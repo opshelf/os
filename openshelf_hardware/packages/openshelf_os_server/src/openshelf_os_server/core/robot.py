@@ -5,6 +5,7 @@ from typing import Optional
 import sentry_sdk
 
 from openshelf_os import robot as r
+from openshelf_os.storage import CellStatus
 import openshelf_os.robot.worker as r_worker
 from openshelf_os.common import (
     ConfigError,
@@ -20,8 +21,15 @@ from openshelf_os_server.core.init_progress import (
     OVERALL_READY,
     get_init_tracker,
 )
+from openshelf_os_server.core.crash_video_recorder import (
+    begin_motion_crash_artifacts,
+    capture_motion_crash_artifacts,
+)
+from openshelf_os_server.core.printer_status import PrinterStatusProbeError, probe_printer_status
 from openshelf_os_server.core.robot_events import RobotEventListener
 from openshelf_os_server.core.storage import StorageService
+from openshelf_os_server.core.bin_storage import BinStorageService, reserved_bin_locations
+from openshelf_os_server.core.command_lifecycle import handle_worker_lifecycle
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.settings import get_root_config
 
@@ -71,10 +79,19 @@ def _report_printer_status() -> None:
         return
     tracker = get_init_tracker()
     device = _printer_device()
-    if os.path.exists(device) is True:
-        tracker.report("printer", "ready", detail=device)
-    else:
-        tracker.report("printer", "failed", reason=f"device not found: {device}")
+    try:
+        status = probe_printer_status(device)
+    except PrinterStatusProbeError as exc:
+        tracker.report("printer", "failed", reason=str(exc))
+        return
+
+    reason = status.failure_reason()
+    if reason is not None:
+        tracker.report("printer", "failed", reason=reason)
+        return
+
+    detail = f"{device} (paper near end)" if status.paper_near_end is True else device
+    tracker.report("printer", "ready", detail=detail)
 
 
 def validate_robot_config() -> None:
@@ -102,6 +119,13 @@ def _home_on_init_enabled() -> bool:
         return bool(get_root_config().robot_app.home_on_init)
     except Exception:
         return True
+
+
+async def _has_active_bin_workflow() -> bool:
+    """Read recovered durable bin state before configuring hardware that may move."""
+    async with AsyncSessionLocal() as session:
+        bin_storage = BinStorageService(session)
+        return await bin_storage.active_workflow() is not None
 
 
 async def init_robot_worker() -> None:
@@ -153,7 +177,16 @@ async def init_robot_worker() -> None:
         _capture_init_exception(e)
         return
 
-    home_on_init = _home_on_init_enabled()
+    try:
+        has_active_bin_workflow = await _has_active_bin_workflow()
+    except Exception as e:
+        set_robot_initialization_error(e)
+        tracker.set_overall(OVERALL_FAILED, error=str(e))
+        logger.warning("bin_workflow_state_query_failed: %s", e, exc_info=True)
+        _capture_init_exception(e)
+        return
+
+    home_on_init = _home_on_init_enabled() and not has_active_bin_workflow
     try:
         await robot.configure(isolate=True, home_on_init=home_on_init)
         logger.info("Built Robot")
@@ -173,9 +206,38 @@ async def init_robot_worker() -> None:
             occupied = await storage_service.get_all_occupied_cells()
             occupied_tuples = [(side, shelf_idx, cell_idx) for side, shelf_idx, cell_idx, _ in occupied]
             robot.sync_occupied_cells(occupied_tuples)
+            reserved_locations = await reserved_bin_locations(session)
+            robot.set_reserved_cell_locations(reserved_locations)
+            for side, shelf_idx, cell_idx in reserved_locations:
+                try:
+                    robot.set_cell_status(side, shelf_idx, cell_idx, CellStatus.MAINTENANCE)
+                except (ValueError, IndexError) as exc:
+                    logger.warning(
+                        "reserved_bin_home_not_in_grid: side=%s shelf=%d cell=%d error=%s",
+                        side,
+                        shelf_idx,
+                        cell_idx,
+                        exc,
+                    )
             logger.info("Synced %d occupied cells from database", len(occupied_tuples))
 
-        worker = r_worker.RobotWorker(robot)
+        worker = r_worker.RobotWorker(
+            robot,
+            crash_artifact_provider=capture_motion_crash_artifacts,
+            crash_artifact_begin_provider=begin_motion_crash_artifacts,
+            command_lifecycle_callback=handle_worker_lifecycle,
+        )
+        failed = tracker.failed_components(degrading_only=True)
+        failed_motor_components = [component for component in failed if component in CRITICAL_MOTOR_COMPONENTS]
+        if home_on_init is False:
+            if failed_motor_components:
+                reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
+            else:
+                reason = "Automatic homing disabled on initialization"
+            worker.set_needs_home(reason, axes=sorted(CRITICAL_MOTOR_COMPONENTS))
+        elif failed_motor_components:
+            reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
+            worker.set_needs_home(reason, axes=failed_motor_components)
         logger.info("Got Instance")
         await worker.connect()
         logger.info("Robot worker connected")
@@ -210,16 +272,6 @@ async def init_robot_worker() -> None:
         return
 
     failed = tracker.failed_components(degrading_only=True)
-    failed_motor_components = [component for component in failed if component in CRITICAL_MOTOR_COMPONENTS]
-    if home_on_init is False and worker is not None:
-        if failed_motor_components:
-            reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
-        else:
-            reason = "Automatic homing disabled on initialization"
-        worker.set_needs_home(reason, axes=sorted(CRITICAL_MOTOR_COMPONENTS))
-    elif failed_motor_components and worker is not None:
-        reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
-        worker.set_needs_home(reason, axes=failed_motor_components)
     if failed:
         tracker.set_overall(OVERALL_DEGRADED)
         logger.warning("robot_initialized_degraded: failed_components=%s", failed)
@@ -244,15 +296,41 @@ def _capture_init_exception(error: Exception) -> None:
 async def stop_robot_worker() -> None:
     global robot_worker, robot_instance, event_listener
 
-    if event_listener is not None:
-        await event_listener.stop()
-        logger.info("Robot event listener stopped")
+    worker = robot_worker
+    listener = event_listener
+    shutdown_error: Optional[Exception] = None
 
-    if robot_worker is not None:
-        await robot_worker.shutdown()
+    try:
+        if worker is not None:
+            try:
+                await worker.shutdown()
+            except Exception as error:
+                shutdown_error = error
+                logger.warning("robot_worker_shutdown_failed: %s", error, exc_info=True)
 
-    robot_worker = None
-    robot_instance = None
+        if listener is not None:
+            try:
+                await listener.drain()
+            except Exception as error:
+                if shutdown_error is None:
+                    shutdown_error = error
+                logger.warning("robot_event_listener_drain_failed: %s", error, exc_info=True)
+    finally:
+        if listener is not None:
+            try:
+                await listener.stop()
+                logger.info("Robot event listener stopped")
+            except Exception as error:
+                if shutdown_error is None:
+                    shutdown_error = error
+                logger.warning("robot_event_listener_stop_failed: %s", error, exc_info=True)
+
+        robot_worker = None
+        robot_instance = None
+        event_listener = None
+
+    if shutdown_error is not None:
+        raise shutdown_error
 
 
 async def get_robot_worker() -> r_worker.RobotWorker:

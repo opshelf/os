@@ -37,6 +37,7 @@ from openshelf_os_server.core.logging_config import configure_logging, get_logge
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, stop_robot_worker
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
+from openshelf_os_server.core.bin_storage import BinStorageService
 from openshelf_os_server.core.camera import (
 	init_camera_progress,
 	init_overhead_camera_manager,
@@ -44,12 +45,17 @@ from openshelf_os_server.core.camera import (
 	init_tool_camera_manager,
 	stop_all_camera_streams,
 )
+from openshelf_os_server.core.crash_video_recorder import (
+	start_crash_video_recorder,
+	stop_crash_video_recorder,
+)
 from openshelf_os_server.core.iobox_sizer import get_iobox_sizer_status, init_iobox_sizer, stop_iobox_sizer
 from openshelf_os_server.core.mock_robot import (
 	get_mock_robot_runtime,
 	start_mock_robot_runtime,
 	stop_mock_robot_runtime,
 )
+from openshelf_os_server.core.command_lifecycle import recover_interrupted_commands
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal, get_db
@@ -647,6 +653,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	async with AsyncSessionLocal() as db:
 		await onboarding.ensure_onboarding_state(db)
 	await _apply_mode_transition()
+	interrupted_commands = await recover_interrupted_commands()
+	if interrupted_commands:
+		logger.warning("robot_commands_recovered", count=interrupted_commands)
+
+	# Configured bin identities and homes must be durable before the app can
+	# serve requests. Interrupted motion is recovered here as well, before any
+	# runtime mode can serve requests or initialize hardware.
+	async with AsyncSessionLocal() as session:
+		bin_storage = BinStorageService(session)
+		await bin_storage.sync_config()
+		await bin_storage.recover_interrupted_workflows()
 
 	robot_init_task: Optional[asyncio.Task[None]] = None
 	camera_init_task: Optional[asyncio.Task[None]] = None
@@ -702,6 +719,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		except Exception as e:
 			logger.warning("iobox_sizer_startup_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 
+	if is_mock is False:
+		await start_crash_video_recorder()
+
 	if len(camera_ids) > 0:
 		camera_init_task = asyncio.create_task(init_camera_progress(camera_ids))
 
@@ -728,6 +748,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 				pass
 			except Exception as e:
 				logger.warning("camera_init_task_shutdown_failed", error=str(e), exc_info=True)
+		try:
+			await stop_crash_video_recorder()
+		except Exception as e:
+			logger.warning("crash_video_recorder_shutdown_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 		try:
 			await stop_all_camera_streams()
 		except Exception as e:

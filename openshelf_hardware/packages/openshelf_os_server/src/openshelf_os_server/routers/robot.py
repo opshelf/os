@@ -16,6 +16,7 @@ from openshelf_os.robot.commands import (
     InitializeCommand,
     RetrieveItemCommand,
     RobotCommands,
+    StopCommand,
     StoreItemCommand,
 )
 import logging
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from openshelf_os_server.core.robot import get_robot_instance, get_robot_worker
+from openshelf_os_server.core.robot_events import process_robot_event
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.iobox_sizer import capture_store_observer_measurement
 from openshelf_os_server.core.logging_config import correlation_id_var
@@ -41,13 +43,27 @@ from openshelf_os_server.core.mock_robot import (
     MockQueueFullError,
     MockRequestConflictError,
     get_mock_robot_runtime,
-    serialize_mock_command,
+)
+from openshelf_os_server.core.command_lifecycle import (
+    CommandQueueFullError,
+    CommandRequestConflictError,
+    admit as admit_robot_command,
+    enqueue_persisted,
+    get_command as get_lifecycle_command,
+    replay as replay_robot_command,
+    serialize_command,
 )
 from openshelf_os_server.core.storage import StorageService
+from openshelf_os_server.core.bin_storage import (
+    BinStorageService,
+    DirectStoreReservationError,
+    bin_workflow_command_admission_guard,
+    validate_direct_store_reservation,
+)
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.settings import get_settings, get_operating_mode
 from openshelf_os_server.database.session import get_db, AsyncSessionLocal
-from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation, User
+from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation, StorageBinItem, User
 from .auth_deps import (
     get_current_user,
     get_relay_or_current_user,
@@ -63,6 +79,47 @@ _SCALE_NOT_ENABLED_MESSAGE = "Scale is not enabled"
 
 def _error_detail(message: str, code: str) -> dict[str, str]:
     return {"message": message, "code": code}
+
+
+async def _ensure_no_active_bin_workflow(
+    command: RobotCommands,
+    db: AsyncSession,
+    current_user: User,
+    worker: RobotWorker | None = None,
+) -> None:
+    active_bin_workflow = await BinStorageService(db).active_workflow()
+    is_admin_workflow_home = (
+        isinstance(command, HomeCommand)
+        and active_bin_workflow is not None
+        and active_bin_workflow.state in {"awaiting_item_scan", "awaiting_bin_scan", "recovery_required"}
+        and worker is not None
+        and (
+            worker.needs_home()
+            or getattr(worker, "_is_emergency_stopped", False)
+            or getattr(worker, "_is_crashed", False)
+        )
+        and getattr(getattr(current_user, "role", None), "name", None) == "admin"
+    )
+    if active_bin_workflow is not None and not isinstance(command, StopCommand) and not is_admin_workflow_home:
+        _raise_active_bin_workflow_lock(active_bin_workflow.id)
+
+
+def _raise_active_bin_workflow_lock(workflow_id: str) -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_423_LOCKED,
+        detail={
+            "message": "A storage bin must be returned before another robot command can run",
+            "code": "bin_workflow_active",
+            "workflow_id": workflow_id,
+        },
+    )
+
+
+async def _ensure_no_active_bin_workflow_mutation(db: AsyncSession) -> None:
+    """Block public motion and queue mutations while a bin workflow owns the robot."""
+    active_bin_workflow = await BinStorageService(db).active_workflow()
+    if active_bin_workflow is not None:
+        _raise_active_bin_workflow_lock(active_bin_workflow.id)
 
 
 def _is_scale_not_enabled(exc: Exception) -> bool:
@@ -224,16 +281,16 @@ class SafetyComponentOverrideRequest(BaseModel):
     bypass: bool
 
 
-class MockCommandAcceptedResponse(BaseModel):
+class CommandAcceptedResponse(BaseModel):
     message: Literal["success"]
     command_id: str
     status: Literal["queued", "running", "succeeded", "failed"]
 
 
-class MockCommandLifecycleResponse(BaseModel):
+class CommandLifecycleResponse(BaseModel):
     command_id: str
     request_id: Optional[str]
-    command: Literal["store_item", "retrieve_item"]
+    command: str
     status: Literal["queued", "running", "succeeded", "failed"]
     result: Optional[dict[str, Any]]
     created_at: datetime
@@ -267,11 +324,23 @@ async def get_command_worker_for_mode() -> RobotWorker | None:
     return await get_robot_worker_or_error()
 
 
+async def get_optional_command_worker_for_mode() -> RobotWorker | None:
+    """Resolve the worker without preempting durable idempotency replays."""
+    if get_operating_mode() == OperatingMode.mock:
+        return None
+    if get_settings().robot.enabled is False:
+        return None
+    try:
+        return await get_robot_worker()
+    except ValueError:
+        return None
+
+
 def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: RobotWorker) -> None:
     if worker.needs_home() is False:
         return
 
-    if isinstance(command, (HomeCommand, InitializeCommand)):
+    if isinstance(command, (HomeCommand, InitializeCommand, StopCommand)):
         return
 
     raise HTTPException(
@@ -292,8 +361,18 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
     if not isinstance(upca, str) or upca.strip() == "" or len(upca) > 50:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="item.upca is required")
 
+    await _validate_direct_store_reservation(item_data, db)
+
     item = (await db.execute(select(Item).where(Item.upca == upca))).scalar_one_or_none()
     if item is not None:
+        bin_membership = (
+            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
+        ).scalar_one_or_none()
+        if bin_membership is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Item is already stored in a bin; retrieve it before storing again",
+            )
         existing = (
             await db.execute(select(ItemLocation).where(ItemLocation.item_id == item.id))
         ).scalars().first()
@@ -325,6 +404,16 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
     access_level_id = item_data.get("access_level_id")
     if access_level_id is not None and await db.get(AccessLevel, access_level_id) is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid access level")
+
+
+async def _validate_direct_store_reservation(item_data: dict[str, Any], db: AsyncSession) -> None:
+    try:
+        await validate_direct_store_reservation(item_data, db)
+    except DirectStoreReservationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail(str(exc), exc.code),
+        ) from exc
 
 
 async def _validate_mock_retrieve(
@@ -373,22 +462,36 @@ async def _validate_mock_retrieve(
         )
 
 
-@router.post("/commands", dependencies=[Depends(get_relay_or_current_user)])
+@router.post(
+    "/commands",
+    dependencies=[Depends(get_relay_or_current_user)],
+    response_model=CommandAcceptedResponse,
+    responses={
+        409: {"description": "Idempotency conflict or command precondition failed"},
+        423: {"description": "A multi-item bin workflow currently owns the robot"},
+        429: {
+            "description": "The active command queue is full",
+            "headers": {"Retry-After": {"schema": {"type": "string"}}},
+        },
+    },
+)
 async def robot_commands(
     command: RobotCommands,
-    worker: RobotWorker | None = Depends(get_command_worker_for_mode),
+    worker: RobotWorker | None = Depends(get_optional_command_worker_for_mode),
     current_user: User = Depends(get_relay_or_current_user),
     db: AsyncSession = Depends(get_db),
-) -> SuccessResponse | MockCommandAcceptedResponse:
-    if get_operating_mode() == OperatingMode.mock:
+) -> CommandAcceptedResponse:
+    operating_mode = get_operating_mode()
+    submission_payload = command.model_dump(mode="json", exclude_none=True)
+    request_id = getattr(command, "request_id", None)
+    if operating_mode == OperatingMode.mock:
         if not isinstance(command, (StoreItemCommand, RetrieveItemCommand)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Mock mode supports only store_item and retrieve_item",
             )
         runtime = get_mock_robot_runtime()
-        payload = command.model_dump(mode="json", exclude_none=True)
-        request_id = command.request_id
+        payload = submission_payload
         try:
             replay = await runtime.replay(payload, request_id)
         except MockRequestConflictError as exc:
@@ -397,49 +500,74 @@ async def robot_commands(
                 detail="request_id was already used with a different payload",
             ) from exc
         if replay is not None:
-            return MockCommandAcceptedResponse.model_validate(
+            return CommandAcceptedResponse.model_validate(
                 {"message": "success", "command_id": replay.command_id, "status": replay.status}
             )
+
+        async with bin_workflow_command_admission_guard():
+            # Direct unit callers often supply light-weight test doubles; API
+            # requests always receive a real AsyncSession and enforce the durable lock.
+            if isinstance(db, AsyncSession):
+                await _ensure_no_active_bin_workflow(command, db, current_user)
 
         if isinstance(command, StoreItemCommand):
             await _validate_mock_store(command, db)
         else:
             await _validate_mock_retrieve(command, current_user, db)
 
-        try:
-            row, _ = await runtime.enqueue(
-                payload,
-                request_id=request_id,
-                correlation_id=correlation_id_var.get(),
-            )
-        except MockRequestConflictError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="request_id was already used with a different payload",
-            ) from exc
-        except MockQueueFullError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Mock robot command queue is full",
-                headers={"Retry-After": "1"},
-            ) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-        return MockCommandAcceptedResponse.model_validate(
+        async with bin_workflow_command_admission_guard():
+            if isinstance(db, AsyncSession):
+                await _ensure_no_active_bin_workflow(command, db, current_user)
+            try:
+                row, _ = await runtime.enqueue(
+                    payload,
+                    request_id=request_id,
+                    correlation_id=correlation_id_var.get(),
+                )
+            except MockRequestConflictError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="request_id was already used with a different payload",
+                ) from exc
+            except MockQueueFullError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Mock robot command queue is full",
+                    headers={"Retry-After": "1"},
+                ) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        return CommandAcceptedResponse.model_validate(
             {"message": "success", "command_id": row.command_id, "status": row.status}
         )
 
+    try:
+        replay = await replay_robot_command(submission_payload, request_id)
+    except CommandRequestConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="request_id was already used with a different payload",
+        ) from exc
+    if replay is not None:
+        return CommandAcceptedResponse(
+            message="success",
+            command_id=replay.command_id,
+            status=cast(Any, replay.status),
+        )
+
+    await _ensure_laser_auto_calibration_not_running()
     if worker is None:
+        await check_robot_enabled()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Robot is not initialized or failed to start",
         )
-    await _ensure_laser_auto_calibration_not_running()
     _ensure_command_allowed_while_needs_home(command, worker)
 
     if isinstance(command, StoreItemCommand):
         logging.info("Processing StoreItemCommand: item=%s", command.item)
         item_data = deepcopy(command.item or {})
+        await _validate_direct_store_reservation(item_data, db)
         upca = item_data.get("upca")
         human_dimensions_source = "command_payload" if item_data.get("dimensions") is not None else "none"
 
@@ -465,7 +593,15 @@ async def robot_commands(
                         status_code=status.HTTP_409_CONFLICT,
                         detail="Item is already stored; retrieve it before storing again",
                     )
-                command = StoreItemCommand(item=item_data)
+                bin_membership = (
+                    await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
+                ).scalar_one_or_none()
+                if bin_membership is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Item is stored in a bin; use the storage bin workflow",
+                    )
+                command = StoreItemCommand(item=item_data, request_id=request_id)
             else:
                 logging.info("Item not found in db for upca: %s", upca)
 
@@ -485,6 +621,19 @@ async def robot_commands(
             logging.warning("IO box sizer observer capture failed: %s", exc)
 
     if isinstance(command, RetrieveItemCommand):
+        if command.upca:
+            binned_item = (
+                await db.execute(
+                    select(Item)
+                    .join(StorageBinItem, StorageBinItem.item_id == Item.id)
+                    .where(Item.upca == command.upca)
+                )
+            ).scalar_one_or_none()
+            if binned_item is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Item is stored in a bin; use the storage bin workflow",
+                )
         if worker.get_safety_status().get("bypassed") is not True:
             try:
                 scale_status = worker.get_cached_scale_status()
@@ -541,22 +690,51 @@ async def robot_commands(
                 detail="You do not have permission to retrieve this item"
             )
 
-    async with robot_command_enqueue_guard():
-        await worker.enqueue_command(command)
-    return SuccessResponse()
+    async with bin_workflow_command_admission_guard():
+        await _ensure_no_active_bin_workflow(command, db, current_user, worker)
+        async with robot_command_enqueue_guard():
+            try:
+                row, was_replay = await admit_robot_command(
+                    submission_payload,
+                    request_id=request_id,
+                    correlation_id=correlation_id_var.get(),
+                )
+            except CommandRequestConflictError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="request_id was already used with a different payload",
+                ) from exc
+            except CommandQueueFullError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Robot command queue is full",
+                    headers={"Retry-After": "1"},
+                ) from exc
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=str(exc),
+                ) from exc
+            if was_replay is False:
+                await enqueue_persisted(worker, command, row)
+    return CommandAcceptedResponse(
+        message="success",
+        command_id=row.command_id,
+        status=cast(Any, row.status),
+    )
 
 
-@router.get("/commands/{command_id}", dependencies=[Depends(get_relay_or_current_user)])
-async def get_robot_command(command_id: str) -> MockCommandLifecycleResponse:
-    if get_operating_mode() != OperatingMode.mock:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Robot command lifecycle polling is unavailable in this mode",
-        )
-    row = await get_mock_robot_runtime().get_command(command_id)
+@router.get(
+    "/commands/{command_id}",
+    dependencies=[Depends(get_relay_or_current_user)],
+    response_model=CommandLifecycleResponse,
+    responses={404: {"description": "Robot command not found"}},
+)
+async def get_robot_command(command_id: str) -> CommandLifecycleResponse:
+    row = await get_lifecycle_command(command_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Robot command not found")
-    return MockCommandLifecycleResponse.model_validate(serialize_mock_command(row))
+    return CommandLifecycleResponse.model_validate(serialize_command(row))
 
 
 @router.post("/start", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
@@ -574,9 +752,14 @@ async def stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -
 
 
 @router.post("/clear_commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
-async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+async def clear_robot_commands(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+    db: AsyncSession = Depends(get_db),
+) -> SuccessResponse:
     await _ensure_laser_auto_calibration_not_running()
-    await worker.clear_commands()
+    async with bin_workflow_command_admission_guard():
+        await _ensure_no_active_bin_workflow_mutation(db)
+        await worker.clear_commands()
     return SuccessResponse()
 
 
@@ -584,10 +767,13 @@ async def clear_robot_commands(worker: RobotWorker = Depends(get_robot_worker_or
 async def control_gripper(
     state: Literal["grip", "release"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
+    db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse:
     await _ensure_laser_auto_calibration_not_running()
 
     async with manual_motion_guard(f"gripper:{state}", worker=worker):
+        async with bin_workflow_command_admission_guard():
+            await _ensure_no_active_bin_workflow_mutation(db)
         if state == "release":
             await worker.release_gripper()
         else:
@@ -654,14 +840,23 @@ async def get_scanner_status(
 
 @router.post(
     "/debug/scanner/scan",
-    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control"))],
 )
 async def emit_scanner_scan_event(
     request: LabelScanRequest,
-    worker: RobotWorker = Depends(get_robot_worker_or_error),
+    worker: RobotWorker | None = Depends(get_command_worker_for_mode),
 ) -> SuccessResponse:
+    payload = {"kind": "label_scanned", "payload": request.code}
     try:
-        await worker.publish_event({"kind": "label_scanned", "payload": request.code})
+        if get_operating_mode() == OperatingMode.mock:
+            # Mock mode does not run a RobotEventListener. Route the scan through
+            # the same handler directly so bin workflow events still use the mock
+            # runtime's SSE publisher.
+            await process_robot_event(payload, get_mock_robot_runtime())
+        else:
+            if worker is None:
+                raise RuntimeError("Robot worker is unavailable")
+            await worker.publish_event(payload)
     except Exception as exc:
         logging.error("Failed to publish label_scanned event: %s", exc)
         raise HTTPException(
@@ -739,15 +934,20 @@ async def get_scale_calibration_params(
 async def set_scale_calibration_params(
     request: ScaleCalibrationParamsRequest,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     try:
-        ok = await worker.set_scale_calibration_params(
-            full_scale=request.full_scale,
-            calibration_weight=request.calibration_weight,
-            precision=request.precision,
-            division=request.division,
-        )
+        async with bin_workflow_command_admission_guard():
+            await _ensure_no_active_bin_workflow_mutation(db)
+            ok = await worker.set_scale_calibration_params(
+                full_scale=request.full_scale,
+                calibration_weight=request.calibration_weight,
+                precision=request.precision,
+                division=request.division,
+            )
         return {"success": ok}
+    except HTTPException:
+        raise
     except ConfigError as exc:
         _raise_scale_config_error(exc)
     except Exception as exc:
@@ -764,9 +964,14 @@ async def set_scale_calibration_params(
 @router.post("/debug/scale/calibration/zero", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def calibrate_scale_zero(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     try:
-        return await worker.calibrate_scale_zero()
+        async with bin_workflow_command_admission_guard():
+            await _ensure_no_active_bin_workflow_mutation(db)
+            return await worker.calibrate_scale_zero()
+    except HTTPException:
+        raise
     except ConfigError as exc:
         _raise_scale_config_error(exc)
     except Exception as exc:
@@ -783,9 +988,14 @@ async def calibrate_scale_zero(
 @router.post("/debug/scale/calibration/weight", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def calibrate_scale_weight(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     try:
-        return await worker.calibrate_scale_weight()
+        async with bin_workflow_command_admission_guard():
+            await _ensure_no_active_bin_workflow_mutation(db)
+            return await worker.calibrate_scale_weight()
+    except HTTPException:
+        raise
     except ConfigError as exc:
         _raise_scale_config_error(exc)
     except Exception as exc:
@@ -802,10 +1012,15 @@ async def calibrate_scale_weight(
 @router.post("/debug/scale/calibration/tare", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def scale_tare(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     try:
-        ok = await worker.scale_tare()
+        async with bin_workflow_command_admission_guard():
+            await _ensure_no_active_bin_workflow_mutation(db)
+            ok = await worker.scale_tare()
         return {"success": ok}
+    except HTTPException:
+        raise
     except ConfigError as exc:
         _raise_scale_config_error(exc)
     except Exception as exc:
@@ -893,6 +1108,7 @@ async def home_motor(
     motor_name: str,
     skip_pre_home_approach: bool = False,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     if skip_pre_home_approach is True:
         if get_operating_mode() != OperatingMode.development:
@@ -916,6 +1132,8 @@ async def home_motor(
 
     try:
         async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker):
+            async with bin_workflow_command_admission_guard():
+                await _ensure_no_active_bin_workflow_mutation(db)
             if motor_name == "rotate":
                 original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
                 try:
@@ -1007,6 +1225,7 @@ async def move_motor(
     motor_name: str,
     request: MotorMoveRequest,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     motor = worker._robot._get_motor_by_name(motor_name)
 
@@ -1018,6 +1237,8 @@ async def move_motor(
 
     try:
         async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker):
+            async with bin_workflow_command_admission_guard():
+                await _ensure_no_active_bin_workflow_mutation(db)
             if motor_name == "rotate":
                 if await worker._robot._tool.is_rotation_at_position(request.position_mm):
                     return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
@@ -1045,9 +1266,12 @@ async def move_motor(
 async def control_door(
     action: Literal["open", "close", "home"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     try:
         async with manual_motion_guard(f"door:{action}", worker=worker):
+            async with bin_workflow_command_admission_guard():
+                await _ensure_no_active_bin_workflow_mutation(db)
             if action == "open":
                 await worker._robot._io.open_door()
             elif action == "close":

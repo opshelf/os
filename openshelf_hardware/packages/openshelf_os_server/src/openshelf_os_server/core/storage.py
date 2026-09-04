@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from openshelf_os.storage import StorageModuleSide
 from openshelf_os_server.core.storage_module import StorageModuleSideName, module_name_to_side
 
-from ..database.models import Item, ItemLocation, StorageCell
+from ..database.models import Item, ItemLocation, StorageBin, StorageCell
 from .validation import CellOccupiedError, LocationValidator, StorageCellValidator, StorageValidator, ValidationError
 
 
@@ -310,7 +310,13 @@ class StorageService:
             select(ItemLocation.side, ItemLocation.shelf_idx, ItemLocation.cell_idx, Item.upca)
             .join(Item)
         )
-        return [(row.side, row.shelf_idx, row.cell_idx, row.upca) for row in result.all()]
+        occupied = [(row.side, row.shelf_idx, row.cell_idx, row.upca) for row in result.all()]
+        bins = await self.session.execute(
+            select(StorageBin.side, StorageBin.shelf_idx, StorageBin.cell_idx, StorageBin.barcode)
+            .where(StorageBin.active.is_(True), StorageBin.status == "at_home")
+        )
+        occupied.extend((row.side, row.shelf_idx, row.cell_idx, row.barcode) for row in bins.all())
+        return occupied
 
     async def create_storage_cell(self, shelf_idx: int, cell_idx: int, capacity: str) -> StorageCell:
         """Create a new storage cell."""

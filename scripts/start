@@ -189,6 +189,8 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+PULL_NEEDED="$PULL"
+
 if [[ -z "$MODE" ]]; then
 	if [[ -f "$MODE_FILE" ]]; then
 		MODE=$(cat "$MODE_FILE" | tr -d '[:space:]')

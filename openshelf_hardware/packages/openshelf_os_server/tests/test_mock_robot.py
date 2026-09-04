@@ -49,6 +49,52 @@ def test_mock_runtime_defaults_to_hardware_execution_delay() -> None:
 
 
 @pytest.mark.anyio
+async def test_mock_status_keeps_command_id_through_queued_to_running(
+	client: AsyncClient,
+	mock_runtime: MockRobotRuntime,
+) -> None:
+	await mock_runtime.stop()
+	response = await client.post(
+		"/api/robot/commands",
+		json={
+			"command": "store_item",
+			"item": {
+				"upca": "036000291452",
+				"name": "Mock item",
+				"dimensions": {"width": 10, "height": 20, "length": 30},
+			},
+		},
+	)
+	assert response.status_code == 200
+	command_id = response.json()["command_id"]
+
+	queued_status = json.loads(await mock_runtime.status_payload())
+	assert len(queued_status["queued_operations"]) == 1
+	queued_operation = queued_status["queued_operations"][0]
+	assert queued_operation["command_id"] == command_id
+	assert queued_operation["command"] == {
+		"command": "store_item",
+		"item": {
+			"upca": "036000291452",
+			"name": "Mock item",
+			"dimensions": {"width": 10, "height": 20, "length": 30},
+		},
+	}
+
+	await mock_runtime._claim_next()
+	running_status = json.loads(await mock_runtime.status_payload())
+	assert running_status["current_command"] == {
+		"command": "store_item",
+		"item": {
+			"upca": "036000291452",
+			"name": "Mock item",
+			"dimensions": {"width": 10, "height": 20, "length": 30},
+		},
+		"command_id": command_id,
+	}
+
+
+@pytest.mark.anyio
 async def test_mock_store_retrieve_persists_inventory_and_replays_request(
 	client: AsyncClient,
 	mock_runtime: MockRobotRuntime,
@@ -152,6 +198,8 @@ async def test_mock_status_has_eighty_cells_and_db_occupancy(
 		for shelf in status["robot_status"]["storage"][side]
 	) == 80
 	assert status["robot_status"]["gantry"]["x_axis"]["homed"] == 1
+	assert status["robot_status"]["scale"]["occupied"] is False
+	assert status["robot_status"]["cabinet_doors"]["closed"] is True
 
 
 @pytest.mark.anyio

@@ -10,7 +10,13 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 
-from openshelf_os_server.database.models import Item, ItemLocation, MockRobotCommand
+from openshelf_os_server.core.bin_storage import reserved_bin_locations
+from openshelf_os_server.database.models import (
+	Item,
+	ItemLocation,
+	MockRobotCommand,
+	StorageBinWorkflow,
+)
 from openshelf_os_server.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
@@ -79,17 +85,27 @@ class MockRobotRuntime:
 		self._lock = asyncio.Lock()
 		self._status_subscribers: list[asyncio.Queue[str]] = []
 		self._event_subscribers: list[asyncio.Queue[str]] = []
+		self._bin_io_box_occupied_override: bool | None = None
+
+	def set_bin_io_box_occupied(self, occupied: bool) -> None:
+		self._bin_io_box_occupied_override = occupied
 
 	async def start(self) -> None:
 		async with AsyncSessionLocal() as session:
 			now = _utcnow()
 			result = await session.execute(
-				select(MockRobotCommand).where(MockRobotCommand.status.in_(ACTIVE_STATUSES))
+				select(MockRobotCommand).where(
+					MockRobotCommand.runtime == "mock",
+					MockRobotCommand.status.in_(ACTIVE_STATUSES),
+				)
 			)
 			for row in result.scalars():
 				row.status = "failed"
 				row.result = {
 					"message": "failed",
+					"command": row.payload.get("command"),
+					"command_id": row.command_id,
+					"request_id": row.request_id,
 					"error": "Command interrupted by service restart",
 					"code": "service_restarted",
 				}
@@ -98,6 +114,7 @@ class MockRobotRuntime:
 			cutoff = now - timedelta(days=MOCK_COMMAND_RETENTION_DAYS)
 			await session.execute(
 				delete(MockRobotCommand).where(
+					MockRobotCommand.runtime == "mock",
 					MockRobotCommand.completed_at.isnot(None),
 					MockRobotCommand.completed_at < cutoff,
 				)
@@ -130,6 +147,7 @@ class MockRobotRuntime:
 			async with AsyncSessionLocal() as session:
 				await session.execute(
 					delete(MockRobotCommand).where(
+						MockRobotCommand.runtime == "mock",
 						MockRobotCommand.completed_at.isnot(None),
 						MockRobotCommand.completed_at
 						< _utcnow() - timedelta(days=MOCK_COMMAND_RETENTION_DAYS),
@@ -138,7 +156,10 @@ class MockRobotRuntime:
 				await session.commit()
 				if request_id is not None:
 					result = await session.execute(
-						select(MockRobotCommand).where(MockRobotCommand.request_id == request_id)
+						select(MockRobotCommand).where(
+							MockRobotCommand.runtime == "mock",
+							MockRobotCommand.request_id == request_id,
+						)
 					)
 					existing = result.scalar_one_or_none()
 					if existing is not None:
@@ -149,13 +170,17 @@ class MockRobotRuntime:
 				active_count = await session.scalar(
 					select(func.count())
 					.select_from(MockRobotCommand)
-					.where(MockRobotCommand.status.in_(ACTIVE_STATUSES))
+					.where(
+						MockRobotCommand.runtime == "mock",
+						MockRobotCommand.status.in_(ACTIVE_STATUSES),
+					)
 				)
 				if int(active_count or 0) >= MOCK_COMMAND_LIMIT:
 					raise MockQueueFullError
 
 				row = MockRobotCommand(
 					command_id=str(uuid.uuid4()),
+					runtime="mock",
 					request_id=request_id,
 					payload=payload,
 					status="queued",
@@ -174,12 +199,25 @@ class MockRobotRuntime:
 		async with AsyncSessionLocal() as session:
 			return await session.get(MockRobotCommand, command_id)
 
+	async def has_active_commands(self) -> bool:
+		async with AsyncSessionLocal() as session:
+			count = await session.scalar(
+				select(func.count())
+				.select_from(MockRobotCommand)
+				.where(
+					MockRobotCommand.runtime == "mock",
+					MockRobotCommand.status.in_(ACTIVE_STATUSES),
+				)
+			)
+			return bool(count)
+
 	async def replay(self, payload: dict[str, Any], request_id: str | None) -> MockRobotCommand | None:
 		if request_id is None:
 			return None
 		async with AsyncSessionLocal() as session:
 			await session.execute(
 				delete(MockRobotCommand).where(
+					MockRobotCommand.runtime == "mock",
 					MockRobotCommand.completed_at.isnot(None),
 					MockRobotCommand.completed_at
 					< _utcnow() - timedelta(days=MOCK_COMMAND_RETENTION_DAYS),
@@ -187,7 +225,10 @@ class MockRobotRuntime:
 			)
 			await session.commit()
 			result = await session.execute(
-				select(MockRobotCommand).where(MockRobotCommand.request_id == request_id)
+				select(MockRobotCommand).where(
+					MockRobotCommand.runtime == "mock",
+					MockRobotCommand.request_id == request_id,
+				)
 			)
 			row = result.scalar_one_or_none()
 			if row is not None and row.payload != payload:
@@ -214,6 +255,8 @@ class MockRobotRuntime:
 				result = {
 					"message": "failed",
 					"command": row.payload.get("command"),
+					"command_id": row.command_id,
+					"request_id": row.request_id,
 					"error": str(exc),
 					"code": "execution_conflict",
 				}
@@ -226,7 +269,10 @@ class MockRobotRuntime:
 			async with AsyncSessionLocal() as session:
 				result = await session.execute(
 					select(MockRobotCommand)
-					.where(MockRobotCommand.status == "queued")
+					.where(
+						MockRobotCommand.runtime == "mock",
+						MockRobotCommand.status == "queued",
+					)
 					.order_by(MockRobotCommand.created_at, MockRobotCommand.command_id)
 					.limit(1)
 				)
@@ -288,6 +334,7 @@ class MockRobotRuntime:
 				select(ItemLocation.side, ItemLocation.shelf_idx, ItemLocation.cell_idx)
 			)
 			occupied = {(row.side, row.shelf_idx, row.cell_idx) for row in occupied_result}
+			occupied.update(await reserved_bin_locations(session))
 			location: tuple[str, int, int] | None = None
 			for side in MOCK_SIDES:
 				for shelf_idx in range(MOCK_SHELVES_PER_SIDE):
@@ -385,7 +432,10 @@ class MockRobotRuntime:
 			commands = (
 				await session.execute(
 					select(MockRobotCommand)
-					.where(MockRobotCommand.status.in_(ACTIVE_STATUSES))
+					.where(
+						MockRobotCommand.runtime == "mock",
+						MockRobotCommand.status.in_(ACTIVE_STATUSES),
+					)
 					.order_by(MockRobotCommand.created_at, MockRobotCommand.command_id)
 				)
 			).scalars().all()
@@ -393,6 +443,21 @@ class MockRobotRuntime:
 				select(ItemLocation.side, ItemLocation.shelf_idx, ItemLocation.cell_idx)
 			)
 			occupied = {(row.side, row.shelf_idx, row.cell_idx) for row in occupied_rows}
+			active_bin_state = (
+				await session.execute(
+					select(StorageBinWorkflow.state)
+					.where(
+						StorageBinWorkflow.state.notin_(("completed", "reconciled"))
+					)
+					.order_by(StorageBinWorkflow.created_at.desc())
+					.limit(1)
+				)
+			).scalar_one_or_none()
+			io_box_occupied = (
+				self._bin_io_box_occupied_override
+				if self._bin_io_box_occupied_override is not None
+				else active_bin_state in {"awaiting_item_scan", "awaiting_bin_scan"}
+			)
 
 		running = next((row for row in commands if row.status == "running"), None)
 		queued = [row for row in commands if row.status == "queued"]
@@ -418,7 +483,9 @@ class MockRobotRuntime:
 			"mode": "mock",
 			"running": True,
 			"ready": True,
-			"current_command": running.payload if running is not None else None,
+			"current_command": (
+				{**running.payload, "command_id": running.command_id} if running is not None else None
+			),
 			"queued_operations": [
 				{"command_id": row.command_id, "command": row.payload, "timestamp": row.created_at.isoformat()}
 				for row in queued
@@ -432,8 +499,27 @@ class MockRobotRuntime:
 				"tool": {"z_axis": axis, "stage": axis, "rotate": axis},
 				"state": {"current_cell": None},
 				"storage": storage,
-				"cabinet_doors": {"left": "closed", "right": "closed"},
+				"cabinet_doors": {
+					"top_closed": True,
+					"bottom_closed": True,
+					"closed": True,
+					"top_open": False,
+					"bottom_open": False,
+					"open": False,
+				},
 				"io_door_open": False,
+				"scale": {
+					"enabled": True,
+					"available": True,
+					"weight_grams": 25.0 if io_box_occupied else 0.0,
+					"stable": True,
+					"valid": True,
+					"overload": False,
+					"zero": not io_box_occupied,
+					"occupied": io_box_occupied,
+					"threshold_grams": 5.0,
+					"updated_at": _utcnow().isoformat(),
+				},
 				"safety": {"ready": True},
 			},
 		}

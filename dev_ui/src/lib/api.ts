@@ -820,6 +820,55 @@ export async function sendScannerScan(code: string): Promise<{ message: string }
 	});
 }
 
+export interface PrinterConfig {
+	feed_dots: number;
+}
+
+export interface PrinterStatus {
+	enabled: boolean;
+	connected: boolean;
+	healthy: boolean;
+	simulated: boolean;
+	error: string | null;
+	paper_out: boolean;
+	paper_near_end: boolean;
+	cover_open: boolean;
+	cutter_error: boolean;
+	recoverable_error: boolean;
+	unrecoverable_error: boolean;
+	auto_recoverable_error: boolean;
+}
+
+export interface PrintLabelResult {
+	message: string;
+	code: string;
+	printed: boolean;
+}
+
+export async function getPrinterConfig(): Promise<PrinterConfig> {
+	return apiFetch<PrinterConfig>('/print/config');
+}
+
+export async function setPrinterConfig(config: PrinterConfig): Promise<PrinterConfig> {
+	return apiFetch<PrinterConfig>('/print/config', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(config)
+	});
+}
+
+export async function getPrinterStatus(): Promise<PrinterStatus> {
+	return apiFetch<PrinterStatus>('/print/status');
+}
+
+export async function printPrinterLabel(code: string): Promise<PrintLabelResult> {
+	return apiFetch<PrintLabelResult>('/print', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ code })
+	});
+}
+
 export interface MotorInfo {
 	name: string;
 	motor_id: number;

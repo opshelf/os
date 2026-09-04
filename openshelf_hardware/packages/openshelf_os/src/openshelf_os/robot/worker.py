@@ -5,16 +5,31 @@ import os
 import re
 import time
 import traceback
+import uuid
 import sentry_sdk
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
 from openshelf_os.robot.core import Robot
-from openshelf_os.robot.commands import RobotCommands, StopCommand, HomeCommand, InitializeCommand
+from openshelf_os.robot.commands import (
+    RobotCommands,
+    StopCommand,
+    HomeCommand,
+    InitializeCommand,
+    RetrieveItemCommand,
+    StoreItemCommand,
+)
 from openshelf_os.robot.status import (
     CabinetDoorState, RobotCommandSuccessful, RobotResponse, SafetyStatus, ScaleStatus,
 )
-from openshelf_os.robot.models import WorkerError, QueuedOperation, WorkerStatusWithQueue
+from openshelf_os.robot.models import (
+    CrashReportArtifacts,
+    CrashReportAttachment,
+    QueuedOperation,
+    WorkerError,
+    WorkerStatusWithQueue,
+)
 from openshelf_os.barcode_service import (
     DEFAULT_BARCODE_PORT,
     BarcodeService,
@@ -31,6 +46,13 @@ SCALE_WEIGHT_PUBLISH_DELTA_GRAMS = 1.0
 ESTOP_POLL_INTERVAL_SECONDS = 0.05
 ESTOP_UNAVAILABLE_REASON = "Emergency stop input unavailable"
 PHYSICAL_ESTOP_REASON = "Physical emergency stop triggered"
+
+CrashArtifactProvider = Callable[[str], Awaitable[CrashReportArtifacts]]
+CrashArtifactBeginProvider = Callable[[str], Awaitable[CrashReportArtifacts]]
+CommandLifecycleCallback = Callable[
+    [str, QueuedOperation, Optional[dict[str, Any]]],
+    Awaitable[None],
+]
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 
@@ -119,6 +141,13 @@ def _normalize_command(command: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
 
     normalized: Dict[str, Any] = {"command": command_name}
 
+    if command.get("command_id") is not None:
+        normalized["command_id"] = str(command["command_id"])
+    if command.get("request_id") is not None:
+        normalized["request_id"] = str(command["request_id"])
+    if command.get("visibility") == "internal":
+        normalized["visibility"] = "internal"
+
     if location is not None:
         normalized["location"] = location
 
@@ -145,14 +174,17 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         if command is None:
             continue
 
-        normalized_operations.append(
-            {
-                "command": command,
-                "timestamp": operation.get("timestamp"),
-                "location": _normalize_location(operation.get("location")),
-                "item_data": operation.get("item_data"),
-            }
-        )
+        normalized_operation = {
+            "command": command,
+            "command_id": operation.get("command_id"),
+            "timestamp": operation.get("timestamp"),
+            "location": _normalize_location(operation.get("location")),
+            "item_data": operation.get("item_data"),
+        }
+        if operation.get("visibility") == "internal":
+            normalized_operation["visibility"] = "internal"
+
+        normalized_operations.append(normalized_operation)
 
     transformed["queued_operations"] = normalized_operations
     transformed["queue_length"] = payload.get("queue_length", len(normalized_operations))
@@ -238,11 +270,20 @@ def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
 class RobotWorker:
     _instance: Optional["RobotWorker"] = None
 
-    def __init__(self, robot: Robot):
+    def __init__(
+        self,
+        robot: Robot,
+        crash_artifact_provider: CrashArtifactProvider | None = None,
+        crash_artifact_begin_provider: CrashArtifactBeginProvider | None = None,
+        command_lifecycle_callback: CommandLifecycleCallback | None = None,
+    ):
         if RobotWorker._instance is not None:
             raise RuntimeError("RobotWorker is a singleton. Use `get_instance()` to access it.")
 
         self._robot = robot
+        self._crash_artifact_provider = crash_artifact_provider
+        self._crash_artifact_begin_provider = crash_artifact_begin_provider
+        self._command_lifecycle_callback = command_lifecycle_callback
         self._worker_task: Optional[asyncio.Task] = None
         self._scale_poll_task: Optional[asyncio.Task] = None
         self._estop_monitor_task: Optional[asyncio.Task] = None
@@ -250,6 +291,9 @@ class RobotWorker:
         self._estop_poll_wakeup: Optional[asyncio.Event] = None
         self._current_task: Optional[asyncio.Task] = None
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._terminalization_lock = asyncio.Lock()
+        self._interruption_generation = 0
+        self._latest_interruption_reason: Optional[str] = None
         self._current_command: Optional[RobotCommands] = None
         self._current_operation: Optional[QueuedOperation] = None
         self._command_started_at: Optional[float] = None
@@ -323,25 +367,6 @@ class RobotWorker:
         for task in tasks:
             self._background_tasks.discard(task)
 
-    async def _cancel_current_command_task(self, reason: str) -> None:
-        task = self._current_task
-        if task is None:
-            return
-
-        if task.done() is False:
-            logging.info("Cancelling current command task during %s", reason)
-            task.cancel()
-
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            logging.warning("Current command task failed during %s: %s", reason, exc)
-
-        if self._current_task is task:
-            self._current_task = None
-
     def drain_motor_time(self) -> float:
         return self._robot.drain_motor_time()
 
@@ -382,24 +407,41 @@ class RobotWorker:
         division: int = 1,
     ) -> bool:
         async with self._scale_lock:
-            return await self._robot.set_scale_calibration_params(
+            result = await self._robot.set_scale_calibration_params(
                 full_scale=full_scale,
                 calibration_weight=calibration_weight,
                 precision=precision,
                 division=division,
             )
+        if result is True:
+            self.invalidate_cached_scale_status()
+        return result
 
     async def calibrate_scale_zero(self, timeout: float = 5.0) -> Dict[str, Any]:
         async with self._scale_lock:
-            return await self._robot.calibrate_scale_zero(timeout=timeout)
+            result = await self._robot.calibrate_scale_zero(timeout=timeout)
+        if result.get("success") is True:
+            self.invalidate_cached_scale_status()
+        return result
 
     async def calibrate_scale_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
         async with self._scale_lock:
-            return await self._robot.calibrate_scale_weight(timeout=timeout)
+            result = await self._robot.calibrate_scale_weight(timeout=timeout)
+        if result.get("success") is True:
+            self.invalidate_cached_scale_status()
+        return result
 
     async def scale_tare(self) -> bool:
         async with self._scale_lock:
-            return await self._robot.scale_tare()
+            result = await self._robot.scale_tare()
+        if result is True:
+            self.invalidate_cached_scale_status()
+        return result
+
+    def invalidate_cached_scale_status(self) -> None:
+        """Force the next bin admission to sample the scale after calibration changes."""
+        self._latest_scale_status = None
+        self._latest_scale_status_monotonic = None
 
     def _build_scale_status_from_data(self, data: Dict[str, Any]) -> ScaleStatus:
         status_payload = data.get("status") if isinstance(data.get("status"), dict) else {}
@@ -461,15 +503,15 @@ class RobotWorker:
         try:
             async with self._scale_lock:
                 data = await self._robot.get_scale_data()
-            scale_status = self._build_scale_status_from_data(data)
+                scale_status = self._build_scale_status_from_data(data)
+                if scale_status.stable is False:
+                    return False
+                self._latest_scale_status = scale_status
+                self._latest_scale_status_monotonic = time.monotonic()
         except Exception as err:
             scale_status = self._build_scale_error_status(err)
-        else:
-            if scale_status.stable is False:
-                return False
-
-        self._latest_scale_status = scale_status
-        self._latest_scale_status_monotonic = time.monotonic()
+            self._latest_scale_status = scale_status
+            self._latest_scale_status_monotonic = time.monotonic()
         scale_key = self._scale_publish_key(scale_status)
 
         if scale_key == self._last_published_scale_key:
@@ -517,16 +559,29 @@ class RobotWorker:
 
         if success is True:
             reason = f"Simulated motor fault on {motor_name}"
+            fault = RuntimeError(reason)
             self.set_needs_home(reason, axes=[motor_name])
-            context = await self._build_error_context(RuntimeError(reason), is_hardware_fault=True)
+            prepared_artifacts = self._begin_motion_crash_capture(reason)
+            try:
+                context = await self._build_error_context(fault, is_hardware_fault=True)
+            except asyncio.CancelledError:
+                self._report_cancelled_motion_crash_handoff(
+                    reason=reason,
+                    fault=fault,
+                    stack_trace="",
+                    artifact_capture=prepared_artifacts,
+                    report_exception=None,
+                )
+                raise
             self.set_crash_state(reason, context=context)
-            self._report_error(
+            self._queue_motion_crash_report(
                 WorkerError(
                     error_type="HardwareFault",
                     message=reason,
                     context=context,
                     stack_trace="",
-                )
+                ),
+                artifact_capture=prepared_artifacts,
             )
             await self._publish_status()
 
@@ -602,7 +657,70 @@ class RobotWorker:
         }
         return context
 
-    def _report_error(self, error: WorkerError, exc: Optional[Exception] = None) -> None:
+    def _build_cancelled_motion_crash_context(self, fault: Exception) -> dict[str, Any]:
+        elapsed_seconds = None
+        if self._command_started_at is not None:
+            elapsed_seconds = time.monotonic() - self._command_started_at
+
+        fault_context = getattr(fault, "fault_context", None)
+        if fault_context is None and getattr(fault, "__cause__", None) is not None:
+            fault_context = getattr(fault.__cause__, "fault_context", None)
+
+        return {
+            "command": self._current_command.model_dump(mode="json") if self._current_command else None,
+            "queued_operation": self._current_operation.model_dump(mode="json") if self._current_operation else None,
+            "elapsed_seconds": elapsed_seconds,
+            "operation_context": None,
+            "diagnostic_snapshot": {"snapshot_error": "cancelled before diagnostics completed"},
+            "hardware_fault": {
+                "is_hardware_fault": True,
+                "exception_type": type(fault).__name__,
+                "message": str(fault),
+                "needs_home_axes": self.needs_home_axes(),
+                "fault_context": fault_context,
+            },
+        }
+
+    def _cancel_motion_crash_capture(
+        self, artifact_capture: Awaitable[CrashReportArtifacts] | None
+    ) -> None:
+        cancel_capture = getattr(artifact_capture, "cancel", None)
+        if callable(cancel_capture):
+            try:
+                cancel_capture()
+            except Exception as capture_error:
+                logging.warning("Failed to cancel prepared motion crash capture: %s", capture_error)
+
+    def _report_cancelled_motion_crash_handoff(
+        self,
+        *,
+        reason: str,
+        fault: Exception,
+        stack_trace: str,
+        artifact_capture: Awaitable[CrashReportArtifacts] | None,
+        report_exception: Exception | None,
+    ) -> None:
+        self._cancel_motion_crash_capture(artifact_capture)
+        context = self._build_cancelled_motion_crash_context(fault)
+        self.set_crash_state(reason, context=context)
+        self._report_error(
+            WorkerError(
+                error_type="HardwareFault",
+                message=reason,
+                context=context,
+                stack_trace=stack_trace,
+            ),
+            exc=report_exception,
+        )
+
+    def _report_error(
+        self,
+        error: WorkerError,
+        exc: Optional[Exception] = None,
+        *,
+        attachments: list[CrashReportAttachment] | None = None,
+        add_to_queue: bool = True,
+    ) -> None:
         sentry_event_id: Optional[str] = None
         try:
             with sentry_sdk.new_scope() as scope:
@@ -631,6 +749,13 @@ class RobotWorker:
                 if error.stack_trace:
                     scope.set_extra("stack_trace", error.stack_trace)
 
+                for attachment in attachments or []:
+                    scope.add_attachment(
+                        bytes=attachment.data,
+                        filename=attachment.filename,
+                        content_type=attachment.content_type,
+                    )
+
                 if exc is not None:
                     sentry_event_id = sentry_sdk.capture_exception(exc)
                 else:
@@ -646,7 +771,111 @@ class RobotWorker:
                 error.context = {}
             error.context["sentry_event_id"] = sentry_event_id
 
+        if add_to_queue is True:
+            self._add_error(error)
+
+    async def _report_motion_crash(
+        self,
+        error: WorkerError,
+        exc: Exception | None,
+        report_state: dict[str, bool],
+        artifact_capture: Awaitable[CrashReportArtifacts] | None = None,
+    ) -> None:
+        artifacts = CrashReportArtifacts()
+        provider = self._crash_artifact_provider
+
+        if artifact_capture is not None:
+            try:
+                artifacts = await artifact_capture
+            except asyncio.CancelledError:
+                report_state["reported"] = True
+                self._report_error(error, exc=exc, add_to_queue=False)
+                raise
+            except Exception as artifact_error:
+                artifacts.context = {
+                    "status": "failed",
+                    "error": str(artifact_error),
+                    "error_type": type(artifact_error).__name__,
+                }
+                logging.warning(
+                    "Motion crash artifact capture failed: %s",
+                    artifact_error,
+                    exc_info=True,
+                )
+        elif provider is not None:
+            try:
+                artifacts = await provider(error.message)
+            except asyncio.CancelledError:
+                report_state["reported"] = True
+                self._report_error(error, exc=exc, add_to_queue=False)
+                raise
+            except Exception as artifact_error:
+                artifacts.context = {
+                    "status": "failed",
+                    "error": str(artifact_error),
+                    "error_type": type(artifact_error).__name__,
+                }
+                logging.warning(
+                    "Motion crash artifact capture failed: %s",
+                    artifact_error,
+                    exc_info=True,
+                )
+
+        if artifacts.context:
+            if error.context is None:
+                error.context = {}
+            error.context["crash_recorder"] = artifacts.context
+
+        report_state["reported"] = True
+        self._report_error(
+            error,
+            exc=exc,
+            attachments=artifacts.attachments,
+            add_to_queue=False,
+        )
+
+    def _queue_motion_crash_report(
+        self,
+        error: WorkerError,
+        exc: Exception | None = None,
+        artifact_capture: Awaitable[CrashReportArtifacts] | None = None,
+    ) -> None:
         self._add_error(error)
+        report_state = {"reported": False}
+        task = self._track_background_task(
+            self._report_motion_crash(error, exc, report_state, artifact_capture),
+            name="motion-crash-report",
+        )
+
+        def _report_if_cancelled_before_reporting(done_task: asyncio.Task[Any]) -> None:
+            if done_task.cancelled() is True and report_state["reported"] is False:
+                self._cancel_motion_crash_capture(artifact_capture)
+                report_state["reported"] = True
+                self._report_error(error, exc=exc, add_to_queue=False)
+
+        task.add_done_callback(_report_if_cancelled_before_reporting)
+
+    def _begin_motion_crash_capture(
+        self, reason: str
+    ) -> Awaitable[CrashReportArtifacts] | None:
+        provider = self._crash_artifact_begin_provider
+        if provider is None:
+            return None
+
+        try:
+            return provider(reason)
+        except Exception as artifact_error:
+            completed = asyncio.get_running_loop().create_future()
+            completed.set_result(
+                CrashReportArtifacts(
+                    context={
+                        "status": "failed",
+                        "error": str(artifact_error),
+                        "error_type": type(artifact_error).__name__,
+                    }
+                )
+            )
+            return completed
 
     def _clear_robot_operation_context(self) -> None:
         try:
@@ -679,25 +908,29 @@ class RobotWorker:
             self._robot.set_operation_context_listener(self._on_operation_context_change)
 
     async def clear_commands(self) -> None:
-        while self._command_queue.empty() is False:
-            try:
-                self._command_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-
-        if self._current_operation is None:
-            self._queued_commands = []
-        else:
-            self._queued_commands = [self._current_operation]
-
+        await self._discard_queued_commands("Commands cleared")
         await self._publish_status()
 
-    async def enqueue_command(self, command: RobotCommands) -> None:
-        queued_operation = self._snapshot_command(command)
-
-        self._queued_commands.append(queued_operation)
-        await self._command_queue.put(queued_operation)
-        await self._publish_status()
+    async def enqueue_command(
+        self,
+        command: RobotCommands,
+        *,
+        command_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+    ) -> None:
+        async with self._terminalization_lock:
+            queued_operation = self._snapshot_command(
+                command,
+                command_id=command_id,
+                visibility=visibility,
+                admission_generation=self._interruption_generation,
+            )
+            self._queued_commands.append(queued_operation)
+            self._command_queue.put_nowait(queued_operation)
+        try:
+            await self._publish_status()
+        except Exception as exc:
+            logging.warning("Failed to publish queued command status: %s", exc)
 
     async def subscribe_status(self) -> tuple[asyncio.Queue[str], Optional[str]]:
         queue: asyncio.Queue[str] = asyncio.Queue()
@@ -805,28 +1038,25 @@ class RobotWorker:
     async def emergency_stop(self, reason: str) -> None:
         self._robot.block_motion_for_safety()
         self.set_emergency_stop_state(reason)
+        # An interrupted move leaves position unknown until the operator homes.
+        # Set this before publishing so recovery clients cannot resume bin motion
+        # during the stop cleanup window.
+        self.set_needs_home(reason)
         await self._publish_status()
         logging.info("Emergency stop triggered: %s", reason)
 
         async def _cleanup_after_stop() -> None:
-            if self._current_task is not None and not self._current_task.done():
-                self._current_task.cancel()
-                try:
-                    await self._current_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as exc:
-                    logging.warning("Cancelled task failed during emergency stop cleanup: %s", exc)
+            interruption_reason = f"Emergency stop: {reason}"
+            interruption_boundary = await self._terminalize_current_command(
+                interruption_reason=interruption_reason,
+            )
+            assert interruption_boundary is not None
 
             await self._restore_y_brake_output()
-
-            self._remove_current_operation()
-            self._current_task = None
-            self._current_command = None
-            self._current_operation = None
-            self._command_started_at = None
-
-            await self.clear_commands()
+            await self._discard_queued_commands(
+                interruption_reason,
+                interruption_boundary=interruption_boundary,
+            )
             await self._publish_status()
 
         self._track_background_task(_cleanup_after_stop(), name="emergency-stop-cleanup")
@@ -1007,7 +1237,14 @@ class RobotWorker:
                 exc=bridge_error,
             )
 
-    def _snapshot_command(self, command: RobotCommands) -> QueuedOperation:
+    def _snapshot_command(
+        self,
+        command: RobotCommands,
+        *,
+        command_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+        admission_generation: int = 0,
+    ) -> QueuedOperation:
         metadata: dict[str, Any] = {}
         for attribute in ("metadata",):
             value = getattr(command, attribute, None)
@@ -1020,6 +1257,9 @@ class RobotWorker:
         return QueuedOperation(
             command=command,
             timestamp=datetime.now(timezone.utc),
+            admission_generation=admission_generation,
+            command_id=command_id or str(uuid.uuid4()),
+            visibility=visibility,
             location=location,
             item_data=item_data,
             metadata=metadata,
@@ -1045,6 +1285,271 @@ class RobotWorker:
 
         for queue in list(self._event_subscribers):
             await queue.put(payload_json)
+
+    async def _publish_command_failure(
+        self,
+        command: Optional[RobotCommands],
+        error: str,
+        operation: Optional[QueuedOperation] = None,
+        *,
+        code: str = "command_interrupted",
+    ) -> None:
+        """Publish a terminal, correlated failure and persist its lifecycle."""
+        if command is None:
+            return
+
+        upca: Optional[str] = command.upca if isinstance(command, RetrieveItemCommand) else None
+        location = command.location if isinstance(command, RetrieveItemCommand) else None
+        if isinstance(command, StoreItemCommand) and isinstance(command.item, dict):
+            item_upca = command.item.get("upca")
+            if item_upca is not None:
+                upca = str(item_upca)
+            location = command.item.get("location")
+
+        payload: dict[str, Any] = {
+            "command": command.command,
+            "message": "failed",
+            "command_id": operation.command_id if operation is not None else None,
+            "error": error,
+            "code": code,
+            "request_id": getattr(command, "request_id", None),
+            "upca": upca,
+            "location": location,
+        }
+        if operation is not None and operation.visibility == "internal":
+            payload["visibility"] = "internal"
+        await self.publish_event(payload)
+        await self._notify_command_lifecycle("failed", operation, payload)
+
+    async def _notify_command_lifecycle(
+        self,
+        status: str,
+        operation: Optional[QueuedOperation],
+        result: Optional[dict[str, Any]],
+    ) -> None:
+        if operation is None or self._command_lifecycle_callback is None:
+            return
+        try:
+            await self._command_lifecycle_callback(status, operation, result)
+        except Exception as exc:
+            logging.exception("Failed to persist command lifecycle %s: %s", status, exc)
+
+    async def _publish_completed_command_result(
+        self,
+        task: asyncio.Task[Any],
+        command: Optional[RobotCommands],
+        operation: Optional[QueuedOperation] = None,
+    ) -> None:
+        """Publish a completed command using the normal worker-loop semantics."""
+        try:
+            result: RobotResponse = task.result()
+            logging.info("Command result: %s", type(result).__name__)
+
+            if (
+                isinstance(command, (HomeCommand, InitializeCommand))
+                and isinstance(result, RobotCommandSuccessful)
+            ):
+                if self._is_crashed:
+                    self.clear_crash_state()
+                    logging.info("Crash state cleared after successful %s", command.command)
+
+                if self._is_emergency_stopped:
+                    if self._is_estop_active is True:
+                        logging.info("Emergency stop state retained while button is active")
+                    else:
+                        self.clear_emergency_stop_state()
+                        logging.info("Emergency stop state cleared after successful %s", command.command)
+
+                if self.needs_home() and isinstance(command, HomeCommand):
+                    self.clear_needs_home()
+                    logging.info("Needs-home flag cleared after successful homing")
+
+            if isinstance(result, RobotCommandSuccessful):
+                payload = result.model_dump(mode="json")
+                payload["command_id"] = operation.command_id if operation is not None else None
+                payload["request_id"] = getattr(command, "request_id", None)
+                if operation is not None and operation.visibility == "internal":
+                    payload["visibility"] = "internal"
+                await self.publish_event(payload)
+                await self._notify_command_lifecycle("succeeded", operation, payload)
+            else:
+                await self._publish_command_failure(
+                    command,
+                    result.error,
+                    operation,
+                    code="execution_failed",
+                )
+            logging.info("Published command result to event queue")
+        except Exception as err:
+            logging.warning("Command execution error: %s", err)
+
+            try:
+                await self._publish_command_failure(
+                    command,
+                    str(err),
+                    operation,
+                    code="execution_error",
+                )
+            except Exception as publish_error:
+                logging.warning("Failed to publish command failure: %s", publish_error)
+
+            is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
+
+            if is_hardware_fault:
+                self.set_needs_home(str(err))
+                logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
+
+            prepared_artifacts = (
+                self._begin_motion_crash_capture(str(err))
+                if is_hardware_fault
+                else None
+            )
+
+            stack_trace = traceback.format_exc()
+            try:
+                error_context = await self._build_error_context(
+                    err, is_hardware_fault=is_hardware_fault
+                )
+            except asyncio.CancelledError:
+                if is_hardware_fault:
+                    self._report_cancelled_motion_crash_handoff(
+                        reason=str(err),
+                        fault=err,
+                        stack_trace=stack_trace,
+                        artifact_capture=prepared_artifacts,
+                        report_exception=err,
+                    )
+                raise
+
+            if is_hardware_fault:
+                self.set_crash_state(str(err), context=error_context)
+
+            worker_error = WorkerError(
+                error_type="HardwareFault" if is_hardware_fault else "CommandExecutionError",
+                message=str(err),
+                context=error_context,
+                stack_trace=stack_trace,
+            )
+            if is_hardware_fault:
+                self._queue_motion_crash_report(
+                    worker_error,
+                    exc=err,
+                    artifact_capture=prepared_artifacts,
+                )
+            else:
+                self._report_error(worker_error, exc=err)
+
+    def _clear_current_command_state(
+        self,
+        task: Optional[asyncio.Task[Any]],
+        command: Optional[RobotCommands],
+        operation: Optional[QueuedOperation],
+    ) -> None:
+        if self._current_task is not task or self._current_command is not command:
+            return
+
+        if self._current_operation is operation:
+            self._remove_current_operation()
+            self._current_operation = None
+        self._clear_robot_operation_context()
+        self._current_task = None
+        self._current_command = None
+        self._command_started_at = None
+
+    async def _terminalize_current_command(
+        self, *, interruption_reason: Optional[str] = None
+    ) -> Optional[int]:
+        """Publish one terminal outcome and clear the matching in-flight command state."""
+        async with self._terminalization_lock:
+            interruption_boundary: Optional[int] = None
+            if interruption_reason is not None:
+                self._interruption_generation += 1
+                self._latest_interruption_reason = interruption_reason
+                interruption_boundary = self._interruption_generation
+
+            task = self._current_task
+            command = self._current_command
+            operation = self._current_operation
+
+            if task is None:
+                if interruption_reason is not None:
+                    await self._publish_command_failure(command, interruption_reason, operation)
+                self._clear_current_command_state(task, command, operation)
+                return interruption_boundary
+
+            if task.done() is True:
+                if task.cancelled() is True:
+                    if interruption_reason is not None:
+                        await self._publish_command_failure(command, interruption_reason, operation)
+                else:
+                    await self._publish_completed_command_result(task, command, operation)
+            elif interruption_reason is None:
+                return None
+            else:
+                logging.info("Cancelling current command task during %s", interruption_reason)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    logging.warning("Cancelled task failed during cleanup: %s", exc)
+                await self._publish_command_failure(command, interruption_reason, operation)
+
+            self._clear_current_command_state(task, command, operation)
+            return interruption_boundary
+
+    async def _discard_queued_commands(
+        self,
+        reason: str,
+        *,
+        interruption_boundary: Optional[int] = None,
+    ) -> None:
+        """Fail queued commands admitted before the interruption boundary."""
+        async with self._terminalization_lock:
+            if interruption_boundary is None:
+                self._interruption_generation += 1
+                self._latest_interruption_reason = reason
+                interruption_boundary = self._interruption_generation
+
+            drained_operations: list[QueuedOperation] = []
+            while self._command_queue.empty() is False:
+                try:
+                    queued_operation = self._command_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                drained_operations.append(queued_operation)
+
+            tracked_operations = [
+                queued_operation
+                for queued_operation in self._queued_commands
+                if queued_operation is not self._current_operation
+            ]
+            queued_operations = list(drained_operations)
+            for queued_operation in tracked_operations:
+                if all(queued_operation is not operation for operation in queued_operations):
+                    queued_operations.append(queued_operation)
+
+            for queued_operation in queued_operations:
+                if queued_operation.admission_generation < interruption_boundary:
+                    await self._publish_command_failure(
+                        queued_operation.command,
+                        reason,
+                        queued_operation,
+                    )
+
+            for queued_operation in drained_operations:
+                if queued_operation.admission_generation >= interruption_boundary:
+                    self._command_queue.put_nowait(queued_operation)
+
+            self._queued_commands = [
+                queued_operation
+                for queued_operation in self._queued_commands
+                if (
+                    queued_operation is self._current_operation
+                    or queued_operation.admission_generation >= interruption_boundary
+                )
+            ]
 
     async def _publish_status(self) -> None:
         try:
@@ -1092,6 +1597,11 @@ class RobotWorker:
 
         status_payload = status.model_dump(mode="json")
 
+        if self._current_operation is not None and isinstance(status_payload.get("current_command"), dict):
+            status_payload["current_command"]["command_id"] = self._current_operation.command_id
+            if self._current_operation.visibility == "internal":
+                status_payload["current_command"]["visibility"] = "internal"
+
         if status.error_queue:
             status_payload["error_queue"] = [
                 error.model_dump(mode="json", exclude_none=True) for error in status.error_queue
@@ -1133,20 +1643,39 @@ class RobotWorker:
                         continue
 
                     command = queued_operation.command
-                    self._current_command = command
-                    self._current_operation = queued_operation
+                    async with self._terminalization_lock:
+                        if queued_operation.admission_generation != self._interruption_generation:
+                            if any(operation is queued_operation for operation in self._queued_commands):
+                                await self._publish_command_failure(
+                                    command,
+                                    self._latest_interruption_reason or "Command interrupted",
+                                    queued_operation,
+                                )
+                                self._queued_commands = [
+                                    operation
+                                    for operation in self._queued_commands
+                                    if operation is not queued_operation
+                                ]
+                            continue
+                        self._current_command = command
+                        self._current_operation = queued_operation
+                    await self._notify_command_lifecycle("running", queued_operation, None)
                     await self._publish_status()
 
-                    if isinstance(command, HomeCommand) and (self._is_crashed is True or self._is_emergency_stopped is True):
-                        if self._is_estop_active is True:
-                            logging.info("Keeping motion safety engaged while emergency stop is active")
-                        elif self._safety_motion_blocked is False:
-                            self._robot.release_motion_safety()
-                            logging.info("Released motion safety for homing in stopped state")
+                    async with self._terminalization_lock:
+                        if self._current_command is not command or self._current_operation is not queued_operation:
+                            continue
 
-                    logging.info("Starting command execution: %s", command.command)
-                    self._command_started_at = time.monotonic()
-                    self._current_task = asyncio.create_task(self._robot.handle_command(command))
+                        if isinstance(command, HomeCommand) and (self._is_crashed is True or self._is_emergency_stopped is True):
+                            if self._is_estop_active is True:
+                                logging.info("Keeping motion safety engaged while emergency stop is active")
+                            elif self._safety_motion_blocked is False:
+                                self._robot.release_motion_safety()
+                                logging.info("Released motion safety for homing in stopped state")
+
+                        logging.info("Starting command execution: %s", command.command)
+                        self._command_started_at = time.monotonic()
+                        self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
                     safety_changed = await self._evaluate_safety_guard()
                     if safety_changed is True:
@@ -1154,62 +1683,7 @@ class RobotWorker:
 
                     if self._current_task.done():
                         logging.info("Command task completed, processing result")
-
-                        try:
-                            result: RobotResponse = self._current_task.result()
-                            logging.info("Command result: %s", type(result).__name__)
-
-                            if (
-                                isinstance(self._current_command, (HomeCommand, InitializeCommand))
-                                and isinstance(result, RobotCommandSuccessful)
-                            ):
-                                if self._is_crashed:
-                                    self.clear_crash_state()
-                                    logging.info("Crash state cleared after successful %s", self._current_command.command)
-
-                                if self._is_emergency_stopped:
-                                    if self._is_estop_active is True:
-                                        logging.info("Emergency stop state retained while button is active")
-                                    else:
-                                        self.clear_emergency_stop_state()
-                                        logging.info("Emergency stop state cleared after successful %s", self._current_command.command)
-
-                                if self.needs_home() and isinstance(self._current_command, HomeCommand):
-                                    self.clear_needs_home()
-                                    logging.info("Needs-home flag cleared after successful homing")
-
-                            await self.publish_event(result.model_dump_json())
-                            logging.info("Published command result to event queue")
-                        except Exception as err:
-                            logging.warning("Command execution error: %s", err)
-
-                            is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
-
-                            if is_hardware_fault:
-                                self.set_needs_home(str(err))
-                                logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
-
-                            error_context = await self._build_error_context(err, is_hardware_fault=is_hardware_fault)
-
-                            if is_hardware_fault:
-                                self.set_crash_state(str(err), context=error_context)
-
-                            self._report_error(
-                                WorkerError(
-                                    error_type="HardwareFault" if is_hardware_fault else "CommandExecutionError",
-                                    message=str(err),
-                                    context=error_context,
-                                    stack_trace=traceback.format_exc(),
-                                ),
-                                exc=err,
-                            )
-
-                        self._clear_robot_operation_context()
-                        self._remove_current_operation()
-                        self._current_task = None
-                        self._current_command = None
-                        self._current_operation = None
-                        self._command_started_at = None
+                        await self._terminalize_current_command()
                         await self._publish_status()
 
                 await asyncio.sleep(0.1)
@@ -1237,6 +1711,12 @@ class RobotWorker:
                         pass
 
                 self._clear_robot_operation_context()
+                await self._publish_command_failure(
+                    self._current_command,
+                    str(err),
+                    self._current_operation,
+                    code="worker_error",
+                )
                 try:
                     await self._publish_status()
                 except Exception as publish_err:
@@ -1318,12 +1798,10 @@ class RobotWorker:
             self._worker_task = None
 
         await self._cancel_background_tasks()
-        await self._cancel_current_command_task("shutdown")
-        self._clear_robot_operation_context()
-        self._remove_current_operation()
-        self._current_command = None
-        self._current_operation = None
-        self._command_started_at = None
+        await self._terminalize_current_command(
+            interruption_reason="Robot stopped during shutdown",
+        )
+        await self._discard_queued_commands("Robot stopped during shutdown")
 
         try:
             await self._robot.handle_command(StopCommand())
