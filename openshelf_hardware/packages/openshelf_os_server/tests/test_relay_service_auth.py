@@ -30,8 +30,8 @@ async def test_relay_service_token_is_limited_to_relay_routes(
     command = await unauthenticated_client.get(
         "/api/robot/commands/nonexistent", headers=headers
     )
-    assert command.status_code == 503
-    assert "unavailable in this mode" in command.json()["detail"]
+    assert command.status_code == 404
+    assert command.json()["detail"] == "Robot command not found"
 
     printed = await unauthenticated_client.post(
         "/api/print/036000291452", headers=headers

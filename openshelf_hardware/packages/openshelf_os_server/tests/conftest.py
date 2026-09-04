@@ -20,7 +20,18 @@ os.environ["OPENSHELF_ONBOARDING_STATE_PATH"] = str(_tmpdir / "onboarding_state"
 
 from sqlalchemy import delete
 
-from openshelf_os_server.database.models import AccessLevel, AuditLog, Item, ItemLocation, Role, StorageCell, User
+from openshelf_os_server.database.models import (
+    AccessLevel,
+    AuditLog,
+    Item,
+    ItemLocation,
+    Role,
+    StorageBin,
+    StorageBinItem,
+    StorageBinWorkflow,
+    StorageCell,
+    User,
+)
 
 import httpx
 from openshelf_os_server.main import app
@@ -107,6 +118,9 @@ async def reset_storage_tables(
 
     async def _clear(session: AsyncSession) -> None:
         if is_storage:
+            await session.execute(delete(StorageBinWorkflow))
+            await session.execute(delete(StorageBinItem))
+            await session.execute(delete(StorageBin))
             await session.execute(delete(ItemLocation))
             await session.execute(delete(Item))
             await session.execute(delete(StorageCell))

@@ -147,11 +147,13 @@ class CameraStreamManager:
 		self.camera_type = camera_type
 		self.is_running = False
 		self.consumer_count = 0
+		self.background_consumer_count = 0
 		self.latest_frame: Optional[bytes] = None
 		self.last_frame_at: Optional[float] = None
 		self.frame_lock = asyncio.Lock()
 		self.capture_task: Optional[asyncio.Task] = None
 		self.target_fps = 12
+		self.background_target_fps = 3
 		self.frame_interval = 1.0 / self.target_fps
 		self.first_frame_timeout = 5.0
 		self.stale_frame_timeout = 5.0
@@ -217,6 +219,19 @@ class CameraStreamManager:
 		self.consumer_count = max(0, self.consumer_count - 1)
 		return self.consumer_count
 
+	def increment_background_consumers(self) -> int:
+		self.background_consumer_count += 1
+		return self.background_consumer_count
+
+	def decrement_background_consumers(self) -> int:
+		self.background_consumer_count = max(0, self.background_consumer_count - 1)
+		return self.background_consumer_count
+
+	def effective_target_fps(self) -> int:
+		if self.consumer_count > 0:
+			return self.target_fps
+		return min(self.target_fps, self.background_target_fps)
+
 	async def _capture_loop(self) -> None:
 		while self.is_running is True:
 			loop_start = asyncio.get_event_loop().time()
@@ -255,7 +270,7 @@ class CameraStreamManager:
 				continue
 
 			elapsed = asyncio.get_event_loop().time() - loop_start
-			sleep_time = max(0.0, self.frame_interval - elapsed)
+			sleep_time = max(0.0, (1.0 / self.effective_target_fps()) - elapsed)
 			await asyncio.sleep(sleep_time)
 
 	async def get_latest_frame(self) -> Optional[bytes]:
@@ -268,6 +283,7 @@ class ToolCameraStreamManager:
 		self.rtsp_url = rtsp_url
 		self.is_running = False
 		self.consumer_count = 0
+		self.background_consumer_count = 0
 		self.latest_frame: Optional[bytes] = None
 		self.last_frame_at: Optional[float] = None
 		self.frame_lock = asyncio.Lock()
@@ -341,6 +357,14 @@ class ToolCameraStreamManager:
 	def decrement_consumers(self) -> int:
 		self.consumer_count = max(0, self.consumer_count - 1)
 		return self.consumer_count
+
+	def increment_background_consumers(self) -> int:
+		self.background_consumer_count += 1
+		return self.background_consumer_count
+
+	def decrement_background_consumers(self) -> int:
+		self.background_consumer_count = max(0, self.background_consumer_count - 1)
+		return self.background_consumer_count
 
 	def _start_worker(self) -> None:
 		self._stop_worker()
@@ -494,33 +518,47 @@ async def init_overview_camera_manager(camera_id: str, rtsp_url: str) -> None:
 	logger.info("overview_camera_registered", camera_id=camera_id, rtsp_url=rtsp_url)
 
 
-async def start_camera_stream_by_id(camera_id: str) -> None:
+async def start_camera_stream_by_id(camera_id: str, *, background: bool = False) -> None:
 	manager = camera_registry.get(camera_id)
 
 	if manager is None:
 		raise ValueError(f"Camera '{camera_id}' not found")
 
-	if manager.is_running is False:
-		await manager.start()
+	if background is True:
+		manager.increment_background_consumers()
+	else:
+		manager.increment_consumers()
 
-	manager.increment_consumers()
+	try:
+		if manager.is_running is False:
+			await manager.start()
+	except BaseException:
+		if background is True:
+			manager.decrement_background_consumers()
+		else:
+			manager.decrement_consumers()
+		raise
 
 
-async def stop_camera_stream_by_id(camera_id: str) -> None:
+async def stop_camera_stream_by_id(camera_id: str, *, background: bool = False) -> None:
 	manager = camera_registry.get(camera_id)
 
 	if manager is None:
 		return
 
-	consumer_count = manager.decrement_consumers()
+	if background is True:
+		manager.decrement_background_consumers()
+	else:
+		manager.decrement_consumers()
 
-	if consumer_count == 0 and manager.is_running is True:
+	if manager.consumer_count == 0 and manager.background_consumer_count == 0 and manager.is_running is True:
 		await manager.stop()
 
 
 async def stop_all_camera_streams() -> None:
 	for manager in list(camera_registry.values()):
 		manager.consumer_count = 0
+		manager.background_consumer_count = 0
 		await manager.stop()
 
 

@@ -217,3 +217,42 @@ def test_scale_refresh_caches_stable_weight_when_valid_flag_is_false() -> None:
         assert worker.get_cached_scale_status() is worker._latest_scale_status
 
     asyncio.run(run())
+
+
+def test_successful_scale_calibration_mutations_invalidate_cached_status() -> None:
+    async def run() -> None:
+        async def set_params(**_: object) -> bool:
+            return True
+
+        async def calibrate_zero(**_: object) -> dict[str, bool]:
+            return {"success": True}
+
+        async def calibrate_weight(**_: object) -> dict[str, bool]:
+            return {"success": True}
+
+        async def tare() -> bool:
+            return True
+
+        worker = RobotWorker.__new__(RobotWorker)
+        worker._robot = types.SimpleNamespace(
+            set_scale_calibration_params=set_params,
+            calibrate_scale_zero=calibrate_zero,
+            calibrate_scale_weight=calibrate_weight,
+            scale_tare=tare,
+        )
+        worker._scale_lock = asyncio.Lock()
+
+        mutations = (
+            lambda: worker.set_scale_calibration_params(6000, 500),
+            worker.calibrate_scale_zero,
+            worker.calibrate_scale_weight,
+            worker.scale_tare,
+        )
+        for mutate in mutations:
+            worker._latest_scale_status = object()
+            worker._latest_scale_status_monotonic = 1.0
+            await mutate()
+            assert worker._latest_scale_status is None
+            assert worker._latest_scale_status_monotonic is None
+
+    asyncio.run(run())
