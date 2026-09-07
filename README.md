@@ -95,7 +95,9 @@ store allocation selects the first fitting free cell in stable layout order and 
 
 send `X-Correlation-ID` to associate API activity with audit records. audit entries can be filtered by exact `correlation_id` through `GET /api/audit/logs`; historical entries created before correlation IDs remain verifiable.
 
-hardware-only routes outside this integration surface may still report disabled or unavailable in mock mode. command polling is intentionally mock-only until the production robot runtime gains a durable lifecycle store.
+hardware-only routes outside this integration surface may still report disabled or unavailable in mock mode. command polling exposes persisted results in both mock and production; available measurements depend on the command producer.
+
+see the [container mass API guide](openshelf_hardware/packages/openshelf_os_server/docs/container-mass.md) for opened-container tare/current/full enrollment, cycle weight events and polling, and production measurement limits.
 
 ### waveshare usb to 4ch rs485 (b)
 

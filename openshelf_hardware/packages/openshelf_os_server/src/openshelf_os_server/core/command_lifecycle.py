@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 
 from openshelf_os.robot.models import QueuedOperation
-from openshelf_os_server.database.models import RobotCommand
+from openshelf_os_server.database.models import Item, RobotCommand
 from openshelf_os_server.database.session import AsyncSessionLocal
 
 COMMAND_LIMIT = 32
@@ -97,6 +97,7 @@ async def admit(
 	request_id: str | None,
 	correlation_id: str | None,
 	visibility: str = "public",
+	enrollment_item: Item | None = None,
 ) -> tuple[RobotCommand, bool]:
 	if request_id is not None and (request_id.strip() == "" or len(request_id) > 255):
 		raise ValueError("request_id must contain 1 to 255 characters")
@@ -142,6 +143,9 @@ async def admit(
 				created_at=utcnow(),
 			)
 			session.add(row)
+			if enrollment_item is not None:
+				# Enrollment and command acceptance must survive or roll back together.
+				session.add(enrollment_item)
 			await session.commit()
 			await session.refresh(row)
 			return row, False
