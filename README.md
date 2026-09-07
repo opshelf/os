@@ -235,3 +235,29 @@ example one-off laser command on a development pi:
 cd /opt/opshelf/repos/openshelf_os
 docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro api -lc 'cd /app/openshelf_hardware && uv run python /app/scripts/laser.py --config /app/openshelf_hardware/data/config.development.json'
 ```
+
+### Chemical name lookup
+
+The optional CAS Common Chemistry integration uses `CAS_COMMON_CHEMISTRY_API_KEY`
+in the **API server environment only**. Configure it in the ignored repository
+`.env` file for Compose, or inject it into the server process environment when
+running directly. Never put it in frontend configuration. Restart the API after
+changing the key. Without a key, inventory/dictionary suggestions still work and
+the chemical endpoints return HTTP 503.
+
+Authenticated users with `storage:read` may call
+`GET /api/chemicals/search?q=ethanol&offset=0` (at most three results) and
+`GET /api/chemicals/64-17-5` (name, synonyms, CAS number, source URL).
+Search accepts complete CAS numbers with or without hyphens, checks their checksum,
+and queries them exactly. Supported incomplete hyphenated CAS prefixes, such as
+`112-`, `112-1`, `112-12`, and `112-12-`, are sent with an appended `*`.
+Invalid complete numeric identifiers, unsupported incomplete bare numbers, and
+explicit numeric wildcard queries produce no results. Text searches try an exact
+query, then a trailing wildcard if there are no exact results. Prefix request
+construction is covered by mocked tests; live upstream partial-search behavior
+remains unverified until an API key is available.
+Upstream requests time out after three seconds, share concurrent identical
+lookups, and cache up to 256 responses for one hour per server process. Rate
+limits temporarily disable remote lookup; custom item entry remains available.
+The upstream contract is documented at
+<https://commonchemistry.cas.org/swagger/commonchemistry-swagger.json>.
