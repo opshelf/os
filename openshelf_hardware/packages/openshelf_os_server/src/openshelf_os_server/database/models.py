@@ -148,6 +148,18 @@ class Item(Base):
 	name: Mapped[str] = mapped_column(String(255), nullable=False)
 	dimensions: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
 	weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+	tare_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+	full_net_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+	enrollment_storage_completed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="1")
+	enrollment_weight_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+	processed_mass_commands: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+
+	@property
+	def net_weight(self) -> Optional[float]:
+		if self.weight is None or self.tare_weight is None or self.weight < self.tare_weight:
+			return None
+		return self.weight - self.tare_weight
+
 	item_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, default=dict)
 	access_level_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("access_levels.id"), nullable=True)
 	created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
