@@ -113,8 +113,8 @@ class CommonChemistry:
 
     async def _request(self, path: str, params: dict[str, str]) -> dict[str, Any]:
         try:
-            async with asyncio.timeout(3):
-                async with httpx.AsyncClient(transport=self._transport, timeout=3) as client:
+            async with asyncio.timeout(8):
+                async with httpx.AsyncClient(transport=self._transport, timeout=8) as client:
                     response = await client.get(
                         f"https://commonchemistry.cas.org/api/{path}", params=params,
                         headers={"X-API-KEY": self._api_key},
@@ -171,11 +171,8 @@ class CommonChemistry:
 
     async def search(self, query: str, offset: int = 0) -> ChemicalSearch:
         query = query.strip().replace("–", "-").replace("−", "-")
-        prefix = bool(re.fullmatch(r"[1-9][0-9]{1,6}-(?:[0-9]{0,2}|[0-9]{2}-)", query))
         identifier = bool(re.fullmatch(r"[0-9*-]+", query))
-        if prefix:
-            query += "*"
-        elif identifier:
+        if identifier:
             try:
                 query = normalize_cas(query)
             except ValueError:

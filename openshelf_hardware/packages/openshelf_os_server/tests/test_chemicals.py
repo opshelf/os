@@ -65,7 +65,7 @@ async def test_cas_search_never_wildcards():
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("query", ["112-", "112-1", "112-12", "112-12-", "112–12–"])
-async def test_incomplete_cas_uses_trailing_wildcard(query):
+async def test_incomplete_cas_never_contacts_upstream(query):
     queries = []
 
     def upstream(request):
@@ -74,7 +74,7 @@ async def test_incomplete_cas_uses_trailing_wildcard(query):
 
     service = CommonChemistry("fixture-key", httpx.MockTransport(upstream))
     assert (await service.search(query)).count == 0
-    assert queries == [query.replace("–", "-") + "*"]
+    assert queries == []
 
 
 @pytest.mark.anyio
@@ -247,3 +247,13 @@ async def test_routes_success_and_not_found(client):
         assert (await client.get("/api/chemicals/64-17-5")).status_code == 404
     finally:
         app.dependency_overrides.pop(get_common_chemistry, None)
+
+
+@pytest.mark.anyio
+async def test_live_like_slow_response_within_deadline():
+    async def upstream(request):
+        await asyncio.sleep(3.1)
+        return httpx.Response(200, json={"count": 1, "results": [{"rn": "64-17-5", "name": "Ethanol"}]})
+
+    service = CommonChemistry("fixture-key", httpx.MockTransport(upstream))
+    assert (await service.search("64-17-5")).results[0].name == "Ethanol"
