@@ -6225,6 +6225,7 @@
         "operationId": "get_audit_log_api_audit_logs__log_id__get",
         "parameters": [
           {
+            "description": "Audit log entry identifier.",
             "in": "path",
             "name": "log_id",
             "required": true,
@@ -8467,6 +8468,7 @@
             }
           },
           {
+            "description": "Zero-based shelf index.",
             "in": "query",
             "name": "shelf_idx",
             "required": false,
@@ -8483,6 +8485,7 @@
             }
           },
           {
+            "description": "Zero-based cell index within the shelf.",
             "in": "query",
             "name": "cell_idx",
             "required": false,
@@ -10229,6 +10232,7 @@
         "operationId": "stream_camera_api_camera__camera_id__get",
         "parameters": [
           {
+            "description": "Camera identifier returned by camera discovery.",
             "in": "path",
             "name": "camera_id",
             "required": true,
@@ -10341,6 +10345,7 @@
             }
           },
           {
+            "description": "Number of records to skip before returning results.",
             "in": "query",
             "name": "offset",
             "required": false,
@@ -10443,6 +10448,7 @@
         "operationId": "chemical_detail_api_chemicals__cas_number__get",
         "parameters": [
           {
+            "description": "CAS Registry Number to look up.",
             "in": "path",
             "name": "cas_number",
             "required": true,
@@ -12147,6 +12153,7 @@
         "operationId": "print_label_api_print__upca__post",
         "parameters": [
           {
+            "description": "Item barcode identifying the inventory record.",
             "in": "path",
             "name": "upca",
             "required": true,
@@ -12630,6 +12637,7 @@
         "operationId": "get_robot_command_api_robot_commands__command_id__get",
         "parameters": [
           {
+            "description": "Command identifier returned when the command was accepted.",
             "in": "path",
             "name": "command_id",
             "required": true,
@@ -12999,6 +13007,7 @@
         "operationId": "clear_motor_alarm_api_robot_debug_motors__motor_name__clear_post",
         "parameters": [
           {
+            "description": "Motor identifier returned by the motor diagnostics endpoint.",
             "in": "path",
             "name": "motor_name",
             "required": true,
@@ -13101,6 +13110,7 @@
         "operationId": "simulate_motor_crash_api_robot_debug_motors__motor_name__crash_post",
         "parameters": [
           {
+            "description": "Motor identifier returned by the motor diagnostics endpoint.",
             "in": "path",
             "name": "motor_name",
             "required": true,
@@ -13203,6 +13213,7 @@
         "operationId": "home_motor_api_robot_debug_motors__motor_name__home_post",
         "parameters": [
           {
+            "description": "Motor identifier returned by the motor diagnostics endpoint.",
             "in": "path",
             "name": "motor_name",
             "required": true,
@@ -13345,6 +13356,7 @@
         "operationId": "move_motor_api_robot_debug_motors__motor_name__move_post",
         "parameters": [
           {
+            "description": "Motor identifier returned by the motor diagnostics endpoint.",
             "in": "path",
             "name": "motor_name",
             "required": true,
@@ -15304,6 +15316,7 @@
         "operationId": "delete_role_api_roles__role_id__delete",
         "parameters": [
           {
+            "description": "Role identifier.",
             "in": "path",
             "name": "role_id",
             "required": true,
@@ -15414,6 +15427,7 @@
         "operationId": "get_role_api_roles__role_id__get",
         "parameters": [
           {
+            "description": "Role identifier.",
             "in": "path",
             "name": "role_id",
             "required": true,
@@ -15511,6 +15525,7 @@
         "operationId": "update_role_api_roles__role_id__put",
         "parameters": [
           {
+            "description": "Role identifier.",
             "in": "path",
             "name": "role_id",
             "required": true,
@@ -15836,6 +15851,7 @@
         "operationId": "cancel_unavailable_bin_return_api_storage_bin_workflows__workflow_id__cancel_return_post",
         "parameters": [
           {
+            "description": "Identifier of the bin workflow to inspect or operate on.",
             "in": "path",
             "name": "workflow_id",
             "required": true,
@@ -15948,6 +15964,7 @@
         "operationId": "reconcile_bin_workflow_api_storage_bin_workflows__workflow_id__reconcile_post",
         "parameters": [
           {
+            "description": "Identifier of the bin workflow to inspect or operate on.",
             "in": "path",
             "name": "workflow_id",
             "required": true,
@@ -16070,6 +16087,7 @@
         "operationId": "retry_bin_workflow_api_storage_bin_workflows__workflow_id__retry_post",
         "parameters": [
           {
+            "description": "Identifier of the bin workflow to inspect or operate on.",
             "in": "path",
             "name": "workflow_id",
             "required": true,
@@ -16208,6 +16226,7 @@
         "operationId": "return_bin_workflow_api_storage_bin_workflows__workflow_id__return_post",
         "parameters": [
           {
+            "description": "Identifier of the bin workflow to inspect or operate on.",
             "in": "path",
             "name": "workflow_id",
             "required": true,
@@ -16340,6 +16359,7 @@
         "operationId": "scan_mock_bin_workflow_api_storage_bin_workflows__workflow_id__scan_post",
         "parameters": [
           {
+            "description": "Identifier of the bin workflow to inspect or operate on.",
             "in": "path",
             "name": "workflow_id",
             "required": true,
@@ -16646,6 +16666,7 @@
             }
           },
           {
+            "description": "Zero-based shelf index.",
             "in": "query",
             "name": "shelf_idx",
             "required": true,
@@ -16655,6 +16676,7 @@
             }
           },
           {
+            "description": "Zero-based cell index within the shelf.",
             "in": "query",
             "name": "cell_idx",
             "required": true,
@@ -16775,6 +16797,7 @@
             }
           },
           {
+            "description": "Zero-based shelf index.",
             "in": "query",
             "name": "shelf_idx",
             "required": true,
@@ -16887,6 +16910,7 @@
         "operationId": "get_items_api_storage_items_get",
         "parameters": [
           {
+            "description": "Number of records to skip before returning results.",
             "in": "query",
             "name": "skip",
             "required": false,
@@ -16897,6 +16921,7 @@
             }
           },
           {
+            "description": "Maximum number of records to return.",
             "in": "query",
             "name": "limit",
             "required": false,
@@ -17098,6 +17123,7 @@
         "operationId": "delete_item_api_storage_items__upca__delete",
         "parameters": [
           {
+            "description": "Item barcode identifying the inventory record.",
             "in": "path",
             "name": "upca",
             "required": true,
@@ -17210,6 +17236,7 @@
         "operationId": "get_item_api_storage_items__upca__get",
         "parameters": [
           {
+            "description": "Item barcode identifying the inventory record.",
             "in": "path",
             "name": "upca",
             "required": true,
@@ -17307,6 +17334,7 @@
         "operationId": "update_item_api_storage_items__upca__put",
         "parameters": [
           {
+            "description": "Item barcode identifying the inventory record.",
             "in": "path",
             "name": "upca",
             "required": true,
@@ -17426,6 +17454,7 @@
         "operationId": "remove_item_location_api_storage_items__upca__locations_delete",
         "parameters": [
           {
+            "description": "Item barcode identifying the inventory record.",
             "in": "path",
             "name": "upca",
             "required": true,
@@ -17443,6 +17472,7 @@
             }
           },
           {
+            "description": "Zero-based shelf index.",
             "in": "query",
             "name": "shelf_idx",
             "required": true,
@@ -17452,6 +17482,7 @@
             }
           },
           {
+            "description": "Zero-based cell index within the shelf.",
             "in": "query",
             "name": "cell_idx",
             "required": true,
@@ -17559,6 +17590,7 @@
         "operationId": "add_item_location_api_storage_items__upca__locations_post",
         "parameters": [
           {
+            "description": "Item barcode identifying the inventory record.",
             "in": "path",
             "name": "upca",
             "required": true,
@@ -17688,6 +17720,7 @@
         "operationId": "remove_item_location_by_path_api_storage_items__upca__locations__side___shelf_idx___cell_idx__delete",
         "parameters": [
           {
+            "description": "Item barcode identifying the inventory record.",
             "in": "path",
             "name": "upca",
             "required": true,
@@ -17705,6 +17738,7 @@
             }
           },
           {
+            "description": "Zero-based shelf index.",
             "in": "path",
             "name": "shelf_idx",
             "required": true,
@@ -17714,6 +17748,7 @@
             }
           },
           {
+            "description": "Zero-based cell index within the shelf.",
             "in": "path",
             "name": "cell_idx",
             "required": true,
@@ -17943,6 +17978,7 @@
         "operationId": "update_storage_cell_api_storage_locations__shelf_idx___cell_idx__put",
         "parameters": [
           {
+            "description": "Zero-based shelf index.",
             "in": "path",
             "name": "shelf_idx",
             "required": true,
@@ -17952,6 +17988,7 @@
             }
           },
           {
+            "description": "Zero-based cell index within the shelf.",
             "in": "path",
             "name": "cell_idx",
             "required": true,
@@ -18425,6 +18462,7 @@
         "operationId": "list_users_api_users_get",
         "parameters": [
           {
+            "description": "Number of records to skip before returning results.",
             "in": "query",
             "name": "offset",
             "required": false,
@@ -18436,6 +18474,7 @@
             }
           },
           {
+            "description": "Maximum number of records to return.",
             "in": "query",
             "name": "limit",
             "required": false,
@@ -18464,6 +18503,7 @@
             }
           },
           {
+            "description": "Role identifier.",
             "in": "query",
             "name": "role_id",
             "required": false,
@@ -18658,6 +18698,7 @@
         "operationId": "delete_user_api_users__user_id__delete",
         "parameters": [
           {
+            "description": "User identifier.",
             "in": "path",
             "name": "user_id",
             "required": true,
@@ -18768,6 +18809,7 @@
         "operationId": "get_user_api_users__user_id__get",
         "parameters": [
           {
+            "description": "User identifier.",
             "in": "path",
             "name": "user_id",
             "required": true,
@@ -18865,6 +18907,7 @@
         "operationId": "update_user_api_users__user_id__put",
         "parameters": [
           {
+            "description": "User identifier.",
             "in": "path",
             "name": "user_id",
             "required": true,

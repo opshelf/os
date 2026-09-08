@@ -165,6 +165,24 @@ def stream_docs(media_type: str, description: str, example: str | None = None) -
     return {200: {"description": description, "content": {media_type: content}}}
 
 
+PARAMETER_DESCRIPTIONS = {
+    "upca": "Item barcode identifying the inventory record.",
+    "workflow_id": "Identifier of the bin workflow to inspect or operate on.",
+    "motor_name": "Motor identifier returned by the motor diagnostics endpoint.",
+    "shelf_idx": "Zero-based shelf index.",
+    "cell_idx": "Zero-based cell index within the shelf.",
+    "role_id": "Role identifier.",
+    "user_id": "User identifier.",
+    "log_id": "Audit log entry identifier.",
+    "camera_id": "Camera identifier returned by camera discovery.",
+    "cas_number": "CAS Registry Number to look up.",
+    "command_id": "Command identifier returned when the command was accepted.",
+    "offset": "Number of records to skip before returning results.",
+    "skip": "Number of records to skip before returning results.",
+    "limit": "Maximum number of records to return.",
+}
+
+
 def configure_security_documentation(app: Any) -> None:
     """Describe the already-supported query-token alternative using standard security."""
     original = app.openapi
@@ -188,6 +206,10 @@ def configure_security_documentation(app: Any) -> None:
             for operation in path.values():
                 if not isinstance(operation, dict):
                     continue
+                for parameter in operation.get("parameters", []):
+                    description = PARAMETER_DESCRIPTIONS.get(parameter.get("name"))
+                    if description:
+                        parameter.setdefault("description", description)
                 security = operation.get("security", [])
                 if {"UserBearer": []} in security and {"UserQueryToken": []} not in security:
                     security.append({"UserQueryToken": []})
