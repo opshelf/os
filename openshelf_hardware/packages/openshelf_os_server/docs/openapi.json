@@ -323,6 +323,20 @@
       },
       "BinContentsResponse": {
         "properties": {
+          "compartment": {
+            "anyOf": [
+              {
+                "maximum": 1024.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Compartment number, starting at 1 at the top left, left-to-right then top-to-bottom at IO; null when unassigned or the bin is undivided.",
+            "title": "Compartment"
+          },
           "confirmed": {
             "title": "Confirmed",
             "type": "boolean"
@@ -351,6 +365,20 @@
       },
       "BinItemSummary": {
         "properties": {
+          "compartment": {
+            "anyOf": [
+              {
+                "maximum": 1024.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Compartment number, starting at 1 at the top left, left-to-right then top-to-bottom at IO; null when unassigned or the bin is undivided.",
+            "title": "Compartment"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -386,6 +414,28 @@
           "barcode": {
             "title": "Barcode",
             "type": "string"
+          },
+          "compartment_dimensions": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StorageBinDimensionsSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Compartment dimensions in millimeters: inner width divided by columns, inner length divided by rows, and full inner height; null for an undivided bin."
+          },
+          "compartment_layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompartmentLayoutSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Equal-sized compartment rows and columns; null for an undivided bin."
           },
           "gross_weight": {
             "anyOf": [
@@ -583,6 +633,20 @@
         "properties": {
           "bin": {
             "$ref": "#/components/schemas/BinResponse"
+          },
+          "compartment": {
+            "anyOf": [
+              {
+                "maximum": 1024.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Persisted target compartment number, starting at 1 at the top left, left-to-right then top-to-bottom at IO; null when no target is assigned or the bin is undivided.",
+            "title": "Compartment"
           },
           "contents": {
             "anyOf": [
@@ -1312,6 +1376,29 @@
           "completed_at"
         ],
         "title": "CommandLifecycleResponse",
+        "type": "object"
+      },
+      "CompartmentLayoutSettings": {
+        "description": "Equal-sized compartments, numbered left-to-right then top-to-bottom at IO.",
+        "properties": {
+          "columns": {
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Columns",
+            "type": "integer"
+          },
+          "rows": {
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "columns"
+        ],
+        "title": "CompartmentLayoutSettings",
         "type": "object"
       },
       "DemoCycleStatusResponse": {
@@ -5077,6 +5164,32 @@
           }
         },
         "title": "StopCommand",
+        "type": "object"
+      },
+      "StorageBinDimensionsSettings": {
+        "properties": {
+          "height": {
+            "exclusiveMinimum": 0.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "length": {
+            "exclusiveMinimum": 0.0,
+            "title": "Length",
+            "type": "number"
+          },
+          "width": {
+            "exclusiveMinimum": 0.0,
+            "title": "Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "width",
+          "height",
+          "length"
+        ],
+        "title": "StorageBinDimensionsSettings",
         "type": "object"
       },
       "StorageCellResponse": {

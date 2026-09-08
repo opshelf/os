@@ -245,6 +245,7 @@ class StorageBin(Base):
 	cell_idx: Mapped[int] = mapped_column(Integer, nullable=False)
 	inner_dimensions: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
 	max_item_dimensions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+	compartment_layout: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 	max_items: Mapped[int] = mapped_column(Integer, nullable=False)
 	status: Mapped[str] = mapped_column(String(24), nullable=False, default="at_home")
 	gross_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -258,12 +259,14 @@ class StorageBinItem(Base):
 	__tablename__ = "storage_bin_items"
 	__table_args__ = (
 		UniqueConstraint("item_id", name="uq_storage_bin_items_item"),
+		UniqueConstraint("bin_id", "compartment", name="uq_storage_bin_items_compartment"),
 		Index("ix_storage_bin_items_bin_id", "bin_id"),
 	)
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
 	bin_id: Mapped[int] = mapped_column(Integer, ForeignKey("storage_bins.id", ondelete="CASCADE"), nullable=False)
 	item_id: Mapped[int] = mapped_column(Integer, ForeignKey("items.id", ondelete="CASCADE"), nullable=False)
+	compartment: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 	created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
@@ -276,6 +279,7 @@ class StorageBinWorkflow(Base):
 	)
 
 	id: Mapped[str] = mapped_column(String(36), primary_key=True)
+	compartment: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 	operation: Mapped[str] = mapped_column(String(12), nullable=False)
 	state: Mapped[str] = mapped_column(String(32), nullable=False)
 	lock_key: Mapped[Optional[str]] = mapped_column(String(16), unique=True, nullable=True)

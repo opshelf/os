@@ -286,7 +286,10 @@ class BinStorageService:
             row = existing.get(entry.barcode)
             inner_dimensions = entry.inner_dimensions.model_dump(mode="json")
             max_item_dimensions = getattr(entry, "max_item_dimensions", None)
+            layout = getattr(entry, "compartment_layout", None)
+            layout_value = layout.model_dump(mode="json") if layout is not None else None
             values = {
+                "compartment_layout": layout_value,
                 "side": entry.home_location.side,
                 "shelf_idx": entry.home_location.shelf_idx,
                 "cell_idx": entry.home_location.cell_idx,
@@ -305,6 +308,15 @@ class BinStorageService:
             if row is None:
                 self.session.add(StorageBin(barcode=entry.barcode, status="at_home", **values))
             else:
+                geometry_changed = any(getattr(row, key) != values[key] for key in (
+                    "compartment_layout", "inner_dimensions", "max_item_dimensions", "max_items", "side", "shelf_idx", "cell_idx"
+                ))
+                if geometry_changed and (row.compartment_layout or layout_value):
+                    unfinished = await self.session.scalar(select(StorageBinWorkflow.id).where(
+                        StorageBinWorkflow.bin_id == row.id, StorageBinWorkflow.lock_key.is_not(None)
+                    ).limit(1))
+                    if row.status != "at_home" or await self._member_count(row.id) or unfinished:
+                        raise ValueError("Empty and return the tray before changing its compartment layout, dimensions or home cell")
                 for key, value in values.items():
                     setattr(row, key, value)
 
@@ -369,20 +381,17 @@ class BinStorageService:
         ]
 
     async def serialize_bin(self, row: StorageBin) -> dict[str, Any]:
+        # Read contents and positions together: retrieval can remove membership concurrently.
         members = (
-            (
-                await self.session.execute(
-                    select(Item)
-                    .join(StorageBinItem, StorageBinItem.item_id == Item.id)
-                    .where(StorageBinItem.bin_id == row.id)
-                    .order_by(Item.name, Item.upca)
-                )
+            await self.session.execute(
+                select(Item, StorageBinItem.compartment)
+                .join(StorageBinItem, StorageBinItem.item_id == Item.id)
+                .where(StorageBinItem.bin_id == row.id)
+                .order_by(Item.name, Item.upca)
             )
-            .scalars()
-            .all()
-        )
+        ).all()
         capacity_volume = self._volume(row.inner_dimensions) or 0.0
-        member_volumes = [self._volume(item.dimensions) for item in members]
+        member_volumes = [self._volume(item.dimensions) for item, _ in members]
         used_volume = (
             sum(volume for volume in member_volumes if volume is not None)
             if all(volume is not None for volume in member_volumes)
@@ -395,13 +404,18 @@ class BinStorageService:
             "inner_dimensions": row.inner_dimensions,
             "max_item_dimensions": self._max_item_dimensions(row),
             "max_items": row.max_items,
+            "compartment_layout": row.compartment_layout,
+            "compartment_dimensions": self._compartment_dimensions(row) if row.compartment_layout else None,
             "item_count": len(members),
             "used_volume": used_volume,
             "available_volume": max(0.0, capacity_volume - used_volume),
             "status": row.status,
             "gross_weight": row.gross_weight if row.status == "at_home" else None,
             "active": row.active,
-            "items": [{"id": item.id, "upca": item.upca, "name": item.name} for item in members],
+            "items": [
+                {"id": item.id, "upca": item.upca, "name": item.name, "compartment": compartment}
+                for item, compartment in members
+            ],
         }
 
     async def item_bin(self, item_id: int) -> Optional[StorageBin]:
@@ -492,6 +506,7 @@ class BinStorageService:
             "id": row.id,
             "operation": row.operation,
             "state": row.state,
+            "compartment": row.compartment,
             "bin": await self.serialize_bin(bin_row),
             "item": {"id": item.id, "upca": item.upca, "name": item.name},
             "error": row.error,
@@ -522,6 +537,7 @@ class BinStorageService:
                     "upca": item.upca,
                     "name": item.name,
                     "confirmed": item.id in confirmed_ids,
+                    "compartment": (row.resolution or {}).get("candidate_compartments", {}).get(str(item.id)),
                 }
                 for item in candidates
             ]
@@ -566,12 +582,24 @@ class BinStorageService:
         )
         candidate_ids = set(member_ids)
         for prior_workflow in previous_workflows:
+            if (prior_workflow.history or [{}])[0].get("compartment_layout") != bin_row.compartment_layout:
+                continue
             if prior_workflow.operation == "restore":
                 candidate_ids.update(
                     (prior_workflow.resolution or {}).get("candidate_item_ids", [])
                 )
             elif (prior_workflow.resolution or {}).get("resolution") == "quarantined":
                 candidate_ids.add(prior_workflow.item_id)
+        candidate_compartments: dict[str, int] = {}
+        for prior in previous_workflows:
+            if (prior.history or [{}])[0].get("compartment_layout") != bin_row.compartment_layout:
+                continue
+            candidate_compartments.update((prior.resolution or {}).get("candidate_compartments", {}))
+            if prior.compartment is not None:
+                candidate_compartments[str(prior.item_id)] = prior.compartment
+        for member in (await self.session.execute(select(StorageBinItem).where(StorageBinItem.bin_id == bin_row.id))).scalars():
+            if member.compartment is not None:
+                candidate_compartments[str(member.item_id)] = member.compartment
         workflow = StorageBinWorkflow(
             id=str(uuid4()),
             operation="restore",
@@ -580,9 +608,10 @@ class BinStorageService:
             bin_id=bin_row.id,
             item_id=previous.item_id,
             user_id=user_id,
-            history=[_history_entry("awaiting_operator", "unavailable bin scanned")],
+            history=[{**_history_entry("awaiting_operator", "unavailable bin scanned"), "compartment_layout": bin_row.compartment_layout}],
             resolution={
                 "candidate_item_ids": sorted(candidate_ids),
+                "candidate_compartments": candidate_compartments,
                 "confirmed_item_ids": sorted(member_ids),
             },
         )
@@ -639,12 +668,59 @@ class BinStorageService:
         width, height, length = dimensions
         return width * height * length
 
+    @staticmethod
+    def _compartment_dimensions(bin_row: StorageBin) -> dict[str, float]:
+        inside = bin_row.inner_dimensions
+        layout = bin_row.compartment_layout
+        return {
+            "width": inside["width"] / (layout["columns"] if layout else 1),
+            "height": inside["height"],
+            "length": inside["length"] / (layout["rows"] if layout else 1),
+        }
+
+    async def _free_compartment(self, bin_row: StorageBin) -> Optional[int]:
+        layout = bin_row.compartment_layout
+        if not layout:
+            return None
+        occupied = list((await self.session.execute(select(StorageBinItem.compartment).where(StorageBinItem.bin_id == bin_row.id))).scalars())
+        count = layout["rows"] * layout["columns"]
+        # Unknown physical positions cannot safely be treated as empty slots.
+        if any(not isinstance(number, int) or number < 1 or number > count for number in occupied):
+            return None
+        return next((number for number in range(1, count + 1) if number not in occupied), None)
+
+    async def _compartment_error(self, workflow: StorageBinWorkflow, bin_row: StorageBin, confirmed_ids: Optional[Sequence[int]] = None) -> Optional[str]:
+        layout = bin_row.compartment_layout
+        if not layout:
+            return None
+        if workflow.operation == "restore":
+            positions = (workflow.resolution or {}).get("candidate_compartments", {})
+            selected = [positions.get(str(item_id)) for item_id in (confirmed_ids if confirmed_ids is not None else (workflow.resolution or {}).get("confirmed_item_ids", []))]
+        else:
+            membership = await self.session.scalar(select(StorageBinItem).where(StorageBinItem.item_id == workflow.item_id))
+            if membership is not None and (membership.bin_id != bin_row.id or membership.compartment != workflow.compartment):
+                return "Item compartment no longer matches the workflow"
+            selected = [workflow.compartment]
+            others = (await self.session.execute(select(StorageBinItem.compartment).where(
+                StorageBinItem.bin_id == bin_row.id, StorageBinItem.item_id != workflow.item_id
+            ))).scalars().all()
+            selected.extend(others)
+        count = layout["rows"] * layout["columns"]
+        if any(not isinstance(number, int) or isinstance(number, bool) or number < 1 or number > count for number in selected):
+            return "A tray item has no valid compartment assignment"
+        if len(selected) != len(set(selected)):
+            return "Two tray items cannot occupy the same compartment"
+        return None
+
     @classmethod
     def _max_item_dimensions(cls, bin_row: StorageBin) -> dict[str, float]:
         configured = cls._dimensions(bin_row.max_item_dimensions, ("width", "length"))
         if configured is not None:
+            if bin_row.compartment_layout:
+                slot = cls._compartment_dimensions(bin_row)
+                return {"width": min(configured[0], slot["width"]), "length": min(configured[1], slot["length"])}
             return {"width": configured[0], "length": configured[1]}
-        inside = cls._dimensions(bin_row.inner_dimensions, ("width", "length"))
+        inside = cls._dimensions(cls._compartment_dimensions(bin_row), ("width", "length"))
         if inside is None:
             return {"width": 0.0, "length": 0.0}
         return {"width": inside[0], "length": inside[1]}
@@ -652,7 +728,7 @@ class BinStorageService:
     @classmethod
     def _fits(cls, item: Item, bin_row: StorageBin) -> bool:
         dimensions = cls._dimensions(item.dimensions, ("width", "height", "length"))
-        inside = cls._dimensions(bin_row.inner_dimensions, ("width", "height", "length"))
+        inside = cls._dimensions(cls._compartment_dimensions(bin_row), ("width", "height", "length"))
         maximum = cls._dimensions(cls._max_item_dimensions(bin_row), ("width", "length"))
         if dimensions is None or inside is None or maximum is None:
             return False
@@ -728,6 +804,7 @@ class BinStorageService:
             )
             if (
                 len(members) >= row.max_items
+                or (row.compartment_layout is not None and await self._free_compartment(row) is None)
                 or not self._fits(item, row)
                 or not self._has_volume_for(item, members, row)
             ):
@@ -739,7 +816,7 @@ class BinStorageService:
             used_volume = sum(self._volume(member.dimensions) or 0.0 for member in members)
             if capacity is None or item_volume is None:
                 continue
-            remaining_volume = capacity - used_volume - item_volume
+            remaining_volume = (self._volume(self._compartment_dimensions(row)) or capacity) - item_volume if row.compartment_layout else capacity - used_volume - item_volume
             candidates.append(
                 (
                     len(members) == 0,
@@ -776,16 +853,30 @@ class BinStorageService:
         else:
             raise ValueError("operation must be 'store' or 'retrieve'")
 
+        compartment = None
+        if bin_row.compartment_layout:
+            if operation == "retrieve":
+                compartment = await self.session.scalar(select(StorageBinItem.compartment).where(StorageBinItem.item_id == item.id))
+                if compartment is None:
+                    raise BinWorkflowConflict("Item has no known compartment in its tray")
+            else:
+                compartment = await self._free_compartment(bin_row)
+                if compartment is None:
+                    raise BinWorkflowConflict("No free tray compartment is available")
         workflow = StorageBinWorkflow(
             id=str(uuid4()),
+            compartment=compartment,
             operation=operation,
             state="retrieving_bin",
             lock_key="global",
             bin_id=bin_row.id,
             item_id=item.id,
             user_id=user_id,
-            history=[_history_entry("retrieving_bin")],
+            history=[{**_history_entry("retrieving_bin"), "compartment_layout": bin_row.compartment_layout}],
         )
+        compartment_error = await self._compartment_error(workflow, bin_row)
+        if compartment_error:
+            raise BinWorkflowConflict(compartment_error)
         bin_row.status = "checked_out"
         bin_row.gross_weight = None
         self.session.add(workflow)
@@ -1021,6 +1112,11 @@ class BinStorageService:
                     workflow, bin_row, error, phase="inventory_finalization"
                 )
             raise RuntimeError(error)
+        compartment_error = await self._compartment_error(workflow, bin_row)
+        if compartment_error:
+            workflow.error = compartment_error
+            await self.transition(workflow, "recovery_required", compartment_error)
+            return
         if workflow.operation == "restore":
             completion_error = await self._restore_completion_error(workflow, bin_row)
             if completion_error is not None:
@@ -1062,7 +1158,7 @@ class BinStorageService:
                     await self.transition(workflow, "recovery_required", completion_error)
                     return
                 if membership is None:
-                    self.session.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
+                    self.session.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id, compartment=workflow.compartment))
                 item.enrollment_weight_pending = False
                 item.enrollment_storage_completed = True
             elif membership is not None:
@@ -1095,8 +1191,10 @@ class BinStorageService:
         for membership in memberships:
             if membership.item_id not in confirmed_ids:
                 await self.session.delete(membership)
+        await self.session.flush()
+        positions = (workflow.resolution or {}).get("candidate_compartments", {})
         for item_id in confirmed_ids - current_ids:
-            self.session.add(StorageBinItem(bin_id=bin_row.id, item_id=item_id))
+            self.session.add(StorageBinItem(bin_id=bin_row.id, item_id=item_id, compartment=positions.get(str(item_id))))
         if confirmed_ids:
             await self.session.execute(
                 update(Item).where(Item.id.in_(confirmed_ids)).values(enrollment_weight_pending=False, enrollment_storage_completed=True)
@@ -1105,6 +1203,9 @@ class BinStorageService:
     async def _restore_completion_error(
         self, workflow: StorageBinWorkflow, bin_row: StorageBin
     ) -> Optional[str]:
+        compartment_error = await self._compartment_error(workflow, bin_row)
+        if compartment_error:
+            return compartment_error
         candidate_ids = set((workflow.resolution or {}).get("candidate_item_ids", []))
         confirmed_ids = set((workflow.resolution or {}).get("confirmed_item_ids", []))
         if not confirmed_ids.issubset(candidate_ids):
@@ -1159,7 +1260,8 @@ class BinStorageService:
             return "Bin workflow is no longer the active workflow"
         if workflow.state != "returning_bin" or bin_row.status != "checked_out":
             return "Bin workflow is not returning its checked-out bin"
-        return await self._store_invariant_error(bin_row, item)
+        compartment_error = await self._compartment_error(workflow, bin_row)
+        return compartment_error or await self._store_invariant_error(bin_row, item)
 
     async def _store_invariant_error(self, bin_row: StorageBin, item: Item) -> Optional[str]:
         """Validate durable bin/item invariants without requiring live motion state."""
@@ -1239,6 +1341,10 @@ class BinStorageService:
         ).scalar_one_or_none()
         if membership is not None and membership.bin_id != bin_row.id:
             return "Item is already associated with another storage bin"
+        if target_item_in_bin:
+            compartment_error = await self._compartment_error(workflow, bin_row)
+            if compartment_error:
+                return compartment_error
         if target_item_in_bin and membership is None:
             return await self._store_invariant_error(bin_row, item)
         return None
@@ -1299,6 +1405,9 @@ class BinStorageService:
         bin_row = await self.session.get(StorageBin, workflow.bin_id)
         if bin_row is None:
             raise RuntimeError("Configured bin no longer exists")
+        compartment_error = await self._compartment_error(workflow, bin_row)
+        if compartment_error:
+            raise BinWorkflowConflict(compartment_error)
         command = ReturnTrayCommand(
             request_id=workflow.id,
             item={
@@ -1355,7 +1464,7 @@ class BinStorageService:
                     raise ValueError("target item state is required for a returned bin")
                 if target_item_in_bin and membership is None:
                     self.session.add(
-                        StorageBinItem(bin_id=workflow.bin_id, item_id=workflow.item_id)
+                        StorageBinItem(bin_id=workflow.bin_id, item_id=workflow.item_id, compartment=workflow.compartment)
                     )
                 if target_item_in_bin:
                     item = await self.session.get(Item, workflow.item_id)
