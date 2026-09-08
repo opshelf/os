@@ -233,13 +233,13 @@ async def test_mock_debug_scanner_restores_unavailable_bin_without_motion(
     event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
     assert event["kind"] == "bin_workflow_updated"
     assert event["payload"]["operation"] == "restore"
-    assert event["payload"]["state"] == "awaiting_bin_scan"
+    assert event["payload"]["state"] == "awaiting_operator"
 
     async with AsyncSessionLocal() as session:
         workflow = await BinStorageService(session).active_workflow()
         assert workflow is not None
         assert workflow.operation == "restore"
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
         assert len((await session.execute(select(MockRobotCommand))).scalars().all()) == commands_before_scan
 
 
@@ -274,7 +274,7 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
 
         workflow = await BinStorageService(session).begin("retrieve", item, None)
         assert workflow is not None
-        await BinStorageService(session).transition(workflow, "awaiting_item_scan")
+        await BinStorageService(session).transition(workflow, "awaiting_operator")
 
     async with AsyncSessionLocal() as session:
         commands_before_scans = len((await session.execute(select(MockRobotCommand))).scalars().all())
@@ -286,7 +286,7 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
     async with AsyncSessionLocal() as session:
         workflow = await BinStorageService(session).active_workflow()
         assert workflow is not None
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
 
     await robot_router.emit_scanner_scan_event(
         robot_router.LabelScanRequest(code="scanner-active-bin"),
@@ -295,7 +295,7 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
     async with AsyncSessionLocal() as session:
         workflow = await BinStorageService(session).active_workflow()
         assert workflow is not None
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
         assert len((await session.execute(select(MockRobotCommand))).scalars().all()) == commands_before_scans
 
 

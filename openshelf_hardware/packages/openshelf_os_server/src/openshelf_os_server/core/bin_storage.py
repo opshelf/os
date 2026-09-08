@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
-from openshelf_os.robot.commands import RetrieveItemCommand, StoreItemCommand
+from openshelf_os.robot.commands import DeliverTrayCommand, ReturnTrayCommand
 from openshelf_os.robot.worker import RobotWorker
 from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.core.manual_motion import get_manual_motion_operation
@@ -36,8 +36,7 @@ logger = get_logger(__name__)
 
 ACTIVE_STATES = {
     "retrieving_bin",
-    "awaiting_item_scan",
-    "awaiting_bin_scan",
+    "awaiting_operator",
     "returning_bin",
     "recovery_required",
     "retry_claimed",
@@ -317,7 +316,7 @@ class BinStorageService:
         await self.session.commit()
 
     async def recover_interrupted_workflows(self) -> None:
-        """Never replay motion after a restart; retain scan-wait states as resumable."""
+        """Never replay motion after a restart; retain operator-wait states as resumable."""
         rows = (
             (
                 await self.session.execute(
@@ -326,6 +325,8 @@ class BinStorageService:
                             {
                                 "retrieving_bin",
                                 "returning_bin",
+                                "awaiting_item_scan",
+                                "awaiting_bin_scan",
                                 *RECOVERY_CLAIMED_STATES,
                             }
                         )
@@ -574,12 +575,12 @@ class BinStorageService:
         workflow = StorageBinWorkflow(
             id=str(uuid4()),
             operation="restore",
-            state="awaiting_bin_scan",
+            state="awaiting_operator",
             lock_key="global",
             bin_id=bin_row.id,
             item_id=previous.item_id,
             user_id=user_id,
-            history=[_history_entry("awaiting_bin_scan", "unavailable bin scanned")],
+            history=[_history_entry("awaiting_operator", "unavailable bin scanned")],
             resolution={
                 "candidate_item_ids": sorted(candidate_ids),
                 "confirmed_item_ids": sorted(member_ids),
@@ -595,7 +596,7 @@ class BinStorageService:
         return workflow
 
     async def confirm_restore_item(self, workflow: StorageBinWorkflow, code: str) -> bool:
-        if workflow.operation != "restore" or workflow.state != "awaiting_bin_scan":
+        if workflow.operation != "restore" or workflow.state != "awaiting_operator":
             return False
         candidate_ids = list((workflow.resolution or {}).get("candidate_item_ids", []))
         item = (
@@ -611,11 +612,11 @@ class BinStorageService:
             **(workflow.resolution or {}),
             "confirmed_item_ids": sorted(confirmed_ids),
         }
-        await self.transition(workflow, "awaiting_bin_scan", f"confirmed item {item.upca}")
+        await self.transition(workflow, "awaiting_operator", f"confirmed item {item.upca}")
         return True
 
     async def cancel_unavailable_return(self, workflow: StorageBinWorkflow) -> None:
-        if workflow.operation != "restore" or workflow.state != "awaiting_bin_scan":
+        if workflow.operation != "restore" or workflow.state != "awaiting_operator":
             raise BinWorkflowConflict("Unavailable bin return cannot be closed now")
         workflow.resolution = {**(workflow.resolution or {}), "resolution": "cancelled"}
         await self.transition(workflow, "reconciled", "operator closed unavailable bin return")
@@ -942,7 +943,7 @@ class BinStorageService:
             raise RuntimeError("Configured bin no longer exists")
         await enqueue_internal(
             worker,
-            RetrieveItemCommand(
+            DeliverTrayCommand(
                 request_id=workflow.id,
                 upca=bin_row.barcode,
                 location=_location(bin_row),
@@ -991,7 +992,7 @@ class BinStorageService:
             await self._publish(worker, workflow)
             return True
         if workflow.state == "retrieving_bin":
-            await self.transition(workflow, "awaiting_item_scan")
+            await self.transition(workflow, "awaiting_operator")
             await self._publish(worker, workflow)
             return True
 
@@ -1243,22 +1244,14 @@ class BinStorageService:
         return None
 
     async def handle_mock_scan(self, workflow: StorageBinWorkflow, code: str) -> bool:
-        """Deterministic scanner/scale behavior for the database-backed mock runtime."""
+        """Optional identity confirmation; scans never initiate tray motion."""
         if workflow.operation == "restore":
             return await self.confirm_restore_item(workflow, code)
+        if workflow.state != "awaiting_operator":
+            return False
         item = await self.session.get(Item, workflow.item_id)
         bin_row = await self.session.get(StorageBin, workflow.bin_id)
-        if item is None or bin_row is None:
-            raise RuntimeError("Bin workflow references missing data")
-        expected = item.upca if workflow.state == "awaiting_item_scan" else bin_row.barcode
-        if code != expected:
-            return False
-        if workflow.state == "awaiting_item_scan":
-            await self.transition(workflow, "awaiting_bin_scan")
-            return True
-        if workflow.state == "awaiting_bin_scan":
-            return True
-        return False
+        return item is not None and bin_row is not None and code in {item.upca, bin_row.barcode}
 
     async def handle_scan(self, code: str, worker: RobotEventPublisher) -> bool:
         workflow = await self.active_workflow()
@@ -1268,28 +1261,10 @@ class BinStorageService:
                 return False
             await self._publish(worker, workflow)
             return True
-        if workflow.operation == "restore":
-            accepted = await self.confirm_restore_item(workflow, code)
-            await self._publish(worker, workflow, rejected_scan=None if accepted else code)
-            return True
-        if workflow.state not in {"awaiting_item_scan", "awaiting_bin_scan"}:
+        if workflow.state != "awaiting_operator":
             return False
-        item = await self.session.get(Item, workflow.item_id)
-        bin_row = await self.session.get(StorageBin, workflow.bin_id)
-        if item is None or bin_row is None:
-            return False
-        expected = item.upca if workflow.state == "awaiting_item_scan" else bin_row.barcode
-        if code != expected:
-            await self._publish(worker, workflow, rejected_scan=code)
-            return True
-        if workflow.state == "awaiting_item_scan":
-            await self.transition(workflow, "awaiting_bin_scan")
-            await self._publish(worker, workflow)
-            return True
-
-        # A bin scan identifies the expected container but must never start
-        # physical motion. Returning the bin requires an explicit Store action.
-        await self._publish(worker, workflow)
+        accepted = await self.handle_mock_scan(workflow, code)
+        await self._publish(worker, workflow, rejected_scan=None if accepted else code)
         return True
 
     async def start_return(
@@ -1300,7 +1275,7 @@ class BinStorageService:
         command_admitted: bool = False,
     ) -> None:
         """Start the physical bin return after explicit operator confirmation."""
-        if workflow.state != "awaiting_bin_scan":
+        if workflow.state != "awaiting_operator":
             raise BinWorkflowConflict("Bin workflow is not ready to return")
 
         if not await is_io_box_occupied(worker):
@@ -1324,7 +1299,7 @@ class BinStorageService:
         bin_row = await self.session.get(StorageBin, workflow.bin_id)
         if bin_row is None:
             raise RuntimeError("Configured bin no longer exists")
-        command = StoreItemCommand(
+        command = ReturnTrayCommand(
             request_id=workflow.id,
             item={
                 "upca": bin_row.barcode,

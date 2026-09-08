@@ -291,7 +291,7 @@ async def test_rejected_mass_enrollment_allows_corrected_retry(
 	if rejection == "queue":
 		monkeypatch.setattr(command_lifecycle, "COMMAND_LIMIT", 0)
 	else:
-		bin_workflow.return_value = SimpleNamespace(id="active-bin", state="awaiting_item_scan")
+		bin_workflow.return_value = SimpleNamespace(id="active-bin", state="awaiting_operator")
 	command = StoreItemCommand(request_id=f"mass-rejected-{rejection}", item={
 		"upca": f"mass-rejected-{rejection}", "name": "Bottle",
 		"dimensions": {"width": 100, "height": 100, "length": 100},

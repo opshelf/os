@@ -523,7 +523,7 @@ async def create_bin_workflow(
                     raise BinWorkflowConflict("Robot has queued commands")
                 workflow = await service.begin(request.operation, item, current_user.id)
                 if workflow is not None:
-                    await service.transition(workflow, "awaiting_item_scan", "mock bin retrieved")
+                    await service.transition(workflow, "awaiting_operator", "mock tray delivered")
         except BinWorkflowConflict as exc:
             raise HTTPException(status_code=423, detail=str(exc)) from exc
         if workflow is None:
@@ -600,7 +600,8 @@ async def scan_mock_bin_workflow(
 ) -> Dict[str, Any]:
     """Submit a simulated bin scan.
 
-    Mock-only scanner input for a workflow waiting on an item or bin barcode.
+    Mock-only optional item/tray identity confirmation while awaiting the operator.
+    Scanning never advances the normal workflow or starts motion.
     `rejected=true` means the scan did not advance the workflow. Hardware modes return
     `404`; an incompatible workflow state returns `409`.
     """
@@ -608,7 +609,7 @@ async def scan_mock_bin_workflow(
         raise HTTPException(status_code=404, detail="Mock bin scanner is unavailable")
     service = BinStorageService(session)
     workflow = await session.get(StorageBinWorkflow, workflow_id)
-    if workflow is None or workflow.state not in {"awaiting_item_scan", "awaiting_bin_scan"}:
+    if workflow is None or workflow.state not in {"awaiting_operator"}:
         raise HTTPException(status_code=409, detail="Workflow is not waiting for a scan")
     accepted = await service.handle_mock_scan(workflow, request.code)
     return {
@@ -618,9 +619,9 @@ async def scan_mock_bin_workflow(
 
 
 @router.post(
-    "/bin-workflows/{workflow_id}/return",
+    "/bin-workflows/{workflow_id}/done",
     dependencies=[Depends(require_relay_or_permissions("storage:write"))],
-    summary="Confirm contents and return a bin",
+    summary="Finish operator action and return the tray",
     responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422, 503)),
 )
 async def return_bin_workflow(
@@ -628,9 +629,11 @@ async def return_bin_workflow(
     request: BinWorkflowReturn,
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Confirm contents and return a bin.
+    """Finish operator action and return the tray.
 
-    Confirms the operator's item/contents state and starts returning the bin home. This may
+    Done confirms the operator's item/contents state and starts returning the tray home.
+    No item or tray scan is required. Use `target_item_in_bin=true` after adding the
+    item and `false` after taking it. The tray must be present in the IO box. This may
     move hardware; completion is reflected in workflow state and robot events. Recovery
     paths require the requested content confirmation. Concurrent recovery, missing bin
     presence, or an incompatible state returns `409`.
@@ -641,7 +644,7 @@ async def return_bin_workflow(
         workflow = await session.get(StorageBinWorkflow, workflow_id)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Bin workflow not found")
-        if workflow.state not in {"awaiting_bin_scan", "recovery_required"}:
+        if workflow.state not in {"awaiting_operator", "recovery_required"}:
             raise HTTPException(status_code=409, detail="Bin workflow is not ready to return")
 
         confirmed_ids: Optional[set[int]] = None
@@ -693,13 +696,13 @@ async def return_bin_workflow(
 
         if get_operating_mode() == common.OperatingMode.mock:
             if recovery_claim is None:
-                await service.transition(workflow, "returning_bin", "operator pressed Store")
+                await service.transition(workflow, "returning_bin", "operator pressed Done")
             elif not await service.transition_recovery_claim(
                 workflow,
                 expected_state=RECOVERY_RETRY_CLAIMED,
                 claim=recovery_claim,
                 state="returning_bin",
-                detail="operator pressed Store after interruption",
+                detail="operator pressed Done after interruption",
                 retain_claim=True,
             ):
                 raise HTTPException(
@@ -769,7 +772,7 @@ async def return_bin_workflow(
                         expected_state=RECOVERY_RETRY_CLAIMED,
                         claim=recovery_claim,
                         state="returning_bin",
-                        detail="operator pressed Store after interruption",
+                        detail="operator pressed Done after interruption",
                         retain_claim=True,
                     ):
                         raise BinWorkflowConflict("Recovery workflow is already being handled")
@@ -1011,7 +1014,7 @@ async def reconcile_bin_workflow(
         workflow = await service.claim_recovery_workflow(
             workflow_id,
             RECOVERY_RECONCILE_CLAIMED,
-            source_states=("awaiting_bin_scan", "recovery_required"),
+            source_states=("awaiting_operator", "recovery_required"),
         )
         if workflow is None:
             raise HTTPException(

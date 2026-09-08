@@ -480,7 +480,7 @@ class MockRobotRuntime:
 			io_box_occupied = (
 				self._bin_io_box_occupied_override
 				if self._bin_io_box_occupied_override is not None
-				else active_bin_state in {"awaiting_item_scan", "awaiting_bin_scan"}
+				else active_bin_state in {"awaiting_operator"}
 			)
 
 		running = next((row for row in commands if row.status == "running"), None)

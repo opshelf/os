@@ -155,7 +155,7 @@ async def _ensure_no_active_bin_workflow(
     is_admin_workflow_home = (
         isinstance(command, HomeCommand)
         and active_bin_workflow is not None
-        and active_bin_workflow.state in {"awaiting_item_scan", "awaiting_bin_scan", "recovery_required"}
+        and active_bin_workflow.state in {"awaiting_operator", "recovery_required"}
         and worker is not None
         and (
             worker.needs_home()
