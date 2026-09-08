@@ -1,4 +1,5 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import response_docs
 
 import asyncio
 import logging
@@ -150,8 +151,19 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 		logger.info("demo_cycle_stopped")
 
 
-@router.post("/cycle/start", response_model=SuccessResponse)
+@router.post(
+    "/cycle/start",
+    response_model=SuccessResponse,
+    summary="Start the demonstration cycle",
+    responses=response_docs(errors=(400, 401, 409, 423, 503)),
+)
 async def start_demo_cycle() -> SuccessResponse:
+	"""Start the demonstration cycle.
+
+	Starts background motion through the configured demo cell map. Requires an authenticated
+	user and available hardware. Missing cells return `400`; an already running demo or
+	conflicting motion returns `409`. Acceptance does not mean the cycle has finished.
+	"""
 	global _demo_task, _stop_event, _is_running, _current_cell_index, _total_cells
 
 	await ensure_laser_auto_calibration_not_running()
@@ -212,8 +224,18 @@ async def shutdown_demo_cycle() -> None:
 		_demo_task = None
 
 
-@router.post("/cycle/stop", response_model=SuccessResponse)
+@router.post(
+    "/cycle/stop",
+    response_model=SuccessResponse,
+    summary="Request demonstration stop",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 async def stop_demo_cycle() -> SuccessResponse:
+	"""Request demonstration stop.
+
+	Requests the running demo cycle to stop. Returns `409` when no demo is running. Poll
+	demo status for completion; this is not a physical emergency stop.
+	"""
 	if _is_running is False:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
@@ -225,8 +247,18 @@ async def stop_demo_cycle() -> SuccessResponse:
 	return SuccessResponse()
 
 
-@router.get("/cycle/status", response_model=DemoCycleStatusResponse)
+@router.get(
+    "/cycle/status",
+    response_model=DemoCycleStatusResponse,
+    summary="Read demonstration progress",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 async def get_demo_cycle_status() -> DemoCycleStatusResponse:
+	"""Read demonstration progress.
+
+	Reports whether the background demo is running, its current cell index, and configured
+	cell count. Does not start or stop motion.
+	"""
 	return DemoCycleStatusResponse(
 		is_running=_is_running,
 		current_cell_index=_current_cell_index,

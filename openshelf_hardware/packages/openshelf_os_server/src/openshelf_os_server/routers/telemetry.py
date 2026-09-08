@@ -1,4 +1,5 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import response_docs
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -15,8 +16,18 @@ class TelemetryResponse(BaseModel):
 	motor_movement_seconds: float
 
 
-@router.get("/telemetry", response_model=TelemetryResponse)
+@router.get(
+    "/telemetry",
+    response_model=TelemetryResponse,
+    summary="Read cumulative device telemetry",
+    responses=response_docs(),
+)
 async def get_telemetry() -> TelemetryResponse:
+	"""Read cumulative device telemetry.
+
+	Public counters for robot cycles and motor movement time in seconds. Does not start
+	hardware sampling or reset counters.
+	"""
 	async with AsyncSessionLocal() as session:
 		result = await session.execute(select(Telemetry).where(Telemetry.id == 1))
 		row = result.scalar_one_or_none()
