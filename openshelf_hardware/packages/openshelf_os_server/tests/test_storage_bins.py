@@ -123,6 +123,7 @@ async def test_recover_interrupted_workflows_preserves_scan_wait_and_terminal_st
                 "reconcile_claimed",
                 "awaiting_item_scan",
                 "awaiting_bin_scan",
+                "awaiting_operator",
                 "completed",
             )
         }
@@ -134,7 +135,7 @@ async def test_recover_interrupted_workflows_preserves_scan_wait_and_terminal_st
         service = BinStorageService(db)
         await service.recover_interrupted_workflows()
 
-        recovered_states = ("retrieving_bin", "returning_bin", "retry_claimed", "reconcile_claimed")
+        recovered_states = ("retrieving_bin", "returning_bin", "retry_claimed", "reconcile_claimed", "awaiting_item_scan", "awaiting_bin_scan")
         restart_error = "Robot process restarted during motion; physical state must be reconciled"
         for state in recovered_states:
             workflow = workflows[state]
@@ -143,8 +144,7 @@ async def test_recover_interrupted_workflows_preserves_scan_wait_and_terminal_st
             assert workflow.error == restart_error
             assert [entry["state"] for entry in workflow.history] == [state, "recovery_required"]
             assert workflow.history[-1]["detail"] == restart_error
-        assert workflows["awaiting_item_scan"].state == "awaiting_item_scan"
-        assert workflows["awaiting_bin_scan"].state == "awaiting_bin_scan"
+        assert workflows["awaiting_operator"].state == "awaiting_operator"
         assert workflows["completed"].state == "completed"
 
         await service.recover_interrupted_workflows()
@@ -675,14 +675,14 @@ async def test_store_workflow_changes_membership_only_after_bin_returns() -> Non
             },
             worker,  # type: ignore[arg-type]
         )
-        assert workflow.state == "awaiting_item_scan"
+        assert workflow.state == "awaiting_operator"
 
         assert await service.handle_scan(item.upca, worker)  # type: ignore[arg-type]
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
         assert (await db.execute(select(StorageBinItem))).scalar_one_or_none() is None
 
         assert await service.handle_scan(bin_row.barcode, worker)  # type: ignore[arg-type]
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
         assert worker.commands[-1].command == "retrieve_item"
 
         await service.start_return(workflow, worker)  # type: ignore[arg-type]
@@ -730,11 +730,11 @@ async def test_resumed_scan_wait_requires_home_before_return_and_continues_after
         service = BinStorageService(db)
         workflow = await service.begin("store", item, None)
         assert workflow is not None
-        await service.transition(workflow, "awaiting_bin_scan")
+        await service.transition(workflow, "awaiting_operator")
 
         with pytest.raises(BinWorkflowConflict, match="Home required"):
             await service.start_return(workflow, worker)  # type: ignore[arg-type]
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
         assert worker.commands == []
 
         worker.is_needs_home = False
@@ -746,7 +746,7 @@ async def test_resumed_scan_wait_requires_home_before_return_and_continues_after
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     "workflow_state",
-    ["awaiting_item_scan", "awaiting_bin_scan", "recovery_required"],
+    ["awaiting_operator", "recovery_required"],
 )
 async def test_active_resumable_workflow_allows_only_admin_home_when_required(
     workflow_state: str,
@@ -847,7 +847,7 @@ async def test_active_bin_workflow_blocks_public_queue_and_manual_motion_but_not
         service = BinStorageService(db)
         workflow = await service.begin("store", item, None)
         assert workflow is not None
-        await service.transition(workflow, "awaiting_item_scan")
+        await service.transition(workflow, "awaiting_operator")
 
         mutations = (
             robot_router.clear_robot_commands(worker, db),
@@ -866,7 +866,7 @@ async def test_active_bin_workflow_blocks_public_queue_and_manual_motion_but_not
             assert error.value.detail["workflow_id"] == workflow.id
 
         await robot_router.stop_robot(worker)
-        assert workflow.state == "awaiting_item_scan"
+        assert workflow.state == "awaiting_operator"
 
     worker.clear_commands.assert_not_awaited()
     worker.grip.assert_not_awaited()
@@ -899,7 +899,7 @@ async def test_bin_motion_admission_blocks_manual_motion_and_active_demo_or_lase
         await db.commit()
         workflow = await BinStorageService(db).begin("store", item, None)
         assert workflow is not None
-        await BinStorageService(db).transition(workflow, "awaiting_item_scan")
+        await BinStorageService(db).transition(workflow, "awaiting_operator")
         await db.commit()
 
         with pytest.raises(HTTPException) as workflow_error:
@@ -1221,7 +1221,7 @@ async def test_admin_can_reconcile_bin_while_waiting_for_return(
         await db.commit()
         workflow = await BinStorageService(db).begin("store", item, None)
         assert workflow is not None
-        await BinStorageService(db).transition(workflow, "awaiting_bin_scan")
+        await BinStorageService(db).transition(workflow, "awaiting_operator")
 
         result = await storage_router.reconcile_bin_workflow(
             workflow.id,
@@ -1296,7 +1296,7 @@ async def test_scanned_unavailable_bin_reconciles_all_confirmed_contents(
         workflow = await service.active_workflow()
         assert workflow is not None
         assert workflow.operation == "restore"
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
         payload = await service.serialize_workflow(workflow)
         assert {item["id"] for item in payload["contents"]} == {first.id, second.id}
         assert all(item["confirmed"] for item in payload["contents"])
@@ -1305,7 +1305,7 @@ async def test_scanned_unavailable_bin_reconciles_all_confirmed_contents(
             **(workflow.resolution or {}),
             "confirmed_item_ids": [second.id],
         }
-        await service.transition(workflow, "awaiting_bin_scan", "operator unchecked first item")
+        await service.transition(workflow, "awaiting_operator", "operator unchecked first item")
         assert await service.handle_scan(first.upca, worker)  # type: ignore[arg-type]
         payload = await service.serialize_workflow(workflow)
         assert {item["id"] for item in payload["contents"] if item["confirmed"]} == {
@@ -1541,7 +1541,7 @@ async def test_stale_or_direct_robot_results_do_not_change_active_workflow() -> 
 
 
 @pytest.mark.anyio
-async def test_mock_workflow_scans_item_identifier_then_configured_bin_barcode(
+async def test_mock_workflow_accepts_optional_identity_scans_without_starting_motion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.mock)
@@ -1569,25 +1569,25 @@ async def test_mock_workflow_scans_item_identifier_then_configured_bin_barcode(
         service = BinStorageService(db)
         workflow = await service.begin("store", item, None)
         assert workflow is not None
-        await service.transition(workflow, "awaiting_item_scan")
+        await service.transition(workflow, "awaiting_operator")
 
         item_scan = await storage_router.scan_mock_bin_workflow(
             workflow.id, storage_router.BinWorkflowScan(code=item.upca), db
         )
         assert item_scan["rejected"] is False
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
 
         wrong_bin_scan = await storage_router.scan_mock_bin_workflow(
-            workflow.id, storage_router.BinWorkflowScan(code="ABC123"), db
+            workflow.id, storage_router.BinWorkflowScan(code="WRONG"), db
         )
         assert wrong_bin_scan["rejected"] is True
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
 
         bin_scan = await storage_router.scan_mock_bin_workflow(
             workflow.id, storage_router.BinWorkflowScan(code=bin_row.barcode), db
         )
         assert bin_scan["rejected"] is False
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
 
         returned = await storage_router.return_bin_workflow(
             workflow.id,
@@ -1627,7 +1627,7 @@ async def test_return_endpoint_requires_occupancy_and_explicit_store_action(
         service = BinStorageService(db)
         workflow = await service.begin("store", item, None)
         assert workflow is not None
-        await service.transition(workflow, "awaiting_bin_scan")
+        await service.transition(workflow, "awaiting_operator")
 
         with pytest.raises(HTTPException) as empty_box_error:
             await storage_router.return_bin_workflow(
@@ -1636,7 +1636,7 @@ async def test_return_endpoint_requires_occupancy_and_explicit_store_action(
                 db,
             )
         assert empty_box_error.value.status_code == 409
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
         assert worker.commands == []
 
         worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=True)
@@ -2217,7 +2217,7 @@ async def test_returned_reconciliation_preserves_cross_bin_membership(
         other_bin = next(bin_row for bin_row in bins if bin_row.id != workflow.bin_id)
         db.add(StorageBinItem(bin_id=other_bin.id, item_id=item.id))
         await db.commit()
-        await service.transition(workflow, "awaiting_bin_scan")
+        await service.transition(workflow, "awaiting_operator")
 
         with pytest.raises(HTTPException) as reconciliation_error:
             await storage_router.reconcile_bin_workflow(
@@ -2424,10 +2424,10 @@ async def test_wrong_scan_does_not_advance_and_global_lock_is_exclusive() -> Non
         service = BinStorageService(db)
         workflow = await service.begin("store", first_item, None)
         assert workflow is not None
-        await service.transition(workflow, "awaiting_item_scan")
+        await service.transition(workflow, "awaiting_operator")
 
         assert await service.handle_scan("000000000000", worker)  # type: ignore[arg-type]
-        assert workflow.state == "awaiting_item_scan"
+        assert workflow.state == "awaiting_operator"
         assert worker.events[-1]["kind"] == "bin_workflow_scan_rejected"
 
         with pytest.raises(BinWorkflowConflict):
@@ -2505,3 +2505,34 @@ async def test_unmeasured_bin_reconciliation_clears_aggregate_and_preserves_item
         assert bin_row.gross_weight is None
         assert (item.weight, item.tare_weight, item.full_net_weight) == (350, 100, 500)
         assert item.enrollment_weight_pending is (operation == "retrieve")
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('operation', ['store', 'retrieve'])
+async def test_mock_done_finishes_without_scans_and_updates_membership(monkeypatch, operation):
+    monkeypatch.setattr(storage_router, 'get_operating_mode', lambda: OperatingMode.mock)
+    runtime = SimpleNamespace(set_bin_io_box_occupied=MagicMock(), publish_status=AsyncMock())
+    monkeypatch.setattr(storage_router, 'get_mock_robot_runtime', lambda: runtime)
+    async with AsyncSessionLocal() as db:
+        item = await StorageService(db).create_item(
+            '123456789001', 'Tray item', {'width': 10, 'height': 10, 'length': 10}
+        )
+        tray = StorageBin(barcode='900000000001', side='left_module', shelf_idx=0, cell_idx=0,
+                          inner_dimensions={'width': 30, 'height': 30, 'length': 30}, max_items=2,
+                          status='at_home', active=True)
+        db.add(tray)
+        await db.flush()
+        if operation == 'retrieve':
+            db.add(StorageBinItem(bin_id=tray.id, item_id=item.id))
+        await db.commit()
+        service = BinStorageService(db)
+        workflow = await service.begin(operation, item, None)
+        assert workflow is not None
+        await service.transition(workflow, 'awaiting_operator')
+        result = await storage_router.return_bin_workflow(
+            workflow.id, storage_router.BinWorkflowReturn(target_item_in_bin=operation == 'store'), db
+        )
+        assert result['workflow']['state'] == 'completed'
+        membership = await service.item_bin(item.id)
+        assert (membership is not None) == (operation == 'store')
+        assert tray.status == 'at_home'
+        runtime.set_bin_io_box_occupied.assert_called_once_with(False)

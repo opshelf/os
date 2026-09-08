@@ -15958,6 +15958,139 @@
         ]
       }
     },
+    "/api/storage/bin-workflows/{workflow_id}/done": {
+      "post": {
+        "description": "Finish operator action and return the tray.\n\nDone confirms the operator's item/contents state and starts returning the tray home.\nNo item or tray scan is required. Use `target_item_in_bin=true` after adding the\nitem and `false` after taking it. The tray must be present in the IO box. This may\nmove hardware; completion is reflected in workflow state and robot events. Recovery\npaths require the requested content confirmation. Concurrent recovery, missing bin\npresence, or an incompatible state returns `409`.",
+        "operationId": "return_bin_workflow_api_storage_bin_workflows__workflow_id__done_post",
+        "parameters": [
+          {
+            "description": "Identifier of the bin workflow to inspect or operate on.",
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinWorkflowReturn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BinWorkflowEnvelope",
+                  "additionalProperties": true,
+                  "title": "Response Return Bin Workflow Api Storage Bin Workflows  Workflow Id  Done Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Operation result"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required or token invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Permission or operating-state restriction"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource or configured hardware not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Operation conflicts with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation failed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required hardware or service is unavailable"
+          }
+        },
+        "security": [
+          {
+            "UserBearer": []
+          },
+          {
+            "UserQueryToken": []
+          }
+        ],
+        "summary": "Finish operator action and return the tray",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
     "/api/storage/bin-workflows/{workflow_id}/reconcile": {
       "post": {
         "description": "Reconcile a bin after manual recovery.\n\nRecords an operator-confirmed `returned` or `quarantined` resolution and reconciles\ncontents. Requires the `admin` role and `storage:write`. This updates inventory/workflow\nstate based on a physical recovery already performed; it is not a substitute for moving\nthe bin. Conflicting claims or invalid confirmations are rejected.",
@@ -16220,142 +16353,9 @@
         ]
       }
     },
-    "/api/storage/bin-workflows/{workflow_id}/return": {
-      "post": {
-        "description": "Confirm contents and return a bin.\n\nConfirms the operator's item/contents state and starts returning the bin home. This may\nmove hardware; completion is reflected in workflow state and robot events. Recovery\npaths require the requested content confirmation. Concurrent recovery, missing bin\npresence, or an incompatible state returns `409`.",
-        "operationId": "return_bin_workflow_api_storage_bin_workflows__workflow_id__return_post",
-        "parameters": [
-          {
-            "description": "Identifier of the bin workflow to inspect or operate on.",
-            "in": "path",
-            "name": "workflow_id",
-            "required": true,
-            "schema": {
-              "title": "Workflow Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
-            "in": "query",
-            "name": "token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
-              "title": "Token"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BinWorkflowReturn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BinWorkflowEnvelope",
-                  "additionalProperties": true,
-                  "title": "Response Return Bin Workflow Api Storage Bin Workflows  Workflow Id  Return Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Operation result"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication required or token invalid"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Permission or operating-state restriction"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource or configured hardware not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Operation conflicts with current state"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Request validation failed"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Required hardware or service is unavailable"
-          }
-        },
-        "security": [
-          {
-            "UserBearer": []
-          },
-          {
-            "UserQueryToken": []
-          }
-        ],
-        "summary": "Confirm contents and return a bin",
-        "tags": [
-          "storage"
-        ]
-      }
-    },
     "/api/storage/bin-workflows/{workflow_id}/scan": {
       "post": {
-        "description": "Submit a simulated bin scan.\n\nMock-only scanner input for a workflow waiting on an item or bin barcode.\n`rejected=true` means the scan did not advance the workflow. Hardware modes return\n`404`; an incompatible workflow state returns `409`.",
+        "description": "Submit a simulated bin scan.\n\nMock-only optional item/tray identity confirmation while awaiting the operator.\nScanning never advances the normal workflow or starts motion.\n`rejected=true` means the scan did not advance the workflow. Hardware modes return\n`404`; an incompatible workflow state returns `409`.",
         "operationId": "scan_mock_bin_workflow_api_storage_bin_workflows__workflow_id__scan_post",
         "parameters": [
           {

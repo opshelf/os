@@ -64,7 +64,7 @@ async def _create_active_bin_workflow(upca: str) -> tuple[str, int, int]:
 		assert item is not None
 		workflow = await BinStorageService(db).begin("store", item, None)
 		assert workflow is not None
-		await BinStorageService(db).transition(workflow, "awaiting_item_scan")
+		await BinStorageService(db).transition(workflow, "awaiting_operator")
 		await db.commit()
 		return workflow.id, item_id, bin_id
 

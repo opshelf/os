@@ -76,6 +76,16 @@ class StoreItemCommand(BaseModel):
         return self
 
 
+class DeliverTrayCommand(RetrieveItemCommand):
+    """Internal workflow motion; intentionally absent from the public command union."""
+    motion: Literal["deliver_tray"] = "deliver_tray"
+
+
+class ReturnTrayCommand(StoreItemCommand):
+    """Internal workflow motion that collects the tray directly from the IO box."""
+    motion: Literal["return_tray"] = "return_tray"
+
+
 RobotCommands = Annotated[
     Union[
         StopCommand,

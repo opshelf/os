@@ -18,7 +18,7 @@ from openshelf_os.serial_ports import (
     MOTOR_PORT_CANDIDATES,
     SCALE_PORT_CANDIDATES,
 )
-from openshelf_os.exceptions import ConfigError as CabinetConfigError, MotorError, MovementError, ToolError
+from openshelf_os.exceptions import ConfigError as CabinetConfigError, GripperError, MotorError, MovementError, ToolError
 from openshelf_os.iobox import IOBox
 from openshelf_os.laser_calibration.scan import (
     ScanAnalysisResult, ScanBounds, analyze_scan_capture,
@@ -27,7 +27,7 @@ from openshelf_os.laser_calibration.scan import (
 from openshelf_os.operating_mode import should_enable_demo_features
 from openshelf_os.robot.commands import (
     RobotCommands, StopCommand, InitializeCommand, IdleCommand, HomeCommand,
-    MoveCommand, RetrieveItemCommand, StoreItemCommand,
+    MoveCommand, RetrieveItemCommand, StoreItemCommand, DeliverTrayCommand, ReturnTrayCommand,
 )
 from openshelf_os.robot.status import (
     RobotResponse, RobotCommandSuccessful, RobotCommandError,
@@ -903,11 +903,76 @@ class Robot:
         self.set_operation_context(phase="io_pick.clear_alarms")
         await self._tool.clear_alarms()
 
+    async def _set_tray_grip(self, *, engaged: bool) -> None:
+        """Route tray servo failures through the command hardware-fault interlock."""
+        try:
+            if engaged:
+                await self.grip()
+            else:
+                await self.release_gripper()
+        except Exception as exc:
+            action = "grip" if engaged else "release"
+            raise GripperError(f"Tray {action} failed: {exc}") from exc
+
+    async def deliver_tray(self, coord: AxisCoordinate) -> None:
+        """Leave the entire tray supported in the IO box, with the tool clear."""
+        position = await self._tool.get_param("PICKUP_POSITION_L")
+        if position is None:
+            raise ConfigError("Missing PICKUP_POSITION_L parameter")
+        self.set_operation_context(phase="deliver_tray.pick_from_shelf", target_coordinate=coord)
+        await self._tool.pick(coord)
+        self.set_operation_context(phase="deliver_tray.rotate_to_front")
+        await self._tool.rotate_to_position("front")
+        self.set_operation_context(phase="deliver_tray.move_to_io")
+        await self._tool.move(AxisCoordinate(position[0], position[1]))
+        self.set_operation_context(phase="deliver_tray.open_door")
+        await self._io.open_door()
+        self.set_operation_context(phase="deliver_tray.extend_into_io")
+        # Use the same supported pose for delivery and collection. No item-transfer
+        # Y motion: the tray itself stays here instead of lifting off its contents.
+        await self._tool.extend_IO(nudge_override=0.0)
+        self.set_operation_context(phase="deliver_tray.release")
+        await self._set_tray_grip(engaged=False)
+        self.set_operation_context(phase="deliver_tray.retract_empty")
+        await self._tool.retract_empty()
+        self.set_operation_context(phase="deliver_tray.close_door")
+        await self._io.close_door()
+        self.set_operation_context(phase="deliver_tray.home_door")
+        await self._io.home_door()
+        await self._tool.clear_alarms()
+
+    async def return_tray(self, coord: AxisCoordinate) -> None:
+        """Collect the released tray at the delivery pose, then replace it at home."""
+        position = await self._tool.get_param("PICKUP_POSITION_L")
+        if position is None:
+            raise ConfigError("Missing PICKUP_POSITION_L parameter")
+        self.set_operation_context(phase="return_tray.release")
+        await self._set_tray_grip(engaged=False)
+        self.set_operation_context(phase="return_tray.rotate_to_front")
+        await self._tool.rotate_to_position("front")
+        self.set_operation_context(phase="return_tray.move_to_io")
+        await self._tool.move(AxisCoordinate(position[0], position[1]))
+        self.set_operation_context(phase="return_tray.open_door")
+        await self._io.open_door()
+        self.set_operation_context(phase="return_tray.extend_into_io")
+        await self._tool.extend_IO(nudge_override=0.0)
+        self.set_operation_context(phase="return_tray.grip")
+        await self._set_tray_grip(engaged=True)
+        self.set_operation_context(phase="return_tray.retract")
+        await self._tool.retract()
+        self.set_operation_context(phase="return_tray.close_door")
+        await self._io.close_door()
+        self.set_operation_context(phase="return_tray.place_at_home", target_coordinate=coord)
+        await self._tool.place(coord)
+        self.set_operation_context(phase="return_tray.home_door")
+        await self._io.home_door()
+        await self._tool.clear_alarms()
+
     # ------------------------------------------------------------------ #
     #  Store / retrieve
     # ------------------------------------------------------------------ #
 
-    async def store(self, item_payload: Any) -> RobotResponse:
+    async def store(self, item_payload: Any, *, tray: bool = False) -> RobotResponse:
         command_name = "store_item"
 
         if not self._grid:
@@ -1013,7 +1078,10 @@ class Robot:
             coord = self._grid.get_cell_coordinate(location)
             self.set_operation_context(target_coordinate=coord.to_axis_coordinate())
             self._logger.info("Store: starting io_pick at %s", location)
-            await self.io_pick(coord.to_axis_coordinate())
+            if tray:
+                await self.return_tray(coord.to_axis_coordinate())
+            else:
+                await self.io_pick(coord.to_axis_coordinate())
             self._logger.info("Store: io_pick completed")
             self.set_operation_context(phase="store.grid_update_commit")
             self._grid.store_item(location, item)
@@ -1097,6 +1165,7 @@ class Robot:
         self,
         location_payload: Dict[str, Any],
         upca_hint: Optional[str] = None,
+        *, tray: bool = False,
     ) -> RobotResponse:
         command_name = "retrieve_item"
 
@@ -1140,7 +1209,10 @@ class Robot:
             if nudge_override is not None:
                 self.set_operation_context(nudge_override=nudge_override)
 
-            await self.io_place(coord, nudge_override=nudge_override)
+            if tray:
+                await self.deliver_tray(coord)
+            else:
+                await self.io_place(coord, nudge_override=nudge_override)
             self.set_operation_context(phase="retrieve.grid_clear_commit")
             self._grid.clear_item(location)
             return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
@@ -1183,6 +1255,13 @@ class Robot:
                 self.set_operation_context(command=command_name, phase="move", target_coordinate=command.coordinate)
                 await self._tool.move(command.coordinate)
                 result = RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, ReturnTrayCommand):
+                result = await self.store(command.item, tray=True)
+            elif isinstance(command, DeliverTrayCommand):
+                if command.location is None:
+                    result = RobotCommandError(command=command_name, error="Tray home location required")
+                else:
+                    result = await self.retrieve_by_location(command.location, command.upca, tray=True)
             elif isinstance(command, StoreItemCommand):
                 payload = getattr(command, "upca", None)
                 if payload is None:
