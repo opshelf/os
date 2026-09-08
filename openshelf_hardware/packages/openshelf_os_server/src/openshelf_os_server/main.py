@@ -1,4 +1,5 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import HealthResponse, SystemInfoResponse, response_docs
 
 import asyncio
 import fcntl
@@ -20,6 +21,7 @@ from alembic import command
 from alembic.config import Config
 from argon2 import PasswordHasher
 from fastapi import FastAPI, Request
+from openshelf_os_server.documentation import DESCRIPTION, TAGS, configure_security_documentation
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sentry_sdk.integrations.fastapi import FastApiIntegration
@@ -777,9 +779,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     lifespan=lifespan,
-    title="OpenShelf OS Server API",
-    description="API for controlling OpenShelf OS robotic automation system",
-    version="0.1.0",
+    title="Openshelf LB Local API",
+    description=DESCRIPTION,
+    openapi_tags=TAGS,
+    version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -824,8 +827,28 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 	return JSONResponse(status_code=500, content={"detail": detail})
 
 
-@app.get("/api/health")
+@app.get(
+    "/api/health",
+    tags=["system"],
+    summary="Check OS and robot initialization",
+    responses=response_docs(
+        model=HealthResponse,
+        existing={
+            503: {
+                "model": HealthResponse,
+                "description": "Robot initialization failed or mock runtime unavailable",
+            }
+        },
+    ),
+)
 async def health() -> JSONResponse:
+	"""Check OS and robot initialization.
+
+	Public health check. Reports the operating mode and robot initialization state. Returns
+	`503` with a degraded body when initialization has failed, including when the mock
+	runtime is unavailable. A healthy process may report a disabled robot; inspect
+	`robot_status` and `robot_phase` before requesting motion.
+	"""
 	body: dict[str, str] = {"status": "ok", "mode": get_operating_mode().value}
 	if get_operating_mode() == OperatingMode.mock:
 		try:
@@ -852,8 +875,18 @@ async def health() -> JSONResponse:
 	return JSONResponse(content=body)
 
 
-@app.get("/api/system/info")
+@app.get(
+    "/api/system/info",
+    tags=["system"],
+    summary="Read device identity and network address",
+    responses=response_docs(model=SystemInfoResponse),
+)
 async def system_info() -> dict[str, str | None]:
+	"""Read device identity and network address.
+
+	Public device discovery information. `lan_ip` is the IPv4 address of `wlan0`, or null
+	when that interface cannot be read. This endpoint does not establish robot readiness.
+	"""
 	lan_ip: str | None = None
 	try:
 		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -887,6 +920,8 @@ app.include_router(onboarding.router, prefix="/api/onboarding")
 app.include_router(report.router, prefix="/api")
 app.include_router(telemetry.router, prefix="/api")
 
+
+configure_security_documentation(app)
 
 def start() -> None:
 	# Entry paths that call this directly, such as the development compose

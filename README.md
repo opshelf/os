@@ -97,7 +97,7 @@ send `X-Correlation-ID` to associate API activity with audit records. audit entr
 
 hardware-only routes outside this integration surface may still report disabled or unavailable in mock mode. command polling exposes persisted results in both mock and production; available measurements depend on the command producer.
 
-see the [container mass API guide](openshelf_hardware/packages/openshelf_os_server/docs/container-mass.md) for opened-container tare/current/full enrollment, cycle weight events and polling, and production measurement limits.
+see the [Local API reference](https://api.opshelf.com/docs/local/) storage group for container mass, cycle measurements, and production limits.
 
 ### waveshare usb to 4ch rs485 (b)
 
@@ -263,3 +263,30 @@ lookups, and cache up to 256 responses for one hour per server process. Rate
 limits temporarily disable remote lookup; custom item entry remains available.
 The upstream contract is documented at
 <https://commonchemistry.cas.org/swagger/commonchemistry-swagger.json>.
+
+
+## API documentation
+
+[Local API reference](https://api.opshelf.com/docs/local/) covers every application
+endpoint, including engineering and development operations. The running device
+also serves `/docs`, `/redoc`, and `/openapi.json`.
+
+From `openshelf_hardware/`:
+
+```sh
+uv sync --all-packages
+uv run openapi
+uv run openapi --check
+uv run pytest packages/openshelf_os_server/tests/test_openapi.py
+```
+
+OpenAPI is generated from the application without running its lifespan. Update
+route summaries/docstrings and Pydantic field descriptions/examples alongside
+behavior changes. Put shared concepts in `documentation.py`; keep endpoint prose
+with the handler. Document effects, prerequisites, completion, and recovery when
+they are not apparent from the schema. Use `response_docs` for documentation-only
+response models so adding documentation does not change runtime serialization.
+Regenerate and commit the JSON with each contract change. The contract tests check
+coverage, examples, references, media types, and artifact freshness.
+
+Publishing both references is owned by the sibling relay's `scripts/deploy-docs.py`.

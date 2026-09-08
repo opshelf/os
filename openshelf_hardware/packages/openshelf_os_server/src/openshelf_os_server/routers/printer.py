@@ -1,4 +1,5 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import response_docs
 
 import asyncio
 import errno
@@ -6,7 +7,7 @@ import logging
 import os
 import threading
 from types import TracebackType
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -116,7 +117,14 @@ class USBPrinter:
             total += n
 
     def print_label(self, payload: str, *, feed_dots: int) -> None:
+        """Write a Code 128 label job with the configured feed distance to the printer."""
         self._write_all(build_label_job(payload, feed_dots=feed_dots))
+
+
+class PrintUpcaResponse(BaseModel):
+    message: Literal["success"]
+    upca: str
+    printed: bool
 
 
 router = APIRouter(tags=["printer"])
@@ -133,8 +141,14 @@ def _probe_status() -> PrinterStatus:
     "/config",
     response_model=PrinterFeedConfig,
     dependencies=[Depends(get_current_user)],
+    summary="Read printer feed settings",
+    responses=response_docs(errors=(401,)),
 )
 async def get_printer_config() -> PrinterFeedConfig:
+    """Read printer feed settings.
+
+    Returns configured feed distance in printer dots. Does not print a label.
+    """
     return PrinterFeedConfig(feed_dots=get_root_config().printer.feed_dots)
 
 
@@ -142,8 +156,15 @@ async def get_printer_config() -> PrinterFeedConfig:
     "/config",
     response_model=PrinterFeedConfig,
     dependencies=[Depends(get_current_user), Depends(require_permissions("printer:print"))],
+    summary="Set printer feed distance",
+    responses=response_docs(errors=(401, 403)),
 )
 async def update_printer_config(request: PrinterFeedConfig) -> PrinterFeedConfig:
+    """Set printer feed distance.
+
+    Requires `printer:print`. Persists the feed distance used after printing. This updates
+    configuration without printing a test label.
+    """
     config = get_root_config()
     config.printer.feed_dots = request.feed_dots
     save_root_config(config)
@@ -154,8 +175,16 @@ async def update_printer_config(request: PrinterFeedConfig) -> PrinterFeedConfig
     "/status",
     response_model=PrinterStatusResponse,
     dependencies=[Depends(get_current_user)],
+    summary="Read printer diagnostics",
+    responses=response_docs(errors=(401,)),
 )
 async def get_printer_status() -> PrinterStatusResponse:
+    """Read printer diagnostics.
+
+    Reports connectivity, health, and printer error flags. A disconnected or unhealthy
+    printer can still return HTTP `200`; inspect the body. Mock mode reports
+    `simulated=true` and does not contact hardware.
+    """
     settings = get_settings()
     if get_operating_mode() == OperatingMode.mock:
         return PrinterStatusResponse(
@@ -212,8 +241,17 @@ def _print_payload(payload: str) -> bool:
     "",
     response_model=PrintLabelResponse,
     dependencies=[Depends(require_relay_or_permissions("printer:print"))],
+    summary="Print a barcode label",
+    responses=response_docs(errors=(401, 403)),
 )
 async def print_custom_label(request: PrintLabelRequest) -> PrintLabelResponse:
+    """Print a barcode label.
+
+    Requires `printer:print` or the relay service credential. Prints the requested code and
+    returns whether printing was accepted. Mock mode validates input and simulates printing
+    without a physical artifact. This operation has no idempotency key; a retry may print
+    another label.
+    """
     return PrintLabelResponse(
         message="success",
         code=request.code,
@@ -224,8 +262,18 @@ async def print_custom_label(request: PrintLabelRequest) -> PrintLabelResponse:
 @router.post(
     "/{upca}",
     dependencies=[Depends(require_relay_or_permissions("printer:print"))],
+    summary="Print a UPCA label",
+    responses=response_docs(model=PrintUpcaResponse, errors=(401, 403, 422)),
 )
 async def print_label(upca: str) -> dict[str, str | bool]:
+    """Print a UPCA label.
+
+    Requires `printer:print` or the relay service credential. Mock mode requires 11 or 12
+    ASCII decimal digits, returning `422` for invalid input; valid input returns
+    `printed=true` without a physical label. Hardware mode skips this digit validation
+    and prints the supplied value as Code 128, or returns `printed=false` when printing
+    is disabled. Returns the supplied UPCA and `printed` flag. Does not create inventory.
+    """
     if get_operating_mode() == OperatingMode.mock:
         if len(upca) not in {11, 12} or upca.isascii() is False or upca.isdecimal() is False:
             raise HTTPException(

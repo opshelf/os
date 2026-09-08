@@ -1,4 +1,5 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import response_docs
 
 import asyncio
 import os
@@ -41,28 +42,54 @@ def _restart_process_id() -> int:
 def _schedule_api_restart() -> None:
 	asyncio.get_running_loop().call_later(1.0, os.kill, _restart_process_id(), signal.SIGTERM)
 
-@router.get("/mode", response_model=ModeResponse, dependencies=[Depends(get_current_user)])
+@router.get(
+    "/mode",
+    response_model=ModeResponse,
+    dependencies=[Depends(get_current_user)],
+    summary="Read the operating mode",
+    responses=response_docs(errors=(401,)),
+)
 async def get_mode() -> ModeResponse:
+	"""Read the operating mode.
+
+	Returns the current production, development, demo, or mock mode. Mode is selected at
+	process startup; the API has no mode-changing endpoint. Use the repository startup
+	tooling to change it.
+	"""
 	mode = get_operating_mode()
 	return ModeResponse(mode=mode.value)
 
 
 @router.get(
-	"/home-on-init",
-	response_model=HomeOnInitResponse,
-	dependencies=[Depends(require_permissions("robot:control"))],
+    "/home-on-init",
+    response_model=HomeOnInitResponse,
+    dependencies=[Depends(require_permissions("robot:control"))],
+    summary="Read startup homing policy",
+    responses=response_docs(errors=(401, 403)),
 )
 async def get_home_on_init() -> HomeOnInitResponse:
+	"""Read startup homing policy.
+
+	Requires `robot:control`. Returns whether initialization is configured to home the
+	robot; does not move hardware.
+	"""
 	config = get_root_config()
 	return HomeOnInitResponse(home_on_init=config.robot_app.home_on_init)
 
 
 @router.put(
-	"/home-on-init",
-	response_model=HomeOnInitResponse,
-	dependencies=[Depends(require_permissions("robot:control"))],
+    "/home-on-init",
+    response_model=HomeOnInitResponse,
+    dependencies=[Depends(require_permissions("robot:control"))],
+    summary="Set startup homing policy",
+    responses=response_docs(errors=(401, 403)),
 )
 async def set_home_on_init(request: HomeOnInitUpdateRequest) -> HomeOnInitResponse:
+	"""Set startup homing policy.
+
+	Requires `robot:control`. Persists whether robot initialization should home hardware.
+	Does not home the robot immediately.
+	"""
 	config = get_root_config()
 	config.robot_app.home_on_init = request.home_on_init
 	save_root_config(config)
@@ -71,11 +98,19 @@ async def set_home_on_init(request: HomeOnInitUpdateRequest) -> HomeOnInitRespon
 
 
 @router.post(
-	"/restart",
-	response_model=RestartResponse,
-	dependencies=[Depends(get_current_user)],
+    "/restart",
+    response_model=RestartResponse,
+    dependencies=[Depends(get_current_user)],
+    summary="Request an API restart",
+    responses=response_docs(errors=(401,)),
 )
 async def restart_api() -> RestartResponse:
+	"""Request an API restart.
+
+	Schedules a process exit so the container supervisor can restart the service. The
+	response is sent before the restart; active connections can then close. Does not change
+	the operating mode. Reconnect and check health before resuming work.
+	"""
 	logger.info("api_restart_requested")
 	_schedule_api_restart()
 	return RestartResponse(message="Restarting API container...")

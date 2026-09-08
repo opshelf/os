@@ -28,15 +28,39 @@ class MoveCommand(BaseModel):
 
 class RetrieveItemCommand(BaseModel):
     command: Literal["retrieve_item"] = "retrieve_item"
-    request_id: Optional[str] = None
+    request_id: Optional[str] = Field(default=None, description="Idempotency ID retained for seven days. Reuse only with the same payload.", examples=["store-001"])
     upca: Optional[str] = None
-    location: Optional[Dict[str, Any]] = None
+    location: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Current item location. Required by the retrieval endpoint; bin homes cannot be retrieved directly.",
+        examples=[{"side": "left_module", "shelf_idx": 0, "cell_idx": 2}],
+        json_schema_extra={"properties": {
+            "side": {"type": "string", "enum": ["left_module", "right_module"]},
+            "shelf_idx": {"type": "integer", "description": "Zero-based shelf index"},
+            "cell_idx": {"type": "integer", "description": "Zero-based cell index"},
+        }},
+    )
 
 
 class StoreItemCommand(BaseModel):
     command: Literal["store_item"] = "store_item"
-    request_id: Optional[str] = None
-    item: Optional[Dict[str, Any]] = None
+    request_id: Optional[str] = Field(default=None, description="Idempotency ID retained for seven days. Reuse only with the same payload.", examples=["store-001"])
+    item: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Existing inventory UPCA, or new item enrollment. Hardware also supports anonymous dimension-based storage; mock requires UPCA, name and dimensions. Existing inventory mass/dimensions take precedence.",
+        examples=[{"upca": "880000000001"}, {"upca": "880000000002", "name": "Opened bottle", "dimensions": {"width": 10, "height": 10, "length": 10}, "tare_weight": 100, "net_weight": 250.5, "full_net_weight": 500}],
+        json_schema_extra={"properties": {
+            "upca": {"type": "string", "description": "Inventory barcode"},
+            "name": {"type": "string", "description": "New item display name"},
+            "dimensions": {"type": "object", "description": "Positive millimeter dimensions", "properties": {key: {"type": "number"} for key in ("width", "height", "length")}},
+            "weight": {"type": ["number", "null"], "description": "Gross grams; mutually exclusive with net_weight"},
+            "tare_weight": {"type": ["number", "null"], "description": "Empty-container grams"},
+            "net_weight": {"type": ["number", "null"], "description": "Contents grams; requires tare and excludes weight"},
+            "full_net_weight": {"type": ["number", "null"], "description": "Full contents reference in grams"},
+            "metadata": {"type": "object", "additionalProperties": True},
+            "access_level_id": {"type": ["integer", "null"]},
+        }},
+    )
 
     @model_validator(mode="after")
     def validate_item_data(self) -> "StoreItemCommand":

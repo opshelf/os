@@ -1,5 +1,6 @@
 """Storage management endpoints with authorization."""
 from __future__ import annotations
+from openshelf_os_server.documentation import BooleanSuccess, MessageResponse, response_docs
 from openshelf_os_server.core.mass import MASS_FIELDS, validate_mass
 
 
@@ -61,7 +62,7 @@ router = APIRouter(tags=["storage"])
 
 
 class DimensionsPayload(BaseModel):
-    """Shared dimension representation."""
+    """Dimensions in millimeters (width, height, length)."""
 
     width: float
     height: float
@@ -69,9 +70,9 @@ class DimensionsPayload(BaseModel):
 
 
 class MassInput(BaseModel):
-    tare_weight: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
-    net_weight: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
-    full_net_weight: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    tare_weight: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False, description="Mass in grams. Omit to preserve; null clears this reference.")
+    net_weight: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False, description="Contents mass in grams; requires known tare. Mutually exclusive with weight. Null clears current gross/net.", examples=[250.5])
+    full_net_weight: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False, description="Mass in grams. Omit to preserve; null clears this reference.")
 
 
 class ItemCreate(MassInput):
@@ -81,9 +82,9 @@ class ItemCreate(MassInput):
 
     upca: str
     name: str = Field(max_length=255)
-    dimensions: Optional[Dict[str, float]] = None
-    weight: Optional[float] = None
-    item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata")
+    dimensions: Optional[Dict[str, float]] = Field(default=None, description="Positive width, height, and length in millimeters; required when enrolling a new item.", examples=[{"width":10,"height":10,"length":10}])
+    weight: Optional[float] = Field(default=None, description="Gross mass in grams. Do not combine with net_weight; null does not clear gross on PUT.", examples=[350.5])
+    item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata", description="Arbitrary item metadata; metadata is also accepted as an input alias. Replaces the object when supplied.")
     access_level_id: Optional[int] = None
 
     @model_validator(mode="before")
@@ -109,9 +110,9 @@ class ItemUpdate(MassInput):
     model_config = ConfigDict(populate_by_name=True)
 
     name: Optional[str] = Field(default=None, max_length=255)
-    dimensions: Optional[Dict[str, float]] = None
-    weight: Optional[float] = None
-    item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata")
+    dimensions: Optional[Dict[str, float]] = Field(default=None, description="Positive width, height, and length in millimeters; required when enrolling a new item.", examples=[{"width":10,"height":10,"length":10}])
+    weight: Optional[float] = Field(default=None, description="Gross mass in grams. Do not combine with net_weight; null does not clear gross on PUT.", examples=[350.5])
+    item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata", description="Arbitrary item metadata; metadata is also accepted as an input alias. Replaces the object when supplied.")
     access_level_id: Optional[int] = None
 
     @model_validator(mode="before")
@@ -147,16 +148,16 @@ class ItemWithLocations(BaseModel):
     name: str
     dimensions: Dict[str, float]
     weight: Optional[float]
-    tare_weight: Optional[float] = None
-    net_weight: Optional[float] = None
-    full_net_weight: Optional[float] = None
+    tare_weight: Optional[float] = Field(default=None, description="Known empty-container mass in grams")
+    net_weight: Optional[float] = Field(default=None, description="Gross minus tare in grams, or null if unknown or gross is below tare")
+    full_net_weight: Optional[float] = Field(default=None, description="Full contents reference in grams; independent of current contents")
     metadata: Dict[str, Any] = Field(default_factory=dict)
     access_level_id: Optional[int]
-    locations: List[Dict[str, Any]]
+    locations: List[Dict[str, Any]] = Field(description="Direct database locations, plus the bin home location when binned; use the bin workflow for binned items")
     created_at: str
     updated_at: str
     can_retrieve: bool
-    bin: Optional[Dict[str, Any]] = None
+    bin: Optional[Dict[str, Any]] = Field(default=None, description="Bin membership and aggregate state; null for direct inventory")
 
 
 class BinWorkflowCreate(BaseModel):
@@ -190,6 +191,69 @@ class StorageCellResponse(BaseModel):
     status: str
     created_at: str
     updated_at: str
+
+
+class InventoryPage(BaseModel):
+    items: list[ItemWithLocations]
+    total: int
+    skip: int
+    limit: int
+
+
+class BinItemSummary(BaseModel):
+    id: int
+    upca: str
+    name: str
+
+
+class BinResponse(BaseModel):
+    id: int
+    barcode: str
+    home_location: ItemLocationCreate
+    inner_dimensions: dict[str, float]
+    max_item_dimensions: dict[str, float]
+    max_items: int
+    item_count: int
+    used_volume: float = Field(description="Occupied volume in cubic millimeters")
+    available_volume: float = Field(description="Remaining volume in cubic millimeters")
+    status: str
+    gross_weight: float | None = Field(description="Bin plus contents in grams; only available at home")
+    active: bool
+    items: list[BinItemSummary]
+
+
+class BinsResponse(BaseModel):
+    bins: list[BinResponse]
+
+
+class BinContentsResponse(BinItemSummary):
+    confirmed: bool
+
+
+class BinWorkflowResponse(BaseModel):
+    id: str
+    operation: str = Field(description="store, retrieve, or restore for an unavailable bin")
+    state: str = Field(description="Current workflow state; recovery_required needs operator reconciliation")
+    bin: BinResponse
+    item: BinItemSummary
+    error: str | None
+    history: list[dict[str, Any]]
+    resolution: dict[str, Any] | None
+    created_at: str
+    updated_at: str
+    contents: list[BinContentsResponse] | None = None
+
+
+class BinWorkflowEnvelope(BaseModel):
+    workflow: BinWorkflowResponse | None
+
+
+class BinWorkflowStartResponse(BinWorkflowEnvelope):
+    storage_mode: Literal["direct", "bin"]
+
+
+class BinScanResponse(BinWorkflowEnvelope):
+    rejected: bool
 
 
 # ---------------------------------------------------------------------------
@@ -360,30 +424,61 @@ def monitor_performance(func: Callable) -> Callable:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/bins", dependencies=[Depends(require_relay_or_permissions("storage:read"))])
+@router.get(
+    "/bins",
+    dependencies=[Depends(require_relay_or_permissions("storage:read"))],
+    summary="List storage bins",
+    responses=response_docs(model=BinsResponse, errors=(401, 403)),
+)
 async def get_bins(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """List storage bins.
+
+    Synchronizes configured bins into the database, then returns bin state and contents.
+    Aggregate `gross_weight` includes the bin and all its contents; it is exposed only at
+    home and is not an individual item mass.
+    """
     service = BinStorageService(session)
     await service.sync_config()
     return {"bins": await service.list_bins()}
 
 
 @router.get(
-    "/bin-workflows/active", dependencies=[Depends(require_relay_or_permissions("storage:read"))]
+    "/bin-workflows/active",
+    dependencies=[Depends(require_relay_or_permissions("storage:read"))],
+    summary="Read the active bin workflow",
+    responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403)),
 )
 async def get_active_bin_workflow(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Read the active bin workflow.
+
+    Returns `workflow=null` when no workflow owns the device. Otherwise inspect its state
+    and error before offering the next operator action. A workflow reserves the robot until
+    the bin is returned or reconciled.
+    """
     service = BinStorageService(session)
     workflow = await service.active_workflow()
     return {"workflow": await service.serialize_workflow(workflow) if workflow else None}
 
 
 @router.post(
-    "/bin-workflows", dependencies=[Depends(require_relay_or_permissions("storage:write"))]
+    "/bin-workflows",
+    dependencies=[Depends(require_relay_or_permissions("storage:write"))],
+    summary="Start a bin storage workflow",
+    responses=response_docs(model=BinWorkflowStartResponse, errors=(401, 403, 404, 409, 423)),
 )
 async def create_bin_workflow(
     request: BinWorkflowCreate,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_relay_or_current_user),
 ) -> Dict[str, Any]:
+    """Start a bin storage workflow.
+
+    Chooses storage for the requested item and operation. A `storage_mode=direct` response
+    with `workflow=null` means no bin workflow was started; submit an ordinary command
+    separately. A bin result reserves the robot and starts retrieval of the bin. Retrieval
+    requires access to every item in that bin. Clear the IO box first; conflicts return
+    `409` or `423`.
+    """
     storage = StorageService(session)
     service = BinStorageService(session)
     await service.sync_config()
@@ -495,12 +590,20 @@ async def create_bin_workflow(
 @router.post(
     "/bin-workflows/{workflow_id}/scan",
     dependencies=[Depends(require_relay_or_permissions("storage:write"))],
+    summary="Submit a simulated bin scan",
+    responses=response_docs(model=BinScanResponse, errors=(401, 403, 404, 409)),
 )
 async def scan_mock_bin_workflow(
     workflow_id: str,
     request: BinWorkflowScan,
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
+    """Submit a simulated bin scan.
+
+    Mock-only scanner input for a workflow waiting on an item or bin barcode.
+    `rejected=true` means the scan did not advance the workflow. Hardware modes return
+    `404`; an incompatible workflow state returns `409`.
+    """
     if get_operating_mode() != common.OperatingMode.mock:
         raise HTTPException(status_code=404, detail="Mock bin scanner is unavailable")
     service = BinStorageService(session)
@@ -517,12 +620,21 @@ async def scan_mock_bin_workflow(
 @router.post(
     "/bin-workflows/{workflow_id}/return",
     dependencies=[Depends(require_relay_or_permissions("storage:write"))],
+    summary="Confirm contents and return a bin",
+    responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422, 503)),
 )
 async def return_bin_workflow(
     workflow_id: str,
     request: BinWorkflowReturn,
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
+    """Confirm contents and return a bin.
+
+    Confirms the operator's item/contents state and starts returning the bin home. This may
+    move hardware; completion is reflected in workflow state and robot events. Recovery
+    paths require the requested content confirmation. Concurrent recovery, missing bin
+    presence, or an incompatible state returns `409`.
+    """
     service = BinStorageService(session)
 
     async with bin_workflow_command_admission_guard():
@@ -696,11 +808,19 @@ async def return_bin_workflow(
 @router.post(
     "/bin-workflows/{workflow_id}/cancel-return",
     dependencies=[Depends(require_relay_or_permissions("storage:write"))],
+    summary="Cancel an unavailable bin return",
+    responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409)),
 )
 async def cancel_unavailable_bin_return(
     workflow_id: str,
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
+    """Cancel an unavailable bin return.
+
+    Cancels a return that cannot proceed using the workflow service's state checks. This is
+    a workflow recovery action, not a general command cancellation. Inspect the returned
+    workflow and resolve physical bin placement before resuming.
+    """
     service = BinStorageService(session)
     async with bin_workflow_command_admission_guard():
         workflow = await session.get(StorageBinWorkflow, workflow_id)
@@ -724,6 +844,8 @@ async def cancel_unavailable_bin_return(
 @router.post(
     "/bin-workflows/{workflow_id}/retry",
     dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Retry a bin workflow recovery",
+    responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 503)),
 )
 async def retry_bin_workflow(
     workflow_id: str,
@@ -731,6 +853,12 @@ async def retry_bin_workflow(
     current_user: User = Depends(get_current_user),
     target_item_in_bin: Optional[bool] = None,
 ) -> Dict[str, Any]:
+    """Retry a bin workflow recovery.
+
+    Claims and retries a workflow in recovery. Requires the `admin` role and
+    `storage:write`; the relay service credential is not accepted. Concurrent recovery or
+    unsuitable physical state returns `409`. Inspect workflow state after the request.
+    """
     if current_user.role.name != "admin":
         raise HTTPException(status_code=403, detail="Administrator role required")
     service = BinStorageService(session)
@@ -847,6 +975,8 @@ async def retry_bin_workflow(
 @router.post(
     "/bin-workflows/{workflow_id}/reconcile",
     dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Reconcile a bin after manual recovery",
+    responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422)),
 )
 async def reconcile_bin_workflow(
     workflow_id: str,
@@ -854,6 +984,13 @@ async def reconcile_bin_workflow(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
+    """Reconcile a bin after manual recovery.
+
+    Records an operator-confirmed `returned` or `quarantined` resolution and reconciles
+    contents. Requires the `admin` role and `storage:write`. This updates inventory/workflow
+    state based on a physical recovery already performed; it is not a substitute for moving
+    the bin. Conflicting claims or invalid confirmations are rejected.
+    """
     if current_user.role.name != "admin":
         raise HTTPException(status_code=403, detail="Administrator role required")
     service = BinStorageService(session)
@@ -916,7 +1053,12 @@ async def reconcile_bin_workflow(
     return {"workflow": await service.serialize_workflow(workflow)}
 
 
-@router.get("/items", dependencies=[Depends(require_relay_or_permissions("storage:read"))])
+@router.get(
+    "/items",
+    dependencies=[Depends(require_relay_or_permissions("storage:read"))],
+    summary="List inventory records",
+    responses=response_docs(model=InventoryPage, errors=(401, 403)),
+)
 @monitor_performance
 async def get_items(
     response: Response,
@@ -925,7 +1067,13 @@ async def get_items(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_relay_or_current_user),
 ) -> Dict[str, Any]:
-    """Get all items with pagination."""
+    """List inventory records.
+
+    Returns an offset page, total count, and matching `X-Total-Count`, `X-Limit`, and
+    `X-Skip` headers. Records include access-based `can_retrieve`, current mass, and direct
+    or bin-derived locations. A bin home location is not directly retrievable: use the bin
+    workflow when `bin` is non-null.
+    """
     storage_service = StorageService(session)
 
     items = await storage_service.get_all_items(skip=skip, limit=limit)
@@ -949,13 +1097,24 @@ async def get_items(
     }
 
 
-@router.get("/items/{upca}", dependencies=[Depends(require_relay_or_permissions("storage:read"))])
+@router.get(
+    "/items/{upca}",
+    dependencies=[Depends(require_relay_or_permissions("storage:read"))],
+    summary="Read an item and its storage state",
+    responses=response_docs(errors=(401, 403, 404)),
+)
 async def get_item(
     upca: str,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_relay_or_current_user),
 ) -> ItemWithLocations:
-    """Get a specific item by UPCA."""
+    """Read an item and its storage state.
+
+    Returns the inventory record, computed retrieval access, locations, and optional bin
+    membership. Read this before moving an item. `net_weight` is derived from known gross
+    and tare; it is null when gross is below tare or either value is missing. A missing
+    record returns `404`.
+    """
     storage_service = StorageService(session)
 
     item = await storage_service.get_item(upca)
@@ -966,13 +1125,30 @@ async def get_item(
     return await _build_item_payload_with_bin(item, locations, current_user, session)
 
 
-@router.post("/items", dependencies=[Depends(require_relay_or_permissions("storage:write"))])
+@router.post(
+    "/items",
+    dependencies=[Depends(require_relay_or_permissions("storage:write"))],
+    summary="Create or update an inventory record",
+    responses=response_docs(errors=(400, 401, 403, 409, 422)),
+)
 async def create_item(
     item: ItemCreate,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_relay_or_current_user),
 ) -> ItemWithLocations:
-    """Create a new item."""
+    """Create or update an inventory record.
+
+    Creates a record or updates the existing UPCA. This does not move the item or assign
+    physical occupancy. New records require valid dimensions; values are millimeters and
+    masses are grams. Both `metadata` and `item_metadata` inputs are accepted; responses use
+    `metadata`.
+
+    To enroll an opened container, supply `tare_weight`, `net_weight`, and optionally
+    `full_net_weight`; gross becomes tare plus net. Do not supply both `weight` and
+    `net_weight`, even if one is null. See the storage group for mass persistence rules.
+    Prefer PUT for partial edits to existing records. Reserved bin barcodes, active
+    workflows, and forbidden changes to bin-managed items return `409`.
+    """
     storage_service = StorageService(session)
 
     try:
@@ -1028,14 +1204,30 @@ async def create_item(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.put("/items/{upca}", dependencies=[Depends(require_relay_or_permissions("storage:write"))])
+@router.put(
+    "/items/{upca}",
+    dependencies=[Depends(require_relay_or_permissions("storage:write"))],
+    summary="Update selected inventory fields",
+    responses=response_docs(errors=(401, 403, 404, 409, 422)),
+)
 async def update_item(
     upca: str,
     item: ItemUpdate,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_relay_or_current_user),
 ) -> ItemWithLocations:
-    """Update an existing item."""
+    """Update selected inventory fields.
+
+    Omitted mass fields retain their values. `net_weight=null` clears gross and derived net;
+    `tare_weight=null` or `full_net_weight=null` clears that reference. Legacy `weight=null`
+    does not clear gross on PUT. Supplying both `weight` and `net_weight` returns `422`.
+    Setting net requires a known tare, either stored or supplied.
+
+    Changing tare alone preserves gross and recomputes net. Metadata replaces the object
+    when provided. Bin-managed dimensions/access changes require retrieval first; active
+    workflows reserve their items. Returns `404` for an absent UPCA. These edits do not move
+    hardware.
+    """
     storage_service = StorageService(session)
 
     existing = await storage_service.get_item(upca)
@@ -1082,14 +1274,22 @@ async def update_item(
 
 
 @router.delete(
-    "/items/{upca}", dependencies=[Depends(require_relay_or_permissions("storage:delete"))]
+    "/items/{upca}",
+    dependencies=[Depends(require_relay_or_permissions("storage:delete"))],
+    summary="Delete an inventory record",
+    responses=response_docs(model=MessageResponse, errors=(401, 403, 404, 409)),
 )
 @monitor_performance
 async def delete_item(
     upca: str,
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, str]:
-    """Delete an item."""
+    """Delete an inventory record.
+
+    Deletes the item and its database location records; it does not physically retrieve it.
+    Bin membership and active workflows block deletion. Use this low-level endpoint only
+    after reconciling physical occupancy. A missing record returns `404`.
+    """
     storage_service = StorageService(session)
 
     existing = await storage_service.get_item(upca)
@@ -1118,7 +1318,10 @@ async def delete_item(
 
 
 @router.post(
-    "/items/{upca}/locations", dependencies=[Depends(require_permissions("storage:write"))]
+    "/items/{upca}/locations",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Assign an inventory location",
+    responses=response_docs(errors=(400, 401, 403, 404, 409, 422)),
 )
 async def add_item_location(
     upca: str,
@@ -1126,7 +1329,12 @@ async def add_item_location(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
-    """Add a location for an item."""
+    """Assign an inventory location.
+
+    Adds database occupancy for an item without moving hardware. Side and zero-based
+    shelf/cell indices identify the location. Occupied or reserved cells and incompatible
+    bin state are rejected. The status stream overlays these database locations on the grid.
+    """
     storage_service = StorageService(session)
 
     db_item = await storage_service.get_item(upca)
@@ -1186,7 +1394,10 @@ async def _remove_item_location_impl(
 
 
 @router.delete(
-    "/items/{upca}/locations", dependencies=[Depends(require_permissions("storage:write"))]
+    "/items/{upca}/locations",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Remove an inventory location",
+    responses=response_docs(errors=(401, 403, 404, 409)),
 )
 async def remove_item_location(
     upca: str,
@@ -1196,7 +1407,12 @@ async def remove_item_location(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
-    """Remove a specific location for an item."""
+    """Remove an inventory location.
+
+    Removes the specified database location using query parameters. This does not move
+    hardware or remove the storage-grid cell. Use only when physical occupancy has already
+    been reconciled.
+    """
     storage_service = StorageService(session)
 
     await _remove_item_location_impl(upca, side, shelf_idx, cell_idx, storage_service)
@@ -1206,6 +1422,8 @@ async def remove_item_location(
 @router.delete(
     "/items/{upca}/locations/{side}/{shelf_idx}/{cell_idx}",
     dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Remove an inventory location by path",
+    responses=response_docs(errors=(401, 403, 404, 409)),
 )
 async def remove_item_location_by_path(
     upca: str,
@@ -1215,7 +1433,11 @@ async def remove_item_location_by_path(
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
-    """Remove a specific location using path parameters."""
+    """Remove an inventory location by path.
+
+    Equivalent to the query-parameter removal endpoint, with side and zero-based shelf/cell
+    indices in the URL. Updates database occupancy only; no robot command is issued.
+    """
     storage_service = StorageService(session)
 
     await _remove_item_location_impl(upca, side, shelf_idx, cell_idx, storage_service)
@@ -1227,13 +1449,22 @@ async def remove_item_location_by_path(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/locations", dependencies=[Depends(require_permissions("storage:read"))])
+@router.get(
+    "/locations",
+    dependencies=[Depends(require_permissions("storage:read"))],
+    summary="List storage cell records",
+    responses=response_docs(errors=(401, 403)),
+)
 async def get_storage_cells(
     shelf_idx: Optional[int] = Query(None, description="Filter by shelf index"),
     cell_idx: Optional[int] = Query(None, description="Filter by cell index"),
     session: AsyncSession = Depends(get_db),
 ) -> List[StorageCellResponse]:
-    """Get storage cells with optional filtering."""
+    """List storage cell records.
+
+    Returns database cell records, optionally filtered by zero-based shelf and cell index.
+    These records are separate from the robot storage-grid file and item-location occupancy.
+    """
     storage_service = StorageService(session)
 
     cells = await storage_service.get_storage_cells(shelf_idx=shelf_idx, cell_idx=cell_idx)
@@ -1255,6 +1486,8 @@ async def get_storage_cells(
 @router.put(
     "/locations/{shelf_idx}/{cell_idx}",
     dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Update a storage cell record",
+    responses=response_docs(errors=(401, 403, 404)),
 )
 async def update_storage_cell(
     shelf_idx: int,
@@ -1262,7 +1495,13 @@ async def update_storage_cell(
     cell_update: StorageCellUpdate,
     session: AsyncSession = Depends(get_db),
 ) -> StorageCellResponse:
-    """Update storage cell status or capacity."""
+    """Update a storage cell record.
+
+    Updates database status or capacity for the selected cell. Capacity accepts a dimension
+    object or a width×height×length string using `x` separators. Valid states are available,
+    occupied, maintenance, and disabled. This does not move hardware or rewrite the robot
+    grid.
+    """
     storage_service = StorageService(session)
 
     status_value = cell_update.status.lower() if cell_update.status else None
@@ -1303,8 +1542,18 @@ def _get_robot_grid():
     return StorageGrid.load_from_file(grid_path)
 
 
-@router.get("/grid", dependencies=[Depends(require_permissions("storage:read"))])
+@router.get(
+    "/grid",
+    dependencies=[Depends(require_permissions("storage:read"))],
+    summary="Read the robot storage grid",
+    responses=response_docs(model=StorageGrid, errors=(401, 403, 500)),
+)
 async def get_storage_grid() -> Dict[str, Any]:
+    """Read the robot storage grid.
+
+    Returns the robot storage-grid structure and calibration data. This is separate from
+    item-location database records; use the status stream for database-overlaid occupancy.
+    """
     try:
         grid = _get_robot_grid()
     except Exception as exc:
@@ -1316,11 +1565,21 @@ async def get_storage_grid() -> Dict[str, Any]:
     return grid.model_dump()
 
 
-@router.delete("/grid/shelf", dependencies=[Depends(require_permissions("storage:write"))])
+@router.delete(
+    "/grid/shelf",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Delete a shelf from the robot grid",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 500)),
+)
 async def delete_shelf(
     side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...)
 ) -> Dict[str, Any]:
-    """Delete a shelf and all its cells from the grid."""
+    """Delete a shelf from the robot grid.
+
+    Deletes the selected side/shelf and its cells from the persisted grid, without
+    retrieving physical contents. This engineering operation changes storage geometry, not
+    item inventory.
+    """
     try:
         grid = _get_robot_grid()
         grid.remove_shelf(side, shelf_idx)
@@ -1334,11 +1593,20 @@ async def delete_shelf(
         ) from exc
 
 
-@router.delete("/grid/cell", dependencies=[Depends(require_permissions("storage:write"))])
+@router.delete(
+    "/grid/cell",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Delete a cell from the robot grid",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 500)),
+)
 async def delete_cell(
     side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...), cell_idx: int = Query(...)
 ) -> Dict[str, Any]:
-    """Delete a single cell from the given shelf."""
+    """Delete a cell from the robot grid.
+
+    Deletes one side/shelf/cell from the persisted grid, without moving hardware. Reconcile
+    item occupancy separately before changing storage geometry.
+    """
     try:
         grid = _get_robot_grid()
         grid.remove_cell(side, shelf_idx, cell_idx)

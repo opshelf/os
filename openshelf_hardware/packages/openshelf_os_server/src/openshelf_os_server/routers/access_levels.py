@@ -1,4 +1,5 @@
 """Access levels API endpoints."""
+from openshelf_os_server.documentation import response_docs
 from typing import List
 
 from fastapi import APIRouter, Depends
@@ -22,12 +23,21 @@ class AccessLevelResponse(BaseModel):
 	created_at: str
 	updated_at: str
 
-@router.get("", response_model=List[AccessLevelResponse])
+@router.get(
+    "",
+    response_model=List[AccessLevelResponse],
+    summary="List access levels",
+    responses=response_docs(errors=(401,)),
+)
 async def list_access_levels(
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> List[AccessLevelResponse]:
-	"""List all access levels."""
+	"""List access levels.
+
+	Returns the configured access levels used by users and inventory retrieval checks.
+	Requires authentication. Assign access-level IDs through the user and item endpoints.
+	"""
 	result = await db.execute(select(AccessLevel).order_by(AccessLevel.id))
 	access_levels = result.scalars().all()
 

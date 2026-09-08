@@ -1,4 +1,6 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import BooleanSuccess, response_docs, stream_docs
+from fastapi.responses import Response
 
 import asyncio
 import functools
@@ -42,6 +44,19 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers.auth_deps import get_current_user
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
+
+from openshelf_os.storage import StorageGrid
+
+class DoorMoveResponse(BaseModel):
+    success: bool
+    position: Literal["close", "open"]
+    position_mm: float
+
+
+class StageMoveResponse(BaseModel):
+    position: float = Field(description="Applied target in millimeters")
+    warnings: list[str] | None
+
 
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
 
@@ -90,10 +105,10 @@ _DEFAULT_CELL_LENGTH = 400.0
 
 
 class PositionResponse(BaseModel):
-	x: float
-	y: float
-	z_offset: float
-	slide_extension: float
+	x: float = Field(description="Position or extension in millimeters")
+	y: float = Field(description="Position or extension in millimeters")
+	z_offset: float = Field(description="Position or extension in millimeters")
+	slide_extension: float = Field(description="Position or extension in millimeters")
 	warnings: Optional[list[str]] = None
 
 
@@ -105,14 +120,14 @@ class MoveRequest(BaseModel):
 
 class MovePositionRequest(BaseModel):
 	side: StorageModuleSide
-	x: float
-	y: float
+	x: float = Field(description="Position or extension in millimeters")
+	y: float = Field(description="Position or extension in millimeters")
 	z_offset: float = 0.0
 
 
 class JogRequest(BaseModel):
 	axis: Literal["x", "y", "z", "stage"]
-	delta: float
+	delta: float = Field(description="Signed displacement in millimeters")
 
 
 class TestRequest(BaseModel):
@@ -290,9 +305,9 @@ class SaveRequest(BaseModel):
 	side: StorageModuleSide
 	shelf_idx: int
 	cell_idx: int
-	x: float
-	y: float
-	z_offset: float
+	x: float = Field(description="Position or extension in millimeters")
+	y: float = Field(description="Position or extension in millimeters")
+	z_offset: float = Field(description="Position or extension in millimeters")
 	status: Optional[str] = None
 	is_manual: Optional[bool] = None
 
@@ -725,8 +740,18 @@ def _validate_stage_target(value: float, limit: float, label: str) -> None:
 		)
 
 
-@router.get("/status", response_model=CalibrationStatusResponse)
+@router.get(
+    "/status",
+    response_model=CalibrationStatusResponse,
+    summary="Read calibration readiness",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 async def get_calibration_status() -> CalibrationStatusResponse:
+	"""Read calibration readiness.
+
+	Reports whether homing is required and which axes need it. Does not home or move the
+	robot. Use this before a calibration procedure.
+	"""
 	worker = await get_robot_worker_or_503()
 
 	return CalibrationStatusResponse(
@@ -736,16 +761,35 @@ async def get_calibration_status() -> CalibrationStatusResponse:
 	)
 
 
-@router.get("/storage")
+@router.get(
+    "/storage",
+    summary="Read the calibration grid",
+    responses=response_docs(model=StorageGrid, errors=(401, 409, 423, 503)),
+)
 async def get_storage():
+	"""Read the calibration grid.
+
+	Returns the storage grid used by calibration, including per-cell calibration points.
+	This is geometry, not a command result or a live inventory snapshot.
+	"""
 	worker = await get_robot_worker_or_503()
 
 	grid = worker._robot._grid
 	return grid.model_dump()
 
 
-@router.get("/laser/read", response_model=LaserReadingResponse)
+@router.get(
+    "/laser/read",
+    response_model=LaserReadingResponse,
+    summary="Read laser distance",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 async def read_laser() -> LaserReadingResponse:
+	"""Read laser distance.
+
+	Returns the current laser distance in millimeters. Requires an initialized robot; a
+	failed read returns `503`. Does not start an automatic calibration session.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
@@ -761,14 +805,35 @@ async def read_laser() -> LaserReadingResponse:
 	return LaserReadingResponse(distance_mm=float(distance_mm))
 
 
-@router.get("/laser/status", response_model=LaserAutoCalibrationSnapshot)
+@router.get(
+    "/laser/status",
+    response_model=LaserAutoCalibrationSnapshot,
+    summary="Read automatic calibration progress",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 async def get_laser_auto_calibration_status() -> LaserAutoCalibrationSnapshot:
+	"""Read automatic calibration progress.
+
+	Returns the current automatic laser-calibration snapshot, including scope and progress.
+	Does not start or abort a session.
+	"""
 	manager = get_laser_auto_calibration_manager()
 	return await manager.get_snapshot()
 
 
-@router.post("/laser/abort", response_model=LaserAutoCalibrationSnapshot)
+@router.post(
+    "/laser/abort",
+    response_model=LaserAutoCalibrationSnapshot,
+    summary="Abort automatic laser calibration",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
+	"""Abort automatic laser calibration.
+
+	Requests cancellation of the active automatic calibration session and returns its
+	snapshot. A state conflict returns `409`; inspect the snapshot before starting another
+	operation.
+	"""
 	manager = get_laser_auto_calibration_manager()
 
 	try:
@@ -783,7 +848,19 @@ async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
 TERMINAL_LASER_AUTO_CALIBRATION_STATES = {"completed", "failed", "cancelled"}
 
 
-@router.get("/laser/stream")
+@router.get(
+    "/laser/stream",
+    summary="Start or observe automatic laser calibration",
+    responses=response_docs(
+        errors=(400, 401, 409, 423, 503),
+        existing=stream_docs(
+            "text/event-stream",
+            "Automatic calibration snapshots encoded as JSON in SSE data frames. GET may start motion unless subscribe_only=true.",
+            None,
+        ),
+    ),
+    response_class=Response,
+)
 async def stream_laser_auto_calibration(
 	request: Request,
 	side: StorageModuleSide | None = None,
@@ -795,6 +872,18 @@ async def stream_laser_auto_calibration(
 	include_extension_calibration: bool | None = None,
 	subscribe_only: bool = False,
 ) -> EventSourceResponse:
+	"""Start or observe automatic laser calibration.
+
+	**This GET can start physical motion.** With the default `subscribe_only=false`, starts
+	or joins an automatic calibration session for the supplied scope. Set
+	`subscribe_only=true` to observe without starting one. Conflicting scopes or a busy
+	robot return `409`; invalid scope returns `400`.
+
+	Returns Server-Sent Events with JSON calibration snapshots. A client disconnect
+	unsubscribes that client; use the abort endpoint to stop the session. Do not infer
+	cancellation from a closed connection. Optional scope parameters select cells, both
+	sides, or the IO box and the angle/extension calibration phases.
+	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,
 		shelf_idx,
@@ -893,9 +982,20 @@ async def stream_laser_auto_calibration(
 	)
 
 
-@router.post("/move", response_model=PositionResponse)
+@router.post(
+    "/move",
+    response_model=PositionResponse,
+    summary="Move to a cell calibration point",
+    responses=response_docs(errors=(400, 401, 409, 423, 503)),
+)
 @serialize_calibration_state
 async def move_to_cell(request: MoveRequest) -> PositionResponse:
+	"""Move to a cell calibration point.
+
+	Moves the tool to the selected side and zero-based shelf/cell calibration point. Returns
+	the current calibration position. A cell without a point returns `400`. Starts the
+	position context used by subsequent jog operations.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
@@ -924,9 +1024,20 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	return await _move_tool_to_coordinate(worker, coord, side_name=request.side)
 
 
-@router.post("/move/position", response_model=PositionResponse)
+@router.post(
+    "/move/position",
+    response_model=PositionResponse,
+    summary="Move to a calibration coordinate",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 @serialize_calibration_state
 async def move_to_position(request: MovePositionRequest) -> PositionResponse:
+	"""Move to a calibration coordinate.
+
+	Moves the tool to the supplied coordinate in millimeters and establishes the calibration
+	position context. The response may include warnings for adjusted coordinates. Requires
+	available hardware and exclusive manual-motion access.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
@@ -939,9 +1050,20 @@ async def move_to_position(request: MovePositionRequest) -> PositionResponse:
 	return await _move_tool_to_coordinate(worker, coord, side_name=request.side, warnings=warnings)
 
 
-@router.post("/jog", response_model=PositionResponse)
+@router.post(
+    "/jog",
+    response_model=PositionResponse,
+    summary="Jog the active calibration position",
+    responses=response_docs(errors=(400, 401, 409, 423, 500, 503)),
+)
 @serialize_calibration_state
 async def jog_axis(request: JogRequest) -> PositionResponse:
+	"""Jog the active calibration position.
+
+	Moves the selected axis by signed `delta` millimeters and updates the in-memory
+	calibration position. Move to a cell or position first; otherwise returns `400`. Changes
+	are not persisted until saved.
+	"""
 	global _current_position
 
 	await ensure_laser_auto_calibration_not_running()
@@ -1034,12 +1156,22 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 	return _current_position
 
 
-@router.post("/test")
+@router.post(
+    "/test",
+    summary="Test a cell pick or place",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 503)),
+)
 @serialize_calibration_state
 async def test_gripper(
 	request: TestRequest,
 	lift: Annotated[float | None, Query(gt=0, le=MAX_PICK_LIFT_MM)] = None,
 ):
+	"""Test a cell pick or place.
+
+	Runs the selected cell gripper test on physical hardware. Optional `lift` requests a
+	bounded pick/lift/place test. Reserved or unsuitable cells are rejected. This tests
+	motion without saving new calibration coordinates.
+	"""
 	global _current_position, _current_side
 
 	await ensure_laser_auto_calibration_not_running()
@@ -1092,8 +1224,18 @@ async def test_gripper(
 
 
 
-@router.post("/test/cycle")
+@router.post(
+    "/test/cycle",
+    summary="Test an IO transfer cycle",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 500, 503)),
+)
 async def test_cycle(request: TestRequest):
+	"""Test an IO transfer cycle.
+
+	Runs the IO pick/place cycle for the selected calibration cell. This moves the tool
+	through the IO box; use only with the physical setup prepared for the test. Does not
+	save calibration.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
@@ -1143,8 +1285,18 @@ async def test_cycle(request: TestRequest):
 	return {"success": True}
 
 
-@router.post("/save")
+@router.post(
+    "/save",
+    summary="Save a cell calibration point",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 503)),
+)
 async def save_calibration(request: SaveRequest):
+	"""Save a cell calibration point.
+
+	Persists coordinates and optional status/manual marker for the selected cell. Configured
+	bin homes cannot be changed here. Invalid status returns `400`; an active workflow can
+	block geometry changes.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
@@ -1199,8 +1351,19 @@ async def save_calibration(request: SaveRequest):
 	return {"success": True}
 
 
-@router.post("/home_tool_motors", response_model=CalibrationStatusResponse)
+@router.post(
+    "/home_tool_motors",
+    response_model=CalibrationStatusResponse,
+    summary="Home the tool stage and gripper",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 async def home_tool_motors() -> CalibrationStatusResponse:
+	"""Home the tool stage and gripper.
+
+	Homes the stage and gripper motors, refreshes worker status, and returns remaining
+	homing requirements. This moves hardware and is unavailable during automatic laser
+	calibration.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
@@ -1232,12 +1395,12 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 
 
 class IOBoxPositionResponse(BaseModel):
-	pickup_low_x: float
-	pickup_low_y: float
-	pickup_high_x: float
-	pickup_high_y: float
-	z_extension: float
-	stage_extension: float
+	pickup_low_x: float = Field(description="Position or extension in millimeters")
+	pickup_low_y: float = Field(description="Position or extension in millimeters")
+	pickup_high_x: float = Field(description="Position or extension in millimeters")
+	pickup_high_y: float = Field(description="Position or extension in millimeters")
+	z_extension: float = Field(description="Position or extension in millimeters")
+	stage_extension: float = Field(description="Position or extension in millimeters")
 	warnings: Optional[list[str]] = None
 
 
@@ -1261,16 +1424,16 @@ def _round_iobox_position(position: IOBoxPositionResponse) -> IOBoxPositionRespo
 class IOBoxJogRequest(BaseModel):
 	position: Literal["low", "high"]
 	axis: Literal["x", "y", "z", "stage"]
-	delta: float
+	delta: float = Field(description="Signed displacement in millimeters")
 
 
 class IOBoxSaveRequest(BaseModel):
-	pickup_low_x: float
-	pickup_low_y: float
-	pickup_high_x: float
-	pickup_high_y: float
-	z_extension: float
-	stage_extension: float
+	pickup_low_x: float = Field(description="Position or extension in millimeters")
+	pickup_low_y: float = Field(description="Position or extension in millimeters")
+	pickup_high_x: float = Field(description="Position or extension in millimeters")
+	pickup_high_y: float = Field(description="Position or extension in millimeters")
+	z_extension: float = Field(description="Position or extension in millimeters")
+	stage_extension: float = Field(description="Position or extension in millimeters")
 
 
 class IOBoxDoorPositionResponse(BaseModel):
@@ -1323,8 +1486,18 @@ def _with_iobox_door_positions(door_config, close: float, open: float):
 		) from exc
 
 
-@router.get("/iobox/door", response_model=IOBoxDoorPositionResponse)
+@router.get(
+    "/iobox/door",
+    response_model=IOBoxDoorPositionResponse,
+    summary="Read IO door travel limits",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 async def get_iobox_door_position() -> IOBoxDoorPositionResponse:
+	"""Read IO door travel limits.
+
+	Returns configured closed/open positions in millimeters. Reading these limits does not
+	move the door.
+	"""
 	config = get_root_config()
 	door_config = _get_iobox_door_config(config)
 
@@ -1334,8 +1507,18 @@ async def get_iobox_door_position() -> IOBoxDoorPositionResponse:
 	)
 
 
-@router.post("/iobox/door/move")
+@router.post(
+    "/iobox/door/move",
+    summary="Test an IO door position",
+    responses=response_docs(model=DoorMoveResponse, errors=(400, 401, 409, 423, 503)),
+)
 async def move_iobox_door(request: IOBoxDoorMoveRequest):
+	"""Test an IO door position.
+
+	Moves the physical door to the selected open/closed position using the supplied travel
+	values. Returns the target position in millimeters. Save separately to persist the
+	tested limits.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 	_validate_iobox_door_positions(request.close, request.open)
 
@@ -1372,8 +1555,17 @@ async def move_iobox_door(request: IOBoxDoorMoveRequest):
 	return {"success": True, "position": request.position, "position_mm": target}
 
 
-@router.post("/iobox/door/save")
+@router.post(
+    "/iobox/door/save",
+    summary="Save IO door travel limits",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 503)),
+)
 async def save_iobox_door_position(request: IOBoxDoorPositionRequest):
+	"""Save IO door travel limits.
+
+	Persists the supplied closed/open positions in the active configuration. Use the move
+	endpoint to test physical travel before saving.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 	_validate_iobox_door_positions(request.close, request.open)
 
@@ -1420,9 +1612,19 @@ def _load_iobox_calibration() -> IOBoxPositionResponse:
 	return _iobox_current
 
 
-@router.get("/iobox", response_model=IOBoxPositionResponse)
+@router.get(
+    "/iobox",
+    response_model=IOBoxPositionResponse,
+    summary="Read IO box pickup calibration",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 @serialize_calibration_state
 async def get_iobox_calibration() -> IOBoxPositionResponse:
+	"""Read IO box pickup calibration.
+
+	Returns configured low/high pickup coordinates and tool extensions in millimeters. Does
+	not move hardware.
+	"""
 	return _load_iobox_calibration()
 
 
@@ -1433,9 +1635,19 @@ async def _get_iobox_current_or_error() -> IOBoxPositionResponse:
 	return _iobox_current
 
 
-@router.post("/iobox/move", response_model=IOBoxPositionResponse)
+@router.post(
+    "/iobox/move",
+    response_model=IOBoxPositionResponse,
+    summary="Move to an IO pickup position",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 @serialize_calibration_state
 async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPositionResponse:
+	"""Move to an IO pickup position.
+
+	Opens the IO door, faces the tool forward, and moves to the configured low or high
+	pickup point. Updates the in-memory IO calibration state returned by the endpoint.
+	"""
 	global _iobox_position, _iobox_current
 
 	await ensure_laser_auto_calibration_not_running()
@@ -1478,9 +1690,19 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 	return iobox_current
 
 
-@router.post("/iobox/jog", response_model=IOBoxPositionResponse)
+@router.post(
+    "/iobox/jog",
+    response_model=IOBoxPositionResponse,
+    summary="Jog an IO pickup position",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 @serialize_calibration_state
 async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
+	"""Jog an IO pickup position.
+
+	Moves the selected low/high pickup axis by signed `delta` millimeters. Updates in-memory
+	calibration; call the IO save endpoint to persist changes.
+	"""
 	global _iobox_current, _iobox_position
 
 	await ensure_laser_auto_calibration_not_running()
@@ -1568,9 +1790,19 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	return iobox_current
 
 
-@router.post("/iobox/test")
+@router.post(
+    "/iobox/test",
+    summary="Test the IO pickup sequence",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 500, 503)),
+)
 @serialize_calibration_state
 async def test_iobox_sequence(with_gripper: bool = False):
+	"""Test the IO pickup sequence.
+
+	Executes the configured low-to-high pickup sequence and retracts the tool.
+	`with_gripper=true` also operates the gripper. This moves physical hardware using the
+	current in-memory calibration.
+	"""
 	global _iobox_current
 
 	await ensure_laser_auto_calibration_not_running()
@@ -1635,9 +1867,19 @@ async def test_iobox_sequence(with_gripper: bool = False):
 	return {"success": True}
 
 
-@router.post("/iobox/save")
+@router.post(
+    "/iobox/save",
+    summary="Save IO pickup calibration",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 503)),
+)
 @serialize_calibration_state
 async def save_iobox_calibration(request: IOBoxSaveRequest):
+	"""Save IO pickup calibration.
+
+	Persists pickup coordinates and extensions, then closes/homes the tool and homes the IO
+	door. This save operation also moves hardware; a homing failure can occur after
+	configuration has been written.
+	"""
 	global _iobox_current
 
 	await ensure_laser_auto_calibration_not_running()
@@ -1702,8 +1944,18 @@ class RotateSaveRequest(BaseModel):
 	back: float
 
 
-@router.get("/rotation", response_model=RotationAnglesResponse)
+@router.get(
+    "/rotation",
+    response_model=RotationAnglesResponse,
+    summary="Read tool orientation positions",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 async def get_rotation_angles() -> RotationAnglesResponse:
+	"""Read tool orientation positions.
+
+	Returns the configured front/back rotation positions used by the tool. Does not rotate
+	hardware.
+	"""
 	config = get_root_config()
 	params = config.robot.tool.parameters
 
@@ -1713,8 +1965,18 @@ async def get_rotation_angles() -> RotationAnglesResponse:
 	)
 
 
-@router.post("/rotation/rotate")
+@router.post(
+    "/rotation/rotate",
+    summary="Test tool rotation",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 423, 503)),
+)
 async def rotate_to_angle(angle: float):
+	"""Test tool rotation.
+
+	Rotates to the requested angle, clamped to the configured motor limits. Positions the
+	stage as needed for rotation and restores its safe X position. Does not persist
+	front/back calibration.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
@@ -1744,8 +2006,17 @@ async def rotate_to_angle(angle: float):
 	return {"success": True}
 
 
-@router.post("/rotation/save")
+@router.post(
+    "/rotation/save",
+    summary="Save tool orientation positions",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 423, 503)),
+)
 async def save_rotation_angles(request: RotateSaveRequest):
+	"""Save tool orientation positions.
+
+	Persists the front/back rotation values in the active configuration. An active bin
+	workflow blocks the change. Test rotation separately before saving.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	config = get_root_config()
@@ -1778,8 +2049,18 @@ class ShelfStageExtensionSaveRequest(BaseModel):
 	back: float
 
 
-@router.get("/shelf", response_model=ShelfStageExtensionResponse)
+@router.get(
+    "/shelf",
+    response_model=ShelfStageExtensionResponse,
+    summary="Read shelf stage extensions",
+    responses=response_docs(errors=(401, 409, 423, 503)),
+)
 async def get_shelf_stage_extension() -> ShelfStageExtensionResponse:
+	"""Read shelf stage extensions.
+
+	Returns configured front/back shelf extension distances in millimeters. Does not move
+	the stage.
+	"""
 	config = get_root_config()
 	params = config.robot.tool.parameters
 
@@ -1789,8 +2070,17 @@ async def get_shelf_stage_extension() -> ShelfStageExtensionResponse:
 	)
 
 
-@router.post("/shelf/save")
+@router.post(
+    "/shelf/save",
+    summary="Save shelf stage extensions",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 503)),
+)
 async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
+	"""Save shelf stage extensions.
+
+	Persists front/back extension distances after checking the configured stage limit. An
+	active bin workflow blocks the change. Does not execute a test move.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	config = get_root_config()
@@ -1833,8 +2123,18 @@ class StageMoveRequest(BaseModel):
 	position: float
 
 
-@router.post("/stage/move")
+@router.post(
+    "/stage/move",
+    summary="Test a stage extension",
+    responses=response_docs(model=StageMoveResponse, errors=(401, 409, 423, 503)),
+)
 async def move_stage(request: StageMoveRequest):
+	"""Test a stage extension.
+
+	Moves the stage toward the requested position in millimeters, applying configured
+	limits. Returns the actual target and any warnings. Does not persist shelf extension
+	settings.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
@@ -1865,9 +2165,18 @@ async def move_stage(request: StageMoveRequest):
 	return {"position": target, "warnings": warnings if warnings else None}
 
 
-@router.post("/abort")
+@router.post(
+    "/abort",
+    summary="Abort manual calibration and home the tool",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 423, 503)),
+)
 async def abort_calibration():
-	"""Abort current calibration operation and home the tool."""
+	"""Abort manual calibration and home the tool.
+
+	Homes the tool and refreshes worker status. This recovery action itself moves hardware
+	and is not an emergency stop. Automatic laser calibration must be aborted through its
+	own endpoint.
+	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
