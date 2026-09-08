@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import openshelf_os.common as common
+from openshelf_os.config.settings import CompartmentLayoutSettings, StorageBinDimensionsSettings
 import openshelf_os_server.core.robot as robot_core
 
 from ..database.models import (
@@ -204,6 +205,10 @@ class BinItemSummary(BaseModel):
     id: int
     upca: str
     name: str
+    compartment: int | None = Field(
+        default=None, ge=1, le=1024,
+        description="Compartment number, starting at 1 at the top left, left-to-right then top-to-bottom at IO; null when unassigned or the bin is undivided.",
+    )
 
 
 class BinResponse(BaseModel):
@@ -213,6 +218,12 @@ class BinResponse(BaseModel):
     inner_dimensions: dict[str, float]
     max_item_dimensions: dict[str, float]
     max_items: int
+    compartment_layout: CompartmentLayoutSettings | None = Field(
+        default=None, description="Equal-sized compartment rows and columns; null for an undivided bin.",
+    )
+    compartment_dimensions: StorageBinDimensionsSettings | None = Field(
+        default=None, description="Compartment dimensions in millimeters: inner width divided by columns, inner length divided by rows, and full inner height; null for an undivided bin.",
+    )
     item_count: int
     used_volume: float = Field(description="Occupied volume in cubic millimeters")
     available_volume: float = Field(description="Remaining volume in cubic millimeters")
@@ -234,6 +245,10 @@ class BinWorkflowResponse(BaseModel):
     id: str
     operation: str = Field(description="store, retrieve, or restore for an unavailable bin")
     state: str = Field(description="Current workflow state; recovery_required needs operator reconciliation")
+    compartment: int | None = Field(
+        default=None, ge=1, le=1024,
+        description="Persisted target compartment number, starting at 1 at the top left, left-to-right then top-to-bottom at IO; null when no target is assigned or the bin is undivided.",
+    )
     bin: BinResponse
     item: BinItemSummary
     error: str | None
@@ -658,6 +673,15 @@ async def return_bin_workflow(
         else:
             if request.target_item_in_bin is None:
                 raise HTTPException(status_code=422, detail="Target item state is required")
+
+        bin_row = await session.get(StorageBin, workflow.bin_id)
+        if bin_row is None:
+            raise HTTPException(status_code=409, detail="Workflow tray no longer exists")
+        compartment_error = await service._compartment_error(
+            workflow, bin_row, sorted(confirmed_ids) if confirmed_ids is not None else None
+        )
+        if compartment_error:
+            raise HTTPException(status_code=409, detail=compartment_error)
 
         recovery_claim: Optional[str] = None
         is_recovery_return = workflow.state == "recovery_required"

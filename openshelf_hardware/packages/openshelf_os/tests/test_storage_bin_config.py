@@ -44,3 +44,26 @@ def test_storage_bin_rejects_item_footprint_larger_than_bin() -> None:
                 "max_items": 6,
             }
         )
+
+
+def test_compartment_capacity_defaults_to_layout_product():
+    configured = StorageBinSettings.model_validate({
+        "barcode": "900000000001",
+        "home_location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 0},
+        "inner_dimensions": {"width": 200, "height": 100, "length": 160},
+        "compartment_layout": {"rows": 2, "columns": 4},
+    })
+    assert configured.max_items == 8
+    assert configured.compartment_layout.model_dump() == {"rows": 2, "columns": 4}
+
+
+@pytest.mark.parametrize("rows,columns,max_items", [(0,4,4), (2,-1,2), (1.5,4,4), (True,4,4), (33,1,33), (2,4,9)])
+def test_invalid_compartment_layout(rows, columns, max_items):
+    with pytest.raises(ValidationError):
+        StorageBinSettings.model_validate({
+            "barcode": "900000000001",
+            "home_location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 0},
+            "inner_dimensions": {"width": 200, "height": 100, "length": 160},
+            "compartment_layout": {"rows": rows, "columns": columns},
+            "max_items": max_items,
+        })
