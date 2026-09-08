@@ -235,3 +235,29 @@ example one-off laser command on a development pi:
 cd /opt/opshelf/repos/openshelf_os
 docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro api -lc 'cd /app/openshelf_hardware && uv run python /app/scripts/laser.py --config /app/openshelf_hardware/data/config.development.json'
 ```
+
+### Chemical name lookup
+
+The optional CAS Common Chemistry integration uses `CAS_COMMON_CHEMISTRY_API_KEY`
+in the **API server environment only**. Configure it in the ignored repository
+`.env` file for Compose, or inject it into the server process environment when
+running directly. Never put it in frontend configuration. Restart the API after
+changing the key. Without a key, inventory suggestions still work (plus dictionary fixtures in mocked mode), and
+the chemical endpoints return HTTP 503.
+
+Authenticated users with `storage:read` may call
+`GET /api/chemicals/search?q=ethanol&offset=0` (at most three results) and
+`GET /api/chemicals/64-17-5` (name, synonyms, CAS number, source URL).
+Search accepts complete CAS numbers with or without hyphens, checks their checksum,
+and queries them exactly. Incomplete CAS numbers (such as `112-`), invalid
+complete numeric identifiers, and explicit numeric wildcard queries return no
+results without contacting CAS. Prefix matching remains available in the UI's
+local inventory (and dictionary fixtures in mocked mode). Live checks confirmed that `112-12-9` resolves,
+while `112-*` and `64-17-*` return no matches from Common Chemistry.
+Text searches try an exact query, then a trailing wildcard if there are no exact
+results. Name wildcards are supported by the upstream service.
+Upstream requests time out after eight seconds per request, share concurrent identical
+lookups, and cache up to 256 responses for one hour per server process. Rate
+limits temporarily disable remote lookup; custom item entry remains available.
+The upstream contract is documented at
+<https://commonchemistry.cas.org/swagger/commonchemistry-swagger.json>.
