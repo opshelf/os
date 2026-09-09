@@ -14,6 +14,7 @@
 	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import InitProgress from '$lib/components/InitProgress.svelte';
+	import TrayRecovery from '$lib/components/TrayRecovery.svelte';
 
 	const apiBase = getApiBase();
 	const RESTART_BUTTON_RESET_MS = 15000;
@@ -361,6 +362,7 @@
 					</div>
 				</td>
 			</tr>
+			<TrayRecovery />
 		</tbody>
 	{/if}
 
