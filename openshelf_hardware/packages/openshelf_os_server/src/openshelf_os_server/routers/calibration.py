@@ -150,15 +150,17 @@ def _build_test_location(request: TestRequest) -> StorageModuleCellLocation:
 UNTESTABLE_CELL_STATUSES = (CellStatus.DISABLED, CellStatus.MAINTENANCE)
 
 
-async def _ensure_cell_is_testable(grid, location: StorageModuleCellLocation) -> Cell:
+async def _ensure_cell_is_testable(
+	grid, location: StorageModuleCellLocation, *, allow_bin_home: bool = False
+) -> Cell:
 	async with AsyncSessionLocal() as session:
 		is_reserved = await is_reserved_bin_location(
 			(location.side.value, location.shelf_idx, location.cell_idx), session
 		)
-	if is_reserved:
+	if is_reserved and not allow_bin_home:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
-			detail="Storage bin homes cannot be used for calibration tests",
+			detail="Tray homes cannot use the item IO cycle test; use the shelf pick/place test",
 		)
 
 	try:
@@ -1169,7 +1171,8 @@ async def test_gripper(
 	"""Test a cell pick or place.
 
 	Runs the selected cell gripper test on physical hardware. Optional `lift` requests a
-	bounded pick/lift/place test. Reserved or unsuitable cells are rejected. This tests
+	bounded pick/lift/place test. Tray homes are supported; disabled or maintenance cells
+	are rejected. This tests
 	motion without saving new calibration coordinates.
 	"""
 	global _current_position, _current_side
@@ -1183,7 +1186,7 @@ async def test_gripper(
 	location = _build_test_location(request)
 	grid = worker._robot._grid
 
-	await _ensure_cell_is_testable(grid, location)
+	await _ensure_cell_is_testable(grid, location, allow_bin_home=True)
 
 	try:
 		coordinate = _build_coordinate_for_location(grid, location)
@@ -1294,8 +1297,8 @@ async def save_calibration(request: SaveRequest):
 	"""Save a cell calibration point.
 
 	Persists coordinates and optional status/manual marker for the selected cell. Configured
-	bin homes cannot be changed here. Invalid status returns `400`; an active workflow can
-	block geometry changes.
+	tray homes allow coordinate/manual-marker updates while preserving their status and
+	reservation. Invalid status returns `400`; an active workflow blocks geometry changes.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
@@ -1304,15 +1307,6 @@ async def save_calibration(request: SaveRequest):
 	grid = worker._robot._grid
 	_validate_non_negative_index(request.shelf_idx, "shelf_idx")
 	_validate_non_negative_index(request.cell_idx, "cell_idx")
-	async with AsyncSessionLocal() as session:
-		is_reserved = await is_reserved_bin_location(
-			(request.side.value, request.shelf_idx, request.cell_idx), session
-		)
-	if is_reserved:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Storage bin homes cannot be changed through calibration",
-		)
 
 	new_status = None
 	if request.status is not None:
@@ -1328,6 +1322,23 @@ async def save_calibration(request: SaveRequest):
 	# newly checked-out bin cannot return using coordinates changed by a rejected save.
 	async with bin_workflow_command_admission_guard():
 		await ensure_no_active_bin_workflow_for_motion()
+
+		async with AsyncSessionLocal() as session:
+			is_reserved = await is_reserved_bin_location(
+				(request.side.value, request.shelf_idx, request.cell_idx), session
+			)
+		if is_reserved:
+			try:
+				existing_cell = grid.get_cell(StorageModuleCellLocation(
+					side=request.side, shelf_idx=request.shelf_idx, cell_idx=request.cell_idx
+				))
+			except (IndexError, ValueError) as exc:
+				raise HTTPException(status_code=409, detail="Tray home cell is missing from storage") from exc
+			if new_status is not None and new_status != existing_cell.status:
+				raise HTTPException(
+					status_code=409,
+					detail="Tray home status cannot be changed through calibration",
+				)
 
 		side_enum = request.side
 		shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)

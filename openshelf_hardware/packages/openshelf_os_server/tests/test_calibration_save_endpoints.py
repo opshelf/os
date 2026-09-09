@@ -141,8 +141,13 @@ async def test_save_calibration_creates_missing_cell_from_existing_shelf(client,
 
 
 @pytest.mark.anyio
-async def test_save_calibration_rejects_configured_bin_home(client, tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("cell_status", [CellStatus.OCCUPIED, CellStatus.MAINTENANCE])
+@pytest.mark.parametrize("status_change", [False, True])
+async def test_save_calibration_preserves_configured_bin_home(client, tmp_path, monkeypatch, cell_status, status_change) -> None:
 	grid = build_grid(tmp_path)
+	cell = grid.left_module[0].cells[0]
+	cell.status = cell_status
+	original = cell.model_copy(deep=True)
 	worker = build_worker(grid)
 	configured_bin = SimpleNamespace(
 		home_location=SimpleNamespace(side="left_module", shelf_idx=0, cell_idx=0)
@@ -163,18 +168,33 @@ async def test_save_calibration_rejects_configured_bin_home(client, tmp_path, mo
 				"x": 475.0,
 				"y": 630.0,
 				"z_offset": 0.0,
-				"status": "available",
+				"status": "available" if status_change else None,
+				"is_manual": True,
 			},
 		)
 
-	assert response.status_code == 409
-	assert response.json()["detail"] == "Storage bin homes cannot be changed through calibration"
-	assert grid.left_module[0].cells[0].status == CellStatus.AVAILABLE
+	if status_change:
+		assert response.status_code == 409
+		assert response.json()["detail"] == "Tray home status cannot be changed through calibration"
+		assert cell == original
+		assert not (tmp_path / "storage-grid.json").exists()
+	else:
+		assert response.status_code == 200
+		assert cell.status == cell_status
+		assert cell.item == original.item
+		assert cell.is_manual is True
+		assert cell.calibration_point.x == 475.0
+		assert cell.calibration_point.y == 630.0
+		assert cell.calibration_point.z_offset == 0.0
+		assert (tmp_path / "storage-grid.json").exists()
 
 
 @pytest.mark.anyio
-async def test_calibration_test_guard_rejects_reserved_bin_home(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("allow_bin_home", [False, True])
+@pytest.mark.parametrize("cell_status", [CellStatus.OCCUPIED, CellStatus.MAINTENANCE, CellStatus.DISABLED])
+async def test_calibration_test_guard_for_reserved_bin_home(monkeypatch, tmp_path, allow_bin_home, cell_status) -> None:
 	grid = build_grid(tmp_path)
+	grid.left_module[0].cells[0].status = cell_status
 	location = calibration.StorageModuleCellLocation(
 		side=calibration.StorageModuleSide.LEFT,
 		shelf_idx=0,
@@ -191,8 +211,12 @@ async def test_calibration_test_guard_rejects_reserved_bin_home(monkeypatch, tmp
 	monkeypatch.setattr(calibration, "AsyncSessionLocal", SessionContext)
 	monkeypatch.setattr(calibration, "is_reserved_bin_location", AsyncMock(return_value=True))
 
-	with pytest.raises(HTTPException, match="Storage bin homes cannot be used for calibration tests"):
-		await calibration._ensure_cell_is_testable(grid, location)
+	if allow_bin_home and cell_status == CellStatus.OCCUPIED:
+		assert await calibration._ensure_cell_is_testable(grid, location, allow_bin_home=True) is grid.left_module[0].cells[0]
+	else:
+		with pytest.raises(HTTPException) as error:
+			await calibration._ensure_cell_is_testable(grid, location, allow_bin_home=allow_bin_home)
+		assert error.value.status_code == (400 if allow_bin_home else 409)
 
 
 @pytest.mark.anyio
@@ -252,7 +276,8 @@ async def test_save_calibration_rejects_negative_indices(client, tmp_path) -> No
 
 
 @pytest.mark.anyio
-async def test_save_calibration_does_not_mutate_grid_when_bin_workflow_is_active(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("reserved", [False, True])
+async def test_save_calibration_does_not_mutate_grid_when_bin_workflow_is_active(tmp_path, monkeypatch, reserved) -> None:
 	grid = build_grid(tmp_path)
 	worker = build_worker(grid)
 	original_cell = grid.left_module[0].cells[0].model_copy(deep=True)
@@ -265,7 +290,7 @@ async def test_save_calibration_does_not_mutate_grid_when_bin_workflow_is_active
 			return False
 
 	monkeypatch.setattr(calibration, "AsyncSessionLocal", SessionContext)
-	monkeypatch.setattr(calibration, "is_reserved_bin_location", AsyncMock(return_value=False))
+	monkeypatch.setattr(calibration, "is_reserved_bin_location", AsyncMock(return_value=reserved))
 	monkeypatch.setattr(
 		calibration,
 		"ensure_no_active_bin_workflow_for_motion",
