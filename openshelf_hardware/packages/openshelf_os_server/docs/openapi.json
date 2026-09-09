@@ -9350,7 +9350,7 @@
     },
     "/api/calibration/save": {
       "post": {
-        "description": "Save a cell calibration point.\n\nPersists coordinates and optional status/manual marker for the selected cell. Configured\nbin homes cannot be changed here. Invalid status returns `400`; an active workflow can\nblock geometry changes.",
+        "description": "Save a cell calibration point.\n\nPersists coordinates and optional status/manual marker for the selected cell. Configured\ntray homes allow coordinate/manual-marker updates while preserving their status and\nreservation. Invalid status returns `400`; an active workflow blocks geometry changes.",
         "operationId": "save_calibration_api_calibration_save_post",
         "parameters": [
           {
@@ -10000,7 +10000,7 @@
     },
     "/api/calibration/test": {
       "post": {
-        "description": "Test a cell pick or place.\n\nRuns the selected cell gripper test on physical hardware. Optional `lift` requests a\nbounded pick/lift/place test. Reserved or unsuitable cells are rejected. This tests\nmotion without saving new calibration coordinates.",
+        "description": "Test a cell pick or place.\n\nRuns the selected cell gripper test on physical hardware. Optional `lift` requests a\nbounded pick/lift/place test. Tray homes are supported; disabled or maintenance cells\nare rejected. This tests\nmotion without saving new calibration coordinates.",
         "operationId": "test_gripper_api_calibration_test_post",
         "parameters": [
           {
