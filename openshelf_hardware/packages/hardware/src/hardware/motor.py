@@ -54,6 +54,7 @@ PARKED_AXES = frozenset({"y_axis"})
 ENABLE_INPUT_INERT = 0x0080
 SOFTWARE_ENABLE_ON = 1
 SOFTWARE_ENABLE_OFF = 0
+MOTION_STATUS_ENABLE_BIT = 1
 EEPROM_SAVE_COMMAND = 0x2211
 EEPROM_SAVE_OK = 0x5555
 EEPROM_SAVE_FAILED = 0xAAAA
@@ -811,6 +812,22 @@ class Motor():
             },
         )
 
+        if "SI1 input function" in mismatches:
+            # Manual 4.3.2 note 2: an input function change only takes effect
+            # after the drive restarts. Until then DI1 still carries ENABLE and
+            # Pr0.07=0 falls back to it, so the axis will not park.
+            self._logger.warning(
+                "DI1 function changed; POWER-CYCLE THE DRIVE for it to take "
+                "effect. Until then the software disable will not de-energise "
+                "this axis and the load stays on motor current",
+                extra={
+                    "motor_id": self._motor_id,
+                    "motor_name": getattr(self._params, "motor_name", None),
+                    "previous_function": mismatches["SI1 input function"],
+                    "configured_function": ENABLE_INPUT_INERT,
+                },
+            )
+
     async def _verify_brake_output_before_motion_trigger(self) -> None:
         if getattr(self._params, "motor_name", None) != "y_axis":
             return
@@ -831,10 +848,14 @@ class Motor():
         output_state = await self.get_param("Digital output state")
         software_enable = await self.get_param("Forced enable by software")
         enable_input_function = await self.get_param("SI1 input function")
+        input_state = await self.get_param("Digital input state")
+        drive_enabled = await self.is_drive_enabled()
 
         return {
             "enable_input_function": enable_input_function,
             "software_enable": software_enable,
+            "digital_input_state": input_state,
+            "drive_enabled": int(drive_enabled),
             "control_mode": motor_settings["Control Mode"],
             "command_pulses_per_revolution": motor_settings["Pulse/revolution"],
             "encoder_resolution_cpr": motor_settings["Encoder resolution"],
@@ -861,6 +882,11 @@ class Motor():
     def _brake_release_s(self) -> float:
         return self._brake_release_delay_ms / 1000.0
 
+    async def is_drive_enabled(self) -> bool:
+        """Bit1 of the motion status word: what the drive thinks its enable is."""
+        status = await self.get_param("Motion status")
+        return bool(status & (1 << MOTION_STATUS_ENABLE_BIT))
+
     async def enable(self) -> None:
         """Energise, then give the drive its own Pr4.19 to release the brake.
 
@@ -873,8 +899,31 @@ class Motor():
         await asyncio.sleep(self._brake_release_s)
 
     async def disable(self) -> None:
-        """De-energise. The drive holds current for Pr4.20 while the brake sets."""
+        """De-energise. The drive holds current for Pr4.20 while the brake sets.
+
+        Pr0.07 is a *forced* enable: at 0 the enable falls back to whichever
+        digital input carries ENABLE. If any input still holds it -- or the
+        drive declines to gate on IO at all -- the write lands and changes
+        nothing, so the result is read back rather than assumed. This warns
+        rather than raises: a drive that will not de-energise is still holding
+        the load, which is not itself dangerous.
+        """
         await self.set_param("Forced enable by software", SOFTWARE_ENABLE_OFF)
+
+        if await self.is_drive_enabled() is False:
+            return
+
+        self._logger.warning(
+            "Drive still reports enabled after Pr0.07=0; the load is on motor "
+            "current, not the brake",
+            extra={
+                "motor_id": self._motor_id,
+                "motor_name": getattr(self._params, "motor_name", None),
+                "enable_input_function": await self.get_param("SI1 input function"),
+                "digital_input_state": await self.get_param("Digital input state"),
+                "digital_output_state": await self.get_param("Digital output state"),
+            },
+        )
 
     async def _enable_for_motion(self) -> None:
         if self._park_when_idle is False:
