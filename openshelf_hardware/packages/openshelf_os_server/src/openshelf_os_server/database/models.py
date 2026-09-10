@@ -271,7 +271,7 @@ class StorageBinItem(Base):
 
 
 class StorageBinWorkflow(Base):
-	"""Durable, globally exclusive bin retrieval/store workflow."""
+	"""Durable tray checkout or barcode return interaction."""
 	__tablename__ = "storage_bin_workflows"
 	__table_args__ = (
 		Index("ix_storage_bin_workflows_state", "state"),
@@ -282,10 +282,8 @@ class StorageBinWorkflow(Base):
 	compartment: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 	operation: Mapped[str] = mapped_column(String(12), nullable=False)
 	state: Mapped[str] = mapped_column(String(32), nullable=False)
-	lock_key: Mapped[Optional[str]] = mapped_column(String(16), unique=True, nullable=True)
-	recovery_claim: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
 	bin_id: Mapped[int] = mapped_column(Integer, ForeignKey("storage_bins.id"), nullable=False)
-	item_id: Mapped[int] = mapped_column(Integer, ForeignKey("items.id"), nullable=False)
+	item_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("items.id"), nullable=True)
 	user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 	history: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
 	error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

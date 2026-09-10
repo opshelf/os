@@ -59,12 +59,7 @@ from openshelf_os_server.core.command_lifecycle import (
     serialize_command,
 )
 from openshelf_os_server.core.storage import StorageService
-from openshelf_os_server.core.bin_storage import (
-    BinStorageService,
-    DirectStoreReservationError,
-    bin_workflow_command_admission_guard,
-    validate_direct_store_reservation,
-)
+from openshelf_os_server.core.bin_storage import DirectStoreReservationError, validate_direct_store_reservation
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.settings import get_settings, get_operating_mode
 from openshelf_os_server.database.session import get_db, AsyncSessionLocal
@@ -145,45 +140,10 @@ def _error_detail(message: str, code: str) -> dict[str, str]:
     return {"message": message, "code": code}
 
 
-async def _ensure_no_active_bin_workflow(
-    command: RobotCommands,
-    db: AsyncSession,
-    current_user: User,
-    worker: RobotWorker | None = None,
-) -> None:
-    active_bin_workflow = await BinStorageService(db).active_workflow()
-    is_admin_workflow_home = (
-        isinstance(command, HomeCommand)
-        and active_bin_workflow is not None
-        and active_bin_workflow.state in {"awaiting_operator", "recovery_required"}
-        and worker is not None
-        and (
-            worker.needs_home()
-            or getattr(worker, "_is_emergency_stopped", False)
-            or getattr(worker, "_is_crashed", False)
-        )
-        and getattr(getattr(current_user, "role", None), "name", None) == "admin"
-    )
-    if active_bin_workflow is not None and not isinstance(command, StopCommand) and not is_admin_workflow_home:
-        _raise_active_bin_workflow_lock(active_bin_workflow.id)
 
 
-def _raise_active_bin_workflow_lock(workflow_id: str) -> NoReturn:
-    raise HTTPException(
-        status_code=status.HTTP_423_LOCKED,
-        detail={
-            "message": "A storage bin must be returned before another robot command can run",
-            "code": "bin_workflow_active",
-            "workflow_id": workflow_id,
-        },
-    )
 
 
-async def _ensure_no_active_bin_workflow_mutation(db: AsyncSession) -> None:
-    """Block public motion and queue mutations while a bin workflow owns the robot."""
-    active_bin_workflow = await BinStorageService(db).active_workflow()
-    if active_bin_workflow is not None:
-        _raise_active_bin_workflow_lock(active_bin_workflow.id)
 
 
 def _is_scale_not_enabled(exc: Exception) -> bool:
@@ -580,8 +540,8 @@ async def robot_commands(
 
     For retrieval, read the item first and supply its `location` (`side`, zero-based
     `shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box
-    before retrieving. Home when `home_required` is reported. An active bin workflow returns
-    `423`; a full queue returns `429` with `Retry-After`.
+    before retrieving. Home when `home_required` is reported. An item reserved by a tray interaction returns
+    `409`; a full queue returns `429` with `Retry-After`.
 
     Mock mode supports only store/retrieve, with one FIFO worker and simulated completion.
     Hardware modes also accept the engineering commands in the schema. A queued stop is not
@@ -611,20 +571,12 @@ async def robot_commands(
                 {"message": "success", "command_id": replay.command_id, "status": replay.status}
             )
 
-        async with bin_workflow_command_admission_guard():
-            # Direct unit callers often supply light-weight test doubles; API
-            # requests always receive a real AsyncSession and enforce the durable lock.
-            if isinstance(db, AsyncSession):
-                await _ensure_no_active_bin_workflow(command, db, current_user)
+        async with robot_command_enqueue_guard():
+            if isinstance(command, StoreItemCommand):
+                await _validate_mock_store(command, db)
+            else:
+                await _validate_mock_retrieve(command, current_user, db)
 
-        if isinstance(command, StoreItemCommand):
-            await _validate_mock_store(command, db)
-        else:
-            await _validate_mock_retrieve(command, current_user, db)
-
-        async with bin_workflow_command_admission_guard():
-            if isinstance(db, AsyncSession):
-                await _ensure_no_active_bin_workflow(command, db, current_user)
             try:
                 row, _ = await runtime.enqueue(
                     payload,
@@ -834,34 +786,34 @@ async def robot_commands(
                 detail="You do not have permission to retrieve this item"
             )
 
-    async with bin_workflow_command_admission_guard():
-        await _ensure_no_active_bin_workflow(command, db, current_user, worker)
-        async with robot_command_enqueue_guard():
-            try:
-                row, was_replay = await admit_robot_command(
-                    submission_payload,
-                    request_id=request_id,
-                    correlation_id=correlation_id_var.get(),
-                    enrollment_item=enrollment_item,
-                )
-            except CommandRequestConflictError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="request_id was already used with a different payload",
-                ) from exc
-            except CommandQueueFullError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Robot command queue is full",
-                    headers={"Retry-After": "1"},
-                ) from exc
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=str(exc),
-                ) from exc
-            if was_replay is False:
-                await enqueue_persisted(worker, command, row)
+    async with robot_command_enqueue_guard():
+        if isinstance(command, StoreItemCommand):
+            await _validate_direct_store_reservation(command.item or {}, db)
+        try:
+            row, was_replay = await admit_robot_command(
+                submission_payload,
+                request_id=request_id,
+                correlation_id=correlation_id_var.get(),
+                enrollment_item=enrollment_item,
+            )
+        except CommandRequestConflictError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="request_id was already used with a different payload",
+            ) from exc
+        except CommandQueueFullError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Robot command queue is full",
+                headers={"Retry-After": "1"},
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        if was_replay is False:
+            await enqueue_persisted(worker, command, row)
     return CommandAcceptedResponse(
         message="success",
         command_id=row.command_id,
@@ -957,9 +909,7 @@ async def clear_robot_commands(
     reconcile interrupted work.
     """
     await _ensure_laser_auto_calibration_not_running()
-    async with bin_workflow_command_admission_guard():
-        await _ensure_no_active_bin_workflow_mutation(db)
-        await worker.clear_commands()
+    await worker.clear_commands()
     return SuccessResponse()
 
 
@@ -983,8 +933,6 @@ async def control_gripper(
     await _ensure_laser_auto_calibration_not_running()
 
     async with manual_motion_guard(f"gripper:{state}", worker=worker):
-        async with bin_workflow_command_admission_guard():
-            await _ensure_no_active_bin_workflow_mutation(db)
         if state == "release":
             await worker.release_gripper()
         else:
@@ -1241,14 +1189,12 @@ async def set_scale_calibration_params(
     not update item mass.
     """
     try:
-        async with bin_workflow_command_admission_guard():
-            await _ensure_no_active_bin_workflow_mutation(db)
-            ok = await worker.set_scale_calibration_params(
-                full_scale=request.full_scale,
-                calibration_weight=request.calibration_weight,
-                precision=request.precision,
-                division=request.division,
-            )
+        ok = await worker.set_scale_calibration_params(
+            full_scale=request.full_scale,
+            calibration_weight=request.calibration_weight,
+            precision=request.precision,
+            division=request.division,
+        )
         return {"success": ok}
     except HTTPException:
         raise
@@ -1282,9 +1228,7 @@ async def calibrate_scale_zero(
     mutation. The response reports the hardware calibration result.
     """
     try:
-        async with bin_workflow_command_admission_guard():
-            await _ensure_no_active_bin_workflow_mutation(db)
-            return await worker.calibrate_scale_zero()
+        return await worker.calibrate_scale_zero()
     except HTTPException:
         raise
     except ConfigError as exc:
@@ -1317,9 +1261,7 @@ async def calibrate_scale_weight(
     not change inventory mass.
     """
     try:
-        async with bin_workflow_command_admission_guard():
-            await _ensure_no_active_bin_workflow_mutation(db)
-            return await worker.calibrate_scale_weight()
+        return await worker.calibrate_scale_weight()
     except HTTPException:
         raise
     except ConfigError as exc:
@@ -1352,9 +1294,7 @@ async def scale_tare(
     prevents mutation.
     """
     try:
-        async with bin_workflow_command_admission_guard():
-            await _ensure_no_active_bin_workflow_mutation(db)
-            ok = await worker.scale_tare()
+        ok = await worker.scale_tare()
         return {"success": ok}
     except HTTPException:
         raise
@@ -1512,8 +1452,6 @@ async def home_motor(
 
     try:
         async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker):
-            async with bin_workflow_command_admission_guard():
-                await _ensure_no_active_bin_workflow_mutation(db)
             if motor_name == "rotate":
                 original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
                 try:
@@ -1639,8 +1577,6 @@ async def move_motor(
 
     try:
         async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker):
-            async with bin_workflow_command_admission_guard():
-                await _ensure_no_active_bin_workflow_mutation(db)
             if motor_name == "rotate":
                 if await worker._robot._tool.is_rotation_at_position(request.position_mm):
                     return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
@@ -1683,8 +1619,6 @@ async def control_door(
     """
     try:
         async with manual_motion_guard(f"door:{action}", worker=worker):
-            async with bin_workflow_command_admission_guard():
-                await _ensure_no_active_bin_workflow_mutation(db)
             if action == "open":
                 await worker._robot._io.open_door()
             elif action == "close":

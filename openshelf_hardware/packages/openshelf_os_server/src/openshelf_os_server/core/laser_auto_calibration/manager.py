@@ -158,7 +158,7 @@ class LaserAutoCalibrationManager(
 
         try:
             async with manual_motion_guard(
-                "laser_auto_calibration", worker=worker, check_bin_workflow=True
+                "laser_auto_calibration", worker=worker
             ):
                 await self._run_requested_scope(worker, requested_scope)
             await self._set_terminal_state("completed", None)

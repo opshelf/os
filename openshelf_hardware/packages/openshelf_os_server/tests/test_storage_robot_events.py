@@ -213,12 +213,8 @@ async def test_mock_debug_scanner_restores_unavailable_bin_without_motion(
         service = BinStorageService(session)
         unavailable = await service.begin("retrieve", item, None)
         assert unavailable is not None
-        await service.transition(unavailable, "recovery_required", "bin unavailable")
-        await service.reconcile(
-            unavailable,
-            resolution="quarantined",
-            target_item_in_bin=True,
-        )
+        await service.transition(unavailable, "awaiting_operator")
+        await service.close(unavailable)
 
     async with AsyncSessionLocal() as session:
         commands_before_scan = len((await session.execute(select(MockRobotCommand))).scalars().all())
@@ -231,16 +227,12 @@ async def test_mock_debug_scanner_restores_unavailable_bin_without_motion(
     assert response.json() == {"message": "success"}
 
     event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
-    assert event["kind"] == "bin_workflow_updated"
-    assert event["payload"]["operation"] == "restore"
-    assert event["payload"]["state"] == "awaiting_operator"
-
+    assert event["kind"] == "tray_scanned"
+    assert event["payload"] == "scanner-restore-bin"
     async with AsyncSessionLocal() as session:
-        workflow = await BinStorageService(session).active_workflow()
-        assert workflow is not None
-        assert workflow.operation == "restore"
-        assert workflow.state == "awaiting_operator"
+        assert await BinStorageService(session).active_workflows() == []
         assert len((await session.execute(select(MockRobotCommand))).scalars().all()) == commands_before_scan
+
 
 
 @pytest.mark.anyio
@@ -284,7 +276,7 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
         None,
     )
     async with AsyncSessionLocal() as session:
-        workflow = await BinStorageService(session).active_workflow()
+        workflow = (await BinStorageService(session).active_workflows())[0]
         assert workflow is not None
         assert workflow.state == "awaiting_operator"
 
@@ -293,7 +285,7 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
         None,
     )
     async with AsyncSessionLocal() as session:
-        workflow = await BinStorageService(session).active_workflow()
+        workflow = (await BinStorageService(session).active_workflows())[0]
         assert workflow is not None
         assert workflow.state == "awaiting_operator"
         assert len((await session.execute(select(MockRobotCommand))).scalars().all()) == commands_before_scans
@@ -418,7 +410,7 @@ async def test_shutdown_drains_completed_return_before_unsubscribing_listener(
         workflow = await session.get(bin_storage.StorageBinWorkflow, workflow_id)
         assert workflow is not None
         assert workflow.state == "completed"
-        assert BinStorageService(session).physical_return_completed(workflow)
+        assert (workflow.resolution or {}).get("physical_return_completed")
 
 
 @pytest.mark.anyio
