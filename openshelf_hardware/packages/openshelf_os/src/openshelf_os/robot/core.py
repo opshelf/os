@@ -4,10 +4,11 @@ import logging
 import sentry_sdk
 
 from pathlib import Path as _Path
-from typing import Any, Callable, Dict, Iterable, Optional, List, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, List, TYPE_CHECKING
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import MotionSafetyInterlock
+from hardware.motor import MotorStatus
 from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
 from openshelf_os.serial_ports import (
@@ -55,6 +56,28 @@ logger = logging.getLogger(__name__)
 InitProgressReporter = Callable[[str, str, str, Optional[str]], None]
 
 _INIT_MOTOR_COMPONENTS = ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]
+
+class PowerRail(NamedTuple):
+    supplies: str
+    #: Motors that lose their incremental encoder reference with the rail.
+    axes: tuple[str, ...]
+    #: Whether the gripper servo drops too, so it must reconfigure on next use.
+    gripper: bool = False
+
+
+# The four switched power rails. Asserting a pin CUTS that rail; clearing it --
+# the default state -- applies power.
+POWER_RAILS: Dict[str, PowerRail] = {
+    "pwr_out0": PowerRail(
+        "tool drives and gripper",
+        ("x_axis", "y_axis", "z_axis", "stage", "rotate"),
+        gripper=True,
+    ),
+    "pwr_out1": PowerRail("IO box", ("door",)),
+    "pwr_out2": PowerRail("peripherals", ()),
+    "pwr_out3": PowerRail("aux", ()),
+}
+POWER_CYCLE_HOLD_S = 3.0
 
 
 class Robot:
@@ -284,6 +307,60 @@ class Robot:
         cabinet = getattr(self, "_cabinet", None)
         if cabinet is not None:
             await cabinet.stop()
+
+    async def power_cycle_rail(self, rail: str) -> tuple[str, ...]:
+        """Cut and restore one switched power rail. Returns the axes it dropped.
+
+        Drive settings that only latch at power-on need this: any DI/DO function
+        change is written, verified and saved, yet stays inert until the drive
+        restarts (CL57RS manual 4.3.2). Anything on the rail comes back with its
+        RAM parameters lost and, for a motor, an incremental encoder that no
+        longer knows where it is -- so those axes are marked unhomed. This
+        returns as soon as power is restored; the caller re-initialises once the
+        hardware is up.
+        """
+        if rail not in POWER_RAILS:
+            raise ConfigError(f"Unknown power rail '{rail}'")
+
+        spec = POWER_RAILS[rail]
+
+        for name in spec.axes:
+            motor = self._get_motor_by_name(name)
+            if motor is not None and motor._status is MotorStatus.MOVING:
+                raise MotorError(f"Refusing to power cycle {rail} while {name} is moving")
+
+        gpio = getattr(self, "_gpio", None)
+        if gpio is None or gpio.has_pin(rail) is False:
+            raise ConfigError(f"GPIO pin {rail} is not configured")
+
+        output = gpio.output(rail)
+        self._logger.warning(
+            "Power cycling rail",
+            extra={"pin": rail, "supplies": spec.supplies, "hold_s": POWER_CYCLE_HOLD_S},
+        )
+
+        output.write(True)  # asserted cuts power
+        try:
+            await asyncio.sleep(POWER_CYCLE_HOLD_S)
+        finally:
+            output.write(False)  # cleared restores it
+
+        for name in spec.axes:
+            motor = self._get_motor_by_name(name)
+            if motor is None:
+                continue
+            # Still booting; nothing may move on stale coordinates.
+            motor._is_homed = False
+            motor._hard_stopped = True
+            motor._cur_pos = None
+
+        if spec.gripper is True:
+            gripper = getattr(getattr(self, "_tool", None), "_gs", None)
+            if gripper is not None:
+                # _ensure_configured() reconfigures it on next use.
+                gripper._configured = False
+
+        return spec.axes
 
     async def idle(self) -> None:
         idle_position = await self._tool.get_param("IDLE_POSITION")
