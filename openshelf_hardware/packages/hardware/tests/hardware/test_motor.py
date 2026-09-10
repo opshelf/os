@@ -265,6 +265,25 @@ async def test_mismatched_persistent_brake_config_repairs_in_order_and_saves(
 
 
 @pytest.mark.asyncio
+async def test_repairing_di1_demands_a_drive_power_cycle(mock_controller, caplog):
+    """Manual 4.3.2 note 2: an input function only takes effect after a restart."""
+    motor = Motor(mock_controller, y_axis_params())
+    reads = persistent_brake_registers({0x0145: 0x88})
+
+    def read(_unit, address):
+        value = reads[address]
+        if address == 0x0145:
+            reads[address] = 0x80
+        return value
+
+    mock_controller.read_holding_registers.side_effect = read
+
+    await motor.configure()
+
+    assert "POWER-CYCLE THE DRIVE" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_persistent_brake_repair_raises_when_eeprom_save_fails(mock_controller):
     motor = Motor(mock_controller, y_axis_params())
     reads = persistent_brake_registers({0x1901: 0xAAAA})
@@ -355,6 +374,8 @@ async def test_brake_diagnostics_include_verified_sequencing_parameters(mock_con
         0x017B: 0x02,
         0x000F: 0,
         0x0145: 0x80,
+        0x0179: 0x01,
+        0x1003: 0x20,  # complete, enable bit clear
     }
     mock_controller.read_holding_registers.side_effect = (
         lambda _unit, address: expected_registers[address]
@@ -363,6 +384,8 @@ async def test_brake_diagnostics_include_verified_sequencing_parameters(mock_con
     assert await motor.get_brake_output_diagnostics() == {
         "enable_input_function": 0x80,
         "software_enable": 0,
+        "digital_input_state": 0x01,
+        "drive_enabled": 0,
         "control_mode": 2,
         "command_pulses_per_revolution": 10000,
         "encoder_resolution_cpr": 4000,
@@ -1185,7 +1208,7 @@ async def test_y_axis_home_triggers_after_fresh_brake_readback(mock_controller):
 
     await motor.home()
 
-    mock_controller.read_holding_registers.assert_awaited_once_with(1, 0x0159)
+    mock_controller.read_holding_registers.assert_any_call(1, 0x0159)
     mock_controller.write_single_register.assert_any_call(1, 0x6002, 0x10)
     # Homing parks after the zero write, not inside wait_for_move.
     calls = mock_controller.write_single_register.await_args_list
@@ -1301,6 +1324,34 @@ async def test_fault_and_timeout_leave_the_axis_energised(mock_controller, finis
         await motor._finish_timeout(1.0, False, state)
 
     assert enable_writes(mock_controller) == []
+
+
+@pytest.mark.asyncio
+async def test_disable_warns_when_the_drive_stays_enabled(mock_controller, caplog):
+    """Pr0.07=0 falls back to the IO enable, so the result is read, not assumed."""
+    motor = Motor(
+        mock_controller,
+        make_motor_params(motor_name="y_axis", brake_output_function=0x24),
+    )
+    # Motion status with the enable bit still set.
+    mock_controller.read_holding_registers.return_value = 1 << 1
+
+    await motor.disable()
+
+    assert "still reports enabled" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_disable_is_quiet_when_the_drive_de_energises(mock_controller, caplog):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(motor_name="y_axis", brake_output_function=0x24),
+    )
+    mock_controller.read_holding_registers.return_value = 0
+
+    await motor.disable()
+
+    assert "still reports enabled" not in caplog.text
 
 
 @pytest.mark.asyncio
