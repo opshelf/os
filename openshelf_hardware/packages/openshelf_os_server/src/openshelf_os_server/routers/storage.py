@@ -1,5 +1,6 @@
 """Storage management endpoints with authorization."""
 from __future__ import annotations
+from openshelf_os_server.core.manual_motion import robot_command_enqueue_guard
 from openshelf_os_server.documentation import BooleanSuccess, MessageResponse, response_docs
 from openshelf_os_server.core.mass import MASS_FIELDS, validate_mass
 
@@ -22,23 +23,11 @@ import openshelf_os_server.core.robot as robot_core
 from ..database.models import (
     Item,
     ItemLocation,
-    StorageBin,
     StorageBinItem,
     StorageBinWorkflow,
     User,
 )
-from ..core.bin_storage import (
-    BinStorageService,
-    BinWorkflowConflict,
-    RECOVERY_RECONCILE_CLAIMED,
-    RECOVERY_RETRY_CLAIMED,
-    bin_workflow_command_admission_guard,
-    ensure_worker_homed_for_bin_motion,
-    ensure_worker_queue_empty_for_bin_start,
-    is_io_box_occupied,
-    is_reserved_bin_barcode,
-    is_reserved_bin_location,
-)
+from ..core.bin_storage import BinStorageService, BinWorkflowConflict, ensure_worker_homed_for_bin_motion, ensure_worker_queue_empty_for_bin_start, is_io_box_occupied, is_reserved_bin_barcode, is_reserved_bin_location
 from ..core.mock_robot import get_mock_robot_runtime
 from ..core.storage import StorageService
 from ..core.validation import CellOccupiedError, ValidationError
@@ -50,7 +39,7 @@ from .auth_deps import (
     require_relay_or_permissions,
 )
 from ..database.session import get_db
-from openshelf_os.storage import CellStatus, StorageGrid
+from openshelf_os.storage import StorageGrid
 from openshelf_os_server.core.storage_module import StorageModuleSideDto
 from openshelf_os_server.settings import get_operating_mode
 
@@ -167,19 +156,12 @@ class BinWorkflowCreate(BaseModel):
     storage_mode: Optional[Literal["bin", "direct"]] = None
 
 
-class BinWorkflowReconcile(BaseModel):
-    resolution: str = Field(pattern=r"^(returned|quarantined)$")
-    target_item_in_bin: Optional[bool] = None
-    confirmed_item_ids: Optional[List[int]] = None
-
-
 class BinWorkflowReturn(BaseModel):
-    target_item_in_bin: Optional[bool] = None
-    confirmed_item_ids: Optional[List[int]] = None
+    confirmed_item_ids: List[int]
 
 
-class BinWorkflowScan(BaseModel):
-    code: str = Field(min_length=1, max_length=50, pattern=r".*\S.*")
+class TrayBarcode(BaseModel):
+    barcode: str = Field(min_length=1, max_length=50)
 
 
 class StorageCellResponse(BaseModel):
@@ -243,14 +225,14 @@ class BinContentsResponse(BinItemSummary):
 
 class BinWorkflowResponse(BaseModel):
     id: str
-    operation: str = Field(description="store, retrieve, or restore for an unavailable bin")
-    state: str = Field(description="Current workflow state; recovery_required needs operator reconciliation")
+    operation: str = Field(description="store, retrieve, or return")
+    state: str = Field(description="Current tray interaction state")
     compartment: int | None = Field(
         default=None, ge=1, le=1024,
         description="Persisted target compartment number, starting at 1 at the top left, left-to-right then top-to-bottom at IO; null when no target is assigned or the bin is undivided.",
     )
     bin: BinResponse
-    item: BinItemSummary
+    item: BinItemSummary | None
     error: str | None
     history: list[dict[str, Any]]
     resolution: dict[str, Any] | None
@@ -267,8 +249,8 @@ class BinWorkflowStartResponse(BinWorkflowEnvelope):
     storage_mode: Literal["direct", "bin"]
 
 
-class BinScanResponse(BinWorkflowEnvelope):
-    rejected: bool
+class BinWorkflowsResponse(BaseModel):
+    workflows: list[BinWorkflowResponse]
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +311,7 @@ def _build_item_payload(
         locations=serialized_locations,
         created_at=item.created_at.isoformat() if item.created_at else "",
         updated_at=item.updated_at.isoformat() if item.updated_at else "",
-        can_retrieve=can_user_retrieve_item(current_user, item),
+        can_retrieve=can_user_retrieve_item(current_user, item) and (bin_payload is None or bin_payload["status"] == "at_home"),
         bin=bin_payload,
     )
 
@@ -457,22 +439,11 @@ async def get_bins(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     return {"bins": await service.list_bins()}
 
 
-@router.get(
-    "/bin-workflows/active",
-    dependencies=[Depends(require_relay_or_permissions("storage:read"))],
-    summary="Read the active bin workflow",
-    responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403)),
-)
+@router.get("/bin-workflows/active", responses=response_docs(model=BinWorkflowsResponse, errors=(401, 403)), dependencies=[Depends(require_relay_or_permissions("storage:read"))])
 async def get_active_bin_workflow(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
-    """Read the active bin workflow.
-
-    Returns `workflow=null` when no workflow owns the device. Otherwise inspect its state
-    and error before offering the next operator action. A workflow reserves the robot until
-    the bin is returned or reconciled.
-    """
+    """List unfinished take, place, and return interactions. Outside trays do not reserve the robot; completed interactions are omitted."""
     service = BinStorageService(session)
-    workflow = await service.active_workflow()
-    return {"workflow": await service.serialize_workflow(workflow) if workflow else None}
+    return {"workflows": [await service.serialize_workflow(w) for w in await service.active_workflows()]}
 
 
 @router.post(
@@ -489,8 +460,8 @@ async def create_bin_workflow(
     """Start a bin storage workflow.
 
     Chooses storage for the requested item and operation. A `storage_mode=direct` response
-    with `workflow=null` means no bin workflow was started; submit an ordinary command
-    separately. A bin result reserves the robot and starts retrieval of the bin. Retrieval
+    with `workflow=null` means no tray workflow was started; submit an ordinary command
+    separately. A tray result starts delivery to the IO box. Retrieval
     requires access to every item in that bin. Clear the IO box first; conflicts return
     `409` or `423`.
     """
@@ -533,7 +504,7 @@ async def create_bin_workflow(
     worker = robot_core.robot_worker
     if get_operating_mode() == common.OperatingMode.mock:
         try:
-            async with bin_workflow_command_admission_guard():
+            async with robot_command_enqueue_guard():
                 if await get_mock_robot_runtime().has_active_commands():
                     raise BinWorkflowConflict("Robot has queued commands")
                 workflow = await service.begin(request.operation, item, current_user.id)
@@ -554,8 +525,7 @@ async def create_bin_workflow(
 
     if worker is None:
         try:
-            async with bin_workflow_command_admission_guard():
-                workflow = await service.begin(request.operation, item, current_user.id)
+            workflow = await service.begin(request.operation, item, current_user.id)
         except BinWorkflowConflict as exc:
             raise HTTPException(status_code=423, detail=str(exc)) from exc
         if workflow is None:
@@ -565,26 +535,26 @@ async def create_bin_workflow(
                 )
             return {"storage_mode": "direct", "workflow": None}
         workflow.error = "Robot worker is unavailable"
-        await service.transition(workflow, "recovery_required", workflow.error)
+        await service.fail(workflow, workflow.error)
     else:
         try:
-            if await is_io_box_occupied(worker):
-                raise HTTPException(
-                    status_code=409,
-                    detail="Remove the item from the IO box before retrieving the storage bin",
-                )
-            async with bin_workflow_command_admission_guard():
+            async with robot_command_enqueue_guard():
+                if await is_io_box_occupied(worker):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Remove the item from the IO box before retrieving the storage bin",
+                    )
                 ensure_worker_homed_for_bin_motion(worker)
                 await ensure_worker_queue_empty_for_bin_start(worker)
                 workflow = await service.begin(request.operation, item, current_user.id)
                 if workflow is not None:
                     await service.start_retrieval(workflow, worker)
-            if workflow is None:
-                if request.operation == "store" and request.storage_mode == "bin":
-                    raise HTTPException(
-                        status_code=409, detail="No compatible storage bin is available"
-                    )
-                return {"storage_mode": "direct", "workflow": None}
+                if workflow is None:
+                    if request.operation == "store" and request.storage_mode == "bin":
+                        raise HTTPException(
+                            status_code=409, detail="No compatible storage bin is available"
+                        )
+                    return {"storage_mode": "direct", "workflow": None}
             try:
                 await service.publish_workflow(worker, workflow)
             except Exception as publish_error:
@@ -596,487 +566,97 @@ async def create_bin_workflow(
         except Exception as exc:
             if workflow is not None:
                 workflow.error = str(exc)
-                await service.transition(workflow, "recovery_required", workflow.error)
+                await service.fail(workflow, workflow.error)
             else:
                 raise
     return {"storage_mode": "bin", "workflow": await service.serialize_workflow(workflow)}
 
 
-@router.post(
-    "/bin-workflows/{workflow_id}/scan",
-    dependencies=[Depends(require_relay_or_permissions("storage:write"))],
-    summary="Submit a simulated bin scan",
-    responses=response_docs(model=BinScanResponse, errors=(401, 403, 404, 409)),
-)
-async def scan_mock_bin_workflow(
-    workflow_id: str,
-    request: BinWorkflowScan,
-    session: AsyncSession = Depends(get_db),
-) -> Dict[str, Any]:
-    """Submit a simulated bin scan.
-
-    Mock-only optional item/tray identity confirmation while awaiting the operator.
-    Scanning never advances the normal workflow or starts motion.
-    `rejected=true` means the scan did not advance the workflow. Hardware modes return
-    `404`; an incompatible workflow state returns `409`.
-    """
-    if get_operating_mode() != common.OperatingMode.mock:
-        raise HTTPException(status_code=404, detail="Mock bin scanner is unavailable")
-    service = BinStorageService(session)
+async def _tray_workflow(session: AsyncSession, workflow_id: str) -> StorageBinWorkflow:
     workflow = await session.get(StorageBinWorkflow, workflow_id)
-    if workflow is None or workflow.state not in {"awaiting_operator"}:
-        raise HTTPException(status_code=409, detail="Workflow is not waiting for a scan")
-    accepted = await service.handle_mock_scan(workflow, request.code)
-    return {
-        "workflow": await service.serialize_workflow(workflow),
-        "rejected": not accepted,
-    }
+    if workflow is None:
+        raise HTTPException(status_code=404, detail="Tray workflow not found")
+    return workflow
 
 
-@router.post(
-    "/bin-workflows/{workflow_id}/done",
-    dependencies=[Depends(require_relay_or_permissions("storage:write"))],
-    summary="Finish operator action and return the tray",
-    responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422, 503)),
-)
-async def return_bin_workflow(
-    workflow_id: str,
-    request: BinWorkflowReturn,
-    session: AsyncSession = Depends(get_db),
-) -> Dict[str, Any]:
-    """Finish operator action and return the tray.
-
-    Done confirms the operator's item/contents state and starts returning the tray home.
-    No item or tray scan is required. Use `target_item_in_bin=true` after adding the
-    item and `false` after taking it. The tray must be present in the IO box. This may
-    move hardware; completion is reflected in workflow state and robot events. Recovery
-    paths require the requested content confirmation. Concurrent recovery, missing bin
-    presence, or an incompatible state returns `409`.
-    """
+@router.post("/bin-workflows/returns", responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422)), dependencies=[Depends(require_permissions("storage:write"))])
+async def begin_tray_return(request: TrayBarcode, session: AsyncSession = Depends(get_db),
+                            current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Resolve a tray barcode and open contents selection without moving hardware. All known contents are selected by default, including the checkout target. An already stored tray returns 409."""
     service = BinStorageService(session)
+    try:
+        workflow = await service.begin_return(request.barcode, current_user.id)
+    except BinWorkflowConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if workflow is None:
+        raise HTTPException(status_code=404, detail="Tray barcode not found")
+    if get_operating_mode() == common.OperatingMode.mock:
+        runtime = get_mock_robot_runtime()
+        runtime.set_bin_io_box_occupied(True)
+        await runtime.publish_status()
+    elif robot_core.robot_worker is not None:
+        await service.publish_workflow(robot_core.robot_worker, workflow)
+    return {"workflow": await service.serialize_workflow(workflow)}
 
-    async with bin_workflow_command_admission_guard():
-        workflow = await session.get(StorageBinWorkflow, workflow_id)
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Bin workflow not found")
-        if workflow.state not in {"awaiting_operator", "recovery_required"}:
-            raise HTTPException(status_code=409, detail="Bin workflow is not ready to return")
 
-        confirmed_ids: Optional[set[int]] = None
-        if workflow.operation == "restore":
-            if request.confirmed_item_ids is None:
-                raise HTTPException(status_code=422, detail="Confirmed bin contents are required")
-            candidate_ids = set((workflow.resolution or {}).get("candidate_item_ids", []))
-            confirmed_ids = set(request.confirmed_item_ids)
-            if not confirmed_ids.issubset(candidate_ids):
-                raise HTTPException(status_code=422, detail="Confirmed bin contents are invalid")
-        else:
-            if request.target_item_in_bin is None:
-                raise HTTPException(status_code=422, detail="Target item state is required")
+@router.post("/bin-workflows/{workflow_id}/close", responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422)), dependencies=[Depends(require_permissions("storage:write"))])
+async def close_tray_workflow(workflow_id: str, session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Finish a take or place instruction and leave its tray outside. Closing a return dialog cancels that return without changing contents or moving hardware. No IO occupancy is required."""
+    service = BinStorageService(session)
+    workflow = await _tray_workflow(session, workflow_id)
+    try:
+        await service.close(workflow)
+    except BinWorkflowConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if get_operating_mode() == common.OperatingMode.mock:
+        runtime = get_mock_robot_runtime()
+        runtime.set_bin_io_box_occupied(False)
+        await runtime.publish_status()
+    elif robot_core.robot_worker is not None:
+        await service.publish_workflow(robot_core.robot_worker, workflow)
+    return {"workflow": await service.serialize_workflow(workflow)}
 
-        bin_row = await session.get(StorageBin, workflow.bin_id)
-        if bin_row is None:
-            raise HTTPException(status_code=409, detail="Workflow tray no longer exists")
-        compartment_error = await service._compartment_error(
-            workflow, bin_row, sorted(confirmed_ids) if confirmed_ids is not None else None
-        )
-        if compartment_error:
-            raise HTTPException(status_code=409, detail=compartment_error)
 
-        recovery_claim: Optional[str] = None
-        is_recovery_return = workflow.state == "recovery_required"
-        if is_recovery_return:
-            workflow = await service.claim_recovery_workflow(workflow_id, RECOVERY_RETRY_CLAIMED)
-            if workflow is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Recovery workflow is already being handled",
-                )
-            recovery_claim = workflow.recovery_claim
-            if recovery_claim is None:  # pragma: no cover - guarded by claim
-                raise RuntimeError("Recovery workflow claim was not persisted")
-            if service.physical_return_completed(workflow):
-                await service.release_recovery_claim(
-                    workflow,
-                    expected_state=RECOVERY_RETRY_CLAIMED,
-                    claim=recovery_claim,
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail="Physical bin return completed; mark the bin returned or unavailable",
-                )
-
-        if workflow.operation == "restore":
-            assert confirmed_ids is not None
-            workflow.resolution = {
-                **(workflow.resolution or {}),
-                "confirmed_item_ids": sorted(confirmed_ids),
-            }
-        else:
-            workflow.resolution = {
-                **(workflow.resolution or {}),
-                "target_item_in_bin": request.target_item_in_bin,
-            }
-
-        if get_operating_mode() == common.OperatingMode.mock:
-            if recovery_claim is None:
-                await service.transition(workflow, "returning_bin", "operator pressed Done")
-            elif not await service.transition_recovery_claim(
-                workflow,
-                expected_state=RECOVERY_RETRY_CLAIMED,
-                claim=recovery_claim,
-                state="returning_bin",
-                detail="operator pressed Done after interruption",
-                retain_claim=True,
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail="Recovery workflow is already being handled",
-                )
-            await service.complete_return(workflow)
-            mock_runtime = get_mock_robot_runtime()
-            mock_runtime.set_bin_io_box_occupied(False)
-            await mock_runtime.publish_status()
-        else:
-            worker = robot_core.robot_worker
-            if worker is None:
-                if recovery_claim is not None:
-                    await service.release_recovery_claim(
-                        workflow,
-                        expected_state=RECOVERY_RETRY_CLAIMED,
-                        claim=recovery_claim,
-                    )
-                raise HTTPException(status_code=503, detail="Robot worker is unavailable")
-
-            if recovery_claim is not None:
-                try:
-                    if not await is_io_box_occupied(worker):
-                        raise BinWorkflowConflict("Place the bin in the IO box before storing it")
-                    ensure_worker_homed_for_bin_motion(worker)
-                except BinWorkflowConflict as exc:
-                    await service.release_recovery_claim(
-                        workflow,
-                        expected_state=RECOVERY_RETRY_CLAIMED,
-                        claim=recovery_claim,
-                    )
-                    raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-            restore_home = None
-            return_home = None
-            if (
-                workflow.operation == "restore" or recovery_claim is not None
-            ) and robot_core.robot_instance is not None:
-                bin_row = await session.get(StorageBin, workflow.bin_id)
-                if bin_row is not None:
-                    return_home = (bin_row.side, bin_row.shelf_idx, bin_row.cell_idx)
-                    if workflow.operation == "restore":
-                        restore_home = return_home
-                    robot_core.robot_instance.set_cell_status(*return_home, CellStatus.AVAILABLE)
-
-            if recovery_claim is None:
-                try:
-                    await service.start_return(workflow, worker, command_admitted=True)
-                except BinWorkflowConflict as exc:
-                    if restore_home is not None and robot_core.robot_instance is not None:
-                        robot_core.robot_instance.set_cell_status(
-                            *restore_home, CellStatus.MAINTENANCE
-                        )
-                    raise HTTPException(status_code=409, detail=str(exc)) from exc
-                if workflow.state == "recovery_required":
-                    raise HTTPException(
-                        status_code=409,
-                        detail=workflow.error or "Failed to return the storage bin",
-                    )
-            else:
-                claim_state = RECOVERY_RETRY_CLAIMED
-                try:
-                    workflow.error = None
-                    if not await service.transition_recovery_claim(
-                        workflow,
-                        expected_state=RECOVERY_RETRY_CLAIMED,
-                        claim=recovery_claim,
-                        state="returning_bin",
-                        detail="operator pressed Done after interruption",
-                        retain_claim=True,
-                    ):
-                        raise BinWorkflowConflict("Recovery workflow is already being handled")
-                    claim_state = "returning_bin"
-                    await service.publish_workflow(worker, workflow)
-                    await service.enqueue_return(workflow, worker, command_admitted=True)
-                except Exception as exc:
-                    workflow.error = str(exc)
-                    if not await service.transition_recovery_claim(
-                        workflow,
-                        expected_state=claim_state,
-                        claim=recovery_claim,
-                        state="recovery_required",
-                        detail=workflow.error,
-                    ):
-                        raise HTTPException(
-                            status_code=409,
-                            detail="Recovery workflow is already being handled",
-                        ) from exc
-                    if restore_home is not None and robot_core.robot_instance is not None:
-                        robot_core.robot_instance.set_cell_status(
-                            *restore_home, CellStatus.MAINTENANCE
-                        )
-                    await service.publish_workflow(worker, workflow)
-                    raise HTTPException(status_code=409, detail=workflow.error) from exc
+@router.post("/bin-workflows/{workflow_id}/store", responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422)), dependencies=[Depends(require_permissions("storage:write"))])
+async def store_returned_tray(workflow_id: str, request: BinWorkflowReturn,
+                              session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Submit selected known contents and return the tray from the IO bay to its shelf. Requires an occupied IO bay and an available, homed robot. Repeated submission of the same selection does not repeat motion."""
+    service = BinStorageService(session)
+    workflow = await _tray_workflow(session, workflow_id)
+    worker = robot_core.robot_worker
+    mocking = get_operating_mode() == common.OperatingMode.mock
+    try:
+        async with robot_command_enqueue_guard():
+            if workflow.state == "awaiting_operator":
+                if mocking:
+                    if await get_mock_robot_runtime().has_active_commands():
+                        raise BinWorkflowConflict("Robot has queued commands")
+                    if not get_mock_robot_runtime().is_bin_io_box_occupied():
+                        raise BinWorkflowConflict("Place the tray in the IO box before storing it")
                 else:
-                    await service.clear_recovery_claim(
-                        workflow,
-                        expected_state="returning_bin",
-                        claim=recovery_claim,
-                    )
-
-    return {"workflow": await service.serialize_workflow(workflow)}
-
-
-@router.post(
-    "/bin-workflows/{workflow_id}/cancel-return",
-    dependencies=[Depends(require_relay_or_permissions("storage:write"))],
-    summary="Cancel an unavailable bin return",
-    responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409)),
-)
-async def cancel_unavailable_bin_return(
-    workflow_id: str,
-    session: AsyncSession = Depends(get_db),
-) -> Dict[str, Any]:
-    """Cancel an unavailable bin return.
-
-    Cancels a return that cannot proceed using the workflow service's state checks. This is
-    a workflow recovery action, not a general command cancellation. Inspect the returned
-    workflow and resolve physical bin placement before resuming.
-    """
-    service = BinStorageService(session)
-    async with bin_workflow_command_admission_guard():
-        workflow = await session.get(StorageBinWorkflow, workflow_id)
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Bin workflow not found")
-        try:
-            await service.cancel_unavailable_return(workflow)
-        except BinWorkflowConflict as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if robot_core.robot_instance is not None:
-        bin_row = await session.get(StorageBin, workflow.bin_id)
-        if bin_row is not None:
-            robot_core.robot_instance.set_cell_status(
-                bin_row.side, bin_row.shelf_idx, bin_row.cell_idx, CellStatus.MAINTENANCE
-            )
-    if robot_core.robot_worker is not None:
-        await service.publish_workflow(robot_core.robot_worker, workflow)
-    return {"workflow": await service.serialize_workflow(workflow)}
-
-
-@router.post(
-    "/bin-workflows/{workflow_id}/retry",
-    dependencies=[Depends(require_permissions("storage:write"))],
-    summary="Retry a bin workflow recovery",
-    responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 503)),
-)
-async def retry_bin_workflow(
-    workflow_id: str,
-    session: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    target_item_in_bin: Optional[bool] = None,
-) -> Dict[str, Any]:
-    """Retry a bin workflow recovery.
-
-    Claims and retries a workflow in recovery. Requires the `admin` role and
-    `storage:write`; the relay service credential is not accepted. Concurrent recovery or
-    unsuitable physical state returns `409`. Inspect workflow state after the request.
-    """
-    if current_user.role.name != "admin":
-        raise HTTPException(status_code=403, detail="Administrator role required")
-    service = BinStorageService(session)
-    workflow = await session.get(StorageBinWorkflow, workflow_id)
-    if workflow is None:
-        raise HTTPException(status_code=404, detail="Bin workflow not found")
-    async with bin_workflow_command_admission_guard():
-        workflow = await service.claim_recovery_workflow(workflow_id, RECOVERY_RETRY_CLAIMED)
-        if workflow is None:
-            raise HTTPException(
-                status_code=409, detail="Recovery workflow is already being handled"
-            )
-        claim = workflow.recovery_claim
-        if claim is None:  # pragma: no cover - guarded by claim_recovery_workflow
-            raise RuntimeError("Recovery workflow claim was not persisted")
-        if service.physical_return_completed(workflow):
-            await service.release_recovery_claim(
-                workflow, expected_state=RECOVERY_RETRY_CLAIMED, claim=claim
-            )
-            raise HTTPException(
-                status_code=409,
-                detail="Physical bin return completed; workflow must be reconciled",
-            )
-        worker = robot_core.robot_worker
-        if worker is None:
-            await service.release_recovery_claim(
-                workflow, expected_state=RECOVERY_RETRY_CLAIMED, claim=claim
-            )
-            raise HTTPException(status_code=503, detail="Robot worker is unavailable")
-        previous_state = next(
-            (
-                entry.get("state")
-                for entry in reversed(workflow.history or [])
-                if entry.get("state") != "recovery_required"
-            ),
-            "retrieving_bin",
-        )
-        target_state = "returning_bin" if previous_state == "returning_bin" else "retrieving_bin"
-        io_occupied = await is_io_box_occupied(worker)
-        if target_state == "retrieving_bin" and io_occupied:
-            await service.release_recovery_claim(
-                workflow, expected_state=RECOVERY_RETRY_CLAIMED, claim=claim
-            )
-            raise HTTPException(
-                status_code=409,
-                detail="Remove the item from the IO box before retrieving the storage bin",
-            )
-        if target_state == "returning_bin" and not io_occupied:
-            await service.release_recovery_claim(
-                workflow, expected_state=RECOVERY_RETRY_CLAIMED, claim=claim
-            )
-            raise HTTPException(
-                status_code=409,
-                detail="Place the bin in the IO box before storing it",
-            )
-        try:
-            ensure_worker_homed_for_bin_motion(worker)
-        except BinWorkflowConflict as exc:
-            await service.release_recovery_claim(
-                workflow, expected_state=RECOVERY_RETRY_CLAIMED, claim=claim
-            )
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        if target_state == "returning_bin" and target_item_in_bin is not None:
-            workflow.resolution = {
-                **(workflow.resolution or {}),
-                "target_item_in_bin": target_item_in_bin,
-            }
-        claim_state = RECOVERY_RETRY_CLAIMED
-        try:
-            if target_state == "retrieving_bin":
-                await ensure_worker_queue_empty_for_bin_start(worker)
-            workflow.error = None
-            if not await service.transition_recovery_claim(
-                workflow,
-                expected_state=RECOVERY_RETRY_CLAIMED,
-                claim=claim,
-                state=target_state,
-                detail="admin retry",
-                retain_claim=True,
-            ):
-                raise BinWorkflowConflict("Recovery workflow is already being handled")
-            claim_state = target_state
-            if target_state == "returning_bin":
-                if workflow.operation == "restore" and robot_core.robot_instance is not None:
-                    bin_row = await session.get(StorageBin, workflow.bin_id)
-                    if bin_row is not None:
-                        robot_core.robot_instance.set_cell_status(
-                            bin_row.side,
-                            bin_row.shelf_idx,
-                            bin_row.cell_idx,
-                            CellStatus.AVAILABLE,
-                        )
-                await service.enqueue_return(workflow, worker, command_admitted=True)
-            else:
-                await service.start_retrieval(workflow, worker)
-        except Exception as exc:
-            workflow.error = str(exc)
-            if not await service.transition_recovery_claim(
-                workflow,
-                expected_state=claim_state,
-                claim=claim,
-                state="recovery_required",
-                detail=workflow.error,
-            ):
-                raise HTTPException(
-                    status_code=409, detail="Recovery workflow is already being handled"
-                ) from exc
-        else:
-            await service.clear_recovery_claim(workflow, expected_state=target_state, claim=claim)
-    await service.publish_workflow(worker, workflow)
-    return {"workflow": await service.serialize_workflow(workflow)}
-
-
-@router.post(
-    "/bin-workflows/{workflow_id}/reconcile",
-    dependencies=[Depends(require_permissions("storage:write"))],
-    summary="Reconcile a bin after manual recovery",
-    responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422)),
-)
-async def reconcile_bin_workflow(
-    workflow_id: str,
-    request: BinWorkflowReconcile,
-    session: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Dict[str, Any]:
-    """Reconcile a bin after manual recovery.
-
-    Records an operator-confirmed `returned` or `quarantined` resolution and reconciles
-    contents. Requires the `admin` role and `storage:write`. This updates inventory/workflow
-    state based on a physical recovery already performed; it is not a substitute for moving
-    the bin. Conflicting claims or invalid confirmations are rejected.
-    """
-    if current_user.role.name != "admin":
-        raise HTTPException(status_code=403, detail="Administrator role required")
-    service = BinStorageService(session)
-    workflow = await session.get(StorageBinWorkflow, workflow_id)
-    if workflow is None:
-        raise HTTPException(status_code=404, detail="Bin workflow not found")
-    confirmed_ids: Optional[set[int]] = None
-    if request.resolution == "returned" and workflow.operation == "restore":
-        if request.confirmed_item_ids is None:
-            raise HTTPException(status_code=422, detail="Confirmed bin contents are required")
-        candidate_ids = set((workflow.resolution or {}).get("candidate_item_ids", []))
-        confirmed_ids = set(request.confirmed_item_ids)
-        if not confirmed_ids.issubset(candidate_ids):
-            raise HTTPException(status_code=422, detail="Confirmed bin contents are invalid")
-    elif request.resolution == "returned" and request.target_item_in_bin is None:
-        raise HTTPException(status_code=422, detail="Target item state is required")
-    async with bin_workflow_command_admission_guard():
-        workflow = await service.claim_recovery_workflow(
-            workflow_id,
-            RECOVERY_RECONCILE_CLAIMED,
-            source_states=("awaiting_operator", "recovery_required"),
-        )
-        if workflow is None:
-            raise HTTPException(
-                status_code=409,
-                detail="Bin workflow cannot be reconciled from its current state",
-            )
-        claim = workflow.recovery_claim
-        if claim is None:  # pragma: no cover - guarded by claim_recovery_workflow
-            raise RuntimeError("Recovery workflow claim was not persisted")
-        if workflow.operation == "restore" and confirmed_ids is not None:
-            workflow.resolution = {
-                **(workflow.resolution or {}),
-                "confirmed_item_ids": sorted(confirmed_ids),
-            }
-        try:
-            reconciled = await service.reconcile(
-                workflow,
-                resolution=request.resolution,
-                target_item_in_bin=request.target_item_in_bin,
-                recovery_claim=claim,
-            )
-        except BinWorkflowConflict as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        if not reconciled:
-            raise HTTPException(
-                status_code=409, detail="Recovery workflow is already being handled"
-            )
-    if robot_core.robot_instance is not None:
-        bin_row = await session.get(StorageBin, workflow.bin_id)
-        if bin_row is not None:
-            status_value = (
-                CellStatus.OCCUPIED if request.resolution == "returned" else CellStatus.MAINTENANCE
-            )
-            robot_core.robot_instance.set_cell_status(
-                bin_row.side, bin_row.shelf_idx, bin_row.cell_idx, status_value
-            )
-    if robot_core.robot_worker is not None:
-        await service.publish_workflow(robot_core.robot_worker, workflow)
+                    if worker is None:
+                        raise BinWorkflowConflict("Robot worker is unavailable")
+                    ensure_worker_homed_for_bin_motion(worker)
+                    await ensure_worker_queue_empty_for_bin_start(worker)
+                    if not await is_io_box_occupied(worker):
+                        raise BinWorkflowConflict("Place the tray in the IO box before storing it")
+            if await service.prepare_return(workflow, request.confirmed_item_ids):
+                if mocking:
+                    await service.complete_return(workflow)
+                    runtime = get_mock_robot_runtime()
+                    runtime.set_bin_io_box_occupied(False)
+                    await runtime.publish_status()
+                else:
+                    assert worker is not None
+                    try:
+                        await service.enqueue_return(workflow, worker)
+                    except Exception as exc:
+                        await service.fail(workflow, str(exc))
+                        raise
+    except BinWorkflowConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if worker is not None:
+        await service.publish_workflow(worker, workflow)
     return {"workflow": await service.serialize_workflow(workflow)}
 
 

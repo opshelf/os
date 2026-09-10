@@ -53,8 +53,6 @@ def build_parameter_worker(stage_limit: float = 170.0):
 	)
 
 
-def active_bin_workflow_error() -> HTTPException:
-	return HTTPException(status_code=423, detail={"code": "bin_workflow_active"})
 
 
 def build_grid(tmp_path) -> StorageGrid:
@@ -275,134 +273,10 @@ async def test_save_calibration_rejects_negative_indices(client, tmp_path) -> No
 	assert response.json()['detail'] == 'Invalid shelf_idx: -1'
 
 
-@pytest.mark.anyio
-@pytest.mark.parametrize("reserved", [False, True])
-async def test_save_calibration_does_not_mutate_grid_when_bin_workflow_is_active(tmp_path, monkeypatch, reserved) -> None:
-	grid = build_grid(tmp_path)
-	worker = build_worker(grid)
-	original_cell = grid.left_module[0].cells[0].model_copy(deep=True)
-
-	class SessionContext:
-		async def __aenter__(self):
-			return object()
-
-		async def __aexit__(self, *_args):
-			return False
-
-	monkeypatch.setattr(calibration, "AsyncSessionLocal", SessionContext)
-	monkeypatch.setattr(calibration, "is_reserved_bin_location", AsyncMock(return_value=reserved))
-	monkeypatch.setattr(
-		calibration,
-		"ensure_no_active_bin_workflow_for_motion",
-		AsyncMock(side_effect=active_bin_workflow_error()),
-	)
-
-	with patch("openshelf_os_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
-		with pytest.raises(HTTPException) as error:
-			await calibration.save_calibration(
-				calibration.SaveRequest(
-					side=calibration.StorageModuleSide.LEFT,
-					shelf_idx=0,
-					cell_idx=0,
-					x=475.0,
-					y=630.0,
-					z_offset=0.0,
-					is_manual=True,
-					status="maintenance",
-				)
-			)
-
-	assert error.value.status_code == 423
-	assert grid.left_module[0].cells[0] == original_cell
-	assert not (tmp_path / "storage-grid.json").exists()
 
 
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-	("save_function", "save_request", "expected_parameters"),
-	[
-		(
-			calibration.save_rotation_angles,
-			calibration.RotateSaveRequest(front=50.0, back=130.0),
-			{"ROTATION_FRONT": 50.0, "ROTATION_BACK": 130.0},
-		),
-		(
-			calibration.save_shelf_stage_extension,
-			calibration.ShelfStageExtensionSaveRequest(front=40.0, back=41.0),
-			{"STAGE_EXTENSION_SHELF_FRONT": 40.0, "STAGE_EXTENSION_SHELF_BACK": 41.0},
-		),
-	],
-)
-async def test_parameter_saves_reject_active_bin_without_persisting_or_reloading(
-	monkeypatch, save_function, save_request, expected_parameters
-) -> None:
-	config = build_parameter_config()
-	worker = build_parameter_worker()
-	original_parameters = config.robot.tool.parameters.model_dump()
-	save_config = Mock()
-	monkeypatch.setattr(calibration, "get_root_config", lambda: config)
-	monkeypatch.setattr(calibration, "save_root_config", save_config)
-	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
-	monkeypatch.setattr(
-		calibration,
-		"ensure_no_active_bin_workflow_for_motion",
-		AsyncMock(side_effect=active_bin_workflow_error()),
-	)
-	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
-
-	with pytest.raises(HTTPException) as error:
-		await save_function(save_request)
-
-	assert error.value.status_code == 423
-	assert config.robot.tool.parameters.model_dump() == original_parameters
-	assert save_config.call_count == 0
-	assert worker._robot.reload_parameters.call_count == 0
-	for name, value in expected_parameters.items():
-		assert getattr(config.robot.tool.parameters, name) != value
 
 
-@pytest.mark.anyio
-async def test_iobox_save_rejects_active_bin_without_persisting_reloading_or_changing_cache(monkeypatch) -> None:
-	config = build_parameter_config()
-	worker = build_parameter_worker()
-	original_parameters = config.robot.tool.parameters.model_dump()
-	original_cache = calibration.IOBoxPositionResponse(
-		pickup_low_x=1.0,
-		pickup_low_y=2.0,
-		pickup_high_x=3.0,
-		pickup_high_y=4.0,
-		z_extension=5.0,
-		stage_extension=6.0,
-	)
-	save_config = Mock()
-	monkeypatch.setattr(calibration, "get_root_config", lambda: config)
-	monkeypatch.setattr(calibration, "save_root_config", save_config)
-	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
-	monkeypatch.setattr(bin_storage, "ensure_no_active_bin_workflow_for_motion", AsyncMock(side_effect=active_bin_workflow_error()))
-	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
-	calibration._iobox_current = original_cache
-
-	try:
-		with pytest.raises(HTTPException) as error:
-			await calibration.save_iobox_calibration(
-				calibration.IOBoxSaveRequest(
-					pickup_low_x=120.0,
-					pickup_low_y=220.0,
-					pickup_high_x=130.0,
-					pickup_high_y=230.0,
-					z_extension=10.0,
-					stage_extension=25.0,
-				)
-			)
-
-		assert error.value.status_code == 423
-		assert config.robot.tool.parameters.model_dump() == original_parameters
-		assert save_config.call_count == 0
-		assert worker._robot.reload_parameters.call_count == 0
-		assert calibration._iobox_current is original_cache
-		worker._robot._tool.home.assert_not_awaited()
-	finally:
-		calibration._iobox_current = None
 
 
 @pytest.mark.anyio
@@ -413,7 +287,6 @@ async def test_iobox_save_persists_reloads_and_updates_cache_after_admission(mon
 	monkeypatch.setattr(calibration, "get_root_config", lambda: config)
 	monkeypatch.setattr(calibration, "save_root_config", save_config)
 	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
-	monkeypatch.setattr(bin_storage, "ensure_no_active_bin_workflow_for_motion", AsyncMock())
 	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
 	calibration._iobox_current = None
 
@@ -468,7 +341,6 @@ async def test_parameter_saves_persist_and_reload_after_admission(
 	monkeypatch.setattr(calibration, "get_root_config", lambda: config)
 	monkeypatch.setattr(calibration, "save_root_config", save_config)
 	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
-	monkeypatch.setattr(calibration, "ensure_no_active_bin_workflow_for_motion", AsyncMock())
 	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
 
 	assert await save_function(save_request) == {"success": True}

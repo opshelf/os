@@ -307,7 +307,7 @@ async def test_set_scale_calibration_params_precision_validation(client: AsyncCl
 	],
 )
 @pytest.mark.anyio
-async def test_scale_mutations_reject_any_active_bin_workflow(
+async def test_scale_mutations_allow_outside_tray(
 	client: AsyncClient,
 	method: str,
 	path: str,
@@ -315,6 +315,8 @@ async def test_scale_mutations_reject_any_active_bin_workflow(
 	json_body: dict[str, int] | None,
 ) -> None:
 	mock_worker = _mock_worker()
+	mock_worker.calibrate_scale_zero.return_value = {"success": True, "status": {"zero_ok": True, "weight_ok": False, "raw": 4}}
+	mock_worker.calibrate_scale_weight.return_value = {"success": True, "status": {"zero_ok": True, "weight_ok": True, "raw": 12}}
 	workflow_id, item_id, bin_id = await _create_active_bin_workflow(f"90000000{len(path):04d}")
 	try:
 		with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
@@ -324,64 +326,9 @@ async def test_scale_mutations_reject_any_active_bin_workflow(
 	finally:
 		await _delete_bin_workflow(workflow_id, item_id, bin_id)
 
-	assert response.status_code == 423
-	assert response.json()["detail"] == {
-		"message": "A storage bin must be returned before another robot command can run",
-		"code": "bin_workflow_active",
-		"workflow_id": workflow_id,
-	}
-	getattr(mock_worker, worker_method).assert_not_awaited()
+	assert response.status_code == 200
+	getattr(mock_worker, worker_method).assert_awaited_once()
 
-
-@pytest.mark.anyio
-async def test_scale_tare_admission_serializes_bin_workflow_start(
-	client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-	monkeypatch.setattr(bin_storage, "_command_admission_lock", asyncio.Lock())
-	mock_worker = _mock_worker()
-	mutation_started = asyncio.Event()
-	release_mutation = asyncio.Event()
-	workflow_attempted = asyncio.Event()
-	workflow_started = asyncio.Event()
-
-	async def blocking_tare() -> bool:
-		mutation_started.set()
-		await release_mutation.wait()
-		return True
-
-	mock_worker.scale_tare.side_effect = blocking_tare
-	item_upca = "900000000099"
-	item_id, bin_id = await _create_bin_workflow_resources(item_upca)
-	workflow_id: str | None = None
-
-	try:
-		async def begin_workflow() -> str:
-			workflow_attempted.set()
-			async with bin_storage.bin_workflow_command_admission_guard():
-				workflow_started.set()
-				async with AsyncSessionLocal() as db:
-					item = await db.get(Item, item_id)
-					assert item is not None
-					workflow = await BinStorageService(db).begin("store", item, None)
-					assert workflow is not None
-					return workflow.id
-
-		with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
-			with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
-				tare_task = asyncio.create_task(client.post("/api/robot/debug/scale/calibration/tare"))
-				await mutation_started.wait()
-				workflow_task = asyncio.create_task(begin_workflow())
-				await workflow_attempted.wait()
-				await asyncio.sleep(0)
-				assert workflow_started.is_set() is False
-				release_mutation.set()
-				response = await tare_task
-				workflow_id = await workflow_task
-
-		assert response.status_code == 200
-		assert workflow_started.is_set() is True
-	finally:
-		await _delete_bin_workflow(workflow_id, item_id, bin_id)
 
 
 @pytest.mark.anyio

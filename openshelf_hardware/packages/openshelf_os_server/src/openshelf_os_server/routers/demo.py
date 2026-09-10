@@ -16,10 +16,7 @@ from hardware.exceptions import MotorError as HardwareMotorError
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from openshelf_os_server.core.robot import get_robot_worker
 from openshelf_os_server.core.manual_motion import manual_motion_guard
-from openshelf_os_server.core.bin_storage import (
-	bin_workflow_command_admission_guard,
-	reserved_bin_locations,
-)
+from openshelf_os_server.core.bin_storage import reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.core.storage_module import side_to_s
@@ -190,11 +187,10 @@ async def start_demo_cycle() -> SuccessResponse:
 
 	tool = robot._tool
 
-	async with manual_motion_guard("demo_cycle_start", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("demo_cycle_start", worker=worker):
 		# Resolve reservations under the same process-local admission gate that
 		# serializes bin workflow starts with demo startup.
-		async with bin_workflow_command_admission_guard():
-			await _ensure_demo_cells_are_not_reserved(robot, cells)
+		await _ensure_demo_cells_are_not_reserved(robot, cells)
 		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 
 		_stop_event = asyncio.Event()

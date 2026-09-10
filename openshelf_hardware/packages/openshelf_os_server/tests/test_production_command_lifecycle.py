@@ -277,7 +277,7 @@ async def test_mass_store_with_identity_persists_baseline_and_replays_before_val
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("rejection", ["queue", "bin"])
+@pytest.mark.parametrize("rejection", ["queue"])
 async def test_rejected_mass_enrollment_allows_corrected_retry(
 	monkeypatch: pytest.MonkeyPatch, rejection: str,
 ) -> None:
@@ -286,12 +286,7 @@ async def test_rejected_mass_enrollment_allows_corrected_retry(
 	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
 	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
 	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", AsyncMock())
-	bin_workflow = AsyncMock(return_value=None)
-	monkeypatch.setattr(robot_router.BinStorageService, "active_workflow", bin_workflow)
-	if rejection == "queue":
-		monkeypatch.setattr(command_lifecycle, "COMMAND_LIMIT", 0)
-	else:
-		bin_workflow.return_value = SimpleNamespace(id="active-bin", state="awaiting_operator")
+	monkeypatch.setattr(command_lifecycle, "COMMAND_LIMIT", 0)
 	command = StoreItemCommand(request_id=f"mass-rejected-{rejection}", item={
 		"upca": f"mass-rejected-{rejection}", "name": "Bottle",
 		"dimensions": {"width": 100, "height": 100, "length": 100},
@@ -311,7 +306,6 @@ async def test_rejected_mass_enrollment_allows_corrected_retry(
 	assert worker.enqueued == []
 
 	monkeypatch.setattr(command_lifecycle, "COMMAND_LIMIT", COMMAND_LIMIT)
-	bin_workflow.return_value = None
 	corrected = StoreItemCommand(request_id=command.request_id, item={**command.item, "net_weight": 300})
 	async with AsyncSessionLocal() as db:
 		accepted = await robot_router.robot_commands(
@@ -697,16 +691,14 @@ async def test_production_replay_precedes_worker_and_laser_preconditions(
 
 
 @pytest.mark.anyio
-async def test_mock_replay_precedes_active_bin_workflow_check(
+async def test_mock_command_replay_returns_existing_command(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 	command = _store("mock-replay-during-bin-workflow")
 	row = SimpleNamespace(command_id="mock-command-id", status="running")
 	runtime = SimpleNamespace(replay=AsyncMock(return_value=row))
-	bin_check = AsyncMock(side_effect=HTTPException(status_code=423, detail="bin active"))
 	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.mock)
 	monkeypatch.setattr(robot_router, "get_mock_robot_runtime", lambda: runtime)
-	monkeypatch.setattr(robot_router, "_ensure_no_active_bin_workflow", bin_check)
 
 	async with AsyncSessionLocal() as db:
 		replayed = await robot_router.robot_commands(
@@ -717,4 +709,3 @@ async def test_mock_replay_precedes_active_bin_workflow_check(
 		)
 	assert replayed.command_id == "mock-command-id"
 	assert replayed.status == "running"
-	bin_check.assert_not_awaited()

@@ -35,11 +35,7 @@ from openshelf_os_server.core.laser_auto_calibration import (
 	get_laser_auto_calibration_manager,
 )
 from openshelf_os_server.core.manual_motion import manual_motion_guard
-from openshelf_os_server.core.bin_storage import (
-	bin_workflow_command_admission_guard,
-	ensure_no_active_bin_workflow_for_motion,
-	is_reserved_bin_location,
-)
+from openshelf_os_server.core.bin_storage import is_reserved_bin_location
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers.auth_deps import get_current_user
 from openshelf_os_server.core.storage_module import side_to_s
@@ -654,7 +650,7 @@ async def _move_tool_to_coordinate(
 	tool = worker._robot._tool
 
 	try:
-		async with manual_motion_guard("calibration_move", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_move", worker=worker):
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await tool.move(coord)
 
@@ -924,9 +920,7 @@ async def stream_laser_auto_calibration(
 		try:
 			# Reserve laser motion under the same gate as bin workflow creation.
 			# The manager records its task synchronously before this gate is released.
-			async with bin_workflow_command_admission_guard():
-				await ensure_no_active_bin_workflow_for_motion()
-				await manager.ensure_session_started(worker, requested_scope)
+			await manager.ensure_session_started(worker, requested_scope)
 		except RuntimeError as exc:
 			raise HTTPException(
 				status_code=status.HTTP_409_CONFLICT,
@@ -1093,7 +1087,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 	warnings: list[str] = []
 
 	try:
-		async with manual_motion_guard("calibration_jog", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_jog", worker=worker):
 			if request.axis == "x":
 				if tool._mx is None:
 					raise HTTPException(
@@ -1198,7 +1192,7 @@ async def test_gripper(
 
 	tool = worker._robot._tool
 
-	async with manual_motion_guard("calibration_test_gripper", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("calibration_test_gripper", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await tool.retract()
@@ -1267,7 +1261,7 @@ async def test_cycle(request: TestRequest):
 	if is_initially_occupied is False:
 		cycle_item = _build_cycle_test_item(cell, location)
 
-	async with manual_motion_guard("calibration_test_cycle", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("calibration_test_cycle", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 
@@ -1320,44 +1314,41 @@ async def save_calibration(request: SaveRequest):
 
 	# Keep calibration persistence inseparable from bin workflow admission so a
 	# newly checked-out bin cannot return using coordinates changed by a rejected save.
-	async with bin_workflow_command_admission_guard():
-		await ensure_no_active_bin_workflow_for_motion()
-
-		async with AsyncSessionLocal() as session:
-			is_reserved = await is_reserved_bin_location(
-				(request.side.value, request.shelf_idx, request.cell_idx), session
-			)
-		if is_reserved:
-			try:
-				existing_cell = grid.get_cell(StorageModuleCellLocation(
-					side=request.side, shelf_idx=request.shelf_idx, cell_idx=request.cell_idx
-				))
-			except (IndexError, ValueError) as exc:
-				raise HTTPException(status_code=409, detail="Tray home cell is missing from storage") from exc
-			if new_status is not None and new_status != existing_cell.status:
-				raise HTTPException(
-					status_code=409,
-					detail="Tray home status cannot be changed through calibration",
-				)
-
-		side_enum = request.side
-		shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
-		cell = _ensure_cell(grid, side_enum, shelf, request.cell_idx)
-
-		cell.calibration_point = CalibrationCoordinate(
-			x=request.x,
-			y=request.y,
-			s=_side_to_s(request.side),
-			z_offset=request.z_offset,
+	async with AsyncSessionLocal() as session:
+		is_reserved = await is_reserved_bin_location(
+			(request.side.value, request.shelf_idx, request.cell_idx), session
 		)
+	if is_reserved:
+		try:
+			existing_cell = grid.get_cell(StorageModuleCellLocation(
+				side=request.side, shelf_idx=request.shelf_idx, cell_idx=request.cell_idx
+			))
+		except (IndexError, ValueError) as exc:
+			raise HTTPException(status_code=409, detail="Tray home cell is missing from storage") from exc
+		if new_status is not None and new_status != existing_cell.status:
+			raise HTTPException(
+				status_code=409,
+				detail="Tray home status cannot be changed through calibration",
+			)
 
-		if request.is_manual is not None:
-			cell.is_manual = request.is_manual
+	side_enum = request.side
+	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
+	cell = _ensure_cell(grid, side_enum, shelf, request.cell_idx)
 
-		if new_status is not None:
-			cell.status = new_status
+	cell.calibration_point = CalibrationCoordinate(
+		x=request.x,
+		y=request.y,
+		s=_side_to_s(request.side),
+		z_offset=request.z_offset,
+	)
 
-		grid.save()
+	if request.is_manual is not None:
+		cell.is_manual = request.is_manual
+
+	if new_status is not None:
+		cell.status = new_status
+
+	grid.save()
 
 	return {"success": True}
 
@@ -1388,7 +1379,7 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 		)
 
 	try:
-		async with manual_motion_guard("calibration_home_tool_motors", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_home_tool_motors", worker=worker):
 			await tool._ms.home()
 			await tool._mg.home()
 	except (MotorError, HardwareMotorError) as e:
@@ -1679,7 +1670,7 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 		x = iobox_current.pickup_high_x
 		y = iobox_current.pickup_high_y
 
-	async with manual_motion_guard("calibration_iobox_move", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("calibration_iobox_move", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await tool.rotate_to_position("front")
@@ -1733,7 +1724,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	warnings: list[str] = []
 
 	try:
-		async with manual_motion_guard("calibration_iobox_jog", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_iobox_jog", worker=worker):
 			if request.axis == "x":
 				if tool._mx is None:
 					raise HTTPException(
@@ -1827,7 +1818,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 	tool = worker._robot._tool
 	io = worker._robot._io
 
-	async with manual_motion_guard("calibration_iobox_test", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("calibration_iobox_test", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await tool.rotate_to_position("front")
@@ -1903,7 +1894,7 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	_validate_stage_target(request.stage_extension, stage_limit, "STAGE_EXTENSION_IO_BOX")
 	_validate_stage_target(request.stage_extension + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
 
-	async with manual_motion_guard("calibration_iobox_save_home", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("calibration_iobox_save_home", worker=worker):
 		params_dict = config.robot.tool.parameters.model_dump()
 		params_dict["PICKUP_POSITION_L"] = (int(request.pickup_low_x), int(request.pickup_low_y))
 		params_dict["PICKUP_POSITION_H"] = (int(request.pickup_high_x), int(request.pickup_high_y))
@@ -2001,7 +1992,7 @@ async def rotate_to_angle(angle: float):
 	rotation_limit = tool._mr._params.lim
 	clamped_angle = max(0, min(rotation_limit, angle))
 	try:
-		async with manual_motion_guard("calibration_rotation", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_rotation", worker=worker):
 			await _clear_motors_for_move(tool, gantry=True, stage=True, rotation=True)
 			if await tool.is_rotation_at_position(clamped_angle):
 				return {"success": True}
@@ -2036,16 +2027,14 @@ async def save_rotation_angles(request: RotateSaveRequest):
 	params_dict["ROTATION_FRONT"] = request.front
 	params_dict["ROTATION_BACK"] = request.back
 
-	async with bin_workflow_command_admission_guard():
-		await ensure_no_active_bin_workflow_for_motion()
-		config.robot.tool.parameters = Parameters.model_validate(params_dict)
-		save_root_config(config)
+	config.robot.tool.parameters = Parameters.model_validate(params_dict)
+	save_root_config(config)
 
-		try:
-			worker = await get_robot_worker()
-			worker._robot.reload_parameters()
-		except ValueError:
-			pass
+	try:
+		worker = await get_robot_worker()
+		worker._robot.reload_parameters()
+	except ValueError:
+		pass
 
 	return {"success": True}
 
@@ -2116,16 +2105,14 @@ async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 	params_dict["STAGE_EXTENSION_SHELF_FRONT"] = request.front
 	params_dict["STAGE_EXTENSION_SHELF_BACK"] = request.back
 
-	async with bin_workflow_command_admission_guard():
-		await ensure_no_active_bin_workflow_for_motion()
-		config.robot.tool.parameters = Parameters.model_validate(params_dict)
-		save_root_config(config)
+	config.robot.tool.parameters = Parameters.model_validate(params_dict)
+	save_root_config(config)
 
-		try:
-			worker = await get_robot_worker()
-			worker._robot.reload_parameters()
-		except ValueError:
-			pass
+	try:
+		worker = await get_robot_worker()
+		worker._robot.reload_parameters()
+	except ValueError:
+		pass
 
 	return {"success": True}
 
@@ -2166,7 +2153,7 @@ async def move_stage(request: StageMoveRequest):
 	target = _clamp_value(request.position, stage_limit, "Stage", warnings)
 
 	try:
-		async with manual_motion_guard("calibration_stage", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_stage", worker=worker):
 			await _clear_motors_for_move(tool, stage=True)
 			await tool._ms.move_to_position(target)
 			await tool._ms.stop()
@@ -2195,7 +2182,7 @@ async def abort_calibration():
 	tool = worker._robot._tool
 
 	try:
-		async with manual_motion_guard("calibration_abort", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_abort", worker=worker):
 			await tool.home()
 		worker.clear_needs_home()
 		await worker.get_status_snapshot(force_refresh=True)

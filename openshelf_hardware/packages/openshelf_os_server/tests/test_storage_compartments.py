@@ -35,10 +35,15 @@ async def item(db, number, width=40, length=70, height=90):
 
 
 async def finish(service, workflow, present):
-    workflow.resolution = {"target_item_in_bin": present}
-    await service.transition(workflow, "returning_bin")
-    await service.complete_return(workflow)
-    assert workflow.state == "completed"
+    await service.transition(workflow, "awaiting_operator")
+    await service.close(workflow)
+    tray_row = await service.session.get(StorageBin, workflow.bin_id)
+    returned = await service.begin_return(tray_row.barcode)
+    selected = [entry["id"] for entry in (await service.serialize_bin(tray_row))["items"]]
+    await service.prepare_return(returned, selected)
+    await service.complete_return(returned)
+    assert returned.state == "completed"
+
 
 
 @pytest.mark.anyio
@@ -88,8 +93,7 @@ async def test_serialization_keeps_contents_coherent_during_retrieval(
             workflow = await service.begin("store", target, None)
             await finish(service, workflow, True)
         retrieve = await service.begin("retrieve", second, None)
-        retrieve.resolution = {"target_item_in_bin": False}
-        await service.transition(retrieve, "returning_bin")
+        await service.transition(retrieve, "awaiting_operator")
         bin_id, workflow_id = retrieve.bin_id, retrieve.id
         expected = [
             {"id": first.id, "upca": first.upca, "name": first.name,
@@ -111,7 +115,7 @@ async def test_serialization_keeps_contents_coherent_during_retrieval(
             if not completed:
                 completed = True
                 # Complete the real workflow after a read has observed the old contents.
-                await BinStorageService(writer).complete_return(retrieve)
+                await BinStorageService(writer).close(retrieve)
                 assert retrieve.state == "completed"
             return result
 
@@ -181,62 +185,3 @@ async def test_relayout_refuses_nonempty_or_checked_out_tray(configured, occupie
         await db.rollback()
         row = await db.scalar(select(StorageBin))
         assert row.compartment_layout == {"rows": 2, "columns": 4}
-
-
-@pytest.mark.anyio
-async def test_empty_tray_can_adopt_layout_without_reusing_old_restore_candidates(configured):
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        await service.sync_config()
-        target = await item(db, 1)
-        old = await service.begin("store", target, None)
-        await service.reconcile(old, resolution="quarantined", target_item_in_bin=None)
-        restore = await service.begin_unavailable_return(configured[0].barcode)
-        restore.resolution = {**restore.resolution, "confirmed_item_ids": []}
-        await service.reconcile(restore, resolution="returned", target_item_in_bin=None)
-        configured[:] = [tray(columns=2, rows=4)]
-        await service.sync_config()
-        newer = await service.begin("store", await item(db, 2, 20, 20), None)
-        await service.reconcile(newer, resolution="quarantined", target_item_in_bin=None)
-        restored = await service.begin_unavailable_return(configured[0].barcode)
-        assert restored.resolution["candidate_item_ids"] == [newer.item_id]
-        assert restored.resolution["candidate_compartments"] == {str(newer.item_id): 1}
-
-
-@pytest.mark.anyio
-async def test_quarantined_store_restores_reserved_compartment(configured):
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        await service.sync_config()
-        original = await service.begin("store", await item(db, 1), None)
-        await finish(service, original, True)
-        uncertain = await service.begin("store", await item(db, 2), None)
-        assert uncertain.compartment == 2
-        await service.reconcile(uncertain, resolution="quarantined", target_item_in_bin=None)
-        restore = await service.begin_unavailable_return(configured[0].barcode)
-        payload = await service.serialize_workflow(restore)
-        assert [entry["compartment"] for entry in payload["contents"]] == [1, 2]
-        restore.resolution = {**restore.resolution, "confirmed_item_ids": [original.item_id, uncertain.item_id]}
-        await service.transition(restore, "returning_bin")
-        await service.complete_return(restore)
-        assert restore.state == "completed"
-        assert await db.scalar(select(StorageBinItem.compartment).where(StorageBinItem.item_id == uncertain.item_id)) == 2
-
-
-@pytest.mark.anyio
-async def test_duplicate_restore_positions_rejected_before_motion(configured):
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        await service.sync_config()
-        first = await service.begin("store", await item(db, 1), None)
-        await service.reconcile(first, resolution="quarantined", target_item_in_bin=None)
-        restore = await service.begin_unavailable_return(configured[0].barcode)
-        await service.reconcile(restore, resolution="returned", target_item_in_bin=None)
-        second = await service.begin("store", await item(db, 2), None)
-        await service.reconcile(second, resolution="quarantined", target_item_in_bin=None)
-        restore = await service.begin_unavailable_return(configured[0].barcode)
-        restore.resolution = {**restore.resolution, "confirmed_item_ids": [first.item_id, second.item_id]}
-        worker = SimpleNamespace(needs_home=lambda: False)
-        with pytest.raises(BinWorkflowConflict, match="same compartment"):
-            await service.enqueue_return(restore, worker)
-        assert await service.item_bin(first.item_id) is None
