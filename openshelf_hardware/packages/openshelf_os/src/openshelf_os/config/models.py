@@ -44,7 +44,7 @@ class Motor(BaseModel):
     status_reg: int = Field(default=0x1003)
     status_fault_bit: Optional[int] = Field(default=0)
     status_complete_bit: int = Field(default=5)
-    brake_output_function: Optional[Literal[0x24, 0xA4, 0xA1]] = Field(default=None)
+    brake_output_function: Optional[Literal[0x24, 0xA4]] = Field(default=None)
     brake_release_delay_ms: int = Field(default=250, ge=0, le=1500)
     brake_engagement_delay_ms: int = Field(default=250, ge=0, le=1500)
     brake_engagement_speed_threshold: int = Field(default=10, ge=0, le=500)
@@ -105,7 +105,7 @@ class Motor(BaseModel):
             "control_mode": 2,
             "ppr": 10000,
             "encoder_resolution_cpr": 4000,
-            "brake_output_function": 0xA1,
+            "brake_output_function": 0x24,
             "brake_release_delay_ms": 250,
             "brake_engagement_delay_ms": 250,
             "brake_engagement_speed_threshold": 10,
