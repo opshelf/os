@@ -416,7 +416,8 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
         "cabinet_bot_unlock": _pca9535_output("pca9535_1", 9, initial=False, shutdown=False),
         "estop": _pca9535_input("pca9535_1", 10, inverted=False, pull="off"),
         "sw_estop": _pca9535_output("pca9535_1", 11),
-        "power_control": _pca9535_output("pca9535_1", 12),
+        # X and Y drive power, cut together.
+        "pwr_out0": _pca9535_output("pca9535_1", 12),
         "pwr_out1": _pca9535_output("pca9535_1", 13),
         "pwr_out2": _pca9535_output("pca9535_1", 14),
         "pwr_out3": _pca9535_output("pca9535_1", 15),
