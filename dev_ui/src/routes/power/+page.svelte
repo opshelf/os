@@ -133,8 +133,8 @@
 
 	{#if rails.length > 0}
 		<p class="hint">
-			cycling cuts a rail for {holdSeconds}s, then restores it. equipment on the rail is still
-			booting when the button returns, so re-home any axes it dropped before moving them.
+			cycling cuts a rail for {holdSeconds}s, then restores it and re-applies the drive settings
+			that power loss cleared. the axes it dropped still need homing before they are moved.
 		</p>
 	{/if}
 
