@@ -40,7 +40,7 @@ sys.modules.setdefault("sentry_sdk", types.SimpleNamespace(
     init=lambda **kwargs: None,
     capture_exception=lambda e: None,
     capture_message=lambda m, **kw: None,
-    push_scope=lambda: types.SimpleNamespace(__enter__=lambda s: types.SimpleNamespace(set_tag=lambda *a: None, set_context=lambda *a: None, set_extra=lambda *a: None), __exit__=lambda *a: None),
+    new_scope=lambda: types.SimpleNamespace(__enter__=lambda s: types.SimpleNamespace(set_tag=lambda *a: None, set_context=lambda *a: None, set_extra=lambda *a: None), __exit__=lambda *a: None),
     flush=lambda **kw: None,
 ))
 
@@ -206,6 +206,7 @@ except Exception:
 class MockRobot:
     def __init__(self):
         self.safety_paused = False
+        self.restore_y_brake_output_calls = 0
         self.handled_commands = []
         self.shutdown_calls = 0
         self.lifecycle_events = []
@@ -221,6 +222,9 @@ class MockRobot:
         if self.shutdown_calls > 0:
             raise RuntimeError("GPIO is closed")
         return None
+
+    async def restore_y_brake_output(self):
+        self.restore_y_brake_output_calls += 1
 
     async def handle_command(self, command):
         self.handled_commands.append(command)
@@ -449,7 +453,21 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         RobotWorker._instance = None
 
-    async def test_emergency_cleanup_preserves_command_admitted_during_cleanup(self):
+    async def test_emergency_stop_cleanup_restores_y_brake_output(self):
+        from openshelf_os.robot.worker import RobotWorker
+
+        robot = MockRobot()
+        RobotWorker._instance = None
+        worker = RobotWorker(robot)
+
+        await worker.emergency_stop("test")
+        await asyncio.sleep(0.1)
+
+        self.assertEqual(robot.restore_y_brake_output_calls, 1)
+
+        RobotWorker._instance = None
+
+    async def test_emergency_cleanup_preserves_command_admitted_during_brake_restore(self):
         from openshelf_os.robot.commands import RetrieveItemCommand
         from openshelf_os.robot.status import RobotCommandSuccessful
         from openshelf_os.robot.worker import RobotWorker
@@ -458,17 +476,19 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         RobotWorker._instance = None
         worker = RobotWorker(robot)
         events = await worker.subscribe_events()
-        cleanup_started = asyncio.Event()
-        release_cleanup = asyncio.Event()
+        brake_restore_started = asyncio.Event()
+        release_brake_restore = asyncio.Event()
         cleanup_complete = asyncio.Event()
         process_task = None
+
+        async def gated_brake_restore():
+            robot.restore_y_brake_output_calls += 1
+            brake_restore_started.set()
+            await release_brake_restore.wait()
 
         original_discard_queued_commands = worker._discard_queued_commands
 
         async def track_cleanup_discard(reason, *, interruption_boundary=None):
-            # Hold the cleanup open so a command can be admitted mid-window.
-            cleanup_started.set()
-            await release_cleanup.wait()
             await original_discard_queued_commands(
                 reason,
                 interruption_boundary=interruption_boundary,
@@ -492,17 +512,18 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             upca="900000000014",
             location={"side": "right_module", "shelf_idx": 1, "cell_idx": 3},
         )
+        robot.restore_y_brake_output = gated_brake_restore
         robot.handle_command = successful_handler
         worker._discard_queued_commands = track_cleanup_discard
         worker._evaluate_safety_guard = no_safety_change
         await worker.enqueue_command(queued_before_stop)
 
         try:
-            await worker.emergency_stop("cleanup boundary")
-            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+            await worker.emergency_stop("brake restore boundary")
+            await asyncio.wait_for(brake_restore_started.wait(), timeout=1)
 
             await worker.enqueue_command(recovered_command)
-            release_cleanup.set()
+            release_brake_restore.set()
             await asyncio.wait_for(cleanup_complete.wait(), timeout=1)
 
             failed_event = {}
@@ -513,7 +534,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             assert_correlated_failure(self, failed_event, {
                 "command": "retrieve_item",
                 "message": "error",
-                "error": "Emergency stop: cleanup boundary",
+                "error": "Emergency stop: brake restore boundary",
                 "request_id": "bin-workflow-before-emergency-boundary",
                 "upca": "900000000013",
                 "location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 4},
@@ -550,14 +571,14 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(robot.handled_commands, [recovered_command])
         finally:
             worker._running = False
-            release_cleanup.set()
+            release_brake_restore.set()
             if process_task is not None and process_task.done() is False:
                 process_task.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await process_task
             RobotWorker._instance = None
 
-    async def test_emergency_stop_cleanup_completes_when_cancelled_task_fails(self):
+    async def test_emergency_stop_cleanup_restores_y_brake_output_when_cancelled_task_fails(self):
         from openshelf_os.robot.worker import RobotWorker
 
         robot = MockRobot()
@@ -579,6 +600,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.1)
 
         self.assertTrue(task_cancelled.is_set())
+        self.assertEqual(robot.restore_y_brake_output_calls, 1)
         self.assertIsNone(worker._current_task)
 
         RobotWorker._instance = None

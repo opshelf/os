@@ -1,7 +1,6 @@
 """Storage management endpoints with authorization."""
-from __future__ import annotations
-from openshelf_os_server.core.mass import MASS_FIELDS, validate_mass
 
+from __future__ import annotations
 
 import functools
 import json
@@ -68,13 +67,7 @@ class DimensionsPayload(BaseModel):
     length: float
 
 
-class MassInput(BaseModel):
-    tare_weight: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
-    net_weight: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
-    full_net_weight: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
-
-
-class ItemCreate(MassInput):
+class ItemCreate(BaseModel):
     """Request payload for creating an item."""
 
     model_config = ConfigDict(populate_by_name=True)
@@ -103,7 +96,7 @@ class ItemCreate(MassInput):
         return self
 
 
-class ItemUpdate(MassInput):
+class ItemUpdate(BaseModel):
     """Request payload for updating an item."""
 
     model_config = ConfigDict(populate_by_name=True)
@@ -147,9 +140,6 @@ class ItemWithLocations(BaseModel):
     name: str
     dimensions: Dict[str, float]
     weight: Optional[float]
-    tare_weight: Optional[float] = None
-    net_weight: Optional[float] = None
-    full_net_weight: Optional[float] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     access_level_id: Optional[int]
     locations: List[Dict[str, Any]]
@@ -242,9 +232,6 @@ def _build_item_payload(
         name=str(item.name),
         dimensions=cast(Dict[str, float], item.dimensions),
         weight=float(item.weight) if item.weight is not None else None,
-        tare_weight=item.tare_weight,
-        net_weight=item.net_weight,
-        full_net_weight=item.full_net_weight,
         metadata=cast(Dict[str, Any], item.item_metadata) or {},
         access_level_id=item.access_level_id,
         locations=serialized_locations,
@@ -981,6 +968,7 @@ async def create_item(
         existing = await storage_service.get_item(item.upca)
         bin_service = BinStorageService(session)
         dimensions = item.dimensions
+        weight = item.weight
         metadata = item.item_metadata or {}
         access_level_id = item.access_level_id
         if existing is not None:
@@ -1001,6 +989,8 @@ async def create_item(
                 )
             if "dimensions" not in provided_fields:
                 dimensions = existing.dimensions
+            if "weight" not in provided_fields:
+                weight = existing.weight
             if "item_metadata" not in provided_fields:
                 metadata = existing.item_metadata or {}
             if "access_level_id" not in provided_fields:
@@ -1009,11 +999,9 @@ async def create_item(
             upca=item.upca,
             name=item.name,
             dimensions=dimensions,
-            weight=item.weight,
-            preserve_existing_weight="weight" not in item.model_fields_set,
+            weight=weight,
             metadata=metadata,
             access_level_id=access_level_id,
-            mass_values={k: v for k, v in item.model_dump(exclude_unset=True).items() if k in (*MASS_FIELDS, "weight")},
         )
 
         locations = await storage_service.get_item_locations(item.upca)
@@ -1054,11 +1042,6 @@ async def update_item(
                 detail="Retrieve the item before changing dimensions or access level",
             )
 
-    try:
-        validate_mass(item.model_dump(exclude_unset=True), existing.tare_weight if existing else None)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
     updated_item = await storage_service.update_item(
         upca=upca,
         name=item.name,
@@ -1066,7 +1049,6 @@ async def update_item(
         weight=item.weight,
         metadata=item.item_metadata,
         access_level_id=item.access_level_id,
-        mass_values={k: v for k, v in item.model_dump(exclude_unset=True).items() if k in (*MASS_FIELDS, "weight")},
     )
 
     if not updated_item:

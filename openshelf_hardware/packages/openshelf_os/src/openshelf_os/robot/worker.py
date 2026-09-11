@@ -723,7 +723,7 @@ class RobotWorker:
     ) -> None:
         sentry_event_id: Optional[str] = None
         try:
-            with sentry_sdk.push_scope() as scope:
+            with sentry_sdk.new_scope() as scope:
                 scope.set_tag("error_type", error.error_type)
                 scope.set_tag("hardware_fault", str(error.error_type == "HardwareFault").lower())
                 context = error.context or {}
@@ -1029,6 +1029,12 @@ class RobotWorker:
             self._needs_home_unknown = True
         self._needs_home_reason = reason
 
+    async def _restore_y_brake_output(self) -> None:
+        try:
+            await self._robot.restore_y_brake_output()
+        except Exception as exc:
+            logging.warning("Failed to restore Y-axis brake output: %s", exc)
+
     async def emergency_stop(self, reason: str) -> None:
         self._robot.block_motion_for_safety()
         self.set_emergency_stop_state(reason)
@@ -1046,6 +1052,7 @@ class RobotWorker:
             )
             assert interruption_boundary is not None
 
+            await self._restore_y_brake_output()
             await self._discard_queued_commands(
                 interruption_reason,
                 interruption_boundary=interruption_boundary,

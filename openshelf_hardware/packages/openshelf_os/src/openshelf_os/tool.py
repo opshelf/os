@@ -256,6 +256,12 @@ class Tool:
 
             raise MotorError(f"Failed to stop tool: {str(e)}") from e
 
+    async def restore_y_brake_output(self) -> None:
+        if self._my is None:
+            return
+
+        await self._my.restore_brake_output()
+
     async def clear_alarms(self) -> None:
         try:
             if self._mg is not None:
@@ -1563,6 +1569,7 @@ class Tool:
     ) -> None:
         if isolate is False:
             try:
+                await self.restore_y_brake_output()
                 await self._home_sequence(y_pre_home_clearance_mm=y_pre_home_clearance_mm)
             except Exception as e:
                 await self._handle_fault(e)
@@ -1571,6 +1578,11 @@ class Tool:
             return
 
         failed_config_motors = failed_config_motors or []
+
+        try:
+            await self.restore_y_brake_output()
+        except Exception as e:
+            self._logger.warning("init restore_y_brake_output failed: %s", e)
 
         await self._home_sequence(
             isolate=True,

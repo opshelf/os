@@ -1,5 +1,4 @@
 from __future__ import annotations
-from openshelf_os_server.core.mass import apply_mass, apply_cycle_mass
 
 import asyncio
 import hashlib
@@ -179,26 +178,6 @@ class MockRobotRuntime:
 				if int(active_count or 0) >= MOCK_COMMAND_LIMIT:
 					raise MockQueueFullError
 
-				# Persist enrollment with admission so failures and restarts retain
-				# the editable baseline without changing it on replay or rejection.
-				if payload.get("command") == "store_item":
-					item_payload = payload["item"]
-					upca = str(item_payload["upca"])
-					item = (
-						await session.execute(select(Item).where(Item.upca == upca))
-					).scalar_one_or_none()
-					if item is None:
-						item = Item(
-							upca=upca,
-							name=str(item_payload.get("name") or upca),
-							dimensions=item_payload.get("dimensions"),
-							weight=item_payload.get("weight"),
-							item_metadata=item_payload.get("metadata") or {},
-							access_level_id=item_payload.get("access_level_id"),
-						)
-						apply_mass(item, item_payload, enrollment=True)
-						session.add(item)
-
 				row = MockRobotCommand(
 					command_id=str(uuid.uuid4()),
 					runtime="mock",
@@ -371,8 +350,6 @@ class MockRobotRuntime:
 				raise MockCommandExecutionError("No suitable storage location found")
 
 			weight = item.weight if item is not None else item_payload.get("weight")
-			if (item is not None and item.tare_weight is not None) or (item is None and item_payload.get("tare_weight") is not None):
-				weight = 350.0
 			if weight is None:
 				weight = _deterministic_weight(upca)
 			if item is None:
@@ -384,10 +361,10 @@ class MockRobotRuntime:
 					item_metadata=item_payload.get("metadata") or {},
 					access_level_id=item_payload.get("access_level_id"),
 				)
-				apply_mass(item, item_payload, enrollment=True)
 				session.add(item)
 				await session.flush()
-			apply_cycle_mass(item, weight, stored=True)
+			elif item.weight is None:
+				item.weight = float(weight)
 
 			side, shelf_idx, cell_idx = location
 			session.add(
@@ -436,9 +413,8 @@ class MockRobotRuntime:
 				if item.weight is not None
 				else _deterministic_weight(str(item.upca))
 			)
-			if item.tare_weight is not None:
-				weight = 350.0
-			apply_cycle_mass(item, weight, stored=False)
+			if item.weight is None:
+				item.weight = weight
 			await session.delete(item_location)
 			await session.commit()
 

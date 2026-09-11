@@ -12,7 +12,6 @@ from openshelf_os.storage import StorageModuleSide
 from openshelf_os_server.core.storage_module import StorageModuleSideName, module_name_to_side
 
 from ..database.models import Item, ItemLocation, StorageBin, StorageCell
-from .mass import apply_mass
 from .validation import CellOccupiedError, LocationValidator, StorageCellValidator, StorageValidator, ValidationError
 
 
@@ -45,8 +44,7 @@ class StorageService:
 
     async def create_item(self, upca: str, name: str, dimensions: Optional[Dict[str, float]],
                         weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
-                        access_level_id: Optional[int] = None, mass_values: Optional[Dict[str, Any]] = None,
-                        *, preserve_existing_weight: bool = False) -> Item:
+                        access_level_id: Optional[int] = None) -> Item:
         """Create or upsert an item in the database."""
         resolved_dimensions = dimensions or {"length": 1.0, "width": 1.0, "height": 1.0}
 
@@ -62,7 +60,6 @@ class StorageService:
                 )
                 item = result.scalar_one_or_none()
 
-                new_item = item is None
                 if item is None:
                     item = Item(
                         upca=upca,
@@ -76,12 +73,10 @@ class StorageService:
                 else:
                     item.name = name
                     item.dimensions = resolved_dimensions
-                    if not preserve_existing_weight:
-                        item.weight = normalized_weight
+                    item.weight = normalized_weight
                     item.item_metadata = normalized_metadata
                     item.access_level_id = access_level_id  # type: ignore[assignment]
 
-                apply_mass(item, mass_values or {}, enrollment=new_item or not bool(item.enrollment_storage_completed))
                 await self.session.flush()
                 await self.session.commit()
                 await self.session.refresh(item)
@@ -120,7 +115,7 @@ class StorageService:
                         dimensions: Optional[Dict[str, float]] = None,
                         weight: Optional[float] = None,
                         metadata: Optional[Dict[str, Any]] = None,
-                        access_level_id: Optional[int] = None, mass_values: Optional[Dict[str, Any]] = None) -> Optional[Item]:
+                        access_level_id: Optional[int] = None) -> Optional[Item]:
         """Update an existing item."""
         result = await self.session.execute(
             select(Item).where(Item.upca == upca)
@@ -146,7 +141,6 @@ class StorageService:
                 if access_level_id is not None:
                     item.access_level_id = access_level_id
 
-                apply_mass(item, mass_values or {}, enrollment=not bool(item.enrollment_storage_completed))
                 await self.session.commit()
                 await self.session.refresh(item)
                 return item
@@ -187,7 +181,7 @@ class StorageService:
         )
         return list(result.scalars().all())
 
-    async def add_item_location(self, upca: str, side: StorageModuleSideName | str | StorageModuleSide, shelf_idx: int, cell_idx: int, *, commit: bool = True) -> Optional[ItemLocation]:
+    async def add_item_location(self, upca: str, side: StorageModuleSideName | str | StorageModuleSide, shelf_idx: int, cell_idx: int) -> Optional[ItemLocation]:
         """Add a location for an item."""
         result = await self.session.execute(
             select(Item).where(Item.upca == upca)
@@ -222,10 +216,7 @@ class StorageService:
                     cell_idx=cell_idx,
                 )
                 self.session.add(location)
-                if commit:
-                    await self.session.commit()
-                else:
-                    await self.session.flush()
+                await self.session.commit()
                 await self.session.refresh(location)
                 return location
             except IntegrityError as exc:
@@ -237,7 +228,7 @@ class StorageService:
                 await self.session.rollback()
                 raise
 
-    async def remove_item_location(self, upca: str, side: StorageModuleSideName | str | StorageModuleSide, shelf_idx: int, cell_idx: int, *, commit: bool = True) -> bool:
+    async def remove_item_location(self, upca: str, side: StorageModuleSideName | str | StorageModuleSide, shelf_idx: int, cell_idx: int) -> bool:
         """Remove a specific location for an item."""
         side_enum = module_name_to_side(side)
 
@@ -257,10 +248,7 @@ class StorageService:
         async with self._lock:
             try:
                 await self.session.delete(location)
-                if commit:
-                    await self.session.commit()
-                else:
-                    await self.session.flush()
+                await self.session.commit()
                 return True
             except Exception:
                 await self.session.rollback()

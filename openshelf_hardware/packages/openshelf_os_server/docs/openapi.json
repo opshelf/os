@@ -9658,42 +9658,6 @@
       },
       "ItemCreate": {
         "properties": {
-          "tare_weight": {
-            "anyOf": [
-              {
-                "type": "number",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tare Weight"
-          },
-          "net_weight": {
-            "anyOf": [
-              {
-                "type": "number",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Net Weight"
-          },
-          "full_net_weight": {
-            "anyOf": [
-              {
-                "type": "number",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Full Net Weight"
-          },
           "upca": {
             "type": "string",
             "title": "Upca"
@@ -9785,42 +9749,6 @@
       },
       "ItemUpdate": {
         "properties": {
-          "tare_weight": {
-            "anyOf": [
-              {
-                "type": "number",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tare Weight"
-          },
-          "net_weight": {
-            "anyOf": [
-              {
-                "type": "number",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Net Weight"
-          },
-          "full_net_weight": {
-            "anyOf": [
-              {
-                "type": "number",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Full Net Weight"
-          },
           "name": {
             "anyOf": [
               {
@@ -9917,39 +9845,6 @@
               }
             ],
             "title": "Weight"
-          },
-          "tare_weight": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tare Weight"
-          },
-          "net_weight": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Net Weight"
-          },
-          "full_net_weight": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Full Net Weight"
           },
           "metadata": {
             "additionalProperties": true,
