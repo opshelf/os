@@ -11,6 +11,7 @@ from hardware.curtain import MotionSafetyInterlock
 from hardware.motor import MotorStatus
 from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
+from openshelf_os.config.models import compare_gpio_pins_to_defaults
 from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORT,
     DEFAULT_MOTOR_PORT,
@@ -98,6 +99,7 @@ class Robot:
         io_params = self._config.get("robot.io", {})
         gpio_config = getattr(self._config.robot, "gpio", None)
         self._gpio = _GpioManager.from_config(gpio_config) if _GpioManager is not None else None
+        self._warn_on_gpio_pin_drift(gpio_config)
 
         self._motion_safety = MotionSafetyInterlock()
         self._tool = Tool(
@@ -139,6 +141,29 @@ class Robot:
         self._demo_nudge_map: dict[tuple[str, int, int], float] = {}
         if should_enable_demo_features() is True:
             self._demo_cell_map = self._load_demo_cell_map(self._config.demo.cell_map_path)
+
+    def _warn_on_gpio_pin_drift(self, gpio_config: Any) -> None:
+        """Flag pins the defaults define but this config lacks, and vice versa.
+
+        A config that declares robot.gpio.pins replaces the defaults outright,
+        so a renamed default goes missing here rather than failing loudly.
+        """
+        pins = getattr(gpio_config, "pins", None)
+        if pins is None:
+            return
+
+        missing, unrecognized = compare_gpio_pins_to_defaults(pins)
+
+        if missing:
+            self._logger.warning(
+                "config gpio pins are missing defaults; features using them are unavailable",
+                extra={"missing_pins": missing},
+            )
+        if unrecognized:
+            self._logger.warning(
+                "config gpio pins are not in the defaults; check for a stale or renamed key",
+                extra={"unrecognized_pins": unrecognized},
+            )
 
     def _emit_init(self, component: str, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
         reporter = getattr(self, "_init_reporter", None)
