@@ -96,11 +96,7 @@ async def test_store_item_continues_when_observer_capture_raises(client: AsyncCl
     worker = _worker()
     payload = {
         "command": "store_item",
-        "item": {
-            "upca": "123456789012",
-            "name": "Test item",
-            "dimensions": {"width": 1, "height": 2, "length": 3},
-        },
+        "item": {"upca": "123456789012", "name": "Test item"},
     }
 
     with (

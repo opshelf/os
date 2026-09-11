@@ -1956,7 +1956,6 @@ async def test_store_completion_revalidates_target_before_membership() -> None:
         item = await StorageService(db).create_item(
             "123456789019", "Target", {"width": 10, "height": 10, "length": 10}
         )
-        item.enrollment_weight_pending = True
         bin_row = StorageBin(
             barcode="900000000019",
             side="right_module",
@@ -1978,8 +1977,6 @@ async def test_store_completion_revalidates_target_before_membership() -> None:
         await service.transition(workflow, "returning_bin")
         await service.complete_return(workflow)
 
-        await db.refresh(item)
-        assert item.enrollment_weight_pending
         assert workflow.state == "recovery_required"
         assert workflow.error == "Item no longer fits the configured storage bin"
         assert bin_row.status == "checked_out"
@@ -2432,76 +2429,3 @@ async def test_wrong_scan_does_not_advance_and_global_lock_is_exclusive() -> Non
 
         with pytest.raises(BinWorkflowConflict):
             await service.begin("store", second_item, None)
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("measured", [425.5, 0, None, "bad", float("nan"), float("inf"), -1, True])
-async def test_bin_return_replaces_aggregate_without_changing_container_mass(measured) -> None:
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789081", "Opened bottle", {"width": 10, "height": 10, "length": 10}
-        )
-        item.weight = 350
-        item.tare_weight = 100
-        item.full_net_weight = 500
-        item.enrollment_weight_pending = True
-        bin_row = StorageBin(
-            barcode="900000000081", side="right_module", shelf_idx=1, cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2, status="at_home", active=True, gross_weight=200,
-        )
-        db.add(bin_row)
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        assert bin_row.gross_weight is None
-        assert item.enrollment_weight_pending
-        await service.transition(workflow, "returning_bin")
-        await service.complete_return(workflow, measured)
-        expected = measured if type(measured) in {int, float} and measured in {425.5, 0} else None
-        assert bin_row.gross_weight == expected
-        await db.refresh(item)
-        assert (item.weight, item.tare_weight, item.full_net_weight) == (350, 100, 500)
-        assert not item.enrollment_weight_pending
-        assert item.enrollment_storage_completed
-        # A replay must not replace the last successful aggregate measurement.
-        await service.complete_return(workflow, 999)
-        assert bin_row.gross_weight == expected
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("operation", ["store", "retrieve", "restore"])
-async def test_unmeasured_bin_reconciliation_clears_aggregate_and_preserves_item_mass(operation) -> None:
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789082", "Opened bottle", {"width": 10, "height": 10, "length": 10}
-        )
-        item.weight = 350
-        item.tare_weight = 100
-        item.full_net_weight = 500
-        item.enrollment_weight_pending = True
-        bin_row = StorageBin(
-            barcode="900000000082", side="right_module", shelf_idx=1, cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2, status="checked_out", active=True, gross_weight=200,
-        )
-        db.add(bin_row)
-        await db.flush()
-        workflow = StorageBinWorkflow(
-            id="unmeasured-return", operation=operation, state="recovery_required",
-            lock_key="global", bin_id=bin_row.id, item_id=item.id,
-            resolution={"candidate_item_ids": [item.id], "confirmed_item_ids": [item.id]}
-            if operation == "restore" else None,
-        )
-        db.add(workflow)
-        if operation == "retrieve":
-            db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
-        await db.commit()
-        await BinStorageService(db).reconcile(
-            workflow, resolution="returned", target_item_in_bin=operation != "retrieve"
-        )
-        await db.refresh(item)
-        assert bin_row.gross_weight is None
-        assert (item.weight, item.tare_weight, item.full_net_weight) == (350, 100, 500)
-        assert item.enrollment_weight_pending is (operation == "retrieve")

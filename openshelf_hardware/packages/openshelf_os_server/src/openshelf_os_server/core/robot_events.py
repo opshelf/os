@@ -8,7 +8,6 @@ from sqlalchemy import select
 import openshelf_os_server.core.robot as robot_core
 
 from openshelf_os.robot.worker import RobotWorker
-from openshelf_os_server.core.mass import apply_cycle_mass
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import BinStorageService, RobotEventPublisher
 from openshelf_os_server.database.models import Telemetry
@@ -108,12 +107,7 @@ async def process_robot_event(
                 return
             storage_service = StorageService(session)
             try:
-                item = await storage_service.get_item(str(upca))
-                if item is not None:
-                    if not apply_cycle_mass(item, payload.get("weight"), stored=False, command_id=payload.get("command_id")):
-                        return
-                removed = await storage_service.remove_item_location(upca, side, shelf_idx_int, cell_idx_int, commit=False)
-                await session.commit()
+                removed = await storage_service.remove_item_location(upca, side, shelf_idx_int, cell_idx_int)
                 if removed:
                     logger.info(
                         "Removed location for retrieved item: upca=%s side=%s shelf=%s cell=%s",
@@ -188,15 +182,33 @@ async def process_robot_event(
                 )
                 if existing_item is None:
                     logger.info("Creating new item with weight=%s", normalized_weight)
-                    existing_item = await storage_service.create_item(
+                    await storage_service.create_item(
                         upca=str(upca),
                         name=str(upca),
                         dimensions=None,
                         weight=normalized_weight,
                         metadata={"name": str(upca)},
                     )
-                if not apply_cycle_mass(existing_item, payload.get("weight"), stored=True, command_id=payload.get("command_id")):
-                    return
+                elif normalized_weight is not None:
+                    weights_differ = existing_item.weight != normalized_weight
+                    logger.info(
+                        "Weight comparison: existing=%s new=%s differ=%s",
+                        existing_item.weight, normalized_weight, weights_differ
+                    )
+                    if weights_differ:
+                        logger.info(
+                            "Updating item weight: upca=%s old=%s new=%s",
+                            upca, existing_item.weight, normalized_weight
+                        )
+                        result = await storage_service.update_item(str(upca), weight=normalized_weight)
+                        logger.info(
+                            "Update result: success=%s new_weight=%s",
+                            result is not None, result.weight if result else None
+                        )
+                    else:
+                        logger.info("Weights equal, skipping update")
+                else:
+                    logger.info("Normalized weight is None, skipping update")
 
                 existing_locations = await storage_service.get_item_locations(str(upca))
                 already_assigned = any(
@@ -205,8 +217,7 @@ async def process_robot_event(
                 )
 
                 if already_assigned is False:
-                    await storage_service.add_item_location(str(upca), side, shelf_idx_int, cell_idx_int, commit=False)
-                await session.commit()
+                    await storage_service.add_item_location(str(upca), side, shelf_idx_int, cell_idx_int)
             except Exception as err:
                 logger.exception("Failed to process store_item event for %s: %s", upca, err)
 

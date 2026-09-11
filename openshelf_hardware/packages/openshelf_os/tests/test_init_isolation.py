@@ -18,6 +18,7 @@ def _make_tool() -> Tool:
     tool._mg = AsyncMock()
     tool._ms = AsyncMock()
     tool._mr = None
+    tool.restore_y_brake_output = AsyncMock()
     return tool
 
 
