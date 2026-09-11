@@ -1219,3 +1219,30 @@ export async function moveStage(
 		body: JSON.stringify({ position })
 	});
 }
+
+export interface PowerRail {
+	rail: string;
+	supplies: string;
+	axes: string[];
+	gripper: boolean;
+	powered: boolean | null;
+}
+
+export interface PowerRailList {
+	hold_seconds: number;
+	rails: PowerRail[];
+}
+
+export async function getPowerRails(): Promise<PowerRailList> {
+	return apiFetch<PowerRailList>('/robot/debug/power');
+}
+
+export interface PowerCycleResult {
+	success: boolean;
+	rail: string;
+	axes_needing_home: string[];
+}
+
+export async function powerCycleRail(rail: string): Promise<PowerCycleResult> {
+	return apiFetch<PowerCycleResult>(`/robot/debug/power/${rail}/cycle`, { method: 'POST' });
+}
