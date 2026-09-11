@@ -19,6 +19,9 @@ def _mock_worker(power_cycle: AsyncMock | None = None):
 	worker._crash_reason = None
 
 	robot = MagicMock()
+	robot.get_power_rail_states = MagicMock(
+		return_value={"pwr_out0": True, "pwr_out1": False, "pwr_out2": None, "pwr_out3": True}
+	)
 	robot.power_cycle_rail = power_cycle or AsyncMock(
 		return_value=("x_axis", "y_axis", "z_axis", "stage", "rotate")
 	)
@@ -29,8 +32,11 @@ def _mock_worker(power_cycle: AsyncMock | None = None):
 
 @pytest.mark.anyio
 async def test_list_power_rails(client: AsyncClient) -> None:
+	mock_worker = _mock_worker()
+
 	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
-		response = await client.get("/api/robot/debug/power")
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.get("/api/robot/debug/power")
 
 	assert response.status_code == 200
 	data = response.json()
@@ -42,6 +48,9 @@ async def test_list_power_rails(client: AsyncClient) -> None:
 	assert rails["pwr_out1"]["gripper"] is False
 	assert rails["pwr_out1"]["supplies"] == "IO box"
 	assert rails["pwr_out3"]["axes"] == []
+	assert rails["pwr_out0"]["powered"] is True
+	assert rails["pwr_out1"]["powered"] is False
+	assert rails["pwr_out2"]["powered"] is None
 
 
 @pytest.mark.anyio

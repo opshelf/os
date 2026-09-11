@@ -1228,6 +1228,15 @@ async def home_motor(
 
 @router.get("/debug/power", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
 async def get_power_rails() -> dict:
+    states: dict[str, bool | None] = {rail: None for rail in POWER_RAILS}
+    try:
+        worker = await get_robot_worker()
+        states = worker._robot.get_power_rail_states()
+    except ValueError:
+        robot = get_robot_instance()
+        if robot is not None:
+            states = robot.get_power_rail_states()
+
     return {
         "hold_seconds": POWER_CYCLE_HOLD_S,
         "rails": [
@@ -1236,6 +1245,7 @@ async def get_power_rails() -> dict:
                 "supplies": spec.supplies,
                 "axes": list(spec.axes),
                 "gripper": spec.gripper,
+                "powered": states.get(rail),
             }
             for rail, spec in POWER_RAILS.items()
         ],
