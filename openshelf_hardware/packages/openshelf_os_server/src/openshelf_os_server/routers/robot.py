@@ -1,8 +1,11 @@
 from __future__ import annotations
+from openshelf_os_server.core.mass import MASS_FIELDS, apply_mass, validate_mass
+from openshelf_os_server.core.validation import ItemValidator, ValidationError
 
 import asyncio
 from copy import deepcopy
 import json
+import math
 import re
 from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Iterable, List, Literal, NoReturn, Optional, cast
@@ -20,6 +23,7 @@ from openshelf_os.robot.commands import (
     StoreItemCommand,
 )
 import logging
+from openshelf_os.robot.core import POWER_CYCLE_HOLD_S, POWER_RAILS
 from openshelf_os.robot.worker import RobotWorker
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -391,7 +395,12 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
             detail="A new item requires upca, name, and complete dimensions",
         )
     try:
-        if any(float(dimensions[key]) <= 0 for key in ("width", "height", "length")):
+        if any(
+            isinstance(dimensions.get(key), bool)
+            or not isinstance(dimensions.get(key), (int, float))
+            or not 0 < dimensions[key] < math.inf
+            for key in ("width", "height", "length")
+        ):
             raise ValueError
         if item_data.get("weight") is not None and float(item_data["weight"]) <= 0:
             raise ValueError
@@ -400,6 +409,11 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Item dimensions and weight must be positive numbers",
         ) from exc
+
+    try:
+        validate_mass(item_data)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     access_level_id = item_data.get("access_level_id")
     if access_level_id is not None and await db.get(AccessLevel, access_level_id) is None:
@@ -564,11 +578,19 @@ async def robot_commands(
         )
     _ensure_command_allowed_while_needs_home(command, worker)
 
+    enrollment_item: Item | None = None
     if isinstance(command, StoreItemCommand):
         logging.info("Processing StoreItemCommand: item=%s", command.item)
         item_data = deepcopy(command.item or {})
-        await _validate_direct_store_reservation(item_data, db)
         upca = item_data.get("upca")
+        if any(key in item_data for key in MASS_FIELDS) and (
+            not isinstance(upca, str) or not upca.strip() or len(upca) > 50
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="item.upca is required for container mass enrollment",
+            )
+        await _validate_direct_store_reservation(item_data, db)
         human_dimensions_source = "command_payload" if item_data.get("dimensions") is not None else "none"
 
         if upca is not None:
@@ -581,8 +603,11 @@ async def robot_commands(
                 item_data["dimensions"] = item.dimensions
                 item_data["name"] = item.name
                 human_dimensions_source = "db"
+                item_data.pop("net_weight", None)
                 if item.weight is not None:
                     item_data["weight"] = item.weight
+                else:
+                    item_data.pop("weight", None)
 
                 location_result = await db.execute(
                     select(ItemLocation).where(ItemLocation.item_id == item.id)
@@ -601,9 +626,35 @@ async def robot_commands(
                         status_code=status.HTTP_409_CONFLICT,
                         detail="Item is stored in a bin; use the storage bin workflow",
                     )
+                item_data["tare_weight"] = item.tare_weight
+                item_data["full_net_weight"] = item.full_net_weight
                 command = StoreItemCommand(item=item_data, request_id=request_id)
             else:
                 logging.info("Item not found in db for upca: %s", upca)
+                dimensions = item_data.get("dimensions")
+                if not isinstance(dimensions, dict) or any(
+                    isinstance(dimensions.get(key), bool)
+                    or not isinstance(dimensions.get(key), (int, float))
+                    or not 0 < dimensions[key] < math.inf
+                    for key in ("width", "height", "length")
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="New items require finite positive width, height, and length",
+                    )
+                try:
+                    ItemValidator.validate_weight(item_data.get("weight"))
+                    validate_mass(item_data)
+                except ValidationError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                # Prepare enrollment for the command admission transaction, so
+                # rejected submissions cannot establish an operator baseline.
+                item = Item(upca=str(upca), name=str(item_data.get("name") or upca),
+                            dimensions=dimensions,
+                            weight=item_data.get("weight"), item_metadata=item_data.get("metadata") or {},
+                            access_level_id=item_data.get("access_level_id"))
+                apply_mass(item, item_data, enrollment=True)
+                enrollment_item = item
 
         logging.info("Final StoreItemCommand: item=%s", command.item)
         final_item_data = command.item or {}
@@ -698,6 +749,7 @@ async def robot_commands(
                     submission_payload,
                     request_id=request_id,
                     correlation_id=correlation_id_var.get(),
+                    enrollment_item=enrollment_item,
                 )
             except CommandRequestConflictError as exc:
                 raise HTTPException(
@@ -866,11 +918,16 @@ async def emit_scanner_scan_event(
     return SuccessResponse()
 
 
-@router.get("/debug/scale", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.get("/debug/scale", dependencies=[Depends(get_current_user)])
 async def get_scale_reading(
-    worker: RobotWorker = Depends(get_robot_worker_or_error),
+    worker: RobotWorker | None = Depends(get_command_worker_for_mode),
 ) -> dict:
+    if get_operating_mode() == OperatingMode.mock:
+        return {"weight_grams": 350.0, "decimal_position": 1,
+                "status": {"stable": True, "valid": True, "zero": False, "overload": False, "raw": 17},
+                "raw_registers": {"weight_hi": 0, "weight_lo": 3500, "decimals": 1, "status": 17}}
     try:
+        assert worker is not None
         data = await worker.get_scale_data()
         weight_abs = abs(data["weight"])
         return {
@@ -1166,6 +1223,71 @@ async def home_motor(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=_error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
+        ) from exc
+
+
+@router.get("/debug/power", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def get_power_rails() -> dict:
+    states: dict[str, bool | None] = {rail: None for rail in POWER_RAILS}
+    try:
+        worker = await get_robot_worker()
+        states = worker._robot.get_power_rail_states()
+    except ValueError:
+        robot = get_robot_instance()
+        if robot is not None:
+            states = robot.get_power_rail_states()
+
+    return {
+        "hold_seconds": POWER_CYCLE_HOLD_S,
+        "rails": [
+            {
+                "rail": rail,
+                "supplies": spec.supplies,
+                "axes": list(spec.axes),
+                "gripper": spec.gripper,
+                "powered": states.get(rail),
+            }
+            for rail, spec in POWER_RAILS.items()
+        ],
+    }
+
+
+@router.post("/debug/power/{rail}/cycle", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+async def power_cycle_rail(
+    rail: str,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Cut a switched rail for a few seconds, then restore it.
+
+    Drive parameters that only latch at power-on need this -- any DI/DO function
+    change stays inert until its drive restarts. Returns once power is back; the
+    hardware is still booting, so re-home the axes it dropped before moving.
+    """
+    if rail not in POWER_RAILS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Power rail '{rail}' not found",
+        )
+
+    try:
+        async with manual_motion_guard(f"power_cycle:{rail}", worker=worker):
+            async with bin_workflow_command_admission_guard():
+                await _ensure_no_active_bin_workflow_mutation(db)
+
+            axes = await worker._robot.power_cycle_rail(rail)
+
+            if axes:
+                worker.set_needs_home(f"power cycle: {rail}", list(axes))
+            await worker.get_status_snapshot(force_refresh=True)
+            return {"success": True, "rail": rail, "axes_needing_home": list(axes)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.error("Power cycle failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_error_detail(f"Power cycle failed: {exc}", "power_cycle_failed"),
         ) from exc
 
 

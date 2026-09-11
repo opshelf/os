@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable, Optional, Protocol, Sequence, cast
@@ -397,7 +398,7 @@ class BinStorageService:
             "used_volume": used_volume,
             "available_volume": max(0.0, capacity_volume - used_volume),
             "status": row.status,
-            "gross_weight": row.gross_weight,
+            "gross_weight": row.gross_weight if row.status == "at_home" else None,
             "active": row.active,
             "items": [{"id": item.id, "upca": item.upca, "name": item.name} for item in members],
         }
@@ -584,6 +585,7 @@ class BinStorageService:
                 "confirmed_item_ids": sorted(member_ids),
             },
         )
+        bin_row.gross_weight = None
         self.session.add(workflow)
         try:
             await self.session.commit()
@@ -784,6 +786,7 @@ class BinStorageService:
             history=[_history_entry("retrieving_bin")],
         )
         bin_row.status = "checked_out"
+        bin_row.gross_weight = None
         self.session.add(workflow)
         try:
             await self.session.commit()
@@ -997,6 +1000,8 @@ class BinStorageService:
         return True
 
     async def complete_return(self, workflow: StorageBinWorkflow, gross_weight: Any = None) -> None:
+        if workflow.state in {"completed", "reconciled"}:
+            return
         if workflow.state == "returning_bin":
             # A later invariant failure must not permit another StoreItemCommand:
             # the bin is already physically at its home location.
@@ -1057,14 +1062,19 @@ class BinStorageService:
                     return
                 if membership is None:
                     self.session.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
+                item.enrollment_weight_pending = False
+                item.enrollment_storage_completed = True
             elif membership is not None:
                 await self.session.delete(membership)
         bin_row.status = "at_home"
-        if gross_weight is not None:
-            try:
-                bin_row.gross_weight = float(gross_weight)
-            except (TypeError, ValueError):
-                pass
+        # Only a valid measurement of the returned contents establishes aggregate mass.
+        bin_row.gross_weight = None
+        try:
+            measured = float(gross_weight)
+            if not isinstance(gross_weight, bool) and math.isfinite(measured) and measured >= 0:
+                bin_row.gross_weight = measured
+        except (TypeError, ValueError, OverflowError):
+            pass
         await self.transition(workflow, "completed")
 
     async def _apply_restore_contents(
@@ -1086,6 +1096,10 @@ class BinStorageService:
                 await self.session.delete(membership)
         for item_id in confirmed_ids - current_ids:
             self.session.add(StorageBinItem(bin_id=bin_row.id, item_id=item_id))
+        if confirmed_ids:
+            await self.session.execute(
+                update(Item).where(Item.id.in_(confirmed_ids)).values(enrollment_weight_pending=False, enrollment_storage_completed=True)
+            )
 
     async def _restore_completion_error(
         self, workflow: StorageBinWorkflow, bin_row: StorageBin
@@ -1368,10 +1382,16 @@ class BinStorageService:
                     self.session.add(
                         StorageBinItem(bin_id=workflow.bin_id, item_id=workflow.item_id)
                     )
+                if target_item_in_bin:
+                    item = await self.session.get(Item, workflow.item_id)
+                    if item is not None:
+                        item.enrollment_weight_pending = False
+                        item.enrollment_storage_completed = True
                 if not target_item_in_bin and membership is not None:
                     await self.session.delete(membership)
         if bin_row:
             bin_row.status = "at_home" if resolution == "returned" else "quarantined"
+            bin_row.gross_weight = None
         if workflow.operation == "restore":
             workflow.resolution = {**(workflow.resolution or {}), "resolution": resolution}
         elif resolution == "returned":
