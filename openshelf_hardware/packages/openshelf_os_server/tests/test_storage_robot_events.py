@@ -175,7 +175,7 @@ async def test_process_robot_event_updates_weight_from_scale() -> None:
 
 
 @pytest.mark.anyio
-async def test_mock_debug_scanner_restores_unavailable_bin_without_motion(
+async def test_mock_debug_scanner_publishes_outside_tray_without_motion(
     monkeypatch: pytest.MonkeyPatch,
     client: AsyncClient,
 ) -> None:
@@ -211,10 +211,10 @@ async def test_mock_debug_scanner_restores_unavailable_bin_without_motion(
         await session.commit()
 
         service = BinStorageService(session)
-        unavailable = await service.begin("retrieve", item, None)
-        assert unavailable is not None
-        await service.transition(unavailable, "awaiting_operator")
-        await service.close(unavailable)
+        checkout = await service.begin("retrieve", item, None)
+        assert checkout is not None
+        await service.transition(checkout, "awaiting_operator")
+        await service.close(checkout)
 
     async with AsyncSessionLocal() as session:
         commands_before_scan = len((await session.execute(select(MockRobotCommand))).scalars().all())
@@ -232,8 +232,6 @@ async def test_mock_debug_scanner_restores_unavailable_bin_without_motion(
     async with AsyncSessionLocal() as session:
         assert await BinStorageService(session).active_workflows() == []
         assert len((await session.execute(select(MockRobotCommand))).scalars().all()) == commands_before_scan
-
-
 
 @pytest.mark.anyio
 async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
@@ -460,7 +458,7 @@ async def test_correlated_bin_event_handler_exception_never_uses_legacy_mutation
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("reservation", ("configured", "durable", "quarantined"))
+@pytest.mark.parametrize("reservation", ("configured", "durable", "outside"))
 async def test_reserved_bin_barcode_and_home_never_use_legacy_mutation_without_workflow(
     monkeypatch: pytest.MonkeyPatch,
     reservation: str,
@@ -494,7 +492,7 @@ async def test_reserved_bin_barcode_and_home_never_use_legacy_mutation_without_w
                     cell_idx=home[2],
                     inner_dimensions={"width": 30.0, "height": 30.0, "length": 30.0},
                     max_items=2,
-                    status="quarantined" if reservation == "quarantined" else "at_home",
+                    status="outside" if reservation == "outside" else "at_home",
                     active=False,
                 )
             )

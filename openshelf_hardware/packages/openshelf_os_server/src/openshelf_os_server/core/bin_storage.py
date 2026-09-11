@@ -895,11 +895,8 @@ class BinStorageService:
             item_id=item.id,
             user_id=user_id,
             compartment=compartment,
-            history=[
-                {**_history_entry("retrieving_bin"), "compartment_layout": tray.compartment_layout}
-            ],
+            history=[_history_entry("retrieving_bin")],
             resolution={
-                "candidate_item_ids": [int(i) for i in positions],
                 "candidate_compartments": positions,
             },
         )

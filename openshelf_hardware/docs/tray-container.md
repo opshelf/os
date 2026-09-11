@@ -9,24 +9,26 @@ Each home cell can optionally define a subdivided tray as described below.
 ## Operator/API flow
 
 1. `POST /api/storage/bin-workflows` with `operation`, `upca`, and (for explicit
-   multi-item storage) `storage_mode: "bin"` reserves the robot and home cell.
+   multi-item storage) `storage_mode: "bin"` reserves the tray and starts delivery.
 2. `retrieving_bin` picks the tray, delivers it to IO, releases it, retracts the
    empty tool and closes the internal IO door. `awaiting_operator` means access
    is ready. The tray may stay in IO or be removed and returned by the operator.
-3. UI shows the item to take/add. Operator clears the opening and presses Done.
-4. `POST /api/storage/bin-workflows/{id}/done` takes
-   `{"target_item_in_bin": false}` for normal retrieval or `true` for storage.
-   This explicit contents confirmation replaces the required scan stages and
-   separate Store confirmation. Optional scans do not start motion.
-5. `returning_bin` grips the tray directly in IO and returns it to its fixed
-   home. Inventory changes finalize only after the physical return succeeds.
-   Track workflow SSE updates or read `/api/storage/bin-workflows/active`.
+3. UI shows the item to take/add. `POST /api/storage/bin-workflows/{id}/close`
+   completes that item instruction, updates membership, and leaves the tray outside.
+4. Scan the outside tray, or use its known barcode in a guided flow, to call
+   `POST /api/storage/bin-workflows/returns`. This opens an independent return
+   interaction with all known contents selected by default. Closing this interaction
+   cancels it without changing contents or moving hardware.
+5. With the tray in IO, `POST /api/storage/bin-workflows/{id}/store` with
+   `confirmed_item_ids` starts `returning_bin`. The robot grips the tray directly
+   in IO and returns it to its fixed home. Track workflow SSE updates or read
+   `/api/storage/bin-workflows/active`.
 
-The old `/return` endpoint and scan-wait state names are replaced. Deploy the OS
-and UI branches together. Unavailable tray restoration still uses explicit
-`confirmed_item_ids`; interrupted motions retain admin recovery/reconciliation.
-Finish existing separate-bin workflows before upgrading. Legacy scan-wait
-workflows are routed to recovery on startup, not silently resumed.
+The old `/return` endpoint, scan-wait states, and global recovery/reconciliation
+flow are replaced. Deploy the OS and UI branches together. Finish existing
+separate-bin workflows before upgrading. Startup marks interrupted legacy motion
+as failed and leaves its tray outside; a recorded physical return is finalized
+without replaying motion. Scan the outside tray to start an independent return.
 
 Both FastAPI mock mode and the UI's independent mocking mode support this flow.
 The API mock completes delivery/return immediately; the UI mock animates each
@@ -45,7 +47,7 @@ release, empty tool clearance, door clearance, and re-grip at the same pose.
 Then verify an operator-removed/replaced tray seats repeatably, followed by a
 loaded retrieval and storage. Confirm that Done stays unavailable with no tray,
 that hands in the opening trigger the existing curtain guard, and that an
-interrupted return requires recovery without accidentally fetching a second tray.
+interrupted return leaves the tray outside without accidentally fetching a second tray.
 
 Use the device's development branch and repo-managed hardware startup flow.
 Do not deploy or run motion from a dirty remote checkout. Configuration and home
@@ -84,13 +86,13 @@ Allocation checks item dimensions, available compartments and existing access
 rules. It prefers a compatible nonempty tray, then the smallest compartment
 volume, then home-cell order. Within a tray it reserves the first free number.
 The selected number is persisted on the workflow and committed to membership
-only when the tray returns; retrieval frees that number without renumbering any
-other item. Recovery and unavailable-tray restoration preserve known positions
-and reject conflicting or unknown assignments instead of guessing.
+when the item instruction is completed; retrieval frees that number without
+renumbering any other item. Independent returns preserve known positions and
+reject conflicting or unknown assignments instead of guessing.
 
 The API returns `compartment_layout` and `compartment_dimensions` on bin summaries,
 `compartment` on each member, and the target `compartment` on the workflow.
-Restore `contents` also includes each candidate's known compartment. The UI uses
+Return `contents` also includes each candidate's known compartment. The UI uses
 these fields for placement/retrieval instructions and its highlighted top view.
 Both API mock mode and the independent UI mock keep the same numbering semantics.
 
