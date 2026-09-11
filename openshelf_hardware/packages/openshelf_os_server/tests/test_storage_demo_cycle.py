@@ -78,7 +78,7 @@ def reset_demo_cycle_state(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("reservation", ("configured", "active", "member", "quarantined"))
+@pytest.mark.parametrize("reservation", ("configured", "active", "member", "outside"))
 async def test_demo_start_rejects_every_reserved_bin_home(
     monkeypatch: pytest.MonkeyPatch,
     reservation: str,
@@ -96,7 +96,7 @@ async def test_demo_start_rejects_every_reserved_bin_home(
                 cell_idx=location.cell_idx,
                 inner_dimensions={"width": 30, "height": 30, "length": 30},
                 max_items=2,
-                status="quarantined" if reservation == "quarantined" else "at_home",
+                status="outside" if reservation == "outside" else "at_home",
                 active=reservation == "active",
             )
             session.add(bin_row)
