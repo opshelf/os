@@ -308,6 +308,25 @@ class Robot:
         if cabinet is not None:
             await cabinet.stop()
 
+    def get_power_rail_states(self) -> Dict[str, Optional[bool]]:
+        """Whether each rail is currently powered. None if the pin is unavailable.
+
+        The pin is asserted to CUT power, so powered is its inverse.
+        """
+        gpio = getattr(self, "_gpio", None)
+        states: Dict[str, Optional[bool]] = {}
+
+        for rail in POWER_RAILS:
+            if gpio is None or gpio.has_pin(rail) is False:
+                states[rail] = None
+                continue
+            try:
+                states[rail] = not gpio.output(rail).read()
+            except Exception:
+                states[rail] = None
+
+        return states
+
     async def power_cycle_rail(self, rail: str) -> tuple[str, ...]:
         """Cut and restore one switched power rail. Returns the axes it dropped.
 

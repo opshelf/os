@@ -221,3 +221,25 @@ async def test_power_cycle_of_another_rail_leaves_the_gripper_alone(monkeypatch)
     await robot.power_cycle_rail("pwr_out1")
 
     assert gripper._configured is True
+
+
+@pytest.mark.asyncio
+async def test_rail_states_invert_the_pin() -> None:
+    """Asserted cuts power, so a cleared pin reads as powered."""
+    gpio = make_gpio()
+    robot = make_robot(gpio, {})
+
+    assert robot.get_power_rail_states()["pwr_out0"] is True
+
+    gpio.output("pwr_out0").write(True)
+    assert robot.get_power_rail_states()["pwr_out0"] is False
+
+
+@pytest.mark.asyncio
+async def test_rail_states_are_none_for_unconfigured_pins() -> None:
+    robot = make_robot(make_gpio(), {})
+    states = robot.get_power_rail_states()
+
+    assert states["pwr_out0"] is True
+    assert states["pwr_out1"] is None
+    assert set(states) == {"pwr_out0", "pwr_out1", "pwr_out2", "pwr_out3"}
