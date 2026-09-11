@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterator, List, Literal, Optional, Tuple, Union, overload
+from typing import Any, Iterable, Iterator, List, Literal, Optional, Tuple, Union, overload
 
 from pydantic import BaseModel, Field, RootModel, field_validator, model_validator
 
@@ -427,9 +427,49 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
     }
 
 
+def compare_gpio_pins_to_defaults(configured: Iterable[str]) -> Tuple[List[str], List[str]]:
+    """Pin names the defaults define but a config omits, and ones it adds.
+
+    A config that declares robot.gpio.pins replaces the defaults outright, so a
+    renamed or newly added default is silently absent on that machine.
+    """
+    names = set(configured)
+    defaults = set(_default_gpio_pins())
+
+    return sorted(defaults - names), sorted(names - defaults)
+
+
+#: Pin names that existing config files still use. A config that declares
+#: robot.gpio.pins replaces the defaults wholesale, so renaming a default is
+#: invisible to those machines until the old key is translated here.
+GPIO_PIN_ALIASES = {"power_control": "pwr_out0"}
+
+
 class GpioConfig(BaseModel):
     expanders: List[GpioExpanderConfig] = Field(default_factory=_default_gpio_expanders)
     pins: dict[str, GpioPinConfig] = Field(default_factory=_default_gpio_pins)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_pin_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict) is False:
+            return data
+
+        pins = data.get("pins")
+        if isinstance(pins, dict) is False:
+            return data
+
+        renamed: dict[str, Any] = {}
+        for name, spec in pins.items():
+            alias = GPIO_PIN_ALIASES.get(name)
+            # An explicit modern key always wins over its legacy alias.
+            use_alias = alias is not None and alias not in pins
+            renamed[alias if use_alias else name] = spec
+
+        if renamed == pins:
+            return data
+
+        return {**data, "pins": renamed}
 
 
 class EmergencyStopConfig(BaseModel):
