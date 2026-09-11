@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from unittest.mock import AsyncMock
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ from hardware.gpio.types import GpioPinSpec
 from hardware.motor import MotorStatus
 from openshelf_os.common import ConfigError
 from openshelf_os.exceptions import MotorError
+from openshelf_os.robot import core
 from openshelf_os.robot.core import Robot
 
 GANTRY_POWER_PIN = "pwr_out0"  # the rail most of these exercise
@@ -38,8 +40,20 @@ def make_gpio() -> GpioManager:
 
 def make_motor(status: MotorStatus = MotorStatus.STOPPED) -> SimpleNamespace:
     return SimpleNamespace(
-        _status=status, _is_homed=True, _hard_stopped=False, _cur_pos=12.0
+        _status=status,
+        _is_homed=True,
+        _hard_stopped=False,
+        _cur_pos=12.0,
+        # power_cycle_rail reconfigures each drive once it answers again.
+        get_param=AsyncMock(return_value=0),
+        configure=AsyncMock(),
     )
+
+
+@pytest.fixture(autouse=True)
+def short_boot_timeout(monkeypatch):
+    """no_sleep turns the boot poll into a spin, so never wait the real deadline."""
+    monkeypatch.setattr(core, "POWER_CYCLE_BOOT_TIMEOUT_S", 0.05)
 
 
 def make_robot(gpio, motors: dict, gripper=None) -> Robot:
@@ -243,3 +257,70 @@ async def test_rail_states_are_none_for_unconfigured_pins() -> None:
     assert states["pwr_out0"] is True
     assert states["pwr_out1"] is None
     assert set(states) == {"pwr_out0", "pwr_out1", "pwr_out2", "pwr_out3"}
+
+
+
+@pytest.mark.asyncio
+async def test_power_cycle_reconfigures_every_axis_it_dropped(monkeypatch) -> None:
+    """Homing only restores velocity; accel, current and gains come from configure()."""
+    motors = {
+        name: make_motor()
+        for name in ("x_axis", "y_axis", "z_axis", "stage", "rotate")
+    }
+    robot = make_robot(make_gpio(), motors)
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    await robot.power_cycle_rail("pwr_out0")
+
+    for motor in motors.values():
+        motor.configure.assert_awaited_once()
+        # Reconfiguring must not resurrect the homed flag.
+        assert motor._is_homed is False
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_waits_for_the_drive_to_answer(monkeypatch) -> None:
+    motor = make_motor()
+    answers: list[object] = [RuntimeError("no response"), RuntimeError("no response"), 0]
+
+    async def get_param(_name):
+        value = answers.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    motor.get_param = AsyncMock(side_effect=get_param)
+    robot = make_robot(make_gpio(), {"x_axis": motor})
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    await robot.power_cycle_rail("pwr_out0")
+
+    assert motor.get_param.await_count == 3
+    motor.configure.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_drive_that_never_answers_is_logged_not_raised(monkeypatch, caplog) -> None:
+    motor = make_motor()
+    motor.get_param = AsyncMock(side_effect=RuntimeError("bus down"))
+    robot = make_robot(make_gpio(), {"x_axis": motor})
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    with caplog.at_level(logging.ERROR):
+        await robot.power_cycle_rail("pwr_out0")
+
+    assert "did not answer after power cycle" in caplog.text
+    motor.configure.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_reconfigure_is_logged_not_raised(monkeypatch, caplog) -> None:
+    motor = make_motor()
+    motor.configure = AsyncMock(side_effect=RuntimeError("modbus timeout"))
+    robot = make_robot(make_gpio(), {"x_axis": motor})
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    with caplog.at_level(logging.ERROR):
+        await robot.power_cycle_rail("pwr_out0")
+
+    assert "failed to reconfigure after power cycle" in caplog.text

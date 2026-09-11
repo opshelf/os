@@ -79,6 +79,8 @@ POWER_RAILS: Dict[str, PowerRail] = {
     "pwr_out3": PowerRail("aux", ()),
 }
 POWER_CYCLE_HOLD_S = 3.0
+POWER_CYCLE_BOOT_TIMEOUT_S = 20.0
+POWER_CYCLE_BOOT_POLL_S = 0.25
 
 
 class Robot:
@@ -352,6 +354,48 @@ class Robot:
 
         return states
 
+    async def _wait_for_drive(self, motor: "Motor") -> bool:
+        """Poll a drive until it answers after a power cycle."""
+        deadline = asyncio.get_running_loop().time() + POWER_CYCLE_BOOT_TIMEOUT_S
+
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                await motor.get_param("Motion status")
+                return True
+            except Exception:
+                await asyncio.sleep(POWER_CYCLE_BOOT_POLL_S)
+
+        return False
+
+    async def _reconfigure_after_power_cycle(self, axes: tuple[str, ...]) -> None:
+        """Re-apply runtime parameters the drives lost with their power.
+
+        move_config() -- all that homing runs -- restores the path mode,
+        direction and velocity. Peak current, accel/decel, the position loop
+        gain, the stop time and the following-error limit come only from
+        configure(), so without this a home after a power cycle runs on EEPROM
+        values and faults.
+        """
+        for name in axes:
+            motor = self._get_motor_by_name(name)
+            if motor is None:
+                continue
+
+            if await self._wait_for_drive(motor) is False:
+                self._logger.error(
+                    "drive did not answer after power cycle; parameters not restored",
+                    extra={"motor_name": name, "timeout_s": POWER_CYCLE_BOOT_TIMEOUT_S},
+                )
+                continue
+
+            try:
+                await motor.configure()
+            except Exception as e:
+                self._logger.error(
+                    "failed to reconfigure after power cycle",
+                    extra={"motor_name": name, "error": str(e)},
+                )
+
     async def power_cycle_rail(self, rail: str) -> tuple[str, ...]:
         """Cut and restore one switched power rail. Returns the axes it dropped.
 
@@ -359,9 +403,9 @@ class Robot:
         change is written, verified and saved, yet stays inert until the drive
         restarts (CL57RS manual 4.3.2). Anything on the rail comes back with its
         RAM parameters lost and, for a motor, an incremental encoder that no
-        longer knows where it is -- so those axes are marked unhomed. This
-        returns as soon as power is restored; the caller re-initialises once the
-        hardware is up.
+        longer knows where it is -- so those axes are marked unhomed and their
+        drives reconfigured once they answer again. The caller still has to home
+        them.
         """
         if rail not in POWER_RAILS:
             raise ConfigError(f"Unknown power rail '{rail}'")
@@ -397,6 +441,8 @@ class Robot:
             motor._is_homed = False
             motor._hard_stopped = True
             motor._cur_pos = None
+
+        await self._reconfigure_after_power_cycle(spec.axes)
 
         if spec.gripper is True:
             gripper = getattr(getattr(self, "_tool", None), "_gs", None)
