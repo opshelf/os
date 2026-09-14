@@ -6,7 +6,16 @@ import pytest
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.robot.core import Robot
 from openshelf_os.robot.status import RobotCommandError, RobotCommandSuccessful
-from openshelf_os.storage import StorageModuleCellLocation, StorageModuleSide
+from openshelf_os.storage import (
+    CalibrationCoordinate,
+    Cell,
+    CellStatus,
+    Dimensions,
+    Shelf,
+    StorageGrid,
+    StorageModuleCellLocation,
+    StorageModuleSide,
+)
 
 
 class StoreGrid:
@@ -22,21 +31,56 @@ class StoreGrid:
         self.stored_locations.append(location)
 
 
-def build_demo_store_robot(
-    demo_cell_map: dict[str, StorageModuleCellLocation] | None,
-    reserved_locations: set[tuple[str, int, int]],
-) -> tuple[Robot, StoreGrid]:
+def build_grid(
+    *,
+    status: CellStatus = CellStatus.AVAILABLE,
+    dimensions: Dimensions | None = None,
+) -> StorageGrid:
+    return StorageGrid(
+        left_module=[
+            Shelf(
+                shelf_idx=0,
+                shelf_height=250.0,
+                shelf_width=400.0,
+                cells=[
+                    Cell(
+                        cell_idx=0,
+                        status=status,
+                        item=None,
+                        calibration_point=CalibrationCoordinate(x=10.0, y=20.0),
+                        dimensions=dimensions
+                        or Dimensions(width=100.0, length=100.0, height=100.0),
+                    )
+                ],
+            )
+        ],
+        right_module=[],
+    )
+
+
+def build_store_robot(
+    grid: StoreGrid | StorageGrid,
+    demo_cell_map: dict[str, StorageModuleCellLocation] | None = None,
+    reserved_locations: set[tuple[str, int, int]] | None = None,
+) -> Robot:
     robot = Robot.__new__(Robot)
     robot._logger = SimpleNamespace(info=lambda *args, **kwargs: None, exception=lambda *args, **kwargs: None)
     robot._state = SimpleNamespace(current_cell=None)
     robot._operation_context = {}
     robot._demo_cell_map = demo_cell_map
-    robot._reserved_cell_locations = reserved_locations
+    robot._reserved_cell_locations = reserved_locations or set()
     robot._io = SimpleNamespace(get_weight=AsyncMock(return_value=42.0))
     robot.io_pick = AsyncMock()
-    grid = StoreGrid()
     robot._grid = grid
-    return robot, grid
+    return robot
+
+
+def build_demo_store_robot(
+    demo_cell_map: dict[str, StorageModuleCellLocation] | None,
+    reserved_locations: set[tuple[str, int, int]],
+) -> tuple[Robot, StoreGrid]:
+    grid = StoreGrid()
+    return build_store_robot(grid, demo_cell_map, reserved_locations), grid
 
 
 def item_payload(upca: str, location: StorageModuleCellLocation | None = None) -> dict[str, object]:
@@ -133,17 +177,69 @@ async def test_demo_store_rejects_unmapped_barcode_with_ordinary_explicit_locati
 
 
 @pytest.mark.asyncio
-async def test_non_demo_store_allows_explicit_location() -> None:
+async def test_non_demo_store_rejects_unknown_explicit_location() -> None:
     explicit_location = StorageModuleCellLocation(
         side=StorageModuleSide.RIGHT, shelf_idx=3, cell_idx=4
     )
-    robot, grid = build_demo_store_robot(None, set())
+    grid = build_grid()
+    robot = build_store_robot(grid)
 
     result = await robot.store(item_payload("ordinary-item", explicit_location))
 
+    assert isinstance(result, RobotCommandError)
+    assert result.error == "Requested storage cell does not exist"
+    robot.io_pick.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_demo_store_stores_to_available_explicit_location() -> None:
+    location = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0)
+    grid = build_grid()
+    robot = build_store_robot(grid)
+
+    result = await robot.store(item_payload("ordinary-item", location))
+
     assert isinstance(result, RobotCommandSuccessful)
-    assert result.location == explicit_location
-    assert grid.stored_locations == [explicit_location]
+    assert result.location == location
+    assert grid.get_cell(location).status == CellStatus.OCCUPIED
+    robot.io_pick.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_non_demo_store_rejects_occupied_explicit_location() -> None:
+    location = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0)
+    robot = build_store_robot(build_grid(status=CellStatus.OCCUPIED))
+
+    result = await robot.store(item_payload("ordinary-item", location))
+
+    assert isinstance(result, RobotCommandError)
+    assert result.error == "Requested storage cell is occupied"
+    robot.io_pick.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_demo_store_rejects_too_small_explicit_location() -> None:
+    location = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0)
+    robot = build_store_robot(build_grid(dimensions=Dimensions(width=1.0, length=1.0, height=1.0)))
+
+    result = await robot.store(item_payload("ordinary-item", location))
+
+    assert isinstance(result, RobotCommandError)
+    assert result.error == "Item does not fit the requested storage cell"
+    robot.io_pick.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_demo_store_rejects_malformed_explicit_location() -> None:
+    robot = build_store_robot(build_grid())
+    payload = item_payload("ordinary-item")
+    payload["location"] = {"side": "middle_module", "shelf_idx": 0, "cell_idx": 0}
+
+    result = await robot.store(payload)
+
+    assert isinstance(result, RobotCommandError)
+    assert result.error == "Invalid storage location provided"
+    robot.io_pick.assert_not_awaited()
 
 
 @pytest.mark.asyncio

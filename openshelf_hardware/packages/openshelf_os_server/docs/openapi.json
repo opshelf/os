@@ -5288,6 +5288,43 @@
             },
             "title": "Item"
           },
+          "location": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Requested destination cell. Must exist, be available, and fit the item. Storage bin homes are reserved and cannot be requested; demo mode keeps its configured cell mapping.",
+            "examples": [
+              {
+                "cell_idx": 2,
+                "shelf_idx": 0,
+                "side": "left_module"
+              }
+            ],
+            "properties": {
+              "cell_idx": {
+                "description": "Zero-based cell index",
+                "type": "integer"
+              },
+              "shelf_idx": {
+                "description": "Zero-based shelf index",
+                "type": "integer"
+              },
+              "side": {
+                "enum": [
+                  "left_module",
+                  "right_module"
+                ],
+                "type": "string"
+              }
+            },
+            "title": "Location"
+          },
           "request_id": {
             "anyOf": [
               {
@@ -12441,7 +12478,7 @@
     },
     "/api/robot/commands": {
       "post": {
-        "description": "Queue a robot command.\n\nReturns a durable `command_id` and current state after admission, not after physical\ncompletion. Poll `/api/robot/commands/{command_id}` for the result or subscribe to\n`/api/robot/events` before submitting. The status stream is not a command receipt.\n\nFor store/retrieve commands, reuse the same `request_id` and payload after an uncertain\nsubmission. Identical replays return the existing record; a different payload returns\n`409`. Records and idempotency are retained for seven days. A terminal failure requires\na new ID for a new attempt. Interrupted commands are failed at startup rather than\nreplayed.\n\nCreate inventory first, then submit\n`{\"command\":\"store_item\",\"request_id\":\"store-001\",\"item\":{\"upca\":\"880000000001\"}}`. New\ncommand-enrolled items require positive complete dimensions; include a name for\ncompatibility with mock mode. Existing items use stored dimensions and mass: update\ninventory before submitting if these must change. Accepted enrollment survives execution\nfailure.\n\nFor retrieval, read the item first and supply its `location` (`side`, zero-based\n`shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box\nbefore retrieving. Home when `home_required` is reported. An active bin workflow returns\n`423`; a full queue returns `429` with `Retry-After`.\n\nMock mode supports only store/retrieve, with one FIFO worker and simulated completion.\nHardware modes also accept the engineering commands in the schema. A queued stop is not\nan emergency stop; use the physical emergency stop for immediate safety-critical\nstopping.",
+        "description": "Queue a robot command.\n\nReturns a durable `command_id` and current state after admission, not after physical\ncompletion. Poll `/api/robot/commands/{command_id}` for the result or subscribe to\n`/api/robot/events` before submitting. The status stream is not a command receipt.\n\nFor store/retrieve commands, reuse the same `request_id` and payload after an uncertain\nsubmission. Identical replays return the existing record; a different payload returns\n`409`. Records and idempotency are retained for seven days. A terminal failure requires\na new ID for a new attempt. Interrupted commands are failed at startup rather than\nreplayed.\n\nCreate inventory first, then submit\n`{\"command\":\"store_item\",\"request_id\":\"store-001\",\"item\":{\"upca\":\"880000000001\"}}`. New\ncommand-enrolled items require positive complete dimensions; include a name for\ncompatibility with mock mode. Existing items use stored dimensions and mass: update\ninventory before submitting if these must change. Accepted enrollment survives execution\nfailure.\n\nTo choose the destination cell, add a top-level `location`\n(`{\"side\":\"left_module\",\"shelf_idx\":0,\"cell_idx\":0}`). The cell must exist in the\nstorage grid, be available, and fit the item; storage bin homes are reserved. Omitting\n`location` keeps automatic allocation, and demo mode keeps its configured cell mapping.\n\nFor retrieval, read the item first and supply its `location` (`side`, zero-based\n`shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box\nbefore retrieving. Home when `home_required` is reported. An active bin workflow returns\n`423`; a full queue returns `429` with `Retry-After`.\n\nMock mode supports only store/retrieve, with one FIFO worker and simulated completion.\nHardware modes also accept the engineering commands in the schema. A queued stop is not\nan emergency stop; use the physical emergency stop for immediate safety-critical\nstopping.",
         "operationId": "robot_commands_api_robot_commands_post",
         "parameters": [
           {

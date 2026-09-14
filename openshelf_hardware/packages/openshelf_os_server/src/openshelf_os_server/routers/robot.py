@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from openshelf_os.common import ConfigError
 from openshelf_os.operating_mode import OperatingMode
+from openshelf_os.storage import CellItem, CellStatus, Dimensions, StorageModuleCellLocation
 from openshelf_os.robot.commands import (
     HomeCommand,
     InitializeCommand,
@@ -48,6 +49,7 @@ from openshelf_os_server.core.mock_robot import (
     MockQueueFullError,
     MockRequestConflictError,
     get_mock_robot_runtime,
+    mock_cell_fits,
 )
 from openshelf_os_server.core.command_lifecycle import (
     CommandQueueFullError,
@@ -425,6 +427,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
     if not isinstance(upca, str) or upca.strip() == "" or len(upca) > 50:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="item.upca is required")
 
+    _parse_requested_store_location(item_data)
     await _validate_direct_store_reservation(item_data, db)
 
     item = (await db.execute(select(Item).where(Item.upca == upca))).scalar_one_or_none()
@@ -445,6 +448,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Item is already stored; retrieve it before storing again",
             )
+        await _validate_mock_store_location(item_data, item.dimensions, db)
         return
 
     name = item_data.get("name")
@@ -470,6 +474,8 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
             detail="Item dimensions and weight must be positive numbers",
         ) from exc
 
+    await _validate_mock_store_location(item_data, dimensions, db)
+
     try:
         validate_mass(item_data)
     except ValidationError as exc:
@@ -488,6 +494,135 @@ async def _validate_direct_store_reservation(item_data: dict[str, Any], db: Asyn
             status_code=status.HTTP_409_CONFLICT,
             detail=_error_detail(str(exc), exc.code),
         ) from exc
+
+
+def _fold_store_location_into_item(command: StoreItemCommand) -> StoreItemCommand:
+    """Keep one internal representation of the requested destination cell.
+
+    Public requests use a top-level `location`; the robot worker, the bin workflow, and
+    admission validation read `item.location`. Folding here also keeps the durable
+    idempotency payload canonical.
+    """
+    location = command.location
+    if location is None:
+        return command
+
+    item = dict(command.item or {})
+    item["location"] = dict(location)
+    return StoreItemCommand(request_id=command.request_id, item=item)
+
+
+def _parse_requested_store_location(item_data: dict[str, Any]) -> StorageModuleCellLocation | None:
+    raw_location = item_data.get("location")
+    if raw_location is None:
+        return None
+    try:
+        if (
+            not isinstance(raw_location, dict)
+            or not isinstance(raw_location.get("side"), str)
+            or any(
+                not isinstance(raw_location.get(key), int)
+                or isinstance(raw_location.get(key), bool)
+                for key in ("shelf_idx", "cell_idx")
+            )
+        ):
+            raise ValueError
+        return StorageModuleCellLocation.model_validate(raw_location)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=_error_detail("location requires side, shelf_idx and cell_idx", "invalid_location"),
+        ) from None
+
+
+def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -> None:
+    location = _parse_requested_store_location(item_data)
+    if location is None:
+        return
+
+    robot = getattr(worker, "_robot", None)
+    grid = getattr(robot, "_grid", None)
+    if getattr(robot, "_demo_cell_map", None) is not None:
+        # Demo execution uses its barcode mapping instead of ordinary requested cells.
+        return
+    if grid is None:
+        # Lightweight worker doubles expose no grid; execution re-validates.
+        return
+
+    cell = grid.get_cell_if_present(location)
+    if cell is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=_error_detail("Requested storage cell does not exist", "cell_not_found"),
+        )
+    if cell.status != CellStatus.AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail(f"Requested storage cell is {cell.status.value}", "cell_unavailable"),
+        )
+
+    dimensions = item_data.get("dimensions")
+    if not isinstance(dimensions, dict):
+        return
+    try:
+        item = CellItem(
+            dimensions=Dimensions(
+                width=float(dimensions["width"]),
+                height=float(dimensions["height"]),
+                length=float(dimensions["length"]),
+            )
+        )
+    except (KeyError, TypeError, ValueError):
+        return
+    if grid.cell_fits_item(cell, item) is False:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail("Item does not fit the requested storage cell", "cell_too_small"),
+        )
+
+
+async def _validate_mock_store_location(
+    item_data: dict[str, Any],
+    dimensions: Any,
+    db: AsyncSession,
+) -> None:
+    location = _parse_requested_store_location(item_data)
+    if location is None:
+        return
+
+    side = location.side.value
+    shelf_idx = location.shelf_idx
+    cell_idx = location.cell_idx
+    if (
+        side not in MOCK_SIDES
+        or not 0 <= shelf_idx < MOCK_SHELVES_PER_SIDE
+        or not 0 <= cell_idx < MOCK_CELLS_PER_SHELF
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=_error_detail("Requested storage cell does not exist", "cell_not_found"),
+        )
+
+    occupied = (
+        await db.execute(
+            select(ItemLocation.id).where(
+                ItemLocation.side == side,
+                ItemLocation.shelf_idx == shelf_idx,
+                ItemLocation.cell_idx == cell_idx,
+            )
+        )
+    ).scalar_one_or_none()
+    if occupied is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail("Requested storage cell is occupied", "cell_unavailable"),
+        )
+
+    if isinstance(dimensions, dict) and mock_cell_fits(dimensions) is False:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail("Item does not fit the requested storage cell", "cell_too_small"),
+        )
 
 
 async def _validate_mock_retrieve(
@@ -578,6 +713,11 @@ async def robot_commands(
     inventory before submitting if these must change. Accepted enrollment survives execution
     failure.
 
+    To choose the destination cell, add a top-level `location`
+    (`{"side":"left_module","shelf_idx":0,"cell_idx":0}`). The cell must exist in the
+    storage grid, be available, and fit the item; storage bin homes are reserved. Omitting
+    `location` keeps automatic allocation, and demo mode keeps its configured cell mapping.
+
     For retrieval, read the item first and supply its `location` (`side`, zero-based
     `shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box
     before retrieving. Home when `home_required` is reported. An active bin workflow returns
@@ -589,6 +729,8 @@ async def robot_commands(
     stopping.
     """
     operating_mode = get_operating_mode()
+    if isinstance(command, StoreItemCommand):
+        command = _fold_store_location_into_item(command)
     submission_payload = command.model_dump(mode="json", exclude_none=True)
     request_id = getattr(command, "request_id", None)
     if operating_mode == OperatingMode.mock:
@@ -683,6 +825,7 @@ async def robot_commands(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="item.upca is required for container mass enrollment",
             )
+        _parse_requested_store_location(item_data)
         await _validate_direct_store_reservation(item_data, db)
         human_dimensions_source = "command_payload" if item_data.get("dimensions") is not None else "none"
 
@@ -751,6 +894,7 @@ async def robot_commands(
 
         logging.info("Final StoreItemCommand: item=%s", command.item)
         final_item_data = command.item or {}
+        _validate_requested_store_location(final_item_data, worker)
         try:
             await capture_store_observer_measurement(
                 upca=final_item_data.get("upca"),

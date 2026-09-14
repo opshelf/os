@@ -227,6 +227,21 @@ async def test_direct_store_rejects_reserved_bin_barcode_and_home_in_both_modes(
         assert home_error.value.status_code == 409
         assert home_error.value.detail["code"] == "reserved_bin_home"
 
+        with pytest.raises(HTTPException) as malformed_mock_error:
+            await robot_router._validate_mock_store(
+                StoreItemCommand(
+                    item={
+                        "upca": "123456789015",
+                        "name": "Direct item",
+                        "dimensions": {"width": 1, "height": 1, "length": 1},
+                        "location": {"side": "left_module", "shelf_idx": False, "cell_idx": 0},
+                    }
+                ),
+                db,
+            )
+        assert malformed_mock_error.value.status_code == 422
+        assert malformed_mock_error.value.detail["code"] == "invalid_location"
+
         worker = MagicMock()
         worker.needs_home.return_value = False
         monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
@@ -247,7 +262,40 @@ async def test_direct_store_rejects_reserved_bin_barcode_and_home_in_both_modes(
             )
         assert hardware_error.value.status_code == 409
         assert hardware_error.value.detail["code"] == "reserved_bin_home"
+
+        with pytest.raises(HTTPException) as malformed_hardware_error:
+            await robot_router.robot_commands(
+                StoreItemCommand(
+                    location={"side": "left_module", "shelf_idx": "0", "cell_idx": 0},
+                    item={
+                        "upca": "123456789016",
+                        "name": "Direct item",
+                        "dimensions": {"width": 1, "height": 1, "length": 1},
+                    },
+                ),
+                worker=worker,
+                current_user=SimpleNamespace(id=1),
+                db=db,
+            )
+        assert malformed_hardware_error.value.status_code == 422
+        assert malformed_hardware_error.value.detail["code"] == "invalid_location"
         worker.enqueue_command.assert_not_called()
+
+        folded = robot_router._fold_store_location_into_item(
+            StoreItemCommand(
+                location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+                item={
+                    "upca": "123456789014",
+                    "name": "Direct item",
+                    "dimensions": {"width": 1, "height": 1, "length": 1},
+                },
+            )
+        )
+        assert folded.location is None
+        with pytest.raises(HTTPException) as folded_home_error:
+            await robot_router._validate_direct_store_reservation(folded.item or {}, db)
+        assert folded_home_error.value.status_code == 409
+        assert folded_home_error.value.detail["code"] == "reserved_bin_home"
 
 
 @pytest.mark.anyio
