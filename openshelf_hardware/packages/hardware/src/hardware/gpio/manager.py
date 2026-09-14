@@ -108,6 +108,18 @@ class GpioManager:
 
         return self._outputs[name]
 
+    def read_output(self, name: str) -> bool:
+        if self._closed is True:
+            raise GpioConfigError("GPIO manager is closed")
+
+        spec = self._require_pin(name)
+
+        if spec.direction != "output":
+            raise GpioConfigError(f"GPIO pin '{name}' is not configured as output")
+
+        backend = self._backend_for(spec)
+        return spec.to_logical(backend.read(spec))
+
     def apply_initial_outputs(self) -> None:
         for name, spec in self._pins.items():
             if spec.direction != "output" or spec.initial is None:

@@ -348,7 +348,7 @@ class Robot:
                 states[rail] = None
                 continue
             try:
-                states[rail] = not gpio.output(rail).read()
+                states[rail] = not gpio.read_output(rail)
             except Exception:
                 states[rail] = None
 
@@ -376,6 +376,8 @@ class Robot:
         configure(), so without this a home after a power cycle runs on EEPROM
         values and faults.
         """
+        failed_axes: list[str] = []
+
         for name in axes:
             motor = self._get_motor_by_name(name)
             if motor is None:
@@ -386,6 +388,7 @@ class Robot:
                     "drive did not answer after power cycle; parameters not restored",
                     extra={"motor_name": name, "timeout_s": POWER_CYCLE_BOOT_TIMEOUT_S},
                 )
+                failed_axes.append(name)
                 continue
 
             try:
@@ -395,8 +398,17 @@ class Robot:
                     "failed to reconfigure after power cycle",
                     extra={"motor_name": name, "error": str(e)},
                 )
+                failed_axes.append(name)
 
-    async def power_cycle_rail(self, rail: str) -> tuple[str, ...]:
+        if failed_axes:
+            raise MotorError(f"Power cycle reconfigure failed for axes: {', '.join(failed_axes)}")
+
+    async def power_cycle_rail(
+        self,
+        rail: str,
+        *,
+        on_cut: Callable[[], None] | None = None,
+    ) -> tuple[str, ...]:
         """Cut and restore one switched power rail. Returns the axes it dropped.
 
         Drive settings that only latch at power-on need this: any DI/DO function
@@ -406,6 +418,9 @@ class Robot:
         longer knows where it is -- so those axes are marked unhomed and their
         drives reconfigured once they answer again. The caller still has to home
         them.
+
+        The optional ``on_cut`` callback runs synchronously after power is cut and
+        before the hold begins.
         """
         if rail not in POWER_RAILS:
             raise ConfigError(f"Unknown power rail '{rail}'")
@@ -421,18 +436,6 @@ class Robot:
         if gpio is None or gpio.has_pin(rail) is False:
             raise ConfigError(f"GPIO pin {rail} is not configured")
 
-        output = gpio.output(rail)
-        self._logger.warning(
-            "Power cycling rail",
-            extra={"pin": rail, "supplies": spec.supplies, "hold_s": POWER_CYCLE_HOLD_S},
-        )
-
-        output.write(True)  # asserted cuts power
-        try:
-            await asyncio.sleep(POWER_CYCLE_HOLD_S)
-        finally:
-            output.write(False)  # cleared restores it
-
         for name in spec.axes:
             motor = self._get_motor_by_name(name)
             if motor is None:
@@ -442,13 +445,34 @@ class Robot:
             motor._hard_stopped = True
             motor._cur_pos = None
 
-        await self._reconfigure_after_power_cycle(spec.axes)
-
         if spec.gripper is True:
             gripper = getattr(getattr(self, "_tool", None), "_gs", None)
             if gripper is not None:
                 # _ensure_configured() reconfigures it on next use.
                 gripper._configured = False
+
+        output = gpio.output(rail)
+        self._logger.warning(
+            "Power cycling rail",
+            extra={"pin": rail, "supplies": spec.supplies, "hold_s": POWER_CYCLE_HOLD_S},
+        )
+
+        output.write(True)  # asserted cuts power
+        if on_cut is not None:
+            on_cut()
+        try:
+            await asyncio.sleep(POWER_CYCLE_HOLD_S)
+        finally:
+            output.write(False)  # cleared restores it
+            configure_error: MotorError | None = None
+            try:
+                await self._reconfigure_after_power_cycle(spec.axes)
+            except MotorError as exc:
+                # _reconfigure_after_power_cycle already logged per-axis failure reasons.
+                configure_error = exc
+
+        if configure_error is not None:
+            raise configure_error
 
         return spec.axes
 
