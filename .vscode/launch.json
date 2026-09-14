@@ -1,0 +1,45 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Attach: api (docker)",
+			"type": "debugpy",
+			"request": "attach",
+			"connect": {
+				"host": "localhost",
+				"port": 5678
+			},
+			"pathMappings": [
+				{
+					"localRoot": "${workspaceFolder}/openshelf_hardware",
+					"remoteRoot": "/app/openshelf_hardware"
+				}
+			],
+			"justMyCode": false
+		},
+		{
+			"name": "Attach: api (device)",
+			"type": "debugpy",
+			"request": "attach",
+			"connect": {
+				"host": "${input:deviceHost}",
+				"port": 5678
+			},
+			"pathMappings": [
+				{
+					"localRoot": "${workspaceFolder}/openshelf_hardware",
+					"remoteRoot": "/app/openshelf_hardware"
+				}
+			],
+			"justMyCode": false
+		}
+	],
+	"inputs": [
+		{
+			"id": "deviceHost",
+			"type": "promptString",
+			"description": "device hostname or IP running the api container",
+			"default": "localhost"
+		}
+	]
+}
