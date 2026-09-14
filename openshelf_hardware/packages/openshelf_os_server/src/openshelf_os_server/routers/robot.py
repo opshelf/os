@@ -1275,10 +1275,14 @@ async def power_cycle_rail(
             async with bin_workflow_command_admission_guard():
                 await _ensure_no_active_bin_workflow_mutation(db)
 
-            axes = await worker._robot.power_cycle_rail(rail)
+            cut_axes = list(POWER_RAILS[rail].axes)
 
-            if axes:
-                worker.set_needs_home(f"power cycle: {rail}", list(axes))
+            def _mark_axes_for_homing() -> None:
+                if cut_axes:
+                    worker.set_needs_home(f"power cycle: {rail}", cut_axes)
+
+            axes = await worker._robot.power_cycle_rail(rail, on_cut=_mark_axes_for_homing)
+
             await worker.get_status_snapshot(force_refresh=True)
             return {"success": True, "rail": rail, "axes_needing_home": list(axes)}
     except HTTPException:
