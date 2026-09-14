@@ -463,8 +463,10 @@ class GpioConfig(BaseModel):
         for name, spec in pins.items():
             alias = GPIO_PIN_ALIASES.get(name)
             # An explicit modern key always wins over its legacy alias.
-            use_alias = alias is not None and alias not in pins
-            renamed[alias if use_alias else name] = spec
+            if alias is not None and alias in pins:
+                continue
+
+            renamed[alias if alias is not None else name] = spec
 
         if renamed == pins:
             return data
