@@ -67,6 +67,10 @@ ENABLE_INPUT_INERT = 0x0080
 SOFTWARE_ENABLE_ON = 1
 SOFTWARE_ENABLE_OFF = 0
 MOTION_STATUS_ENABLE_BIT = 1
+# The drive keeps current for Pr4.20 while the brake sets, so disable waits that
+# long plus this margin before calling the drive stuck enabled.
+DISABLE_CONFIRM_MARGIN_S = 0.25
+DISABLE_POLL_S = 0.02
 EEPROM_SAVE_COMMAND = 0x2211
 EEPROM_SAVE_OK = 0x5555
 EEPROM_SAVE_FAILED = 0xAAAA
@@ -922,7 +926,12 @@ class Motor():
         """
         await self.set_param("Forced enable by software", SOFTWARE_ENABLE_OFF)
 
-        if await self.is_drive_enabled() is False:
+        deadline = time.monotonic() + self._brake_engagement_delay_ms / 1000.0 + DISABLE_CONFIRM_MARGIN_S
+        while await self.is_drive_enabled() is True:
+            if time.monotonic() > deadline:
+                break
+            await asyncio.sleep(DISABLE_POLL_S)
+        else:
             return
 
         self._logger.warning(
@@ -2136,23 +2145,14 @@ class Motor():
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
             raise
         finally:
+            # Every restore runs; a failure in one must not skip the next.
+            restore_errors: list[str] = []
+
             if restore_following_error is True:
                 try:
                     await self._restore_following_error_limit()
                 except Exception as restore_error:
-                    self._is_homed = False
-                    self._hard_stopped = True
-                    if home_failed is True:
-                        # Keep the homing failure as the reported cause.
-                        self._logger.warning(
-                            "Failed to restore following error limit after homing failure",
-                            extra={"motor_id": self._motor_id, "error": str(restore_error)},
-                        )
-                    else:
-                        self._emit_init("failed", detail="home", reason="following error restore failed")
-                        raise MotorConfigError(
-                            f"Failed to restore motor {self._motor_id} following error limit: {restore_error}"
-                        ) from restore_error
+                    restore_errors.append(f"following error limit: {restore_error}")
 
             if restore_peak_current is not None:
                 try:
@@ -2166,10 +2166,15 @@ class Motor():
                         },
                     )
                 except Exception as restore_error:
-                    self._is_homed = False
-                    self._hard_stopped = True
-                    self._emit_init("failed", detail="home", reason="peak current restore failed")
-                    raise MotorConfigError(
-                        f"Failed to restore motor {self._motor_id} peak current "
-                        f"to {restore_peak_current}: {restore_error}"
-                    ) from restore_error
+                    restore_errors.append(f"peak current to {restore_peak_current}: {restore_error}")
+
+            if restore_errors:
+                self._is_homed = False
+                self._hard_stopped = True
+                message = f"Failed to restore motor {self._motor_id} " + "; ".join(restore_errors)
+                if home_failed is True:
+                    # Keep the homing failure as the reported cause.
+                    self._logger.warning(message, extra={"motor_id": self._motor_id})
+                else:
+                    self._emit_init("failed", detail="home", reason="homing override restore failed")
+                    raise MotorConfigError(message)
