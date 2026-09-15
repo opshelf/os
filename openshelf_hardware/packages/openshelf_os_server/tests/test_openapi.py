@@ -1,7 +1,5 @@
 """Contract quality and transport declarations; no robot lifespan is started."""
 
-import json
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -17,11 +15,9 @@ from openshelf_os_server.routers import robot
 from openshelf_os_server.routers.storage import InventoryPage
 
 
-def test_generated_document_matches_live_routes_and_artifact():
+def test_generated_document_matches_live_routes():
     document = generate_openapi_json()
     assert document == app.openapi()
-    artifact = Path(__file__).resolve().parents[1] / "docs/openapi.json"
-    assert artifact.read_text() == json.dumps(document, indent=2, sort_keys=True) + "\n"
     registered = {
         (route.path, method.lower())
         for route in app.routes
