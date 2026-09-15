@@ -286,7 +286,9 @@ behavior changes. Put shared concepts in `documentation.py`; keep endpoint prose
 with the handler. Document effects, prerequisites, completion, and recovery when
 they are not apparent from the schema. Use `response_docs` for documentation-only
 response models so adding documentation does not change runtime serialization.
-Regenerate and commit the JSON with each contract change. The contract tests check
-coverage, examples, references, media types, and artifact freshness.
+`uv run openapi` writes the JSON on demand; it is a generated artifact and is not
+committed. `uv run openapi --check` validates the generated contract without
+writing. The contract tests check coverage, examples, references, and media types.
 
-Publishing both references is owned by the sibling relay's `scripts/deploy-docs.py`.
+Publishing both references is owned by the sibling relay's `scripts/deploy-docs.py`,
+which regenerates each document at build time.
