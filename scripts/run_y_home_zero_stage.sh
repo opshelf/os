@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 onsite_confirmation="ONSITE-RESTRAINT-AND-ESTOP-READY"
 
 usage() {
-  echo "usage: $0 inspect | <home|home-startup> ONSITE-RESTRAINT-AND-ESTOP-READY" >&2
+  echo "usage: $0 inspect | <home|home-startup|lift-100|lift-100-90rpm|descend-0> ONSITE-RESTRAINT-AND-ESTOP-READY" >&2
 }
 
 if [[ $# -eq 1 && "$1" == inspect ]]; then
@@ -17,6 +17,15 @@ elif [[ $# -eq 2 && "$1" == home && "$2" == "$onsite_confirmation" ]]; then
 elif [[ $# -eq 2 && "$1" == home-startup && "$2" == "$onsite_confirmation" ]]; then
   stage=home-startup
   python_args=(home --startup --confirm SUPERVISED-Y-HOME-ZERO-DIAGNOSTIC)
+elif [[ $# -eq 2 && "$1" == lift-100 && "$2" == "$onsite_confirmation" ]]; then
+  stage=lift-100
+  python_args=(move --target-mm 100 --confirm SUPERVISED-Y-SPEED-DIAGNOSTIC-MOVE)
+elif [[ $# -eq 2 && "$1" == lift-100-90rpm && "$2" == "$onsite_confirmation" ]]; then
+  stage=lift-100-90rpm
+  python_args=(move --target-mm 100 --rpm 90 --confirm SUPERVISED-Y-SPEED-DIAGNOSTIC-MOVE)
+elif [[ $# -eq 2 && "$1" == descend-0 && "$2" == "$onsite_confirmation" ]]; then
+  stage=descend-0
+  python_args=(move --target-mm 0 --confirm SUPERVISED-Y-SPEED-DIAGNOSTIC-MOVE)
 else
   usage
   exit 2

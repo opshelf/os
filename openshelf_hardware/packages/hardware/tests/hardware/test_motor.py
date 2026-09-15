@@ -1269,7 +1269,9 @@ async def test_y_axis_home_arms_following_error_trip_before_motion(mock_controll
     assert calls.index(call(1, 0x016D, 0x07)) < trigger
     assert calls.index(call(1, 0x000B, 500)) < trigger
     assert registers[0x016D] == 0x07
-    assert registers[0x000B] == 500
+    # Homing-only: restored to max_following_error once the zero is set.
+    assert calls.index(call(1, 0x6002, 0x21)) < calls.index(call(1, 0x000B, 4000))
+    assert registers[0x000B] == 4000
 
 
 @pytest.mark.asyncio
@@ -1369,8 +1371,29 @@ async def test_y_axis_home_fails_when_the_drive_drops_the_zero(mock_controller, 
         await motor.home()
 
     assert motor.is_homed() is False
+    assert mock_controller.write_single_register.await_args_list[-1] == call(1, 0x000B, 4000)
     # Never parked on a bad zero.
     assert call(1, 0x000F, 0) not in mock_controller.write_single_register.await_args_list
+
+
+@pytest.mark.asyncio
+async def test_y_axis_home_fails_when_following_error_limit_cannot_be_restored(mock_controller):
+    motor = y_home_motor(mock_controller)
+    registers = echo_registers(mock_controller, {0x0159: 0x24})
+    write = mock_controller.write_single_register.side_effect
+
+    async def refuse_restore(unit, address, value):
+        if (address, value) != (0x000B, 4000):
+            await write(unit, address, value)
+
+    mock_controller.write_single_register.side_effect = refuse_restore
+
+    with pytest.raises(MotorConfigError, match="Failed to restore motor 1 following error limit"):
+        await motor.home()
+
+    assert registers[0x000B] == 500
+    assert motor.is_homed() is False
+    assert motor.is_hard_stopped() is True
 
 
 @pytest.mark.asyncio

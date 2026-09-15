@@ -31,8 +31,8 @@ POSITION_TOLERANCE_MM = 1.0
 NOOP_POSITION_TOLERANCE_MM = 0.01
 HOME_APPROACH_TOLERANCE_MM = 1.0
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
-# Y following-error trip. In position mode a stall only accrues the commanded
-# overshoot, so the stock 4000 counts (one rev) hides anything under one mpr.
+# Y following-error trip for homing only; restored to max_following_error after,
+# since lifts at speed lag well past 10 mm.
 HOME_FOLLOWING_ERROR_MM = 10.0
 ALARM_DETECT_FOLLOWING_ERROR_BIT = 2
 # Y zeroes only once the homing trip is cleared and 0x6002 reads ready (0x000P):
@@ -1870,6 +1870,13 @@ class Motor():
             0x21,
         )
 
+    async def _restore_following_error_limit(self) -> None:
+        limit = int(getattr(self._params, "max_following_error", 4000))
+        await self.set_param("Allowed max position following error", limit)
+        actual = await self.get_param("Allowed max position following error")
+        if actual != limit:
+            raise MotorConfigError(f"readback mismatch: configured={limit}, read={actual}")
+
     async def _clear_homing_trip(self) -> None:
         """Clear the homing trip, then wait for no alarm, no motion and 0x6002 ready."""
         await self.move_config()
@@ -2026,12 +2033,15 @@ class Motor():
     ) -> None:
         self._simulated_fault = False
         restore_peak_current: int | None = None
+        restore_following_error = False
+        home_failed = False
 
         try:
             self._emit_init("homing")
             await self.clear_alarm()
 
             if getattr(self._params, "motor_name", None) == "y_axis":
+                restore_following_error = True
                 try:
                     await self._arm_following_error_trip()
                 except Exception as e:
@@ -2117,6 +2127,7 @@ class Motor():
                 raise MotorTimeoutError(f"Motor {self._motor_id} homing timed out")
 
         except Exception as e:
+            home_failed = True
             if isinstance(e, MotorTimeoutError):
                 self._is_homed = False
             reason = "timeout" if isinstance(e, MotorTimeoutError) else str(e)
@@ -2125,6 +2136,24 @@ class Motor():
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
             raise
         finally:
+            if restore_following_error is True:
+                try:
+                    await self._restore_following_error_limit()
+                except Exception as restore_error:
+                    self._is_homed = False
+                    self._hard_stopped = True
+                    if home_failed is True:
+                        # Keep the homing failure as the reported cause.
+                        self._logger.warning(
+                            "Failed to restore following error limit after homing failure",
+                            extra={"motor_id": self._motor_id, "error": str(restore_error)},
+                        )
+                    else:
+                        self._emit_init("failed", detail="home", reason="following error restore failed")
+                        raise MotorConfigError(
+                            f"Failed to restore motor {self._motor_id} following error limit: {restore_error}"
+                        ) from restore_error
+
             if restore_peak_current is not None:
                 try:
                     await self._set_and_verify_peak_current(restore_peak_current)
