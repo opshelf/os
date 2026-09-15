@@ -1,14 +1,15 @@
 import asyncio
-from contextlib import asynccontextmanager
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from httpx import AsyncClient
 from sqlalchemy import select
 
 from openshelf_os.operating_mode import OperatingMode
-from openshelf_os.robot.commands import HomeCommand, StoreItemCommand
+from openshelf_os.robot.commands import StoreItemCommand
 from openshelf_os_server.core import bin_storage
 from openshelf_os_server.core.bin_storage import BinStorageService, BinWorkflowConflict
 from openshelf_os_server.core.mock_robot import MockRobotRuntime
@@ -90,121 +91,12 @@ def _workflow_bin(barcode: str, side: str, shelf_idx: int, cell_idx: int) -> Sim
 
 
 @pytest.mark.anyio
-async def test_recover_interrupted_workflows_preserves_scan_wait_and_terminal_states() -> None:
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789000", "Recovery target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000000",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=0,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        workflows = {
-            state: StorageBinWorkflow(
-                id=f"startup-recovery-{state}",
-                operation="retrieve",
-                state=state,
-                bin_id=bin_row.id,
-                item_id=item.id,
-                history=[{"state": state}],
-            )
-            for state in (
-                "retrieving_bin",
-                "returning_bin",
-                "retry_claimed",
-                "reconcile_claimed",
-                "awaiting_item_scan",
-                "awaiting_bin_scan",
-                "completed",
-            )
-        }
-        for state in ("retrieving_bin", "returning_bin", "retry_claimed", "reconcile_claimed"):
-            workflows[state].recovery_claim = f"stale-{state}-claim"
-        db.add_all(workflows.values())
-        await db.commit()
-
-        service = BinStorageService(db)
-        await service.recover_interrupted_workflows()
-
-        recovered_states = ("retrieving_bin", "returning_bin", "retry_claimed", "reconcile_claimed")
-        restart_error = "Robot process restarted during motion; physical state must be reconciled"
-        for state in recovered_states:
-            workflow = workflows[state]
-            assert workflow.state == "recovery_required"
-            assert workflow.recovery_claim is None
-            assert workflow.error == restart_error
-            assert [entry["state"] for entry in workflow.history] == [state, "recovery_required"]
-            assert workflow.history[-1]["detail"] == restart_error
-        assert workflows["awaiting_item_scan"].state == "awaiting_item_scan"
-        assert workflows["awaiting_bin_scan"].state == "awaiting_bin_scan"
-        assert workflows["completed"].state == "completed"
-
-        await service.recover_interrupted_workflows()
-        for state in recovered_states:
-            assert [entry["state"] for entry in workflows[state].history] == [
-                state,
-                "recovery_required",
-            ]
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    "workflow_state",
-    ("retry_claimed", "reconcile_claimed", "retrieving_bin", "returning_bin"),
-)
-async def test_startup_recovery_retains_global_lock_after_interrupted_claim(
-    workflow_state: str,
-) -> None:
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789001", "Recovery lock target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000001",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=0,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        workflow = StorageBinWorkflow(
-            id=f"startup-recovery-lock-{workflow_state}",
-            operation="retrieve",
-            state=workflow_state,
-            lock_key="global",
-            recovery_claim=f"stale-{workflow_state}-claim",
-            bin_id=bin_row.id,
-            item_id=item.id,
-            history=[{"state": workflow_state}],
-        )
-        db.add(workflow)
-        await db.commit()
-
-        await BinStorageService(db).recover_interrupted_workflows()
-
-        assert workflow.state == "recovery_required"
-        assert workflow.recovery_claim is None
-        assert workflow.lock_key == "global"
-
-
-@pytest.mark.anyio
-async def test_direct_store_rejects_reserved_bin_barcode_and_home_in_both_modes(
+async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     configured = _configured_bin("900000000010", "left_module", 0, 0)
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config(configured))
+    tray_home = {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
 
     async with AsyncSessionLocal() as db:
         with pytest.raises(HTTPException) as barcode_error:
@@ -212,6 +104,9 @@ async def test_direct_store_rejects_reserved_bin_barcode_and_home_in_both_modes(
         assert barcode_error.value.status_code == 409
         assert barcode_error.value.detail["code"] == "reserved_bin_barcode"
 
+        # A tray home is a usable target for the reservation guard in both modes: the tray's
+        # return reports the occupied cell instead of the store being refused up front. The
+        # cell-level check below still refuses it, as production's maintenance status does.
         with pytest.raises(HTTPException) as home_error:
             await robot_router._validate_mock_store(
                 StoreItemCommand(
@@ -219,13 +114,17 @@ async def test_direct_store_rejects_reserved_bin_barcode_and_home_in_both_modes(
                         "upca": "123456789012",
                         "name": "Direct item",
                         "dimensions": {"width": 1, "height": 1, "length": 1},
-                        "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+                        "location": tray_home,
                     }
                 ),
                 db,
             )
         assert home_error.value.status_code == 409
-        assert home_error.value.detail["code"] == "reserved_bin_home"
+        assert home_error.value.detail["code"] == "cell_unavailable"
+
+        await robot_router._validate_direct_store_reservation(
+            {"upca": "123456789013", "location": tray_home}, db
+        )
 
         with pytest.raises(HTTPException) as malformed_mock_error:
             await robot_router._validate_mock_store(
@@ -246,23 +145,6 @@ async def test_direct_store_rejects_reserved_bin_barcode_and_home_in_both_modes(
         worker.needs_home.return_value = False
         monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
         monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-        with pytest.raises(HTTPException) as hardware_error:
-            await robot_router.robot_commands(
-                StoreItemCommand(
-                    item={
-                        "upca": "123456789013",
-                        "name": "Direct item",
-                        "dimensions": {"width": 1, "height": 1, "length": 1},
-                        "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
-                    }
-                ),
-                worker=worker,
-                current_user=SimpleNamespace(id=1),
-                db=db,
-            )
-        assert hardware_error.value.status_code == 409
-        assert hardware_error.value.detail["code"] == "reserved_bin_home"
-
         with pytest.raises(HTTPException) as malformed_hardware_error:
             await robot_router.robot_commands(
                 StoreItemCommand(
@@ -292,14 +174,15 @@ async def test_direct_store_rejects_reserved_bin_barcode_and_home_in_both_modes(
             )
         )
         assert folded.location is None
-        with pytest.raises(HTTPException) as folded_home_error:
-            await robot_router._validate_direct_store_reservation(folded.item or {}, db)
-        assert folded_home_error.value.status_code == 409
-        assert folded_home_error.value.detail["code"] == "reserved_bin_home"
+        assert folded.item is not None
+        assert folded.item["location"] == tray_home
+        # The folded location reaches the same reservation guard, which reserves only
+        # identities; the cell-level refusal is asserted above.
+        await robot_router._validate_direct_store_reservation(folded.item, db)
 
 
 @pytest.mark.anyio
-async def test_item_crud_reserves_configured_and_quarantined_bin_homes_before_sync(
+async def test_item_barcodes_and_locations_claim_only_live_trays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     configured = _configured_bin("900000000017", "left_module", 0, 0)
@@ -317,13 +200,15 @@ async def test_item_crud_reserves_configured_and_quarantined_bin_homes_before_sy
         item = await StorageService(db).create_item(
             "123456789017", "Direct item", {"width": 1, "height": 1, "length": 1}
         )
-        with pytest.raises(HTTPException, match="reserved as a storage bin home"):
-            await storage_router.add_item_location(
-                item.upca,
-                storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
-                db,
-                current_user,
-            )
+        # A live tray home stays reserved for automatic allocation, while an explicit
+        # location edit may use it: the tray's return reports an occupied home instead.
+        await storage_router.add_item_location(
+            item.upca,
+            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
+            db,
+            current_user,
+        )
+        assert await bin_storage.is_reserved_bin_location(("left_module", 0, 0), db) is True
 
         db.add(
             StorageBin(
@@ -333,38 +218,24 @@ async def test_item_crud_reserves_configured_and_quarantined_bin_homes_before_sy
                 cell_idx=1,
                 inner_dimensions={"width": 30, "height": 30, "length": 30},
                 max_items=1,
-                status="quarantined",
+                status="outside",
                 active=False,
             )
         )
         await db.commit()
-        with pytest.raises(HTTPException, match="reserved as a storage bin home"):
-            await storage_router.add_item_location(
-                item.upca,
-                storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=1),
-                db,
-                current_user,
-            )
-
-        member_bin = StorageBin(
-            barcode="900000000019",
-            side="left_module",
-            shelf_idx=0,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=1,
-            status="at_home",
-            active=False,
+        # A tray released by config changes stops reserving its home and identity.
+        assert await bin_storage.is_reserved_bin_location(("left_module", 0, 1), db) is False
+        assert await bin_storage.is_reserved_bin_barcode("900000000018", db) is False
+        await storage_router.add_item_location(
+            item.upca,
+            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=1),
+            db,
+            current_user,
         )
-        db.add(member_bin)
-        await db.flush()
-        db.add(StorageBinItem(bin_id=member_bin.id, item_id=item.id))
-        await db.commit()
-        assert await bin_storage.is_reserved_bin_location(("left_module", 0, 2), db) is True
 
 
 @pytest.mark.anyio
-async def test_mock_allocation_excludes_active_and_quarantined_bin_homes(
+async def test_mock_allocation_excludes_live_bin_homes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
@@ -388,8 +259,8 @@ async def test_mock_allocation_excludes_active_and_quarantined_bin_homes(
                     cell_idx=1,
                     inner_dimensions={"width": 30, "height": 30, "length": 30},
                     max_items=1,
-                    status="quarantined",
-                    active=False,
+                    status="outside",
+                    active=True,
                 ),
             ]
         )
@@ -407,6 +278,40 @@ async def test_mock_allocation_excludes_active_and_quarantined_bin_homes(
         },
     )
     assert result["location"] == {"side": "left_module", "shelf_idx": 0, "cell_idx": 2}
+
+
+@pytest.mark.anyio
+async def test_mock_allocation_uses_released_bin_homes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
+    async with AsyncSessionLocal() as db:
+        db.add(
+            StorageBin(
+                barcode="900000000013",
+                side="left_module",
+                shelf_idx=0,
+                cell_idx=0,
+                inner_dimensions={"width": 30, "height": 30, "length": 30},
+                max_items=1,
+                status="outside",
+                active=False,
+            )
+        )
+        await db.commit()
+
+    result = await MockRobotRuntime()._execute_store(
+        "mock-released-home",
+        {
+            "command": "store_item",
+            "item": {
+                "upca": "123456789014",
+                "name": "Direct item",
+                "dimensions": {"width": 1, "height": 1, "length": 1},
+            },
+        },
+    )
+    assert result["location"] == {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
 
 
 @pytest.mark.anyio
@@ -466,7 +371,7 @@ async def test_explicit_storage_mode_controls_new_item_flow(
         )
         assert direct == {"storage_mode": "direct", "workflow": None}
         assert bin_row.status == "at_home"
-        assert await BinStorageService(db).active_workflow() is None
+        assert await BinStorageService(db).active_workflows() == []
 
         selected_bin = await storage_router.create_bin_workflow(
             storage_router.BinWorkflowCreate(
@@ -477,8 +382,8 @@ async def test_explicit_storage_mode_controls_new_item_flow(
         )
         assert selected_bin["storage_mode"] == "bin"
         assert selected_bin["workflow"]["item"]["id"] == bin_item.id
-        assert selected_bin["workflow"]["state"] == "recovery_required"
-        assert bin_row.status == "checked_out"
+        assert selected_bin["workflow"]["state"] == "failed"
+        assert bin_row.status == "outside"
 
 
 @pytest.mark.anyio
@@ -504,69 +409,7 @@ async def test_explicit_bin_mode_rejects_when_no_compatible_bin_exists(
 
         assert error.value.status_code == 409
         assert error.value.detail == "No compatible storage bin is available"
-        assert await BinStorageService(db).active_workflow() is None
-
-
-@pytest.mark.anyio
-async def test_bin_start_waits_for_direct_enqueue_then_rejects_queued_work(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    worker = BlockingWorker()
-    configured = _workflow_bin("900000000016", "left_module", 0, 0)
-    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config(configured))
-    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
-    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.production)
-    monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-    direct_enqueue_held = asyncio.Event()
-    admission_attempts = 0
-    original_guard = bin_storage.bin_workflow_command_admission_guard
-
-    @asynccontextmanager
-    async def observed_guard():
-        nonlocal admission_attempts
-        admission_attempts += 1
-        if admission_attempts == 2:
-            direct_enqueue_held.set()
-        async with original_guard():
-            yield
-
-    monkeypatch.setattr(robot_router, "bin_workflow_command_admission_guard", observed_guard)
-    monkeypatch.setattr(storage_router, "bin_workflow_command_admission_guard", observed_guard)
-
-    async with AsyncSessionLocal() as setup_db:
-        await StorageService(setup_db).create_item(
-            "123456789016", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-
-    async with AsyncSessionLocal() as direct_db, AsyncSessionLocal() as bin_db:
-        direct_task = asyncio.create_task(
-            robot_router.robot_commands(
-                HomeCommand(),
-                worker=worker,  # type: ignore[arg-type]
-                current_user=SimpleNamespace(id=1, role=SimpleNamespace(name="admin")),
-                db=direct_db,
-            )
-        )
-        await worker.command_enqueue_started.wait()
-        bin_task = asyncio.create_task(
-            storage_router.create_bin_workflow(
-                storage_router.BinWorkflowCreate(operation="store", upca="123456789016"),
-                session=bin_db,
-                current_user=SimpleNamespace(id=1),
-            )
-        )
-        await direct_enqueue_held.wait()
-        worker.release_command_enqueue.set()
-        await direct_task
-
-        with pytest.raises(HTTPException) as error:
-            await bin_task
-
-        assert error.value.status_code == 409
-        assert error.value.detail == "Robot has queued commands"
-        assert len(worker.commands) == 1
-        assert await BinStorageService(bin_db).active_workflow() is None
+        assert await BinStorageService(db).active_workflows() == []
 
 
 @pytest.mark.anyio
@@ -687,862 +530,6 @@ async def test_allocator_rejects_bin_without_remaining_volume() -> None:
 
 
 @pytest.mark.anyio
-async def test_store_workflow_changes_membership_only_after_bin_returns() -> None:
-    worker = FakeWorker()
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789012", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000003",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.commit()
-        service = BinStorageService(db)
-
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        assert (await db.execute(select(StorageBinItem))).scalar_one_or_none() is None
-
-        await service.start_retrieval(workflow, worker)  # type: ignore[arg-type]
-        assert worker.commands[-1].command == "retrieve_item"
-        assert worker.commands[-1].request_id == workflow.id
-        assert await service.handle_robot_result(
-            {
-                "command": "retrieve_item",
-                "message": "success",
-                "request_id": workflow.id,
-                "upca": bin_row.barcode,
-            },
-            worker,  # type: ignore[arg-type]
-        )
-        assert workflow.state == "awaiting_item_scan"
-
-        assert await service.handle_scan(item.upca, worker)  # type: ignore[arg-type]
-        assert workflow.state == "awaiting_bin_scan"
-        assert (await db.execute(select(StorageBinItem))).scalar_one_or_none() is None
-
-        assert await service.handle_scan(bin_row.barcode, worker)  # type: ignore[arg-type]
-        assert workflow.state == "awaiting_bin_scan"
-        assert worker.commands[-1].command == "retrieve_item"
-
-        await service.start_return(workflow, worker)  # type: ignore[arg-type]
-        assert workflow.state == "returning_bin"
-        assert worker.commands[-1].command == "store_item"
-        assert worker.commands[-1].request_id == workflow.id
-        assert (await db.execute(select(StorageBinItem))).scalar_one_or_none() is None
-
-        assert await service.handle_robot_result(
-            {
-                "command": "store_item",
-                "message": "success",
-                "request_id": workflow.id,
-                "upca": bin_row.barcode,
-                "weight": 200,
-            },
-            worker,  # type: ignore[arg-type]
-        )
-        membership = (await db.execute(select(StorageBinItem))).scalar_one()
-        assert membership.item_id == item.id
-        assert workflow.state == "completed"
-        assert workflow.lock_key is None
-
-
-@pytest.mark.anyio
-async def test_resumed_scan_wait_requires_home_before_return_and_continues_after_home() -> None:
-    worker = FakeWorker()
-    worker.is_needs_home = True
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789020", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000020",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        await service.transition(workflow, "awaiting_bin_scan")
-
-        with pytest.raises(BinWorkflowConflict, match="Home required"):
-            await service.start_return(workflow, worker)  # type: ignore[arg-type]
-        assert workflow.state == "awaiting_bin_scan"
-        assert worker.commands == []
-
-        worker.is_needs_home = False
-        await service.start_return(workflow, worker)  # type: ignore[arg-type]
-        assert workflow.state == "returning_bin"
-        assert worker.commands[-1].command == "store_item"
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    "workflow_state",
-    ["awaiting_item_scan", "awaiting_bin_scan", "recovery_required"],
-)
-async def test_active_resumable_workflow_allows_only_admin_home_when_required(
-    workflow_state: str,
-) -> None:
-    worker = FakeWorker()
-    worker.is_needs_home = True
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789021", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000021",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=2,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-        )
-        await db.commit()
-        workflow = await BinStorageService(db).begin("store", item, None)
-        assert workflow is not None
-        await BinStorageService(db).transition(workflow, workflow_state)
-
-        admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-        await robot_router._ensure_no_active_bin_workflow(HomeCommand(), db, admin, worker)  # type: ignore[arg-type]
-
-        with pytest.raises(HTTPException) as non_admin_error:
-            await robot_router._ensure_no_active_bin_workflow(
-                HomeCommand(),
-                db,
-                SimpleNamespace(role=SimpleNamespace(name="operator")),
-                worker,  # type: ignore[arg-type]
-            )
-        assert non_admin_error.value.status_code == 423
-
-        with pytest.raises(HTTPException) as command_error:
-            await robot_router._ensure_no_active_bin_workflow(
-                StoreItemCommand(item={"upca": "123"}),
-                db,
-                admin,
-                worker,  # type: ignore[arg-type]
-            )
-        assert command_error.value.status_code == 423
-
-        worker.is_needs_home = False
-        with pytest.raises(HTTPException) as no_home_required_error:
-            await robot_router._ensure_no_active_bin_workflow(HomeCommand(), db, admin, worker)  # type: ignore[arg-type]
-        assert no_home_required_error.value.status_code == 423
-
-        for recovery_state in ("_is_emergency_stopped", "_is_crashed"):
-            setattr(worker, recovery_state, True)
-            await robot_router._ensure_no_active_bin_workflow(HomeCommand(), db, admin, worker)  # type: ignore[arg-type]
-
-            with pytest.raises(HTTPException) as non_admin_error:
-                await robot_router._ensure_no_active_bin_workflow(
-                    HomeCommand(),
-                    db,
-                    SimpleNamespace(role=SimpleNamespace(name="operator")),
-                    worker,  # type: ignore[arg-type]
-                )
-            assert non_admin_error.value.status_code == 423
-            setattr(worker, recovery_state, False)
-
-
-@pytest.mark.anyio
-async def test_active_bin_workflow_blocks_public_queue_and_manual_motion_but_not_stop(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    worker = MagicMock()
-    worker.clear_commands = AsyncMock()
-    worker.grip = AsyncMock()
-    worker.release_gripper = AsyncMock()
-    worker.shutdown = AsyncMock()
-    worker._robot._get_motor_by_name.return_value = MagicMock()
-    monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789026", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000026",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=2,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-        )
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        await service.transition(workflow, "awaiting_item_scan")
-
-        mutations = (
-            robot_router.clear_robot_commands(worker, db),
-            robot_router.control_gripper("grip", worker, db),
-            robot_router.home_motor("x_axis", worker=worker, db=db),
-            robot_router.move_motor(
-                "x_axis", robot_router.MotorMoveRequest(position_mm=1), worker, db
-            ),
-            robot_router.control_door("open", worker, db),
-        )
-        for mutation in mutations:
-            with pytest.raises(HTTPException) as error:
-                await mutation
-            assert error.value.status_code == 423
-            assert error.value.detail["code"] == "bin_workflow_active"
-            assert error.value.detail["workflow_id"] == workflow.id
-
-        await robot_router.stop_robot(worker)
-        assert workflow.state == "awaiting_item_scan"
-
-    worker.clear_commands.assert_not_awaited()
-    worker.grip.assert_not_awaited()
-    worker.shutdown.assert_awaited_once()
-
-
-@pytest.mark.anyio
-async def test_bin_motion_admission_blocks_manual_motion_and_active_demo_or_laser(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    worker = FakeWorker()
-    worker._demo_cycling = False
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789027", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000027",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=2,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-        )
-        await db.commit()
-        workflow = await BinStorageService(db).begin("store", item, None)
-        assert workflow is not None
-        await BinStorageService(db).transition(workflow, "awaiting_item_scan")
-        await db.commit()
-
-        with pytest.raises(HTTPException) as workflow_error:
-            async with manual_motion_guard("calibration_move", check_bin_workflow=True):
-                pytest.fail("motion must not be admitted while a bin workflow is active")
-        assert workflow_error.value.status_code == 423
-        assert workflow_error.value.detail["code"] == "bin_workflow_active"
-
-    worker._demo_cycling = True
-    with pytest.raises(BinWorkflowConflict, match="Demo cycle"):
-        await bin_storage.ensure_worker_queue_empty_for_bin_start(worker)
-
-    worker._demo_cycling = False
-    monkeypatch.setattr(
-        bin_storage, "is_laser_auto_calibration_running", AsyncMock(return_value=True)
-    )
-    with pytest.raises(BinWorkflowConflict, match="Laser auto calibration"):
-        await bin_storage.ensure_worker_queue_empty_for_bin_start(worker)
-
-
-@pytest.mark.anyio
-async def test_retry_requires_successful_home_before_enqueueing_recovery_motion(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    worker = FakeWorker()
-    worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=False)
-    worker.is_needs_home = True
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789022", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000022",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=2,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-        )
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        workflow.error = "motor fault"
-        await service.transition(workflow, "recovery_required", workflow.error)
-        admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-
-        with pytest.raises(HTTPException) as home_required_error:
-            await storage_router.retry_bin_workflow(workflow.id, db, admin)
-        assert home_required_error.value.status_code == 409
-        assert workflow.state == "recovery_required"
-        assert worker.commands == []
-
-        worker.is_needs_home = False
-        result = await storage_router.retry_bin_workflow(workflow.id, db, admin)
-        assert result["workflow"]["state"] == "retrieving_bin"
-        assert worker.commands[-1].command == "retrieve_item"
-
-
-@pytest.mark.anyio
-async def test_retry_retrieval_rejects_occupied_io_box_and_releases_claim(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    worker = FakeWorker()
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789044", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000044",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=2,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-        )
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        await service.transition(workflow, "recovery_required", "motor fault")
-        history_before_retry = list(workflow.history)
-
-        with pytest.raises(HTTPException) as occupied_error:
-            await storage_router.retry_bin_workflow(workflow.id, db, admin)
-
-        assert occupied_error.value.status_code == 409
-        assert (
-            occupied_error.value.detail
-            == "Remove the item from the IO box before retrieving the storage bin"
-        )
-        assert workflow.state == "recovery_required"
-        assert workflow.history == history_before_retry
-        assert workflow.recovery_claim is None
-        assert worker.commands == []
-
-
-@pytest.mark.anyio
-async def test_retry_return_rejects_empty_io_box_and_releases_claim(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    worker = FakeWorker()
-    worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=False)
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789045", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000045",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=2,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-        )
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        await service.transition(workflow, "returning_bin")
-        await service.transition(workflow, "recovery_required", "motor fault")
-        history_before_retry = list(workflow.history)
-
-        with pytest.raises(HTTPException) as empty_error:
-            await storage_router.retry_bin_workflow(workflow.id, db, admin)
-
-        assert empty_error.value.status_code == 409
-        assert empty_error.value.detail == "Place the bin in the IO box before storing it"
-        assert workflow.state == "recovery_required"
-        assert workflow.history == history_before_retry
-        assert workflow.recovery_claim is None
-        assert worker.commands == []
-
-
-@pytest.mark.anyio
-async def test_concurrent_retries_with_separate_sessions_enqueue_only_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(bin_storage, "_command_admission_lock", asyncio.Lock())
-    worker = BlockingWorker()
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789041", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000041",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=2,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-        )
-        await db.commit()
-        workflow = await BinStorageService(db).begin("store", item, None)
-        assert workflow is not None
-        await BinStorageService(db).transition(workflow, "recovery_required", "motor fault")
-        workflow_id = workflow.id
-
-    async def retry() -> object:
-        async with AsyncSessionLocal() as db:
-            try:
-                return await storage_router.retry_bin_workflow(workflow_id, db, admin)
-            except HTTPException as exc:
-                return exc
-
-    first = asyncio.create_task(retry())
-    await worker.command_enqueue_started.wait()
-    second = asyncio.create_task(retry())
-    await asyncio.sleep(0)
-    worker.release_command_enqueue.set()
-    first_result, second_result = await asyncio.gather(first, second)
-
-    results = [first_result, second_result]
-    assert sum(isinstance(result, HTTPException) for result in results) == 1
-    loser = next(result for result in results if isinstance(result, HTTPException))
-    assert loser.status_code == 409
-    assert len(worker.commands) == 1
-    async with AsyncSessionLocal() as db:
-        workflow = await db.get(StorageBinWorkflow, workflow_id)
-        assert workflow is not None
-        assert workflow.state == "retrieving_bin"
-        assert workflow.recovery_claim is None
-
-
-@pytest.mark.anyio
-async def test_reconcile_claim_blocks_concurrent_retry_before_enqueue(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(bin_storage, "_command_admission_lock", asyncio.Lock())
-    worker = FakeWorker()
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789042", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000042",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=2,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-        )
-        await db.commit()
-        workflow = await BinStorageService(db).begin("store", item, None)
-        assert workflow is not None
-        await BinStorageService(db).transition(workflow, "recovery_required", "motor fault")
-        workflow_id = workflow.id
-
-    reconcile_entered = asyncio.Event()
-    release_reconcile = asyncio.Event()
-    original_reconcile = BinStorageService.reconcile
-
-    async def blocking_reconcile(self, *args, **kwargs):
-        reconcile_entered.set()
-        await release_reconcile.wait()
-        return await original_reconcile(self, *args, **kwargs)
-
-    monkeypatch.setattr(BinStorageService, "reconcile", blocking_reconcile)
-
-    async def reconcile() -> object:
-        async with AsyncSessionLocal() as db:
-            try:
-                return await storage_router.reconcile_bin_workflow(
-                    workflow_id,
-                    storage_router.BinWorkflowReconcile(
-                        resolution="returned", target_item_in_bin=True
-                    ),
-                    db,
-                    admin,
-                )
-            except HTTPException as exc:
-                return exc
-
-    async def retry() -> object:
-        async with AsyncSessionLocal() as db:
-            try:
-                return await storage_router.retry_bin_workflow(workflow_id, db, admin)
-            except HTTPException as exc:
-                return exc
-
-    reconciliation = asyncio.create_task(reconcile())
-    await reconcile_entered.wait()
-    retried = asyncio.create_task(retry())
-    await asyncio.sleep(0)
-    release_reconcile.set()
-    reconciliation_result, retry_result = await asyncio.gather(reconciliation, retried)
-
-    assert not isinstance(reconciliation_result, HTTPException)
-    assert isinstance(retry_result, HTTPException)
-    assert retry_result.status_code == 409
-    assert worker.commands == []
-    async with AsyncSessionLocal() as db:
-        workflow = await db.get(StorageBinWorkflow, workflow_id)
-        assert workflow is not None
-        assert workflow.state == "reconciled"
-        assert workflow.recovery_claim is None
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("resolution", "expected_status"),
-    (("returned", "at_home"), ("quarantined", "quarantined")),
-)
-async def test_admin_can_reconcile_bin_while_waiting_for_return(
-    monkeypatch: pytest.MonkeyPatch,
-    resolution: str,
-    expected_status: str,
-) -> None:
-    monkeypatch.setattr(storage_router.robot_core, "robot_instance", None)
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", None)
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789046", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000046",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.commit()
-        workflow = await BinStorageService(db).begin("store", item, None)
-        assert workflow is not None
-        await BinStorageService(db).transition(workflow, "awaiting_bin_scan")
-
-        result = await storage_router.reconcile_bin_workflow(
-            workflow.id,
-            storage_router.BinWorkflowReconcile(
-                resolution=resolution,
-                target_item_in_bin=True if resolution == "returned" else None,
-            ),
-            db,
-            admin,
-        )
-
-        assert result["workflow"]["state"] == "reconciled"
-        expected_resolution = {"resolution": resolution}
-        if resolution == "returned":
-            expected_resolution["target_item_in_bin"] = True
-        assert result["workflow"]["resolution"] == expected_resolution
-        await db.refresh(bin_row)
-        assert bin_row.status == expected_status
-        membership = (
-            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
-        ).scalar_one_or_none()
-        assert (membership is not None) is (resolution == "returned")
-
-
-@pytest.mark.anyio
-async def test_scanned_unavailable_bin_reconciles_all_confirmed_contents(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.production)
-    monkeypatch.setattr(storage_router.robot_core, "robot_instance", None)
-    worker = FakeWorker()
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-
-    async with AsyncSessionLocal() as db:
-        storage = StorageService(db)
-        first = await storage.create_item(
-            "123456789048", "First", {"width": 10, "height": 10, "length": 10}
-        )
-        second = await storage.create_item(
-            "123456789049", "Second", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000048",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=3,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        db.add_all(
-            [
-                StorageBinItem(bin_id=bin_row.id, item_id=first.id),
-                StorageBinItem(bin_id=bin_row.id, item_id=second.id),
-            ]
-        )
-        await db.commit()
-        service = BinStorageService(db)
-        previous = await service.begin("retrieve", first, None)
-        assert previous is not None
-        await service.transition(previous, "recovery_required", "bin dropped")
-        await service.reconcile(
-            previous,
-            resolution="quarantined",
-            target_item_in_bin=True,
-        )
-
-        assert await service.handle_scan(bin_row.barcode, worker)  # type: ignore[arg-type]
-        workflow = await service.active_workflow()
-        assert workflow is not None
-        assert workflow.operation == "restore"
-        assert workflow.state == "awaiting_bin_scan"
-        payload = await service.serialize_workflow(workflow)
-        assert {item["id"] for item in payload["contents"]} == {first.id, second.id}
-        assert all(item["confirmed"] for item in payload["contents"])
-
-        workflow.resolution = {
-            **(workflow.resolution or {}),
-            "confirmed_item_ids": [second.id],
-        }
-        await service.transition(workflow, "awaiting_bin_scan", "operator unchecked first item")
-        assert await service.handle_scan(first.upca, worker)  # type: ignore[arg-type]
-        payload = await service.serialize_workflow(workflow)
-        assert {item["id"] for item in payload["contents"] if item["confirmed"]} == {
-            first.id,
-            second.id,
-        }
-
-        returned = await storage_router.return_bin_workflow(
-            workflow.id,
-            storage_router.BinWorkflowReturn(confirmed_item_ids=[first.id]),
-            db,
-        )
-        assert returned["workflow"]["state"] == "returning_bin"
-        assert worker.commands[-1].command == "store_item"
-        assert await service.handle_robot_result(
-            {
-                "command": "store_item",
-                "message": "success",
-                "request_id": workflow.id,
-                "upca": bin_row.barcode,
-            },
-            worker,  # type: ignore[arg-type]
-        )
-
-        member_ids = set(
-            (
-                await db.execute(
-                    select(StorageBinItem.item_id).where(StorageBinItem.bin_id == bin_row.id)
-                )
-            ).scalars()
-        )
-        assert member_ids == {first.id}
-        assert bin_row.status == "at_home"
-        assert workflow.state == "completed"
-
-
-@pytest.mark.anyio
-async def test_unavailable_bin_return_can_close_before_motion() -> None:
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789050", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000050",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
-        await db.commit()
-        service = BinStorageService(db)
-        previous = await service.begin("retrieve", item, None)
-        assert previous is not None
-        await service.transition(previous, "recovery_required", "bin dropped")
-        await service.reconcile(
-            previous,
-            resolution="quarantined",
-            target_item_in_bin=True,
-        )
-        workflow = await service.begin_unavailable_return(bin_row.barcode)
-        assert workflow is not None
-
-        result = await storage_router.cancel_unavailable_bin_return(workflow.id, db)
-
-        assert result["workflow"]["state"] == "reconciled"
-        assert result["workflow"]["resolution"]["resolution"] == "cancelled"
-        assert bin_row.status == "quarantined"
-        assert await service.active_workflow() is None
-
-
-@pytest.mark.anyio
-async def test_marking_restore_unavailable_does_not_reconcile_contents(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(storage_router.robot_core, "robot_instance", None)
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789052", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000052",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
-        await db.commit()
-
-        service = BinStorageService(db)
-        previous = await service.begin("retrieve", item, None)
-        assert previous is not None
-        await service.transition(previous, "recovery_required", "bin unavailable")
-        await service.reconcile(previous, resolution="quarantined", target_item_in_bin=None)
-        workflow = await service.begin_unavailable_return(bin_row.barcode)
-        assert workflow is not None
-        workflow.resolution = {
-            **(workflow.resolution or {}),
-            "confirmed_item_ids": [],
-        }
-        await db.commit()
-
-        result = await storage_router.reconcile_bin_workflow(
-            workflow.id,
-            storage_router.BinWorkflowReconcile(resolution="quarantined"),
-            db,
-            admin,
-        )
-
-        membership = (
-            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
-        ).scalar_one_or_none()
-        assert membership is not None
-        assert result["workflow"]["state"] == "reconciled"
-        assert result["workflow"]["resolution"]["resolution"] == "quarantined"
-        assert bin_row.status == "quarantined"
-
-
-@pytest.mark.anyio
-async def test_failed_retry_enqueue_releases_only_its_claim_and_preserves_recovery(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FailingWorker(FakeWorker):
-        def get_cached_scale_status(self):
-            return SimpleNamespace(occupied=False)
-
-        async def enqueue_command(self, command) -> None:
-            raise RuntimeError("queue unavailable")
-
-    worker = FailingWorker()
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789043", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000043",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=2,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-        )
-        await db.commit()
-        workflow = await BinStorageService(db).begin("store", item, None)
-        assert workflow is not None
-        await BinStorageService(db).transition(workflow, "recovery_required", "motor fault")
-        history_before_retry = list(workflow.history)
-
-        result = await storage_router.retry_bin_workflow(workflow.id, db, admin)
-
-        assert result["workflow"]["state"] == "recovery_required"
-        assert workflow.state == "recovery_required"
-        assert workflow.error == "queue unavailable"
-        assert workflow.history[: len(history_before_retry)] == history_before_retry
-        assert [entry["state"] for entry in workflow.history[len(history_before_retry) :]] == [
-            "retrieving_bin",
-            "recovery_required",
-        ]
-        assert workflow.history[-1]["state"] == "recovery_required"
-        assert workflow.recovery_claim is None
-
-        retry_worker = FakeWorker()
-        retry_worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=False)
-        monkeypatch.setattr(storage_router.robot_core, "robot_worker", retry_worker)
-        retry_result = await storage_router.retry_bin_workflow(workflow.id, db, admin)
-        assert retry_result["workflow"]["state"] == "retrieving_bin"
-        assert len(retry_worker.commands) == 1
-
-
-@pytest.mark.anyio
 async def test_stale_or_direct_robot_results_do_not_change_active_workflow() -> None:
     worker = FakeWorker()
     async with AsyncSessionLocal() as db:
@@ -1589,287 +576,7 @@ async def test_stale_or_direct_robot_results_do_not_change_active_workflow() -> 
 
 
 @pytest.mark.anyio
-async def test_mock_workflow_scans_item_identifier_then_configured_bin_barcode(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.mock)
-    mock_runtime = SimpleNamespace(
-        set_bin_io_box_occupied=MagicMock(),
-        publish_status=AsyncMock(),
-    )
-    monkeypatch.setattr(storage_router, "get_mock_robot_runtime", lambda: mock_runtime)
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "ABC123", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000019",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        await service.transition(workflow, "awaiting_item_scan")
-
-        item_scan = await storage_router.scan_mock_bin_workflow(
-            workflow.id, storage_router.BinWorkflowScan(code=item.upca), db
-        )
-        assert item_scan["rejected"] is False
-        assert workflow.state == "awaiting_bin_scan"
-
-        wrong_bin_scan = await storage_router.scan_mock_bin_workflow(
-            workflow.id, storage_router.BinWorkflowScan(code="ABC123"), db
-        )
-        assert wrong_bin_scan["rejected"] is True
-        assert workflow.state == "awaiting_bin_scan"
-
-        bin_scan = await storage_router.scan_mock_bin_workflow(
-            workflow.id, storage_router.BinWorkflowScan(code=bin_row.barcode), db
-        )
-        assert bin_scan["rejected"] is False
-        assert workflow.state == "awaiting_bin_scan"
-
-        returned = await storage_router.return_bin_workflow(
-            workflow.id,
-            storage_router.BinWorkflowReturn(target_item_in_bin=True),
-            db,
-        )
-        assert returned["workflow"]["state"] == "completed"
-        assert workflow.state == "completed"
-
-
-@pytest.mark.anyio
-async def test_return_endpoint_requires_occupancy_and_explicit_store_action(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.production)
-    worker = FakeWorker()
-    worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=False)
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789020", "Return target", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000020",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=2,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-        )
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        await service.transition(workflow, "awaiting_bin_scan")
-
-        with pytest.raises(HTTPException) as empty_box_error:
-            await storage_router.return_bin_workflow(
-                workflow.id,
-                storage_router.BinWorkflowReturn(target_item_in_bin=True),
-                db,
-            )
-        assert empty_box_error.value.status_code == 409
-        assert workflow.state == "awaiting_bin_scan"
-        assert worker.commands == []
-
-        worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=True)
-        returned = await storage_router.return_bin_workflow(
-            workflow.id,
-            storage_router.BinWorkflowReturn(target_item_in_bin=True),
-            db,
-        )
-        assert returned["workflow"]["state"] == "returning_bin"
-        assert workflow.state == "returning_bin"
-        assert [command.command for command in worker.commands] == ["store_item"]
-
-        with pytest.raises(HTTPException) as duplicate_error:
-            await storage_router.return_bin_workflow(
-                workflow.id,
-                storage_router.BinWorkflowReturn(target_item_in_bin=True),
-                db,
-            )
-        assert duplicate_error.value.status_code == 409
-        assert [command.command for command in worker.commands] == ["store_item"]
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("operation", "target_item_in_bin"),
-    (("retrieve", False), ("store", True)),
-)
-async def test_interrupted_bin_motion_resumes_at_normal_return_action(
-    monkeypatch: pytest.MonkeyPatch,
-    operation: str,
-    target_item_in_bin: bool,
-) -> None:
-    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.production)
-    monkeypatch.setattr(storage_router.robot_core, "robot_instance", None)
-    worker = FakeWorker()
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789025", "Interrupted target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000025",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        if operation == "retrieve":
-            db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
-        await db.commit()
-
-        service = BinStorageService(db)
-        workflow = await service.begin(operation, item, None)
-        assert workflow is not None
-        await service.recover_interrupted_workflows()
-        assert workflow.state == "recovery_required"
-
-        returned = await storage_router.return_bin_workflow(
-            workflow.id,
-            storage_router.BinWorkflowReturn(target_item_in_bin=target_item_in_bin),
-            db,
-        )
-
-        assert returned["workflow"]["state"] == "returning_bin"
-        assert workflow.state == "returning_bin"
-        assert workflow.recovery_claim is None
-        assert workflow.resolution == {"target_item_in_bin": target_item_in_bin}
-        assert [command.command for command in worker.commands] == ["store_item"]
-
-
-@pytest.mark.anyio
-async def test_interrupted_retrieval_return_requires_io_occupancy_and_releases_claim(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.production)
-    monkeypatch.setattr(storage_router.robot_core, "robot_instance", None)
-    worker = FakeWorker()
-    worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=False)
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789026", "Interrupted target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000026",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
-        await db.commit()
-
-        service = BinStorageService(db)
-        workflow = await service.begin("retrieve", item, None)
-        assert workflow is not None
-        await service.transition(workflow, "recovery_required", "emergency stop")
-
-        with pytest.raises(HTTPException) as empty_box_error:
-            await storage_router.return_bin_workflow(
-                workflow.id,
-                storage_router.BinWorkflowReturn(target_item_in_bin=False),
-                db,
-            )
-
-        assert empty_box_error.value.status_code == 409
-        assert empty_box_error.value.detail == "Place the bin in the IO box before storing it"
-        assert workflow.state == "recovery_required"
-        assert workflow.recovery_claim is None
-        assert worker.commands == []
-
-
-@pytest.mark.anyio
-async def test_interrupted_return_enqueue_failure_stays_on_return_step_and_can_retry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.production)
-    monkeypatch.setattr(storage_router.robot_core, "robot_instance", None)
-    worker = FakeWorker()
-    enqueue = AsyncMock(side_effect=RuntimeError("queue unavailable"))
-    worker.enqueue_command = enqueue
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789027", "Interrupted target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000027",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
-        await db.commit()
-
-        service = BinStorageService(db)
-        workflow = await service.begin("retrieve", item, None)
-        assert workflow is not None
-        await service.transition(workflow, "recovery_required", "emergency stop")
-
-        with pytest.raises(HTTPException) as enqueue_error:
-            await storage_router.return_bin_workflow(
-                workflow.id,
-                storage_router.BinWorkflowReturn(target_item_in_bin=False),
-                db,
-            )
-
-        assert enqueue_error.value.status_code == 409
-        assert enqueue_error.value.detail == "queue unavailable"
-        assert workflow.state == "recovery_required"
-        assert workflow.error == "queue unavailable"
-        assert workflow.recovery_claim is None
-
-        enqueue.side_effect = None
-        returned = await storage_router.return_bin_workflow(
-            workflow.id,
-            storage_router.BinWorkflowReturn(target_item_in_bin=False),
-            db,
-        )
-
-        assert returned["workflow"]["state"] == "returning_bin"
-        assert enqueue.await_count == 2
-
-
-@pytest.mark.anyio
-async def test_store_target_is_reserved_from_item_and_location_mutations() -> None:
+async def test_parked_tray_interaction_allows_item_and_location_mutations() -> None:
     current_user = SimpleNamespace(role=SimpleNamespace(name="admin"), access_level_id=None)
     async with AsyncSessionLocal() as db:
         item = await StorageService(db).create_item(
@@ -1888,34 +595,46 @@ async def test_store_target_is_reserved_from_item_and_location_mutations() -> No
             )
         )
         await db.commit()
-        workflow = await BinStorageService(db).begin("store", item, None)
+        service = BinStorageService(db)
+        workflow = await service.begin("store", item, None)
         assert workflow is not None
+        await service.transition(workflow, "awaiting_operator")
 
-        with pytest.raises(HTTPException, match="reserved by an active"):
-            await storage_router.create_item(
-                storage_router.ItemCreate(upca=item.upca, name="Changed"), db, current_user
-            )
-        with pytest.raises(HTTPException, match="reserved by an active"):
-            await storage_router.update_item(
-                item.upca, storage_router.ItemUpdate(name="Changed"), db, current_user
-            )
-        with pytest.raises(HTTPException, match="reserved by an active"):
+        # A parked tray holds the item for its own completion, not against every edit.
+        await storage_router.create_item(
+            storage_router.ItemCreate(
+                upca=item.upca,
+                name="Changed",
+                dimensions={"width": 10, "height": 10, "length": 10},
+            ),
+            db,
+            current_user,
+        )
+        await storage_router.update_item(
+            item.upca, storage_router.ItemUpdate(name="Changed again"), db, current_user
+        )
+        await storage_router.add_item_location(
+            item.upca,
+            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
+            db,
+            current_user,
+        )
+
+        # Completing the interaction is what rejects the conflicting direct location.
+        with pytest.raises(BinWorkflowConflict, match="direct storage location"):
+            await service.close(workflow)
+
+        await storage_router.remove_item_location(item.upca, "left_module", 0, 0, db, current_user)
+        await service.close(workflow)
+        assert workflow.state == "completed"
+
+        # Deletion stays out of reach once the item is a tray member with retained history.
+        with pytest.raises(HTTPException, match="Retrieve the item before deleting it"):
             await storage_router.delete_item(item.upca, db)
-        with pytest.raises(HTTPException, match="reserved by an active"):
-            await storage_router.add_item_location(
-                item.upca,
-                storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
-                db,
-                current_user,
-            )
-        with pytest.raises(HTTPException, match="reserved by an active"):
-            await storage_router.remove_item_location(
-                item.upca, "left_module", 0, 0, db, current_user
-            )
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("state", ["completed", "reconciled"])
+@pytest.mark.parametrize("state", ["completed", "cancelled"])
 async def test_delete_item_with_historical_bin_workflow_returns_clear_conflict(state: str) -> None:
     async with AsyncSessionLocal() as db:
         item = await StorageService(db).create_item(
@@ -1954,6 +673,38 @@ async def test_delete_item_with_historical_bin_workflow_returns_clear_conflict(s
         )
         assert await db.get(StorageBinWorkflow, workflow.id) is not None
         assert await StorageService(db).get_item(item.upca) is not None
+
+
+@pytest.mark.anyio
+async def test_return_rejects_occupied_tray_home(monkeypatch) -> None:
+    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        tray = trays[0]
+        barcode = tray.barcode
+        home = (tray.side, tray.shelf_idx, tray.cell_idx)
+        service = BinStorageService(db)
+        checkout = await service.begin("retrieve", items[0], None)
+        assert checkout is not None
+        await service.transition(checkout, "awaiting_operator")
+        await service.close(checkout)
+        returned = await service.begin_return(barcode)
+        assert returned is not None
+        returned_id = returned.id
+
+        occupant = await StorageService(db).create_item(
+            "123456788099", "Home occupant", {"width": 10, "length": 10, "height": 10}
+        )
+        occupant_upca = occupant.upca
+        # An item recorded in the cell the tray returns to is rejected at confirmation.
+        await StorageService(db).add_item_location(occupant_upca, *home)
+        with pytest.raises(BinWorkflowConflict, match="home cell is occupied"):
+            await service.prepare_return(returned, [])
+
+        await StorageService(db).remove_item_location(occupant_upca, *home)
+        refreshed = await db.get(StorageBinWorkflow, returned_id)
+        assert refreshed is not None
+        assert await service.prepare_return(refreshed, []) is True
 
 
 @pytest.mark.anyio
@@ -1998,558 +749,479 @@ async def test_member_upsert_preserves_omitted_bin_invariant_fields() -> None:
         assert updated.access_level_id == access_level.id
 
 
-@pytest.mark.anyio
-async def test_store_completion_revalidates_target_before_membership() -> None:
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789019", "Target", {"width": 10, "height": 10, "length": 10}
+async def setup_trays(db):
+    storage = StorageService(db)
+    items = [
+        await storage.create_item(
+            f"12345678800{i}", f"Item {i}", {"width": 10, "length": 10, "height": 10}
         )
-        item.enrollment_weight_pending = True
-        bin_row = StorageBin(
-            barcode="900000000019",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
+        for i in range(3)
+    ]
+    trays = [
+        StorageBin(
+            barcode=f"90000000800{i}",
+            side="left_module",
+            shelf_idx=0,
+            cell_idx=i,
+            inner_dimensions={"width": 100, "length": 150, "height": 100},
+            compartment_layout={"columns": 2, "rows": 3},
+            max_items=6,
             status="at_home",
             active=True,
         )
-        db.add(bin_row)
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-
-        item.dimensions = {"width": 31, "height": 10, "length": 10}
-        await db.commit()
-        await service.transition(workflow, "returning_bin")
-        await service.complete_return(workflow)
-
-        await db.refresh(item)
-        assert item.enrollment_weight_pending
-        assert workflow.state == "recovery_required"
-        assert workflow.error == "Item no longer fits the configured storage bin"
-        assert bin_row.status == "checked_out"
-        assert (await db.execute(select(StorageBinItem))).scalar_one_or_none() is None
-
-
-@pytest.mark.anyio
-async def test_store_completion_rejects_capacity_consumed_after_allocation() -> None:
-    async with AsyncSessionLocal() as db:
-        storage = StorageService(db)
-        target = await storage.create_item(
-            "123456789065", "Target", {"width": 10, "height": 2, "length": 10}
-        )
-        existing = await storage.create_item(
-            "123456789066", "Existing", {"width": 10, "height": 10, "length": 9}
-        )
-        bin_row = StorageBin(
-            barcode="900000000065",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 10, "height": 10, "length": 10},
-            max_item_dimensions={"width": 10, "length": 10},
-            max_items=3,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", target, None)
-        assert workflow is not None
-
-        db.add(StorageBinItem(bin_id=bin_row.id, item_id=existing.id))
-        await db.commit()
-        await service.transition(workflow, "returning_bin")
-        await service.complete_return(workflow)
-
-        assert workflow.state == "recovery_required"
-        assert workflow.error == "Storage bin does not have enough available space"
-        target_membership = (
-            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == target.id))
-        ).scalar_one_or_none()
-        assert target_membership is None
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("operation", "target_item_in_bin", "expected_membership"),
-    (("store", False, False), ("retrieve", True, True)),
-)
-async def test_return_confirmation_controls_target_membership(
-    operation: str,
-    target_item_in_bin: bool,
-    expected_membership: bool,
-) -> None:
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789047", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000047",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        if operation == "retrieve":
-            db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
-        await db.commit()
-
-        service = BinStorageService(db)
-        workflow = await service.begin(operation, item, None)
-        assert workflow is not None
-        workflow.resolution = {"target_item_in_bin": target_item_in_bin}
-        await service.transition(workflow, "returning_bin")
-        await service.complete_return(workflow)
-
-        membership = (
-            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
-        ).scalar_one_or_none()
-        assert (membership is not None) is expected_membership
-        assert workflow.state == "completed"
-
-
-@pytest.mark.anyio
-async def test_post_return_validation_failure_is_durable_reconcile_only_and_cannot_retry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    worker = FakeWorker()
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-    post_return_log = MagicMock()
-    monkeypatch.setattr(bin_storage.logger, "error", post_return_log)
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789023", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000023",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-
-        item.dimensions = {"width": 31, "height": 10, "length": 10}
-        await db.commit()
-        await service.transition(workflow, "returning_bin")
-        assert await service.handle_robot_result(
-            {
-                "command": "store_item",
-                "message": "success",
-                "request_id": workflow.id,
-                "upca": bin_row.barcode,
-            },
-            worker,  # type: ignore[arg-type]
-        )
-        assert workflow.state == "recovery_required"
-        assert service.physical_return_completed(workflow)
-        post_return_log.assert_called_once_with(
-            "bin_workflow_post_return_failure",
-            workflow_id=workflow.id,
-            workflow_state="returning_bin",
-            operation="store",
-            bin_id=bin_row.id,
-            bin_barcode=bin_row.barcode,
-            item_id=item.id,
-            phase="inventory_finalization",
-            error="Item no longer fits the configured storage bin",
-            physical_return_completed=True,
-        )
-        workflow_id = workflow.id
-
-    # A new database session represents the durable state used after restart.
-    async with AsyncSessionLocal() as db:
-        workflow = await db.get(StorageBinWorkflow, workflow_id)
-        assert workflow is not None
-        assert workflow.state == "recovery_required"
-        assert BinStorageService(db).physical_return_completed(workflow)
-        history_before_retry = list(workflow.history)
-
-        with pytest.raises(HTTPException) as retry_error:
-            await storage_router.retry_bin_workflow(workflow.id, db, admin)
-
-        assert retry_error.value.status_code == 409
-        assert (
-            retry_error.value.detail == "Physical bin return completed; workflow must be reconciled"
-        )
-        assert workflow.state == "recovery_required"
-        assert workflow.history == history_before_retry
-        assert worker.commands == []
-        assert (await db.execute(select(StorageBinItem))).scalar_one_or_none() is None
-
-        with pytest.raises(HTTPException) as return_error:
-            await storage_router.return_bin_workflow(
-                workflow.id,
-                storage_router.BinWorkflowReturn(target_item_in_bin=True),
-                db,
-            )
-
-        assert return_error.value.status_code == 409
-        assert (
-            return_error.value.detail
-            == "Physical bin return completed; mark the bin returned or unavailable"
-        )
-        assert workflow.state == "recovery_required"
-        assert workflow.recovery_claim is None
-        assert workflow.history == history_before_retry
-        assert worker.commands == []
-
-        bin_row = await db.get(StorageBin, workflow.bin_id)
-        assert bin_row is not None
-        with pytest.raises(HTTPException) as reconciliation_error:
-            await storage_router.reconcile_bin_workflow(
-                workflow.id,
-                storage_router.BinWorkflowReconcile(resolution="returned", target_item_in_bin=True),
-                db,
-                admin,
-            )
-
-        assert reconciliation_error.value.status_code == 409
-        assert reconciliation_error.value.detail == "Item no longer fits the configured storage bin"
-        assert workflow.state == "recovery_required"
-        assert workflow.error == "Item no longer fits the configured storage bin"
-        assert workflow.recovery_claim is None
-        assert workflow.history[-1]["state"] == "recovery_required"
-        assert bin_row.status == "checked_out"
-        assert (await db.execute(select(StorageBinItem))).scalar_one_or_none() is None
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("target_item_in_bin", [False, True])
-async def test_returned_reconciliation_preserves_cross_bin_membership(
-    target_item_in_bin: bool,
-) -> None:
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789056", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bins = [
-            StorageBin(
-                barcode=f"90000000005{index}",
-                side="right_module",
-                shelf_idx=1,
-                cell_idx=index,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=2,
-                status="at_home",
-                active=True,
-            )
-            for index in (6, 7)
+        for i in range(2)
+    ]
+    db.add_all(trays)
+    await db.flush()
+    db.add_all(
+        [
+            StorageBinItem(bin_id=trays[0].id, item_id=items[0].id, compartment=1),
+            StorageBinItem(bin_id=trays[0].id, item_id=items[1].id, compartment=2),
+            StorageBinItem(bin_id=trays[1].id, item_id=items[2].id, compartment=1),
         ]
-        db.add_all(bins)
-        await db.commit()
-
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        other_bin = next(bin_row for bin_row in bins if bin_row.id != workflow.bin_id)
-        db.add(StorageBinItem(bin_id=other_bin.id, item_id=item.id))
-        await db.commit()
-        await service.transition(workflow, "awaiting_bin_scan")
-
-        with pytest.raises(HTTPException) as reconciliation_error:
-            await storage_router.reconcile_bin_workflow(
-                workflow.id,
-                storage_router.BinWorkflowReconcile(
-                    resolution="returned", target_item_in_bin=target_item_in_bin
-                ),
-                db,
-                admin,
-            )
-
-        assert reconciliation_error.value.status_code == 409
-        assert (
-            reconciliation_error.value.detail
-            == "Item is already associated with another storage bin"
-        )
-        membership = (
-            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
-        ).scalar_one()
-        assert membership.bin_id == other_bin.id
-        workflow_bin = await db.get(StorageBin, workflow.bin_id)
-        assert workflow_bin is not None
-        assert workflow_bin.status == "checked_out"
-        assert workflow.state == "recovery_required"
-        assert workflow.error == "Item is already associated with another storage bin"
-        assert workflow.recovery_claim is None
+    )
+    await db.commit()
+    return items, trays
 
 
 @pytest.mark.anyio
-async def test_returned_restore_reconciliation_rejects_invalid_contents() -> None:
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
+async def test_close_takes_item_and_leaves_other_contents_visible_outside():
     async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789057", "Restored", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000057",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
-        await db.commit()
-
+        items, trays = await setup_trays(db)
         service = BinStorageService(db)
-        previous = await service.begin("retrieve", item, None)
-        assert previous is not None
-        await service.transition(previous, "recovery_required", "bin unavailable")
-        await service.reconcile(previous, resolution="quarantined", target_item_in_bin=None)
-        restore = await service.begin_unavailable_return(bin_row.barcode)
-        assert restore is not None
-
-        item.dimensions = {"width": 31, "height": 10, "length": 10}
-        await db.commit()
-        with pytest.raises(HTTPException) as reconciliation_error:
-            await storage_router.reconcile_bin_workflow(
-                restore.id,
-                storage_router.BinWorkflowReconcile(
-                    resolution="returned", confirmed_item_ids=[item.id]
-                ),
-                db,
-                admin,
-            )
-
-        assert reconciliation_error.value.status_code == 409
-        assert (
-            reconciliation_error.value.detail
-            == "A confirmed item no longer fits the configured storage bin"
-        )
-        membership = (
-            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
-        ).scalar_one()
-        assert membership.bin_id == bin_row.id
-        assert bin_row.status == "quarantined"
-        assert restore.state == "recovery_required"
-        assert restore.error == "A confirmed item no longer fits the configured storage bin"
-        assert restore.recovery_claim is None
+        w = await service.begin("retrieve", items[0], None)
+        await service.transition(w, "awaiting_operator")
+        await service.close(w)
+        assert w.state == "completed"
+        assert trays[0].status == "outside"
+        assert await service.item_bin(items[0].id) is None
+        user = SimpleNamespace(role=SimpleNamespace(name="admin"), access_level_id=None)
+        payload = await storage_router._build_item_payload_with_bin(items[1], [], user, db)
+        assert payload.bin["status"] == "outside"
+        assert payload.can_retrieve is False
+        with pytest.raises(BinWorkflowConflict):
+            await service.begin("retrieve", items[1], None)
+        await db.refresh(items[2])
+        assert await service.begin("retrieve", items[2], None) is not None
+        async with manual_motion_guard("gripper", worker=FakeWorker()):
+            pass
 
 
 @pytest.mark.anyio
-async def test_return_command_failure_remains_retryable(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("select_item", [True, False], ids=["subset", "empty"])
+async def test_barcode_return_defaults_all_known_items_and_applies_selection(select_item):
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        w = await service.begin("retrieve", items[0], None)
+        await service.transition(w, "awaiting_operator")
+        await service.close(w)
+        returned = await service.begin_return(trays[0].barcode)
+        payload = await service.serialize_workflow(returned)
+        assert {i["id"] for i in payload["contents"]} == {items[0].id, items[1].id}
+        assert all(i["confirmed"] for i in payload["contents"])
+        assert returned.item_id is None
+        assert (await service.begin_return(trays[0].barcode)).id == returned.id
+        selected_ids = [items[0].id] if select_item else []
+        expected_selection = {items[0].id: select_item, items[1].id: False}
+        assert await service.prepare_return(returned, selected_ids)
+        assert not await service.prepare_return(returned, selected_ids)
+        await db.refresh(returned)
+        payload = await service.serialize_workflow(returned)
+        assert payload["state"] == "returning_bin"
+        assert {i["id"]: i["confirmed"] for i in payload["contents"]} == expected_selection
+        worker = FakeWorker()
+        await service.publish_workflow(worker, returned)
+        assert worker.events[-1] == {"kind": "bin_workflow_updated", "payload": payload}
+        await service.complete_return(returned, 425.5)
+        await service.complete_return(returned)
+        assert trays[0].status == "at_home"
+        assert trays[0].gross_weight == 425.5
+        await db.refresh(returned)
+        payload = await service.serialize_workflow(returned)
+        assert payload["state"] == "completed"
+        assert {i["id"]: i["confirmed"] for i in payload["contents"]} == expected_selection
+        await service.publish_workflow(worker, returned)
+        assert worker.events[-1] == {"kind": "bin_workflow_updated", "payload": payload}
+        assert await service.item_bin(items[1].id) is None
+        if select_item:
+            assert (await service.item_bin(items[0].id)).id == trays[0].id
+        else:
+            assert await service.item_bin(items[0].id) is None
+        with pytest.raises(BinWorkflowConflict, match="already in"):
+            await service.begin_return(trays[0].barcode)
+
+
+@pytest.mark.anyio
+async def test_mock_checkout_close_and_barcode_return_simulates_placement(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    runtime = MockRobotRuntime()
+    active_commands = AsyncMock(return_value=False)
+    monkeypatch.setattr(runtime, "has_active_commands", active_commands)
+    monkeypatch.setattr(storage_router, "get_mock_robot_runtime", lambda: runtime)
+    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.mock)
+    monkeypatch.setattr(storage_router.robot_core, "robot_worker", None)
+    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        upca = items[0].upca
+        selected_id, omitted_id = items[0].id, items[1].id
+        barcode, tray_id = trays[0].barcode, trays[0].id
+
+    statuses, _ = await runtime.subscribe_status()
+    try:
+        checkout = await client.post(
+            "/api/storage/bin-workflows", json={"operation": "retrieve", "upca": upca},
+        )
+        assert checkout.status_code == 200, checkout.text
+        checkout_id = checkout.json()["workflow"]["id"]
+        assert json.loads(statuses.get_nowait())["robot_status"]["scale"]["occupied"] is True
+
+        closed = await client.post(f"/api/storage/bin-workflows/{checkout_id}/close")
+        assert closed.status_code == 200, closed.text
+        assert closed.json()["workflow"]["state"] == "completed"
+        assert json.loads(statuses.get_nowait())["robot_status"]["scale"]["occupied"] is False
+
+        returned = await client.post(
+            "/api/storage/bin-workflows/returns", json={"barcode": barcode},
+        )
+        assert returned.status_code == 200, returned.text
+        workflow = returned.json()["workflow"]
+        assert {item["id"] for item in workflow["contents"]} == {selected_id, omitted_id}
+        assert all(item["confirmed"] for item in workflow["contents"])
+        assert json.loads(statuses.get_nowait())["robot_status"]["scale"]["occupied"] is True
+
+        store_url = f"/api/storage/bin-workflows/{workflow['id']}/store"
+        selection = {"confirmed_item_ids": [selected_id]}
+        active_commands.return_value = True
+        blocked = await client.post(store_url, json=selection)
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"] == "Robot has queued commands"
+        active_commands.return_value = False
+        stored = await client.post(store_url, json=selection)
+        assert stored.status_code == 200, stored.text
+        assert stored.json()["workflow"]["state"] == "completed"
+        assert {
+            item["id"]: item["confirmed"] for item in stored.json()["workflow"]["contents"]
+        } == {selected_id: True, omitted_id: False}
+        assert json.loads(statuses.get_nowait())["robot_status"]["scale"]["occupied"] is False
+    finally:
+        await runtime.unsubscribe_status(statuses)
+
+    async with AsyncSessionLocal() as db:
+        service = BinStorageService(db)
+        tray = await db.get(StorageBin, tray_id)
+        assert tray.status == "at_home"
+        assert (await service.item_bin(selected_id)).id == tray_id
+        assert await service.item_bin(omitted_id) is None
+
+
+@pytest.mark.anyio
+async def test_store_close_assigns_compartment_without_return_motion():
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        target = await StorageService(db).create_item(
+            "123456788099", "New", {"width": 10, "length": 10, "height": 10}
+        )
+        service = BinStorageService(db)
+        w = await service.begin("store", target, None)
+        assert w.compartment == 3
+        await service.transition(w, "awaiting_operator")
+        await service.close(w)
+        await service.close(w)
+        assert (await service.item_bin(target.id)).status == "outside"
+        assert (
+            await db.scalar(
+                select(StorageBinItem.compartment).where(StorageBinItem.item_id == target.id)
+            )
+            == 3
+        )
+        assert await service.active_workflows() == []
+
+
+@pytest.mark.anyio
+async def test_return_requires_occupancy_then_enqueues_once(monkeypatch):
+    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.development)
     worker = FakeWorker()
     monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
-    admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
+    monkeypatch.setattr(bin_storage, "enqueue_internal", AsyncMock())
     async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789024", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000024",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.commit()
+        items, trays = await setup_trays(db)
         service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        await service.transition(workflow, "returning_bin")
-        assert await service.handle_robot_result(
-            {
-                "command": "store_item",
-                "message": "error",
-                "error": "motor fault",
-                "request_id": workflow.id,
-                "upca": bin_row.barcode,
-            },
-            worker,  # type: ignore[arg-type]
-        )
-        assert workflow.state == "recovery_required"
-        assert not service.physical_return_completed(workflow)
-
-        result = await storage_router.retry_bin_workflow(
-            workflow.id,
-            db,
-            admin,
-            target_item_in_bin=False,
-        )
-
-        assert result["workflow"]["state"] == "returning_bin"
-        assert result["workflow"]["resolution"] == {"target_item_in_bin": False}
-        assert worker.commands[-1].command == "store_item"
+        w = await service.begin("retrieve", items[0], None)
+        await service.transition(w, "awaiting_operator")
+        await service.close(w)
+        returned = await service.begin_return(trays[0].barcode)
+        request = storage_router.BinWorkflowReturn(confirmed_item_ids=[])
+        worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=False)
+        with pytest.raises(HTTPException, match="Place the tray"):
+            await storage_router.store_returned_tray(returned.id, request, db)
+        worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=True)
+        await storage_router.store_returned_tray(returned.id, request, db)
+        await storage_router.store_returned_tray(returned.id, request, db)
+        assert bin_storage.enqueue_internal.await_count == 1
+        assert returned.state == "returning_bin"
 
 
 @pytest.mark.anyio
-async def test_correlated_retrieval_failure_requires_bin_workflow_recovery() -> None:
+@pytest.mark.parametrize("close_first", [False, True], ids=["store-wins", "close-wins"])
+async def test_return_close_and_store_use_persisted_state_across_sessions(monkeypatch, close_first):
+    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.development)
     worker = FakeWorker()
+    monkeypatch.setattr(storage_router.robot_core, "robot_worker", worker)
+    enqueue = AsyncMock()
+    monkeypatch.setattr(bin_storage, "enqueue_internal", enqueue)
+
+    async with AsyncSessionLocal() as close_db:
+        items, trays = await setup_trays(close_db)
+        service = BinStorageService(close_db)
+        checkout = await service.begin("retrieve", items[0], None)
+        await service.transition(checkout, "awaiting_operator")
+        await service.close(checkout)
+        returned = await service.begin_return(trays[0].barcode)
+        workflow_id, tray_id = returned.id, trays[0].id
+        selected_id, omitted_id = items[0].id, items[1].id
+        request = storage_router.BinWorkflowReturn(confirmed_item_ids=[selected_id])
+
+        async with AsyncSessionLocal() as store_db:
+            # Both requests have loaded awaiting_operator before either wins.
+            stale_store = await store_db.get(StorageBinWorkflow, workflow_id)
+            assert stale_store.state == returned.state == "awaiting_operator"
+            if close_first:
+                await service.close(returned)
+                result = await storage_router.store_returned_tray(workflow_id, request, store_db)
+                assert result["workflow"]["state"] == "cancelled"
+                enqueue.assert_not_awaited()
+            else:
+                await storage_router.store_returned_tray(workflow_id, request, store_db)
+                assert returned.state == "awaiting_operator"
+                with pytest.raises(BinWorkflowConflict, match="Wait for tray motion"):
+                    await service.close(returned)
+                assert returned.state == "returning_bin"
+                assert (await service.begin_return("900000008000")).id == workflow_id
+                await storage_router.store_returned_tray(workflow_id, request, store_db)
+                enqueue.assert_awaited_once()
+
     async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789013", "Target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000005",
-            side="right_module",
-            shelf_idx=1,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.commit()
         service = BinStorageService(db)
-
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-
-        assert await service.handle_robot_result(
-            {
-                "command": "retrieve_item",
-                "message": "error",
-                "error": "motor fault",
-                "request_id": workflow.id,
-                "upca": bin_row.barcode,
-                "location": {"side": "right_module", "shelf_idx": 1, "cell_idx": 2},
-            },
-            worker,  # type: ignore[arg-type]
-        )
-        assert workflow.state == "recovery_required"
-        assert workflow.error == "motor fault"
-        assert workflow.lock_key == "global"
-        assert bin_row.status == "checked_out"
-        assert (await db.execute(select(StorageBinItem))).scalar_one_or_none() is None
-
-
-@pytest.mark.anyio
-async def test_wrong_scan_does_not_advance_and_global_lock_is_exclusive() -> None:
-    worker = FakeWorker()
-    async with AsyncSessionLocal() as db:
-        storage = StorageService(db)
-        first_item = await storage.create_item(
-            "333333333333", "First", {"width": 10, "height": 10, "length": 10}
-        )
-        second_item = await storage.create_item(
-            "444444444444", "Second", {"width": 10, "height": 10, "length": 10}
-        )
-        db.add(
-            StorageBin(
-                barcode="900000000004",
-                side="left_module",
-                shelf_idx=2,
-                cell_idx=0,
-                inner_dimensions={"width": 20, "height": 20, "length": 20},
-                max_items=3,
-                status="at_home",
-                active=True,
+        returned = await db.get(StorageBinWorkflow, workflow_id)
+        if close_first:
+            await service.close(returned)
+            assert returned.state == "cancelled"
+            assert await service.item_bin(selected_id) is None
+            assert (await service.item_bin(omitted_id)).id == tray_id
+            assert (await db.get(StorageBin, tray_id)).status == "outside"
+        else:
+            assert await service.handle_robot_result(
+                {"request_id": workflow_id, "command": "store_item", "message": "success"},
+                worker,
             )
-        )
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", first_item, None)
-        assert workflow is not None
-        await service.transition(workflow, "awaiting_item_scan")
-
-        assert await service.handle_scan("000000000000", worker)  # type: ignore[arg-type]
-        assert workflow.state == "awaiting_item_scan"
-        assert worker.events[-1]["kind"] == "bin_workflow_scan_rejected"
-
-        with pytest.raises(BinWorkflowConflict):
-            await service.begin("store", second_item, None)
+            assert returned.state == "completed"
+            assert returned.resolution["physical_return_completed"] is True
+            assert (await db.get(StorageBin, tray_id)).status == "at_home"
+            assert (await service.item_bin(selected_id)).id == tray_id
+            assert await service.item_bin(omitted_id) is None
+            with pytest.raises(BinWorkflowConflict, match="already in"):
+                await service.begin_return("900000008000")
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("measured", [425.5, 0, None, "bad", float("nan"), float("inf"), -1, True])
-async def test_bin_return_replaces_aggregate_without_changing_container_mass(measured) -> None:
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789081", "Opened bottle", {"width": 10, "height": 10, "length": 10}
-        )
-        item.weight = 350
-        item.tare_weight = 100
-        item.full_net_weight = 500
-        item.enrollment_weight_pending = True
-        bin_row = StorageBin(
-            barcode="900000000081", side="right_module", shelf_idx=1, cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2, status="at_home", active=True, gross_weight=200,
-        )
-        db.add(bin_row)
-        await db.commit()
-        service = BinStorageService(db)
-        workflow = await service.begin("store", item, None)
-        assert workflow is not None
-        assert bin_row.gross_weight is None
-        assert item.enrollment_weight_pending
-        await service.transition(workflow, "returning_bin")
-        await service.complete_return(workflow, measured)
-        expected = measured if type(measured) in {int, float} and measured in {425.5, 0} else None
-        assert bin_row.gross_weight == expected
-        await db.refresh(item)
-        assert (item.weight, item.tare_weight, item.full_net_weight) == (350, 100, 500)
-        assert not item.enrollment_weight_pending
-        assert item.enrollment_storage_completed
-        # A replay must not replace the last successful aggregate measurement.
-        await service.complete_return(workflow, 999)
-        assert bin_row.gross_weight == expected
+@pytest.mark.parametrize("operation", ["retrieve", "store"])
+async def test_stale_checkout_close_does_not_reapply_membership_after_return(operation):
+    async with AsyncSessionLocal() as stale_db:
+        items, trays = await setup_trays(stale_db)
+        target = items[0]
+        if operation == "store":
+            target = await StorageService(stale_db).create_item(
+                "123456788099", "New", {"width": 10, "length": 10, "height": 10}
+            )
+        service = BinStorageService(stale_db)
+        checkout = await service.begin(operation, target, None)
+        await service.transition(checkout, "awaiting_operator")
+        target_id, tray_id = target.id, trays[0].id
 
+        async with AsyncSessionLocal() as winner_db:
+            winner = BinStorageService(winner_db)
+            current = await winner_db.get(StorageBinWorkflow, checkout.id)
+            await winner.close(current)
+            returned = await winner.begin_return("900000008000")
+            # Reverse the checkout's membership change during a later return.
+            assert await winner.prepare_return(
+                returned, [target_id] if operation == "retrieve" else []
+            )
+            await winner.complete_return(returned)
+            completed_history = current.history
 
-@pytest.mark.anyio
-@pytest.mark.parametrize("operation", ["store", "retrieve", "restore"])
-async def test_unmeasured_bin_reconciliation_clears_aggregate_and_preserves_item_mass(operation) -> None:
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789082", "Opened bottle", {"width": 10, "height": 10, "length": 10}
-        )
-        item.weight = 350
-        item.tare_weight = 100
-        item.full_net_weight = 500
-        item.enrollment_weight_pending = True
-        bin_row = StorageBin(
-            barcode="900000000082", side="right_module", shelf_idx=1, cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2, status="checked_out", active=True, gross_weight=200,
-        )
-        db.add(bin_row)
-        await db.flush()
-        workflow = StorageBinWorkflow(
-            id="unmeasured-return", operation=operation, state="recovery_required",
-            lock_key="global", bin_id=bin_row.id, item_id=item.id,
-            resolution={"candidate_item_ids": [item.id], "confirmed_item_ids": [item.id]}
-            if operation == "restore" else None,
-        )
-        db.add(workflow)
+        assert checkout.state == "awaiting_operator"
+        await service.close(checkout)
+        await service.close(checkout)
+        assert checkout.state == "completed"
+        assert checkout.history == completed_history
+        member = await service.item_bin(target_id)
         if operation == "retrieve":
-            db.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
+            assert member.id == tray_id
+        else:
+            assert member is None
+        await stale_db.refresh(trays[0])
+        assert trays[0].status == "at_home"
+        assert await service.active_workflows() == []
+
+
+@pytest.mark.anyio
+async def test_return_rejects_unexpected_and_cross_tray_items_before_motion():
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        w = await service.begin("retrieve", items[0], None)
+        await service.transition(w, "awaiting_operator")
+        await service.close(w)
+        returned = await service.begin_return(trays[0].barcode)
+        rid, other_id = returned.id, items[2].id
+        with pytest.raises(BinWorkflowConflict, match="unexpected|compartment"):
+            await service.prepare_return(returned, [other_id])
+        await db.refresh(returned)
+        assert returned.state == "awaiting_operator"
+        await service.close(returned)
+        assert returned.state == "cancelled"
+        assert (await service.begin_return("900000008000")).id != rid
+
+
+@pytest.mark.anyio
+async def test_interrupted_motion_fails_without_global_lock_or_automatic_replay():
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        w = await service.begin("retrieve", items[0], None)
+        await service.recover_interrupted_workflows()
+        assert w.state == "failed"
+        assert trays[0].status == "outside"
+        assert await service.has_unfinished_motion()
+        assert await service.begin("retrieve", items[2], None)
+        async with manual_motion_guard("gripper", worker=FakeWorker()):
+            pass
+
+
+@pytest.mark.anyio
+async def test_restart_finalizes_recorded_physical_return_without_motion():
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        w = await service.begin("retrieve", items[0], None)
+        await service.transition(w, "awaiting_operator")
+        await service.close(w)
+        returned = await service.begin_return(trays[0].barcode)
+        await service.prepare_return(returned, [])
+        returned.resolution = {**returned.resolution, "physical_return_completed": True}
         await db.commit()
-        await BinStorageService(db).reconcile(
-            workflow, resolution="returned", target_item_in_bin=operation != "retrieve"
+        await service.recover_interrupted_workflows()
+        assert returned.state == "completed"
+        assert trays[0].status == "at_home"
+        assert await service.item_bin(items[1].id) is None
+
+
+@pytest.mark.anyio
+async def test_same_item_cannot_checkout_two_trays():
+    async with AsyncSessionLocal() as db:
+        await setup_trays(db)
+        target = await StorageService(db).create_item(
+            "123456788098", "New", {"width": 10, "length": 10, "height": 10}
         )
-        await db.refresh(item)
-        assert bin_row.gross_weight is None
-        assert (item.weight, item.tare_weight, item.full_net_weight) == (350, 100, 500)
-        assert item.enrollment_weight_pending is (operation == "retrieve")
+        service = BinStorageService(db)
+        assert await service.begin("store", target, None)
+        with pytest.raises(BinWorkflowConflict, match="already in progress"):
+            await service.begin("store", target, None)
+        assert len(await service.active_workflows()) == 1
+        assert (
+            len((await db.scalars(select(StorageBin).where(StorageBin.status == "outside"))).all())
+            == 1
+        )
+
+
+@pytest.mark.anyio
+async def test_direct_store_reserves_only_tray_members(monkeypatch):
+    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
+    async with AsyncSessionLocal() as db:
+        await setup_trays(db)
+        target = await StorageService(db).create_item(
+            "123456788077", "Pending tray item", {"width": 10, "length": 10, "height": 10}
+        )
+        service = BinStorageService(db)
+        w = await service.begin("store", target, None)
+        assert w is not None
+        await service.transition(w, "awaiting_operator")
+        # A parked interaction does not reserve its item, and unrelated items stay eligible.
+        await robot_router._validate_direct_store_reservation({"upca": target.upca}, db)
+        await robot_router._validate_direct_store_reservation({"upca": "123456788078"}, db)
+        await service.close(w)
+        with pytest.raises(HTTPException) as stored:
+            await robot_router._validate_direct_store_reservation({"upca": target.upca}, db)
+        assert stored.value.status_code == 409
+        assert stored.value.detail["code"] == "reserved_tray_item"
+
+
+@pytest.mark.anyio
+async def test_direct_store_allows_return_candidate_until_confirmation(monkeypatch):
+    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        upca = items[0].upca
+        item_id = items[0].id
+        service = BinStorageService(db)
+        checkout = await service.begin("retrieve", items[0], None)
+        await service.transition(checkout, "awaiting_operator")
+        await service.close(checkout)
+        assert await service.item_bin(item_id) is None
+        returned = await service.begin_return(trays[0].barcode)
+        returned_id = returned.id
+        # The open return dialog names the candidate but does not reserve it for storage.
+        await robot_router._validate_direct_store_reservation({"upca": upca}, db)
+        await StorageService(db).add_item_location(upca, "left_module", shelf_idx=5, cell_idx=0)
+        # Confirming the return, not the open dialog, rejects the conflicting location.
+        with pytest.raises(BinWorkflowConflict, match="direct storage location"):
+            await service.prepare_return(returned, [item_id])
+        await StorageService(db).remove_item_location(upca, "left_module", 5, 0)
+        confirmed = await db.get(StorageBinWorkflow, returned_id)
+        assert confirmed is not None
+        assert await service.prepare_return(confirmed, [item_id]) is True
+
+
+@pytest.mark.anyio
+async def test_mock_direct_admission_excludes_overlapping_tray_start(monkeypatch):
+    monkeypatch.setattr(storage_router, "can_user_retrieve_item", lambda *args: True)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def validate(*args):
+        entered.set()
+        await release.wait()
+
+    runtime = SimpleNamespace(
+        replay=AsyncMock(return_value=None),
+        enqueue=AsyncMock(return_value=(SimpleNamespace(command_id="direct", status="queued"), False)),
+        has_active_commands=AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.mock)
+    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.mock)
+    monkeypatch.setattr(robot_router, "get_mock_robot_runtime", lambda: runtime)
+    monkeypatch.setattr(storage_router, "get_mock_robot_runtime", lambda: runtime)
+    monkeypatch.setattr(robot_router, "_validate_mock_store", validate)
+    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
+    async with AsyncSessionLocal() as db:
+        items, _ = await setup_trays(db)
+        upca = items[0].upca
+    async with AsyncSessionLocal() as direct_db, AsyncSessionLocal() as tray_db:
+        command = asyncio.create_task(robot_router.robot_commands(
+            StoreItemCommand(item={"upca": "123456788078"}),
+            worker=None, current_user=SimpleNamespace(id=1), db=direct_db,
+        ))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            with pytest.raises(HTTPException) as rejected:
+                await storage_router.create_bin_workflow(
+                    storage_router.BinWorkflowCreate(operation="retrieve", upca=upca),
+                    session=tray_db, current_user=SimpleNamespace(id=1),
+                )
+            assert rejected.value.status_code == 409
+        finally:
+            release.set()
+            await command

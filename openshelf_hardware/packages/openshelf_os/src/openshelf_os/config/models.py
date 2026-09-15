@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterator, List, Literal, Optional, Tuple, Union, overload
+from typing import Any, Iterable, Iterator, List, Literal, Optional, Tuple, Union, overload
 
 from pydantic import BaseModel, Field, RootModel, field_validator, model_validator
 
@@ -44,7 +44,7 @@ class Motor(BaseModel):
     status_reg: int = Field(default=0x1003)
     status_fault_bit: Optional[int] = Field(default=0)
     status_complete_bit: int = Field(default=5)
-    brake_output_function: Optional[Literal[0x24, 0xA4, 0xA1]] = Field(default=None)
+    brake_output_function: Optional[Literal[0x24, 0xA4]] = Field(default=None)
     brake_release_delay_ms: int = Field(default=250, ge=0, le=1500)
     brake_engagement_delay_ms: int = Field(default=250, ge=0, le=1500)
     brake_engagement_speed_threshold: int = Field(default=10, ge=0, le=500)
@@ -105,7 +105,7 @@ class Motor(BaseModel):
             "control_mode": 2,
             "ppr": 10000,
             "encoder_resolution_cpr": 4000,
-            "brake_output_function": 0xA1,
+            "brake_output_function": 0x24,
             "brake_release_delay_ms": 250,
             "brake_engagement_delay_ms": 250,
             "brake_engagement_speed_threshold": 10,
@@ -416,7 +416,8 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
         "cabinet_bot_unlock": _pca9535_output("pca9535_1", 9, initial=False, shutdown=False),
         "estop": _pca9535_input("pca9535_1", 10, inverted=False, pull="off"),
         "sw_estop": _pca9535_output("pca9535_1", 11),
-        "power_control": _pca9535_output("pca9535_1", 12),
+        # X and Y drive power, cut together.
+        "pwr_out0": _pca9535_output("pca9535_1", 12),
         "pwr_out1": _pca9535_output("pca9535_1", 13),
         "pwr_out2": _pca9535_output("pca9535_1", 14),
         "pwr_out3": _pca9535_output("pca9535_1", 15),
@@ -426,9 +427,51 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
     }
 
 
+def compare_gpio_pins_to_defaults(configured: Iterable[str]) -> Tuple[List[str], List[str]]:
+    """Pin names the defaults define but a config omits, and ones it adds.
+
+    A config that declares robot.gpio.pins replaces the defaults outright, so a
+    renamed or newly added default is silently absent on that machine.
+    """
+    names = set(configured)
+    defaults = set(_default_gpio_pins())
+
+    return sorted(defaults - names), sorted(names - defaults)
+
+
+#: Pin names that existing config files still use. A config that declares
+#: robot.gpio.pins replaces the defaults wholesale, so renaming a default is
+#: invisible to those machines until the old key is translated here.
+GPIO_PIN_ALIASES = {"power_control": "pwr_out0"}
+
+
 class GpioConfig(BaseModel):
     expanders: List[GpioExpanderConfig] = Field(default_factory=_default_gpio_expanders)
     pins: dict[str, GpioPinConfig] = Field(default_factory=_default_gpio_pins)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_pin_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict) is False:
+            return data
+
+        pins = data.get("pins")
+        if isinstance(pins, dict) is False:
+            return data
+
+        renamed: dict[str, Any] = {}
+        for name, spec in pins.items():
+            alias = GPIO_PIN_ALIASES.get(name)
+            # An explicit modern key always wins over its legacy alias.
+            if alias is not None and alias in pins:
+                continue
+
+            renamed[alias if alias is not None else name] = spec
+
+        if renamed == pins:
+            return data
+
+        return {**data, "pins": renamed}
 
 
 class EmergencyStopConfig(BaseModel):

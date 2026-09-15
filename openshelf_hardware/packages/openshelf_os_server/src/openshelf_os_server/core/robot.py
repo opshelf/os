@@ -125,7 +125,7 @@ async def _has_active_bin_workflow() -> bool:
     """Read recovered durable bin state before configuring hardware that may move."""
     async with AsyncSessionLocal() as session:
         bin_storage = BinStorageService(session)
-        return await bin_storage.active_workflow() is not None
+        return await bin_storage.has_unfinished_motion()
 
 
 async def init_robot_worker() -> None:

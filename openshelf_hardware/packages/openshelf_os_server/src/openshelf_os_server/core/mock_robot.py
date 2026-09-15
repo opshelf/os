@@ -109,6 +109,9 @@ class MockRobotRuntime:
 		self._event_subscribers: list[asyncio.Queue[str]] = []
 		self._bin_io_box_occupied_override: bool | None = None
 
+	def is_bin_io_box_occupied(self) -> bool:
+		return self._bin_io_box_occupied_override is True
+
 	def set_bin_io_box_occupied(self, occupied: bool) -> None:
 		self._bin_io_box_occupied_override = occupied
 
@@ -501,7 +504,7 @@ class MockRobotRuntime:
 				await session.execute(
 					select(StorageBinWorkflow.state)
 					.where(
-						StorageBinWorkflow.state.notin_(("completed", "reconciled"))
+						StorageBinWorkflow.state.in_(("retrieving_bin", "awaiting_operator", "returning_bin"))
 					)
 					.order_by(StorageBinWorkflow.created_at.desc())
 					.limit(1)
@@ -510,7 +513,7 @@ class MockRobotRuntime:
 			io_box_occupied = (
 				self._bin_io_box_occupied_override
 				if self._bin_io_box_occupied_override is not None
-				else active_bin_state in {"awaiting_item_scan", "awaiting_bin_scan"}
+				else active_bin_state in {"awaiting_operator"}
 			)
 
 		running = next((row for row in commands if row.status == "running"), None)

@@ -31,18 +31,58 @@ POSITION_TOLERANCE_MM = 1.0
 NOOP_POSITION_TOLERANCE_MM = 0.01
 HOME_APPROACH_TOLERANCE_MM = 1.0
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
-BRAKE_SIGNAL_OUTPUT_FUNCTIONS = frozenset({0x24, 0xA4, 0xA1})
+# Y following-error trip for homing only; restored to max_following_error after,
+# since lifts at speed lag well past 10 mm.
+HOME_FOLLOWING_ERROR_MM = 10.0
+ALARM_DETECT_FOLLOWING_ERROR_BIT = 2
+# Y zeroes only once the homing trip is cleared and 0x6002 reads ready (0x000P):
+# a 0x21 written while it still reads 0x0040 (quick stop) is silently dropped.
+TRIGGER_READY_MASK = 0xFFF0
+ZERO_TOLERANCE_MM = 0.25
+ZERO_SETTLE_TIMEOUT_S = 1.0
+ZERO_SETTLE_POLL_S = 0.02
+MOTION_STATUS_FAULT_BIT = 0
+MOTION_STATUS_RUNNING_BIT = 2
+# SO2 as the drive's own brake output. 0x24 is BRAKE with no inversion: the
+# output is open-collector common-anode, so asserted sinks the line, energises
+# the relay and releases the brake. 0xA4 inverts that. 0xA1 (inverted
+# path-complete) is deliberately absent -- it is a status signal, untied to the
+# enable state, and it leaves Pr4.19/4.20/4.21 inert.
+BRAKE_OUTPUT_FUNCTIONS = frozenset({0x24, 0xA4})
 DEFAULT_BRAKE_RELEASE_DELAY_MS = 250
 DEFAULT_BRAKE_ENGAGEMENT_DELAY_MS = 250
 DEFAULT_BRAKE_ENGAGEMENT_SPEED_THRESHOLD = 10
 DEFAULT_STALL_TIMEOUT_S = 5.0
 SOFTWARE_STALL_CONFIRM_DELAY_S = 0.05
+
+# Axes that give up their enable between moves so the load rests on the brake
+# rather than on holding current. Only Y hangs its load off the motor.
+PARKED_AXES = frozenset({"y_axis"})
+
+# Pr4.02 on a parked axis: DI1 inert, N.C. polarity retained. With no input
+# carrying the ENABLE function, Pr0.07 becomes the sole enable source, which is
+# what makes a software disable mean anything -- Pr0.07 is a *forced* enable and
+# at 0 it falls back to whichever input holds ENABLE.
+ENABLE_INPUT_INERT = 0x0080
+SOFTWARE_ENABLE_ON = 1
+SOFTWARE_ENABLE_OFF = 0
+MOTION_STATUS_ENABLE_BIT = 1
+# The drive keeps current for Pr4.20 while the brake sets, so disable waits that
+# long plus this margin before calling the drive stuck enabled.
+DISABLE_CONFIRM_MARGIN_S = 0.25
+DISABLE_POLL_S = 0.02
+EEPROM_SAVE_COMMAND = 0x2211
+EEPROM_SAVE_OK = 0x5555
+EEPROM_SAVE_FAILED = 0xAAAA
+EEPROM_SAVE_POLL_ATTEMPTS = 10
+EEPROM_SAVE_POLL_DELAY_S = 0.05
+
 Y_AXIS_RUNTIME_PROFILE = {
     "Ip": 60,
     "control_mode": 2,
     "ppr": 10000,
     "encoder_resolution_cpr": 4000,
-    "brake_output_function": 0xA1,
+    "brake_output_function": 0x24,
     "brake_release_delay_ms": 250,
     "brake_engagement_delay_ms": 250,
     "brake_engagement_speed_threshold": 10,
@@ -192,7 +232,6 @@ class Motor():
                 DEFAULT_BRAKE_ENGAGEMENT_SPEED_THRESHOLD,
             )
         )
-        self._active_brake_output_function: int | None = None
 
     # ------------------------------------------------------------------ #
     #  Lifecycle
@@ -625,10 +664,10 @@ class Motor():
     def require_brake_output_configuration(self) -> int:
         brake_output_function = self._configured_brake_output_function
 
-        if brake_output_function not in BRAKE_SIGNAL_OUTPUT_FUNCTIONS:
+        if brake_output_function not in BRAKE_OUTPUT_FUNCTIONS:
             raise MotorConfigError(
                 f"Motor {self._motor_id} has no verified brake output configuration; "
-                "set brake_output_function to 0x24, 0xA4, or 0xA1"
+                "set brake_output_function to 0x24 or 0xA4"
             )
 
         return brake_output_function
@@ -639,6 +678,25 @@ class Motor():
             "Brake engagement delay": self._brake_engagement_delay_ms,
             "Brake engagement speed threshold": self._brake_engagement_speed_threshold,
         }
+
+    def _expected_persistent_brake_config(self) -> dict[str, int]:
+        """The registers the drive must hold in EEPROM for brake control to work.
+
+        Nothing at runtime writes any of these, so once the drive agrees with
+        this the boot audit is a pure read and the EEPROM is never touched
+        again. Peak current and Pr0.07 are deliberately absent: both are moved
+        at runtime, so auditing them would see a legitimate value and provoke a
+        needless save.
+        """
+        settings = {
+            **self._expected_brake_control_settings(),
+            "SO2 output function": self.require_brake_output_configuration(),
+        }
+
+        if self._park_when_idle:
+            settings["SI1 input function"] = ENABLE_INPUT_INERT
+
+        return settings
 
     async def _read_and_verify_brake_control(self) -> dict[str, int]:
         configured_function = self.require_brake_output_configuration()
@@ -659,24 +717,132 @@ class Motor():
 
         return actual_settings
 
-    async def _configure_brake_control(self) -> None:
-        # Establish and verify the manufacturer's sequencing parameters before
-        # assigning SO2, which can immediately change the physical brake state.
+    async def _audit_persistent_brake_config(self) -> dict[str, int]:
+        expected = self._expected_persistent_brake_config()
+        mismatches: dict[str, int] = {}
+
+        for parameter_name, expected_value in expected.items():
+            actual_value = await self.get_param(parameter_name)
+            if actual_value != expected_value:
+                mismatches[parameter_name] = actual_value
+
+        return mismatches
+
+    async def _save_parameters_to_eeprom(self) -> None:
+        await self.set_param("Control word", EEPROM_SAVE_COMMAND)
+
+        for _ in range(EEPROM_SAVE_POLL_ATTEMPTS):
+            status = await self.get_param("Save status word")
+
+            if status == EEPROM_SAVE_OK:
+                return
+            if status == EEPROM_SAVE_FAILED:
+                raise MotorConfigError(
+                    f"Motor {self._motor_id} reported an EEPROM save failure (0xAAAA)"
+                )
+
+            await asyncio.sleep(EEPROM_SAVE_POLL_DELAY_S)
+
+        raise MotorConfigError(
+            f"Motor {self._motor_id} did not confirm the EEPROM save within "
+            f"{EEPROM_SAVE_POLL_ATTEMPTS * EEPROM_SAVE_POLL_DELAY_S:.2f}s"
+        )
+
+    async def _repair_persistent_brake_config(self) -> None:
+        """Write the persistent brake config, then commit it to EEPROM.
+
+        The write order matters for a suspended load. Pr0.07 goes high first so
+        the motor stays energised across the transition; the sequencing delays
+        land before SO2 becomes a brake output, because assigning SO2 can change
+        the physical brake state immediately; DI1 is made inert last, since from
+        that point Pr0.07 is the only thing that can enable the drive.
+        """
+        if self._park_when_idle:
+            await self.set_param("Forced enable by software", SOFTWARE_ENABLE_ON)
+
         for parameter_name, value in self._expected_brake_control_settings().items():
             await self.set_param(parameter_name, value)
 
-        for parameter_name, expected_value in self._expected_brake_control_settings().items():
-            actual_value = await self.get_param(parameter_name)
-            if actual_value != expected_value:
-                raise MotorConfigError(
-                    f"Motor {self._motor_id} {parameter_name} readback mismatch: "
-                    f"configured={expected_value}, read={actual_value}"
-                )
-
-        await self.set_brake_output_function(
+        await self.set_param(
+            "SO2 output function",
             self.require_brake_output_configuration(),
-            force=True,
         )
+
+        if self._park_when_idle:
+            await self.set_param("SI1 input function", ENABLE_INPUT_INERT)
+
+        remaining = await self._audit_persistent_brake_config()
+        if remaining:
+            raise MotorConfigError(
+                f"Motor {self._motor_id} rejected the brake configuration: "
+                + ", ".join(
+                    f"{name} read={value}" for name, value in remaining.items()
+                )
+            )
+
+        await self._save_parameters_to_eeprom()
+
+        if self._park_when_idle:
+            # Deliberate park: the brake sets through Pr4.20 / Pr4.21.
+            await self.set_param("Forced enable by software", SOFTWARE_ENABLE_OFF)
+
+    async def _configure_brake_control(self) -> None:
+        """Audit the drive's persistent brake config; repair and save only if wrong.
+
+        Steady state is a read of four or five registers and nothing else. The
+        EEPROM is written only when the drive genuinely disagrees, which after
+        commissioning means never.
+        """
+        mismatches = await self._audit_persistent_brake_config()
+
+        if not mismatches:
+            self._logger.info(
+                "Persistent brake configuration matches; no write required",
+                extra={
+                    "motor_id": self._motor_id,
+                    "motor_name": getattr(self._params, "motor_name", None),
+                },
+            )
+            return
+
+        expected = self._expected_persistent_brake_config()
+        self._logger.warning(
+            "Persistent brake configuration mismatch; repairing and saving to EEPROM",
+            extra={
+                "motor_id": self._motor_id,
+                "motor_name": getattr(self._params, "motor_name", None),
+                "mismatches": {
+                    name: {"expected": expected[name], "read": value}
+                    for name, value in mismatches.items()
+                },
+            },
+        )
+
+        await self._repair_persistent_brake_config()
+
+        self._logger.warning(
+            "Persistent brake configuration repaired and saved to EEPROM",
+            extra={
+                "motor_id": self._motor_id,
+                "motor_name": getattr(self._params, "motor_name", None),
+            },
+        )
+
+        if "SI1 input function" in mismatches:
+            # Manual 4.3.2 note 2: an input function change only takes effect
+            # after the drive restarts. Until then DI1 still carries ENABLE and
+            # Pr0.07=0 falls back to it, so the axis will not park.
+            self._logger.warning(
+                "DI1 function changed; POWER-CYCLE THE DRIVE for it to take "
+                "effect. Until then the software disable will not de-energise "
+                "this axis and the load stays on motor current",
+                extra={
+                    "motor_id": self._motor_id,
+                    "motor_name": getattr(self._params, "motor_name", None),
+                    "previous_function": mismatches["SI1 input function"],
+                    "configured_function": ENABLE_INPUT_INERT,
+                },
+            )
 
     async def _verify_brake_output_before_motion_trigger(self) -> None:
         if getattr(self._params, "motor_name", None) != "y_axis":
@@ -691,15 +857,21 @@ class Motor():
                 f"configured=0x{configured_function:02X}, read=0x{register_function:02X}"
             )
 
-        self._active_brake_output_function = configured_function
-
     async def get_brake_output_diagnostics(self) -> dict[str, int]:
         configured_function = self.require_brake_output_configuration()
         motor_settings = await self._read_and_verify_motor_electrical_parameters()
         settings = await self._read_and_verify_brake_control()
         output_state = await self.get_param("Digital output state")
+        software_enable = await self.get_param("Forced enable by software")
+        enable_input_function = await self.get_param("SI1 input function")
+        input_state = await self.get_param("Digital input state")
+        drive_enabled = await self.is_drive_enabled()
 
         return {
+            "enable_input_function": enable_input_function,
+            "software_enable": software_enable,
+            "digital_input_state": input_state,
+            "drive_enabled": int(drive_enabled),
             "control_mode": motor_settings["Control Mode"],
             "command_pulses_per_revolution": motor_settings["Pulse/revolution"],
             "encoder_resolution_cpr": motor_settings["Encoder resolution"],
@@ -714,32 +886,93 @@ class Motor():
             "output_state": output_state,
         }
 
-    async def set_brake_output_function(self, value: int, *, force: bool = False) -> None:
-        brake_output_function = int(value)
+    # ------------------------------------------------------------------ #
+    #  Enable / park
+    # ------------------------------------------------------------------ #
 
-        if brake_output_function not in BRAKE_SIGNAL_OUTPUT_FUNCTIONS:
-            raise MotorConfigError(
-                f"Refusing unsupported brake-signal SO2 function 0x{brake_output_function:02X}; "
-                "expected 0x24, 0xA4, or 0xA1"
-            )
+    @property
+    def _park_when_idle(self) -> bool:
+        return getattr(self._params, "motor_name", None) in PARKED_AXES
 
-        if force is False and self._active_brake_output_function == brake_output_function:
+    @property
+    def _brake_release_s(self) -> float:
+        return self._brake_release_delay_ms / 1000.0
+
+    async def is_drive_enabled(self) -> bool:
+        """Bit1 of the motion status word: what the drive thinks its enable is."""
+        status = await self.get_param("Motion status")
+        return bool(status & (1 << MOTION_STATUS_ENABLE_BIT))
+
+    async def enable(self) -> None:
+        """Energise, then give the drive its own Pr4.19 to release the brake.
+
+        The wait is not the host sequencing the brake -- nothing here commands
+        it. It is the host declining to command motion until the drive has had
+        the time it was configured to need. Firing PR0 into a brake that is
+        still set is the failure this axis already has a runbook for.
+        """
+        await self.set_param("Forced enable by software", SOFTWARE_ENABLE_ON)
+        await asyncio.sleep(self._brake_release_s)
+
+    async def disable(self) -> None:
+        """De-energise. The drive holds current for Pr4.20 while the brake sets.
+
+        Pr0.07 is a *forced* enable: at 0 the enable falls back to whichever
+        digital input carries ENABLE. If any input still holds it -- or the
+        drive declines to gate on IO at all -- the write lands and changes
+        nothing, so the result is read back rather than assumed. This warns
+        rather than raises: a drive that will not de-energise is still holding
+        the load, which is not itself dangerous.
+        """
+        await self.set_param("Forced enable by software", SOFTWARE_ENABLE_OFF)
+
+        deadline = time.monotonic() + self._brake_engagement_delay_ms / 1000.0 + DISABLE_CONFIRM_MARGIN_S
+        while await self.is_drive_enabled() is True:
+            if time.monotonic() > deadline:
+                break
+            await asyncio.sleep(DISABLE_POLL_S)
+        else:
             return
 
-        await self.set_param("SO2 output function", brake_output_function)
-        register_function = await self.get_param("SO2 output function")
+        self._logger.warning(
+            "Drive still reports enabled after Pr0.07=0; the load is on motor "
+            "current, not the brake",
+            extra={
+                "motor_id": self._motor_id,
+                "motor_name": getattr(self._params, "motor_name", None),
+                "enable_input_function": await self.get_param("SI1 input function"),
+                "digital_input_state": await self.get_param("Digital input state"),
+                "digital_output_state": await self.get_param("Digital output state"),
+            },
+        )
 
-        if register_function != brake_output_function:
-            raise MotorConfigError(
-                f"Motor {self._motor_id} rejected SO2 output function: "
-                f"wrote=0x{brake_output_function:02X}, read=0x{register_function:02X}"
+    async def _enable_for_motion(self) -> None:
+        if self._park_when_idle is False:
+            return
+
+        await self.enable()
+
+    async def _park(self) -> None:
+        """Disable after motion, tolerating a bus that has already gone wrong.
+
+        A failure to park is worth a warning and nothing more: the axis is left
+        energised, which is the conservative state for a suspended load, and the
+        caller's outcome is never masked.
+        """
+        if self._park_when_idle is False:
+            return
+
+        try:
+            await self.disable()
+        except Exception as e:
+            self._logger.warning(
+                "Failed to park motor; left energised",
+                extra={
+                    "motor_id": self._motor_id,
+                    "motor_name": getattr(self._params, "motor_name", None),
+                    "error": str(e),
+                },
             )
-
-        self._active_brake_output_function = brake_output_function
-
-    async def restore_brake_output(self) -> None:
-        brake_output_function = self.require_brake_output_configuration()
-        await self.set_brake_output_function(brake_output_function, force=True)
 
     # ------------------------------------------------------------------ #
     #  Alarm / fault management
@@ -873,6 +1106,7 @@ class Motor():
         )
 
         await self._verify_brake_output_before_motion_trigger()
+        await self._enable_for_motion()
         await self._controller.write_single_register(
             self._motor_id,
             motor_helpers.TRIGGER,
@@ -1000,6 +1234,7 @@ class Motor():
             await self.set_param("Position Low", pulse[1])
 
             await self._verify_brake_output_before_motion_trigger()
+            await self._enable_for_motion()
             await self._controller.write_single_register(
                 self._motor_id,
                 motor_helpers.TRIGGER,
@@ -1328,6 +1563,11 @@ class Motor():
         self._status = MotorStatus.STOPPED
         self._hard_stopped = False
 
+        # Homing parks in home(), after the trip clear and zero write -- register
+        # writes with no motion that want the drive enabled.
+        if homing is False:
+            await self._park()
+
         self._logger.debug(
             "Motion complete",
             extra={
@@ -1624,6 +1864,7 @@ class Motor():
 
     async def _start_path_zero(self) -> None:
         await self._verify_brake_output_before_motion_trigger()
+        await self._enable_for_motion()
         await self._controller.write_single_register(
             self._motor_id,
             motor_helpers.TRIGGER,
@@ -1638,6 +1879,55 @@ class Motor():
             0x21,
         )
 
+    async def _restore_following_error_limit(self) -> None:
+        limit = int(getattr(self._params, "max_following_error", 4000))
+        await self.set_param("Allowed max position following error", limit)
+        actual = await self.get_param("Allowed max position following error")
+        if actual != limit:
+            raise MotorConfigError(f"readback mismatch: configured={limit}, read={actual}")
+
+    async def _clear_homing_trip(self) -> None:
+        """Clear the homing trip, then wait for no alarm, no motion and 0x6002 ready."""
+        await self.move_config()
+
+        deadline = time.monotonic() + ZERO_SETTLE_TIMEOUT_S
+        while True:
+            status = await self.get_param("Motion status")
+            alarm = await self.get_param("Current alarm")
+            trigger = await self._controller.read_holding_registers(self._motor_id, motor_helpers.TRIGGER)
+
+            settled = (
+                alarm == 0
+                and not status & (1 << MOTION_STATUS_FAULT_BIT)
+                and not status & (1 << MOTION_STATUS_RUNNING_BIT)
+                and trigger & TRIGGER_READY_MASK == 0
+            )
+            if settled:
+                return
+
+            if time.monotonic() > deadline:
+                raise MotorError(
+                    f"Motor {self._motor_id} did not settle before zeroing: "
+                    f"status=0x{status:04X}, alarm=0x{alarm:04X}, trigger=0x{trigger:04X}"
+                )
+
+            await asyncio.sleep(ZERO_SETTLE_POLL_S)
+
+    async def _verify_zero_position(self) -> None:
+        """Fail homing if the drive did not accept the 0x21 zero."""
+        deadline = time.monotonic() + ZERO_SETTLE_TIMEOUT_S
+        while True:
+            position = await self.get_position()
+            if abs(position) <= ZERO_TOLERANCE_MM:
+                return
+
+            if time.monotonic() > deadline:
+                raise MotorError(
+                    f"Motor {self._motor_id} zero did not take: position={position:.3f} mm"
+                )
+
+            await asyncio.sleep(ZERO_SETTLE_POLL_S)
+
     async def _set_and_verify_peak_current(self, value: int) -> None:
         peak_current = int(value)
         if peak_current <= 0:
@@ -1650,6 +1940,30 @@ class Motor():
                 f"Motor {self._motor_id} peak current readback mismatch: "
                 f"configured={peak_current}, read={actual_peak_current}"
             )
+
+    async def _arm_following_error_trip(self) -> None:
+        """Pr4.22 bit2 on, Pr0.05 = HOME_FOLLOWING_ERROR_MM in encoder counts."""
+        cpr = int(getattr(self._params, "encoder_resolution_cpr", 4000))
+        counts = round(HOME_FOLLOWING_ERROR_MM / self._params.mpr * cpr)
+        if not 0 < counts <= 0xFFFF:
+            raise MotorConfigError(f"Following-error limit out of range: {counts} counts")
+
+        detection = await self.get_param("Alarm detection")
+        settings = {
+            "Alarm detection": detection | (1 << ALARM_DETECT_FOLLOWING_ERROR_BIT),
+            "Allowed max position following error": counts,
+        }
+
+        for name, value in settings.items():
+            await self.set_param(name, value)
+
+        for name, value in settings.items():
+            actual = await self.get_param(name)
+            if actual != value:
+                raise MotorConfigError(
+                    f"Motor {self._motor_id} {name} readback mismatch: "
+                    f"configured={value}, read={actual}"
+                )
 
     def _get_home_approach_target_mm(self) -> float:
         backoff_mm = DEFAULT_HOME_APPROACH_BACKOFF_MM
@@ -1728,10 +2042,19 @@ class Motor():
     ) -> None:
         self._simulated_fault = False
         restore_peak_current: int | None = None
+        restore_following_error = False
+        home_failed = False
 
         try:
             self._emit_init("homing")
             await self.clear_alarm()
+
+            if getattr(self._params, "motor_name", None) == "y_axis":
+                restore_following_error = True
+                try:
+                    await self._arm_following_error_trip()
+                except Exception as e:
+                    raise MotorConfigError(f"Failed to arm following-error trip: {str(e)}") from e
 
             home_dir = self._get_home_direction()
             home_rpm = self._params.home_rpm or self._params.ret_rpm
@@ -1783,12 +2106,20 @@ class Motor():
                 self._on_move_complete(elapsed)
 
             if stop == MotorStatus.STOPPED:
+                is_y_axis = getattr(self._params, "motor_name", None) == "y_axis"
+                if is_y_axis:
+                    await self._clear_homing_trip()
+
                 try:
                     await self._set_zero_position()
                 except Exception as e:
                     raise MotorError(f"Failed to set home position as zero: {str(e)}") from e
 
-                await self.move_config()
+                if is_y_axis:
+                    await self._verify_zero_position()
+                else:
+                    await self.move_config()
+                await self._park()
 
                 self._is_homed = True
                 self._hard_stopped = False
@@ -1805,6 +2136,7 @@ class Motor():
                 raise MotorTimeoutError(f"Motor {self._motor_id} homing timed out")
 
         except Exception as e:
+            home_failed = True
             if isinstance(e, MotorTimeoutError):
                 self._is_homed = False
             reason = "timeout" if isinstance(e, MotorTimeoutError) else str(e)
@@ -1813,6 +2145,15 @@ class Motor():
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
             raise
         finally:
+            # Every restore runs; a failure in one must not skip the next.
+            restore_errors: list[str] = []
+
+            if restore_following_error is True:
+                try:
+                    await self._restore_following_error_limit()
+                except Exception as restore_error:
+                    restore_errors.append(f"following error limit: {restore_error}")
+
             if restore_peak_current is not None:
                 try:
                     await self._set_and_verify_peak_current(restore_peak_current)
@@ -1825,10 +2166,15 @@ class Motor():
                         },
                     )
                 except Exception as restore_error:
-                    self._is_homed = False
-                    self._hard_stopped = True
-                    self._emit_init("failed", detail="home", reason="peak current restore failed")
-                    raise MotorConfigError(
-                        f"Failed to restore motor {self._motor_id} peak current "
-                        f"to {restore_peak_current}: {restore_error}"
-                    ) from restore_error
+                    restore_errors.append(f"peak current to {restore_peak_current}: {restore_error}")
+
+            if restore_errors:
+                self._is_homed = False
+                self._hard_stopped = True
+                message = f"Failed to restore motor {self._motor_id} " + "; ".join(restore_errors)
+                if home_failed is True:
+                    # Keep the homing failure as the reported cause.
+                    self._logger.warning(message, extra={"motor_id": self._motor_id})
+                else:
+                    self._emit_init("failed", detail="home", reason="homing override restore failed")
+                    raise MotorConfigError(message)

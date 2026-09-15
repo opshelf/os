@@ -323,6 +323,20 @@
       },
       "BinContentsResponse": {
         "properties": {
+          "compartment": {
+            "anyOf": [
+              {
+                "maximum": 1024.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Compartment number, starting at 1 at the top left, left-to-right then top-to-bottom at IO; null when unassigned or the bin is undivided.",
+            "title": "Compartment"
+          },
           "confirmed": {
             "title": "Confirmed",
             "type": "boolean"
@@ -351,6 +365,20 @@
       },
       "BinItemSummary": {
         "properties": {
+          "compartment": {
+            "anyOf": [
+              {
+                "maximum": 1024.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Compartment number, starting at 1 at the top left, left-to-right then top-to-bottom at IO; null when unassigned or the bin is undivided.",
+            "title": "Compartment"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -386,6 +414,28 @@
           "barcode": {
             "title": "Barcode",
             "type": "string"
+          },
+          "compartment_dimensions": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StorageBinDimensionsSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Compartment dimensions in millimeters: inner width divided by columns, inner length divided by rows, and full inner height; null for an undivided bin."
+          },
+          "compartment_layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompartmentLayoutSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Equal-sized compartment rows and columns; null for an undivided bin."
           },
           "gross_weight": {
             "anyOf": [
@@ -463,30 +513,6 @@
         "title": "BinResponse",
         "type": "object"
       },
-      "BinScanResponse": {
-        "properties": {
-          "rejected": {
-            "title": "Rejected",
-            "type": "boolean"
-          },
-          "workflow": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BinWorkflowResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "workflow",
-          "rejected"
-        ],
-        "title": "BinScanResponse",
-        "type": "object"
-      },
       "BinWorkflowCreate": {
         "properties": {
           "operation": {
@@ -540,49 +566,24 @@
         "title": "BinWorkflowEnvelope",
         "type": "object"
       },
-      "BinWorkflowReconcile": {
-        "properties": {
-          "confirmed_item_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Confirmed Item Ids"
-          },
-          "resolution": {
-            "pattern": "^(returned|quarantined)$",
-            "title": "Resolution",
-            "type": "string"
-          },
-          "target_item_in_bin": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Item In Bin"
-          }
-        },
-        "required": [
-          "resolution"
-        ],
-        "title": "BinWorkflowReconcile",
-        "type": "object"
-      },
       "BinWorkflowResponse": {
         "properties": {
           "bin": {
             "$ref": "#/components/schemas/BinResponse"
+          },
+          "compartment": {
+            "anyOf": [
+              {
+                "maximum": 1024.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Persisted target compartment number, starting at 1 at the top left, left-to-right then top-to-bottom at IO; null when no target is assigned or the bin is undivided.",
+            "title": "Compartment"
           },
           "contents": {
             "anyOf": [
@@ -626,10 +627,17 @@
             "type": "string"
           },
           "item": {
-            "$ref": "#/components/schemas/BinItemSummary"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BinItemSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "operation": {
-            "description": "store, retrieve, or restore for an unavailable bin",
+            "description": "store, retrieve, or return",
             "title": "Operation",
             "type": "string"
           },
@@ -646,7 +654,7 @@
             "title": "Resolution"
           },
           "state": {
-            "description": "Current workflow state; recovery_required needs operator reconciliation",
+            "description": "Current tray interaction state",
             "title": "State",
             "type": "string"
           },
@@ -673,48 +681,17 @@
       "BinWorkflowReturn": {
         "properties": {
           "confirmed_item_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "integer"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Confirmed Item Ids"
-          },
-          "target_item_in_bin": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Item In Bin"
-          }
-        },
-        "title": "BinWorkflowReturn",
-        "type": "object"
-      },
-      "BinWorkflowScan": {
-        "properties": {
-          "code": {
-            "maxLength": 50,
-            "minLength": 1,
-            "pattern": ".*\\S.*",
-            "title": "Code",
-            "type": "string"
+            "items": {
+              "type": "integer"
+            },
+            "title": "Confirmed Item Ids",
+            "type": "array"
           }
         },
         "required": [
-          "code"
+          "confirmed_item_ids"
         ],
-        "title": "BinWorkflowScan",
+        "title": "BinWorkflowReturn",
         "type": "object"
       },
       "BinWorkflowStartResponse": {
@@ -743,6 +720,22 @@
           "storage_mode"
         ],
         "title": "BinWorkflowStartResponse",
+        "type": "object"
+      },
+      "BinWorkflowsResponse": {
+        "properties": {
+          "workflows": {
+            "items": {
+              "$ref": "#/components/schemas/BinWorkflowResponse"
+            },
+            "title": "Workflows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "workflows"
+        ],
+        "title": "BinWorkflowsResponse",
         "type": "object"
       },
       "BinsResponse": {
@@ -1312,6 +1305,29 @@
           "completed_at"
         ],
         "title": "CommandLifecycleResponse",
+        "type": "object"
+      },
+      "CompartmentLayoutSettings": {
+        "description": "Equal-sized compartments, numbered left-to-right then top-to-bottom at IO.",
+        "properties": {
+          "columns": {
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Columns",
+            "type": "integer"
+          },
+          "rows": {
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "columns"
+        ],
+        "title": "CompartmentLayoutSettings",
         "type": "object"
       },
       "DemoCycleStatusResponse": {
@@ -3969,6 +3985,103 @@
         "title": "PositionResponse",
         "type": "object"
       },
+      "PowerCycleResponse": {
+        "properties": {
+          "axes_needing_home": {
+            "description": "Axes that must be re-homed before further motion",
+            "items": {
+              "type": "string"
+            },
+            "title": "Axes Needing Home",
+            "type": "array"
+          },
+          "rail": {
+            "title": "Rail",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "rail",
+          "axes_needing_home"
+        ],
+        "title": "PowerCycleResponse",
+        "type": "object"
+      },
+      "PowerRailStatus": {
+        "properties": {
+          "axes": {
+            "description": "Motors that lose their encoder reference when this rail is cut",
+            "items": {
+              "type": "string"
+            },
+            "title": "Axes",
+            "type": "array"
+          },
+          "gripper": {
+            "description": "Whether the gripper servo drops with this rail",
+            "title": "Gripper",
+            "type": "boolean"
+          },
+          "powered": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current rail state; null when it cannot be read",
+            "title": "Powered"
+          },
+          "rail": {
+            "description": "GPIO output identifier of the switched rail",
+            "title": "Rail",
+            "type": "string"
+          },
+          "supplies": {
+            "description": "Hardware that loses power when this rail is cut",
+            "title": "Supplies",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rail",
+          "supplies",
+          "axes",
+          "gripper",
+          "powered"
+        ],
+        "title": "PowerRailStatus",
+        "type": "object"
+      },
+      "PowerRailsResponse": {
+        "properties": {
+          "hold_seconds": {
+            "description": "How long a cycle cuts the rail before restoring power",
+            "title": "Hold Seconds",
+            "type": "number"
+          },
+          "rails": {
+            "items": {
+              "$ref": "#/components/schemas/PowerRailStatus"
+            },
+            "title": "Rails",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hold_seconds",
+          "rails"
+        ],
+        "title": "PowerRailsResponse",
+        "type": "object"
+      },
       "PrintLabelRequest": {
         "properties": {
           "code": {
@@ -5079,6 +5192,32 @@
         "title": "StopCommand",
         "type": "object"
       },
+      "StorageBinDimensionsSettings": {
+        "properties": {
+          "height": {
+            "exclusiveMinimum": 0.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "length": {
+            "exclusiveMinimum": 0.0,
+            "title": "Length",
+            "type": "number"
+          },
+          "width": {
+            "exclusiveMinimum": 0.0,
+            "title": "Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "width",
+          "height",
+          "length"
+        ],
+        "title": "StorageBinDimensionsSettings",
+        "type": "object"
+      },
       "StorageCellResponse": {
         "description": "Response payload for a storage cell.",
         "properties": {
@@ -5461,6 +5600,21 @@
           "expires_in"
         ],
         "title": "TokenResponse",
+        "type": "object"
+      },
+      "TrayBarcode": {
+        "properties": {
+          "barcode": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Barcode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "barcode"
+        ],
+        "title": "TrayBarcode",
         "type": "object"
       },
       "UserCreate": {
@@ -7005,16 +7159,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -7104,16 +7248,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -7205,16 +7339,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -7304,16 +7428,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -7425,16 +7539,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -7545,16 +7649,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -7654,16 +7748,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -7767,16 +7851,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -7888,16 +7962,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -8007,16 +8071,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "500": {
             "content": {
@@ -8138,16 +8192,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "500": {
             "content": {
               "application/json": {
@@ -8248,16 +8292,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -8348,16 +8382,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -8447,16 +8471,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -8688,16 +8702,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -8808,16 +8812,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -8918,16 +8912,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9017,16 +9001,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -9127,16 +9101,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9164,7 +9128,7 @@
     },
     "/api/calibration/rotation/save": {
       "post": {
-        "description": "Save tool orientation positions.\n\nPersists the front/back rotation values in the active configuration. An active bin\nworkflow blocks the change. Test rotation separately before saving.",
+        "description": "Save tool orientation positions.\n\nPersists the front/back rotation values in the active configuration. Test rotation\nseparately before saving.",
         "operationId": "save_rotation_angles_api_calibration_rotation_save_post",
         "parameters": [
           {
@@ -9237,16 +9201,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9274,7 +9228,7 @@
     },
     "/api/calibration/save": {
       "post": {
-        "description": "Save a cell calibration point.\n\nPersists coordinates and optional status/manual marker for the selected cell. Configured\nbin homes cannot be changed here. Invalid status returns `400`; an active workflow can\nblock geometry changes.",
+        "description": "Save a cell calibration point.\n\nPersists coordinates and optional status/manual marker for the selected cell. Tray homes\nallow coordinate, manual-marker, and status updates. Invalid status returns `400`.",
         "operationId": "save_calibration_api_calibration_save_post",
         "parameters": [
           {
@@ -9356,16 +9310,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -9457,16 +9401,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9494,7 +9428,7 @@
     },
     "/api/calibration/shelf/save": {
       "post": {
-        "description": "Save shelf stage extensions.\n\nPersists front/back extension distances after checking the configured stage limit. An\nactive bin workflow blocks the change. Does not execute a test move.",
+        "description": "Save shelf stage extensions.\n\nPersists front/back extension distances after checking the configured stage limit. Does\nnot execute a test move.",
         "operationId": "save_shelf_stage_extension_api_calibration_shelf_save_post",
         "parameters": [
           {
@@ -9576,16 +9510,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -9687,16 +9611,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9786,16 +9700,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -9887,16 +9791,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9924,7 +9818,7 @@
     },
     "/api/calibration/test": {
       "post": {
-        "description": "Test a cell pick or place.\n\nRuns the selected cell gripper test on physical hardware. Optional `lift` requests a\nbounded pick/lift/place test. Reserved or unsuitable cells are rejected. This tests\nmotion without saving new calibration coordinates.",
+        "description": "Test a cell pick or place.\n\nRuns the selected cell gripper test on physical hardware. Optional `lift` requests a\nbounded pick/lift/place test. Tray homes are supported; disabled or maintenance cells\nare rejected. This tests\nmotion without saving new calibration coordinates.",
         "operationId": "test_gripper_api_calibration_test_post",
         "parameters": [
           {
@@ -10025,16 +9919,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -10062,7 +9946,7 @@
     },
     "/api/calibration/test/cycle": {
       "post": {
-        "description": "Test an IO transfer cycle.\n\nRuns the IO pick/place cycle for the selected calibration cell. This moves the tool\nthrough the IO box; use only with the physical setup prepared for the test. Does not\nsave calibration.",
+        "description": "Test an IO transfer cycle.\n\nRuns the IO pick/place cycle for the selected calibration cell. Tray homes are supported;\ndisabled or maintenance cells are rejected. This moves the tool through the IO box; use\nonly with the physical setup prepared for the test. Does not save calibration.",
         "operationId": "test_cycle_api_calibration_test_cycle_post",
         "parameters": [
           {
@@ -10144,16 +10028,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "500": {
             "content": {
@@ -10664,16 +10538,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -10764,16 +10628,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -10863,16 +10717,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -12441,16 +12285,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -12478,7 +12312,7 @@
     },
     "/api/robot/commands": {
       "post": {
-        "description": "Queue a robot command.\n\nReturns a durable `command_id` and current state after admission, not after physical\ncompletion. Poll `/api/robot/commands/{command_id}` for the result or subscribe to\n`/api/robot/events` before submitting. The status stream is not a command receipt.\n\nFor store/retrieve commands, reuse the same `request_id` and payload after an uncertain\nsubmission. Identical replays return the existing record; a different payload returns\n`409`. Records and idempotency are retained for seven days. A terminal failure requires\na new ID for a new attempt. Interrupted commands are failed at startup rather than\nreplayed.\n\nCreate inventory first, then submit\n`{\"command\":\"store_item\",\"request_id\":\"store-001\",\"item\":{\"upca\":\"880000000001\"}}`. New\ncommand-enrolled items require positive complete dimensions; include a name for\ncompatibility with mock mode. Existing items use stored dimensions and mass: update\ninventory before submitting if these must change. Accepted enrollment survives execution\nfailure.\n\nTo choose the destination cell, add a top-level `location`\n(`{\"side\":\"left_module\",\"shelf_idx\":0,\"cell_idx\":0}`). The cell must exist in the\nstorage grid, be available, and fit the item; storage bin homes are reserved. Omitting\n`location` keeps automatic allocation, and demo mode keeps its configured cell mapping.\n\nFor retrieval, read the item first and supply its `location` (`side`, zero-based\n`shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box\nbefore retrieving. Home when `home_required` is reported. An active bin workflow returns\n`423`; a full queue returns `429` with `Retry-After`.\n\nMock mode supports only store/retrieve, with one FIFO worker and simulated completion.\nHardware modes also accept the engineering commands in the schema. A queued stop is not\nan emergency stop; use the physical emergency stop for immediate safety-critical\nstopping.",
+        "description": "Queue a robot command.\n\nReturns a durable `command_id` and current state after admission, not after physical\ncompletion. Poll `/api/robot/commands/{command_id}` for the result or subscribe to\n`/api/robot/events` before submitting. The status stream is not a command receipt.\n\nFor store/retrieve commands, reuse the same `request_id` and payload after an uncertain\nsubmission. Identical replays return the existing record; a different payload returns\n`409`. Records and idempotency are retained for seven days. A terminal failure requires\na new ID for a new attempt. Interrupted commands are failed at startup rather than\nreplayed.\n\nCreate inventory first, then submit\n`{\"command\":\"store_item\",\"request_id\":\"store-001\",\"item\":{\"upca\":\"880000000001\"}}`. New\ncommand-enrolled items require positive complete dimensions; include a name for\ncompatibility with mock mode. Existing items use stored dimensions and mass: update\ninventory before submitting if these must change. Accepted enrollment survives execution\nfailure.\n\nTo choose the destination cell, add a top-level `location`\n(`{\"side\":\"left_module\",\"shelf_idx\":0,\"cell_idx\":0}`). The cell must exist in the\nstorage grid, be available, and fit the item; a live bin home stays reserved and is\nreported unavailable. Omitting `location` keeps automatic allocation, and demo mode\nkeeps its configured cell mapping.\n\nFor retrieval, read the item first and supply its `location` (`side`, zero-based\n`shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box\nbefore retrieving. Home when `home_required` is reported. An item reserved by a tray interaction returns\n`409`; a full queue returns `429` with `Retry-After`.\n\nMock mode supports only store/retrieve, with one FIFO worker and simulated completion.\nHardware modes also accept the engineering commands in the schema. A queued stop is not\nan emergency stop; use the physical emergency stop for immediate safety-critical\nstopping.",
         "operationId": "robot_commands_api_robot_commands_post",
         "parameters": [
           {
@@ -12615,16 +12449,6 @@
               }
             },
             "description": "Request validation failed"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "A multi-item bin workflow currently owns the robot"
           },
           "429": {
             "content": {
@@ -12839,16 +12663,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -13246,7 +13060,7 @@
     },
     "/api/robot/debug/motors/{motor_name}/home": {
       "post": {
-        "description": "Home one motor.\n\nRuns the selected motor's homing operation with manual-motion guards. This moves\nhardware and may also position the tool for safe rotation. `skip_pre_home_approach=true`\nis restricted to the Y axis in development mode. Unknown names return `404`; bin\nworkflows block motion.",
+        "description": "Home one motor.\n\nRuns the selected motor's homing operation with manual-motion guards. This moves\nhardware and may also position the tool for safe rotation. `skip_pre_home_approach=true`\nis restricted to the Y axis in development mode. Unknown names return `404`; motion that\nanother operation already holds returns `409`.",
         "operationId": "home_motor_api_robot_debug_motors__motor_name__home_post",
         "parameters": [
           {
@@ -13352,16 +13166,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -13389,7 +13193,7 @@
     },
     "/api/robot/debug/motors/{motor_name}/move": {
       "post": {
-        "description": "Move one motor to a position.\n\nMoves the selected motor to `position_mm` using the manual-motion guard. Rotation may\nrequire associated stage positioning. Unknown names return `404`; active bin workflows\nblock motion; hardware failures return `503`.",
+        "description": "Move one motor to a position.\n\nMoves the selected motor to `position_mm` using the manual-motion guard. Rotation may\nrequire associated stage positioning. Unknown names return `404`; motion that another\noperation already holds returns `409`; hardware failures return `503`.",
         "operationId": "move_motor_api_robot_debug_motors__motor_name__move_post",
         "parameters": [
           {
@@ -13475,16 +13279,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -13505,6 +13299,201 @@
           }
         ],
         "summary": "Move one motor to a position",
+        "tags": [
+          "robot"
+        ]
+      }
+    },
+    "/api/robot/debug/power": {
+      "get": {
+        "description": "Read the four switched power rails.\n\nReports what each rail feeds, the axes that lose their encoder reference when it is\ncut, and the current output state. `powered` is `null` when the rail cannot be read.\nCut power only through the rail cycle operation: driving the output directly drops\nthe drives without reconfiguring or re-homing the axes that lose their reference.",
+        "operationId": "get_power_rails_api_robot_debug_power_get",
+        "parameters": [
+          {
+            "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PowerRailsResponse",
+                  "additionalProperties": true,
+                  "title": "Response Get Power Rails Api Robot Debug Power Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Operation result"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required or token invalid"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required hardware or service is unavailable"
+          }
+        },
+        "security": [
+          {
+            "UserBearer": []
+          },
+          {
+            "UserQueryToken": []
+          }
+        ],
+        "summary": "Inspect switched power rails",
+        "tags": [
+          "robot"
+        ]
+      }
+    },
+    "/api/robot/debug/power/{rail}/cycle": {
+      "post": {
+        "description": "Cut a switched rail for a few seconds, then restore it.\n\nDrive parameters that only latch at power-on need this -- any DI/DO function\nchange stays inert until its drive restarts. Returns once power is back; the\nhardware is still booting, so re-home the axes it dropped before moving. An\nactive command or queued work returns `409`; a tray workflow that is idle between\nsteps does not block the cycle.",
+        "operationId": "power_cycle_rail_api_robot_debug_power__rail__cycle_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rail",
+            "required": true,
+            "schema": {
+              "title": "Rail",
+              "type": "string"
+            }
+          },
+          {
+            "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PowerCycleResponse",
+                  "additionalProperties": true,
+                  "title": "Response Power Cycle Rail Api Robot Debug Power  Rail  Cycle Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Operation result"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required or token invalid"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource or configured hardware not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Operation conflicts with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required hardware or service is unavailable"
+          }
+        },
+        "security": [
+          {
+            "UserBearer": []
+          },
+          {
+            "UserQueryToken": []
+          }
+        ],
+        "summary": "Power-cycle a switched rail",
         "tags": [
           "robot"
         ]
@@ -13772,16 +13761,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -13968,16 +13947,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -14071,16 +14040,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -14173,16 +14132,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -14476,7 +14425,7 @@
     },
     "/api/robot/gripper": {
       "post": {
-        "description": "Grip or release directly.\n\nPerforms an immediate authenticated gripper operation using the `state` query parameter.\nChanges physical hardware. Blocked while a bin workflow or laser auto-calibration owns\nthe robot.",
+        "description": "Grip or release directly.\n\nPerforms an immediate authenticated gripper operation using the `state` query parameter.\nChanges physical hardware. Blocked while laser auto-calibration runs or another operation\nholds the manual-motion guard.",
         "operationId": "control_gripper_api_robot_gripper_post",
         "parameters": [
           {
@@ -14551,16 +14500,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -15678,7 +15617,7 @@
     },
     "/api/storage/bin-workflows": {
       "post": {
-        "description": "Start a bin storage workflow.\n\nChooses storage for the requested item and operation. A `storage_mode=direct` response\nwith `workflow=null` means no bin workflow was started; submit an ordinary command\nseparately. A bin result reserves the robot and starts retrieval of the bin. Retrieval\nrequires access to every item in that bin. Clear the IO box first; conflicts return\n`409` or `423`.",
+        "description": "Start a bin storage workflow.\n\nChooses storage for the requested item and operation. A `storage_mode=direct` response\nwith `workflow=null` means no tray workflow was started; submit an ordinary command\nseparately. A tray result starts delivery to the IO box. Retrieval\nrequires access to every item in that bin. Clear the IO box first; a tray or item already\nin use, or an unavailable robot worker, returns `409`.",
         "operationId": "create_bin_workflow_api_storage_bin_workflows_post",
         "parameters": [
           {
@@ -15773,16 +15712,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           }
         },
         "security": [
@@ -15801,7 +15730,7 @@
     },
     "/api/storage/bin-workflows/active": {
       "get": {
-        "description": "Read the active bin workflow.\n\nReturns `workflow=null` when no workflow owns the device. Otherwise inspect its state\nand error before offering the next operator action. A workflow reserves the robot until\nthe bin is returned or reconciled.",
+        "description": "List unfinished take, place, and return interactions. Outside trays do not reserve the robot; completed interactions are omitted.",
         "operationId": "get_active_bin_workflow_api_storage_bin_workflows_active_get",
         "parameters": [
           {
@@ -15828,7 +15757,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BinWorkflowEnvelope",
+                  "$ref": "#/components/schemas/BinWorkflowsResponse",
                   "additionalProperties": true,
                   "title": "Response Get Active Bin Workflow Api Storage Bin Workflows Active Get",
                   "type": "object"
@@ -15876,140 +15805,17 @@
             "UserQueryToken": []
           }
         ],
-        "summary": "Read the active bin workflow",
+        "summary": "Get Active Bin Workflow",
         "tags": [
           "storage"
         ]
       }
     },
-    "/api/storage/bin-workflows/{workflow_id}/cancel-return": {
+    "/api/storage/bin-workflows/returns": {
       "post": {
-        "description": "Cancel an unavailable bin return.\n\nCancels a return that cannot proceed using the workflow service's state checks. This is\na workflow recovery action, not a general command cancellation. Inspect the returned\nworkflow and resolve physical bin placement before resuming.",
-        "operationId": "cancel_unavailable_bin_return_api_storage_bin_workflows__workflow_id__cancel_return_post",
+        "description": "Resolve a tray barcode and open contents selection without moving hardware. All known contents are selected by default, including the checkout target. An already stored tray returns 409.",
+        "operationId": "begin_tray_return_api_storage_bin_workflows_returns_post",
         "parameters": [
-          {
-            "description": "Identifier of the bin workflow to inspect or operate on.",
-            "in": "path",
-            "name": "workflow_id",
-            "required": true,
-            "schema": {
-              "title": "Workflow Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
-            "in": "query",
-            "name": "token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
-              "title": "Token"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BinWorkflowEnvelope",
-                  "additionalProperties": true,
-                  "title": "Response Cancel Unavailable Bin Return Api Storage Bin Workflows  Workflow Id  Cancel Return Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Operation result"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication required or token invalid"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Permission or operating-state restriction"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource or configured hardware not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Operation conflicts with current state"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "UserBearer": []
-          },
-          {
-            "UserQueryToken": []
-          }
-        ],
-        "summary": "Cancel an unavailable bin return",
-        "tags": [
-          "storage"
-        ]
-      }
-    },
-    "/api/storage/bin-workflows/{workflow_id}/reconcile": {
-      "post": {
-        "description": "Reconcile a bin after manual recovery.\n\nRecords an operator-confirmed `returned` or `quarantined` resolution and reconciles\ncontents. Requires the `admin` role and `storage:write`. This updates inventory/workflow\nstate based on a physical recovery already performed; it is not a substitute for moving\nthe bin. Conflicting claims or invalid confirmations are rejected.",
-        "operationId": "reconcile_bin_workflow_api_storage_bin_workflows__workflow_id__reconcile_post",
-        "parameters": [
-          {
-            "description": "Identifier of the bin workflow to inspect or operate on.",
-            "in": "path",
-            "name": "workflow_id",
-            "required": true,
-            "schema": {
-              "title": "Workflow Id",
-              "type": "string"
-            }
-          },
           {
             "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
             "in": "query",
@@ -16033,7 +15839,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BinWorkflowReconcile"
+                "$ref": "#/components/schemas/TrayBarcode"
               }
             }
           },
@@ -16046,7 +15852,7 @@
                 "schema": {
                   "$ref": "#/components/schemas/BinWorkflowEnvelope",
                   "additionalProperties": true,
-                  "title": "Response Reconcile Bin Workflow Api Storage Bin Workflows  Workflow Id  Reconcile Post",
+                  "title": "Response Begin Tray Return Api Storage Bin Workflows Returns Post",
                   "type": "object"
                 }
               }
@@ -16112,16 +15918,16 @@
             "UserQueryToken": []
           }
         ],
-        "summary": "Reconcile a bin after manual recovery",
+        "summary": "Begin Tray Return",
         "tags": [
           "storage"
         ]
       }
     },
-    "/api/storage/bin-workflows/{workflow_id}/retry": {
+    "/api/storage/bin-workflows/{workflow_id}/close": {
       "post": {
-        "description": "Retry a bin workflow recovery.\n\nClaims and retries a workflow in recovery. Requires the `admin` role and\n`storage:write`; the relay service credential is not accepted. Concurrent recovery or\nunsuitable physical state returns `409`. Inspect workflow state after the request.",
-        "operationId": "retry_bin_workflow_api_storage_bin_workflows__workflow_id__retry_post",
+        "description": "Finish a take or place instruction and leave its tray outside. Closing a return dialog cancels that return without changing contents or moving hardware. No IO occupancy is required.",
+        "operationId": "close_tray_workflow_api_storage_bin_workflows__workflow_id__close_post",
         "parameters": [
           {
             "description": "Identifier of the bin workflow to inspect or operate on.",
@@ -16131,22 +15937,6 @@
             "schema": {
               "title": "Workflow Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "target_item_in_bin",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Target Item In Bin"
             }
           },
           {
@@ -16175,7 +15965,7 @@
                 "schema": {
                   "$ref": "#/components/schemas/BinWorkflowEnvelope",
                   "additionalProperties": true,
-                  "title": "Response Retry Bin Workflow Api Storage Bin Workflows  Workflow Id  Retry Post",
+                  "title": "Response Close Tray Workflow Api Storage Bin Workflows  Workflow Id  Close Post",
                   "type": "object"
                 }
               }
@@ -16226,21 +16016,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Required hardware or service is unavailable"
+            "description": "Request validation failed"
           }
         },
         "security": [
@@ -16251,16 +16031,16 @@
             "UserQueryToken": []
           }
         ],
-        "summary": "Retry a bin workflow recovery",
+        "summary": "Close Tray Workflow",
         "tags": [
           "storage"
         ]
       }
     },
-    "/api/storage/bin-workflows/{workflow_id}/return": {
+    "/api/storage/bin-workflows/{workflow_id}/store": {
       "post": {
-        "description": "Confirm contents and return a bin.\n\nConfirms the operator's item/contents state and starts returning the bin home. This may\nmove hardware; completion is reflected in workflow state and robot events. Recovery\npaths require the requested content confirmation. Concurrent recovery, missing bin\npresence, or an incompatible state returns `409`.",
-        "operationId": "return_bin_workflow_api_storage_bin_workflows__workflow_id__return_post",
+        "description": "Submit selected known contents and return the tray from the IO bay to its shelf. Requires an occupied IO bay and an available, homed robot. Repeated submission of the same selection does not repeat motion.",
+        "operationId": "store_returned_tray_api_storage_bin_workflows__workflow_id__store_post",
         "parameters": [
           {
             "description": "Identifier of the bin workflow to inspect or operate on.",
@@ -16308,7 +16088,7 @@
                 "schema": {
                   "$ref": "#/components/schemas/BinWorkflowEnvelope",
                   "additionalProperties": true,
-                  "title": "Response Return Bin Workflow Api Storage Bin Workflows  Workflow Id  Return Post",
+                  "title": "Response Store Returned Tray Api Storage Bin Workflows  Workflow Id  Store Post",
                   "type": "object"
                 }
               }
@@ -16364,16 +16144,6 @@
               }
             },
             "description": "Request validation failed"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Required hardware or service is unavailable"
           }
         },
         "security": [
@@ -16384,130 +16154,7 @@
             "UserQueryToken": []
           }
         ],
-        "summary": "Confirm contents and return a bin",
-        "tags": [
-          "storage"
-        ]
-      }
-    },
-    "/api/storage/bin-workflows/{workflow_id}/scan": {
-      "post": {
-        "description": "Submit a simulated bin scan.\n\nMock-only scanner input for a workflow waiting on an item or bin barcode.\n`rejected=true` means the scan did not advance the workflow. Hardware modes return\n`404`; an incompatible workflow state returns `409`.",
-        "operationId": "scan_mock_bin_workflow_api_storage_bin_workflows__workflow_id__scan_post",
-        "parameters": [
-          {
-            "description": "Identifier of the bin workflow to inspect or operate on.",
-            "in": "path",
-            "name": "workflow_id",
-            "required": true,
-            "schema": {
-              "title": "Workflow Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
-            "in": "query",
-            "name": "token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
-              "title": "Token"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BinWorkflowScan"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BinScanResponse",
-                  "additionalProperties": true,
-                  "title": "Response Scan Mock Bin Workflow Api Storage Bin Workflows  Workflow Id  Scan Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Operation result"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Authentication required or token invalid"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Permission or operating-state restriction"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Resource or configured hardware not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Operation conflicts with current state"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "UserBearer": []
-          },
-          {
-            "UserQueryToken": []
-          }
-        ],
-        "summary": "Submit a simulated bin scan",
+        "summary": "Store Returned Tray",
         "tags": [
           "storage"
         ]
@@ -17046,7 +16693,7 @@
         ]
       },
       "post": {
-        "description": "Create or update an inventory record.\n\nCreates a record or updates the existing UPCA. This does not move the item or assign\nphysical occupancy. New records require valid dimensions; values are millimeters and\nmasses are grams. Both `metadata` and `item_metadata` inputs are accepted; responses use\n`metadata`.\n\nTo enroll an opened container, supply `tare_weight`, `net_weight`, and optionally\n`full_net_weight`; gross becomes tare plus net. Do not supply both `weight` and\n`net_weight`, even if one is null. See the storage group for mass persistence rules.\nPrefer PUT for partial edits to existing records. Reserved bin barcodes, active\nworkflows, and forbidden changes to bin-managed items return `409`.",
+        "description": "Create or update an inventory record.\n\nCreates a record or updates the existing UPCA. This does not move the item or assign\nphysical occupancy. New records require valid dimensions; values are millimeters and\nmasses are grams. Both `metadata` and `item_metadata` inputs are accepted; responses use\n`metadata`.\n\nTo enroll an opened container, supply `tare_weight`, `net_weight`, and optionally\n`full_net_weight`; gross becomes tare plus net. Do not supply both `weight` and\n`net_weight`, even if one is null. See the storage group for mass persistence rules.\nPrefer PUT for partial edits to existing records. Reserved bin barcodes and forbidden\nchanges to bin-managed items return `409`. A tray interaction holding the item does not\nblock the edit; conflicting state is rejected when that interaction completes.",
         "operationId": "create_item_api_storage_items_post",
         "parameters": [
           {
@@ -17156,7 +16803,7 @@
     },
     "/api/storage/items/{upca}": {
       "delete": {
-        "description": "Delete an inventory record.\n\nDeletes the item and its database location records; it does not physically retrieve it.\nBin membership and active workflows block deletion. Use this low-level endpoint only\nafter reconciling physical occupancy. A missing record returns `404`.",
+        "description": "Delete an inventory record.\n\nDeletes the item and its database location records; it does not physically retrieve it.\nBin membership and retained workflow history block deletion. Use this low-level endpoint\nonly after reconciling physical occupancy. A missing record returns `404`.",
         "operationId": "delete_item_api_storage_items__upca__delete",
         "parameters": [
           {
@@ -17367,7 +17014,7 @@
         ]
       },
       "put": {
-        "description": "Update selected inventory fields.\n\nOmitted mass fields retain their values. `net_weight=null` clears gross and derived net;\n`tare_weight=null` or `full_net_weight=null` clears that reference. Legacy `weight=null`\ndoes not clear gross on PUT. Supplying both `weight` and `net_weight` returns `422`.\nSetting net requires a known tare, either stored or supplied.\n\nChanging tare alone preserves gross and recomputes net. Metadata replaces the object\nwhen provided. Bin-managed dimensions/access changes require retrieval first; active\nworkflows reserve their items. Returns `404` for an absent UPCA. These edits do not move\nhardware.",
+        "description": "Update selected inventory fields.\n\nOmitted mass fields retain their values. `net_weight=null` clears gross and derived net;\n`tare_weight=null` or `full_net_weight=null` clears that reference. Legacy `weight=null`\ndoes not clear gross on PUT. Supplying both `weight` and `net_weight` returns `422`.\nSetting net requires a known tare, either stored or supplied.\n\nChanging tare alone preserves gross and recomputes net. Metadata replaces the object\nwhen provided. Bin-managed dimensions/access changes require retrieval first. Returns\n`404` for an absent UPCA. These edits do not move\nhardware.",
         "operationId": "update_item_api_storage_items__upca__put",
         "parameters": [
           {
@@ -17623,7 +17270,7 @@
         ]
       },
       "post": {
-        "description": "Assign an inventory location.\n\nAdds database occupancy for an item without moving hardware. Side and zero-based\nshelf/cell indices identify the location. Occupied or reserved cells and incompatible\nbin state are rejected. The status stream overlays these database locations on the grid.",
+        "description": "Assign an inventory location.\n\nAdds database occupancy for an item without moving hardware. Side and zero-based\nshelf/cell indices identify the location. Occupied cells and incompatible bin state are\nrejected. Tray homes are usable while their tray is away; the tray's return then reports\nthe occupied home instead. The status stream overlays these database locations on the\ngrid.",
         "operationId": "add_item_location_api_storage_items__upca__locations_post",
         "parameters": [
           {
