@@ -31,6 +31,10 @@ POSITION_TOLERANCE_MM = 1.0
 NOOP_POSITION_TOLERANCE_MM = 0.01
 HOME_APPROACH_TOLERANCE_MM = 1.0
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
+# Y following-error trip. In position mode a stall only accrues the commanded
+# overshoot, so the stock 4000 counts (one rev) hides anything under one mpr.
+HOME_FOLLOWING_ERROR_MM = 10.0
+ALARM_DETECT_FOLLOWING_ERROR_BIT = 2
 # SO2 as the drive's own brake output. 0x24 is BRAKE with no inversion: the
 # output is open-collector common-anode, so asserted sinks the line, energises
 # the relay and releases the brake. 0xA4 inverts that. 0xA1 (inverted
@@ -1871,6 +1875,30 @@ class Motor():
                 f"configured={peak_current}, read={actual_peak_current}"
             )
 
+    async def _arm_following_error_trip(self) -> None:
+        """Pr4.22 bit2 on, Pr0.05 = HOME_FOLLOWING_ERROR_MM in encoder counts."""
+        cpr = int(getattr(self._params, "encoder_resolution_cpr", 4000))
+        counts = round(HOME_FOLLOWING_ERROR_MM / self._params.mpr * cpr)
+        if not 0 < counts <= 0xFFFF:
+            raise MotorConfigError(f"Following-error limit out of range: {counts} counts")
+
+        detection = await self.get_param("Alarm detection")
+        settings = {
+            "Alarm detection": detection | (1 << ALARM_DETECT_FOLLOWING_ERROR_BIT),
+            "Allowed max position following error": counts,
+        }
+
+        for name, value in settings.items():
+            await self.set_param(name, value)
+
+        for name, value in settings.items():
+            actual = await self.get_param(name)
+            if actual != value:
+                raise MotorConfigError(
+                    f"Motor {self._motor_id} {name} readback mismatch: "
+                    f"configured={value}, read={actual}"
+                )
+
     def _get_home_approach_target_mm(self) -> float:
         backoff_mm = DEFAULT_HOME_APPROACH_BACKOFF_MM
         lower_lim = float(getattr(self._params, "lower_lim", 0.0))
@@ -1952,6 +1980,12 @@ class Motor():
         try:
             self._emit_init("homing")
             await self.clear_alarm()
+
+            if getattr(self._params, "motor_name", None) == "y_axis":
+                try:
+                    await self._arm_following_error_trip()
+                except Exception as e:
+                    raise MotorConfigError(f"Failed to arm following-error trip: {str(e)}") from e
 
             home_dir = self._get_home_direction()
             home_rpm = self._params.home_rpm or self._params.ret_rpm
