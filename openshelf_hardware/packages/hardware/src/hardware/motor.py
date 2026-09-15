@@ -37,7 +37,10 @@ HOME_FOLLOWING_ERROR_MM = 10.0
 ALARM_DETECT_FOLLOWING_ERROR_BIT = 2
 # Y zeroes only after the homing trip is cleared and the drive has settled:
 # 0x21 against a latched following error keeps that error as a position offset.
-FOLLOWING_ERROR_REGISTER = 0x1010
+# Following error is derived from the profile/feedback pair rather than read
+# from 0x1010: on the installed drive that register reports a fixed nonsense
+# value (0xFFFFEF9E) while the axis sits still at zero.
+PROFILE_POSITION_REGISTER = 0x1012
 ZERO_SETTLE_MAX_FOLLOWING_ERROR = 200
 ZERO_SETTLE_TIMEOUT_S = 1.0
 ZERO_SETTLE_POLL_S = 0.02
@@ -1871,11 +1874,16 @@ class Motor():
         )
 
     async def _read_following_error(self) -> int:
-        high, low = await self._controller.read_holding_register_block(
-            self._motor_id, FOLLOWING_ERROR_REGISTER, count=2
+        """Feedback position (0x1014/15) minus profile position (0x1012/13), in pulses."""
+        words = await self._controller.read_holding_register_block(
+            self._motor_id, PROFILE_POSITION_REGISTER, count=4
         )
-        value = ((high & 0xFFFF) << 16) | (low & 0xFFFF)
-        return value - 0x1_0000_0000 if value & 0x8000_0000 else value
+
+        def signed(high: int, low: int) -> int:
+            value = ((high & 0xFFFF) << 16) | (low & 0xFFFF)
+            return value - 0x1_0000_0000 if value & 0x8000_0000 else value
+
+        return signed(words[2], words[3]) - signed(words[0], words[1])
 
     async def _clear_homing_trip(self) -> None:
         """Clear the homing trip, then wait for no alarm, no motion and a small following error."""

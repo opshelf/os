@@ -1311,8 +1311,8 @@ async def test_y_axis_home_zeroes_only_after_clearing_the_trip(mock_controller):
     [
         {0x2203: 0x20},  # trip still latched
         {0x1003: 1 << 2},  # still running
-        {0x1010: 0, 0x1011: 4000},  # one rev of following error
-        {0x1010: 0xFFFF, 0x1011: 0xFFFF - 3999},  # same, negative
+        {0x1014: 0, 0x1015: 4000},  # feedback leads profile by one rev
+        {0x1012: 0, 0x1013: 4000},  # profile leads feedback by one rev
     ],
 )
 async def test_y_axis_home_refuses_to_zero_an_unsettled_drive(mock_controller, monkeypatch, unsettled):
