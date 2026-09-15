@@ -4,12 +4,14 @@ import logging
 import sentry_sdk
 
 from pathlib import Path as _Path
-from typing import Any, Callable, Dict, Iterable, Optional, List, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, List, TYPE_CHECKING
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import MotionSafetyInterlock
+from hardware.motor import MotorStatus
 from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
+from openshelf_os.config.models import compare_gpio_pins_to_defaults
 from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORT,
     DEFAULT_MOTOR_PORT,
@@ -56,6 +58,30 @@ InitProgressReporter = Callable[[str, str, str, Optional[str]], None]
 
 _INIT_MOTOR_COMPONENTS = ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]
 
+class PowerRail(NamedTuple):
+    supplies: str
+    #: Motors that lose their incremental encoder reference with the rail.
+    axes: tuple[str, ...]
+    #: Whether the gripper servo drops too, so it must reconfigure on next use.
+    gripper: bool = False
+
+
+# The four switched power rails. Asserting a pin CUTS that rail; clearing it --
+# the default state -- applies power.
+POWER_RAILS: Dict[str, PowerRail] = {
+    "pwr_out0": PowerRail(
+        "tool drives and gripper",
+        ("x_axis", "y_axis", "z_axis", "stage", "rotate"),
+        gripper=True,
+    ),
+    "pwr_out1": PowerRail("IO box", ("door",)),
+    "pwr_out2": PowerRail("peripherals", ()),
+    "pwr_out3": PowerRail("aux", ()),
+}
+POWER_CYCLE_HOLD_S = 3.0
+POWER_CYCLE_BOOT_TIMEOUT_S = 20.0
+POWER_CYCLE_BOOT_POLL_S = 0.25
+
 
 class Robot:
     # ------------------------------------------------------------------ #
@@ -75,6 +101,7 @@ class Robot:
         io_params = self._config.get("robot.io", {})
         gpio_config = getattr(self._config.robot, "gpio", None)
         self._gpio = _GpioManager.from_config(gpio_config) if _GpioManager is not None else None
+        self._warn_on_gpio_pin_drift(gpio_config)
 
         self._motion_safety = MotionSafetyInterlock()
         self._tool = Tool(
@@ -116,6 +143,29 @@ class Robot:
         self._demo_nudge_map: dict[tuple[str, int, int], float] = {}
         if should_enable_demo_features() is True:
             self._demo_cell_map = self._load_demo_cell_map(self._config.demo.cell_map_path)
+
+    def _warn_on_gpio_pin_drift(self, gpio_config: Any) -> None:
+        """Flag pins the defaults define but this config lacks, and vice versa.
+
+        A config that declares robot.gpio.pins replaces the defaults outright,
+        so a renamed default goes missing here rather than failing loudly.
+        """
+        pins = getattr(gpio_config, "pins", None)
+        if pins is None:
+            return
+
+        missing, unrecognized = compare_gpio_pins_to_defaults(pins)
+
+        if missing:
+            self._logger.warning(
+                "config gpio pins are missing defaults; features using them are unavailable",
+                extra={"missing_pins": missing},
+            )
+        if unrecognized:
+            self._logger.warning(
+                "config gpio pins are not in the defaults; check for a stale or renamed key",
+                extra={"unrecognized_pins": unrecognized},
+            )
 
     def _emit_init(self, component: str, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
         reporter = getattr(self, "_init_reporter", None)
@@ -285,8 +335,146 @@ class Robot:
         if cabinet is not None:
             await cabinet.stop()
 
-    async def restore_y_brake_output(self) -> None:
-        await self._tool.restore_y_brake_output()
+    def get_power_rail_states(self) -> Dict[str, Optional[bool]]:
+        """Whether each rail is currently powered. None if the pin is unavailable.
+
+        The pin is asserted to CUT power, so powered is its inverse.
+        """
+        gpio = getattr(self, "_gpio", None)
+        states: Dict[str, Optional[bool]] = {}
+
+        for rail in POWER_RAILS:
+            if gpio is None or gpio.has_pin(rail) is False:
+                states[rail] = None
+                continue
+            try:
+                states[rail] = not gpio.read_output(rail)
+            except Exception:
+                states[rail] = None
+
+        return states
+
+    async def _wait_for_drive(self, motor: "Motor") -> bool:
+        """Poll a drive until it answers after a power cycle."""
+        deadline = asyncio.get_running_loop().time() + POWER_CYCLE_BOOT_TIMEOUT_S
+
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                await motor.get_param("Motion status")
+                return True
+            except Exception:
+                await asyncio.sleep(POWER_CYCLE_BOOT_POLL_S)
+
+        return False
+
+    async def _reconfigure_after_power_cycle(self, axes: tuple[str, ...]) -> None:
+        """Re-apply runtime parameters the drives lost with their power.
+
+        move_config() -- all that homing runs -- restores the path mode,
+        direction and velocity. Peak current, accel/decel, the position loop
+        gain, the stop time and the following-error limit come only from
+        configure(), so without this a home after a power cycle runs on EEPROM
+        values and faults.
+        """
+        failed_axes: list[str] = []
+
+        for name in axes:
+            motor = self._get_motor_by_name(name)
+            if motor is None:
+                continue
+
+            if await self._wait_for_drive(motor) is False:
+                self._logger.error(
+                    "drive did not answer after power cycle; parameters not restored",
+                    extra={"motor_name": name, "timeout_s": POWER_CYCLE_BOOT_TIMEOUT_S},
+                )
+                failed_axes.append(name)
+                continue
+
+            try:
+                await motor.configure()
+            except Exception as e:
+                self._logger.error(
+                    "failed to reconfigure after power cycle",
+                    extra={"motor_name": name, "error": str(e)},
+                )
+                failed_axes.append(name)
+
+        if failed_axes:
+            raise MotorError(f"Power cycle reconfigure failed for axes: {', '.join(failed_axes)}")
+
+    async def power_cycle_rail(
+        self,
+        rail: str,
+        *,
+        on_cut: Callable[[], None] | None = None,
+    ) -> tuple[str, ...]:
+        """Cut and restore one switched power rail. Returns the axes it dropped.
+
+        Drive settings that only latch at power-on need this: any DI/DO function
+        change is written, verified and saved, yet stays inert until the drive
+        restarts (CL57RS manual 4.3.2). Anything on the rail comes back with its
+        RAM parameters lost and, for a motor, an incremental encoder that no
+        longer knows where it is -- so those axes are marked unhomed and their
+        drives reconfigured once they answer again. The caller still has to home
+        them.
+
+        The optional ``on_cut`` callback runs synchronously after power is cut and
+        before the hold begins.
+        """
+        if rail not in POWER_RAILS:
+            raise ConfigError(f"Unknown power rail '{rail}'")
+
+        spec = POWER_RAILS[rail]
+
+        for name in spec.axes:
+            motor = self._get_motor_by_name(name)
+            if motor is not None and motor._status is MotorStatus.MOVING:
+                raise MotorError(f"Refusing to power cycle {rail} while {name} is moving")
+
+        gpio = getattr(self, "_gpio", None)
+        if gpio is None or gpio.has_pin(rail) is False:
+            raise ConfigError(f"GPIO pin {rail} is not configured")
+
+        for name in spec.axes:
+            motor = self._get_motor_by_name(name)
+            if motor is None:
+                continue
+            # Still booting; nothing may move on stale coordinates.
+            motor._is_homed = False
+            motor._hard_stopped = True
+            motor._cur_pos = None
+
+        if spec.gripper is True:
+            gripper = getattr(getattr(self, "_tool", None), "_gs", None)
+            if gripper is not None:
+                # _ensure_configured() reconfigures it on next use.
+                gripper._configured = False
+
+        output = gpio.output(rail)
+        self._logger.warning(
+            "Power cycling rail",
+            extra={"pin": rail, "supplies": spec.supplies, "hold_s": POWER_CYCLE_HOLD_S},
+        )
+
+        output.write(True)  # asserted cuts power
+        if on_cut is not None:
+            on_cut()
+        try:
+            await asyncio.sleep(POWER_CYCLE_HOLD_S)
+        finally:
+            output.write(False)  # cleared restores it
+            configure_error: MotorError | None = None
+            try:
+                await self._reconfigure_after_power_cycle(spec.axes)
+            except MotorError as exc:
+                # _reconfigure_after_power_cycle already logged per-axis failure reasons.
+                configure_error = exc
+
+        if configure_error is not None:
+            raise configure_error
+
+        return spec.axes
 
     async def idle(self) -> None:
         idle_position = await self._tool.get_param("IDLE_POSITION")

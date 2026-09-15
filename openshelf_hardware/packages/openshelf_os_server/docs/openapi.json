@@ -3985,6 +3985,103 @@
         "title": "PositionResponse",
         "type": "object"
       },
+      "PowerCycleResponse": {
+        "properties": {
+          "axes_needing_home": {
+            "description": "Axes that must be re-homed before further motion",
+            "items": {
+              "type": "string"
+            },
+            "title": "Axes Needing Home",
+            "type": "array"
+          },
+          "rail": {
+            "title": "Rail",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "rail",
+          "axes_needing_home"
+        ],
+        "title": "PowerCycleResponse",
+        "type": "object"
+      },
+      "PowerRailStatus": {
+        "properties": {
+          "axes": {
+            "description": "Motors that lose their encoder reference when this rail is cut",
+            "items": {
+              "type": "string"
+            },
+            "title": "Axes",
+            "type": "array"
+          },
+          "gripper": {
+            "description": "Whether the gripper servo drops with this rail",
+            "title": "Gripper",
+            "type": "boolean"
+          },
+          "powered": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current rail state; null when it cannot be read",
+            "title": "Powered"
+          },
+          "rail": {
+            "description": "GPIO output identifier of the switched rail",
+            "title": "Rail",
+            "type": "string"
+          },
+          "supplies": {
+            "description": "Hardware that loses power when this rail is cut",
+            "title": "Supplies",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rail",
+          "supplies",
+          "axes",
+          "gripper",
+          "powered"
+        ],
+        "title": "PowerRailStatus",
+        "type": "object"
+      },
+      "PowerRailsResponse": {
+        "properties": {
+          "hold_seconds": {
+            "description": "How long a cycle cuts the rail before restoring power",
+            "title": "Hold Seconds",
+            "type": "number"
+          },
+          "rails": {
+            "items": {
+              "$ref": "#/components/schemas/PowerRailStatus"
+            },
+            "title": "Rails",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hold_seconds",
+          "rails"
+        ],
+        "title": "PowerRailsResponse",
+        "type": "object"
+      },
       "PrintLabelRequest": {
         "properties": {
           "code": {
@@ -13525,6 +13622,201 @@
           }
         ],
         "summary": "Move one motor to a position",
+        "tags": [
+          "robot"
+        ]
+      }
+    },
+    "/api/robot/debug/power": {
+      "get": {
+        "description": "Read the four switched power rails.\n\nReports what each rail feeds, the axes that lose their encoder reference when it is\ncut, and the current output state. `powered` is `null` when the rail cannot be read.\nCut power only through the rail cycle operation: driving the output directly drops\nthe drives without reconfiguring or re-homing the axes that lose their reference.",
+        "operationId": "get_power_rails_api_robot_debug_power_get",
+        "parameters": [
+          {
+            "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PowerRailsResponse",
+                  "additionalProperties": true,
+                  "title": "Response Get Power Rails Api Robot Debug Power Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Operation result"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required or token invalid"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required hardware or service is unavailable"
+          }
+        },
+        "security": [
+          {
+            "UserBearer": []
+          },
+          {
+            "UserQueryToken": []
+          }
+        ],
+        "summary": "Inspect switched power rails",
+        "tags": [
+          "robot"
+        ]
+      }
+    },
+    "/api/robot/debug/power/{rail}/cycle": {
+      "post": {
+        "description": "Cut a switched rail for a few seconds, then restore it.\n\nDrive parameters that only latch at power-on need this -- any DI/DO function\nchange stays inert until its drive restarts. Returns once power is back; the\nhardware is still booting, so re-home the axes it dropped before moving. An\nactive command or queued work returns `409`; a tray workflow that is idle between\nsteps does not block the cycle.",
+        "operationId": "power_cycle_rail_api_robot_debug_power__rail__cycle_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rail",
+            "required": true,
+            "schema": {
+              "title": "Rail",
+              "type": "string"
+            }
+          },
+          {
+            "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only.",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PowerCycleResponse",
+                  "additionalProperties": true,
+                  "title": "Response Power Cycle Rail Api Robot Debug Power  Rail  Cycle Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Operation result"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authentication required or token invalid"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource or configured hardware not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Operation conflicts with current state"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Required hardware or service is unavailable"
+          }
+        },
+        "security": [
+          {
+            "UserBearer": []
+          },
+          {
+            "UserQueryToken": []
+          }
+        ],
+        "summary": "Power-cycle a switched rail",
         "tags": [
           "robot"
         ]

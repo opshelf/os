@@ -80,39 +80,10 @@ async def test_home_moves_rotate_to_back_after_homing_for_right_facing_device() 
 
 
 @pytest.mark.asyncio
-async def test_home_restores_y_brake_before_homing_y_axis() -> None:
-    events: list[str] = []
-
-    class FakeYMotor:
-        async def restore_brake_output(self) -> None:
-            events.append("restore")
-
-        async def home(self) -> None:
-            events.append("home")
-
-    y_motor = FakeYMotor()
-
-    tool = Tool.__new__(Tool)
-    tool._ms = None
-    tool._mg = None
-    tool._mr = None
-    tool._mx = None
-    tool._my = y_motor
-    tool._handle_fault = AsyncMock()
-
-    await tool.home()
-
-    assert events == ["restore", "home"]
-
-
-@pytest.mark.asyncio
 async def test_startup_home_moves_y_away_before_direct_home() -> None:
     events: list[str] = []
 
     class FakeYMotor:
-        async def restore_brake_output(self) -> None:
-            events.append("restore")
-
         async def home(
             self,
             pre_home_clearance_mm: float | None = None,
@@ -135,7 +106,7 @@ async def test_startup_home_moves_y_away_before_direct_home() -> None:
 
     await tool.home(y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM)
 
-    assert events == ["restore", "home:10.0:skip=True:current=30"]
+    assert events == ["home:10.0:skip=True:current=30"]
     assert Y_STARTUP_HOME_PEAK_CURRENT == 30
 
 
