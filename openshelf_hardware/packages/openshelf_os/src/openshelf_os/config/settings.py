@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -20,15 +20,32 @@ class StorageBinItemDimensionsSettings(BaseModel):
     length: float = Field(gt=0)
 
 
+class CompartmentLayoutSettings(BaseModel):
+    """Equal-sized compartments, numbered left-to-right then top-to-bottom at IO."""
+    rows: int = Field(ge=1, le=32, strict=True)
+    columns: int = Field(ge=1, le=32, strict=True)
+
+
 class StorageBinSettings(BaseModel):
     barcode: str = Field(pattern=r"^\d{12}$")
     home_location: StorageBinLocationSettings
     inner_dimensions: StorageBinDimensionsSettings
     max_item_dimensions: Optional[StorageBinItemDimensionsSettings] = None
     max_items: int = Field(ge=1)
+    compartment_layout: Optional[CompartmentLayoutSettings] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_compartment_capacity(cls, value: Any) -> Any:
+        if isinstance(value, dict) and value.get("compartment_layout") is not None and "max_items" not in value:
+            layout = CompartmentLayoutSettings.model_validate(value["compartment_layout"])
+            return {**value, "max_items": layout.rows * layout.columns}
+        return value
 
     @model_validator(mode="after")
     def validate_max_item_footprint(self) -> "StorageBinSettings":
+        if self.compartment_layout and self.max_items > self.compartment_layout.rows * self.compartment_layout.columns:
+            raise ValueError("max_items cannot exceed the compartment count")
         maximum = self.max_item_dimensions
         if maximum is None:
             return self

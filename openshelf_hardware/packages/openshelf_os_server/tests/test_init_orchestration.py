@@ -582,7 +582,7 @@ async def test_robot_initialization_blocks_startup_scans_before_worker_exposure(
             self.is_needs_home = True
             events.append("needs_home")
 
-        def inject_awaiting_bin_scan(self, boundary: str) -> None:
+        def inject_awaiting_operator(self, boundary: str) -> None:
             if self.is_needs_home:
                 events.append(f"{boundary}_scan_blocked")
             else:
@@ -590,10 +590,10 @@ async def test_robot_initialization_blocks_startup_scans_before_worker_exposure(
                 events.append(f"{boundary}_return_enqueued")
 
         async def connect(self) -> None:
-            self.inject_awaiting_bin_scan("scanner_connect")
+            self.inject_awaiting_operator("scanner_connect")
 
         async def start(self) -> None:
-            self.inject_awaiting_bin_scan("command_start")
+            self.inject_awaiting_operator("command_start")
 
         async def get_status_snapshot(self, force_refresh=False) -> None:
             return None
@@ -606,7 +606,7 @@ async def test_robot_initialization_blocks_startup_scans_before_worker_exposure(
     class Listener:
         async def start(self) -> None:
             assert robot_module.robot_worker is None
-            worker.inject_awaiting_bin_scan("event_listener")
+            worker.inject_awaiting_operator("event_listener")
 
         async def stop(self) -> None:
             return None
@@ -621,7 +621,7 @@ async def test_robot_initialization_blocks_startup_scans_before_worker_exposure(
 
     async def report_scanner_status(candidate) -> None:
         assert candidate is worker
-        worker.inject_awaiting_bin_scan("scanner_status")
+        worker.inject_awaiting_operator("scanner_status")
 
     class Session:
         async def __aenter__(self):

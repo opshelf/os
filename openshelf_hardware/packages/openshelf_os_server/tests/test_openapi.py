@@ -49,6 +49,37 @@ def test_authentication_documents_json_login_and_query_alternative():
     assert "/api/auth/login" not in paths
 
 
+def test_bin_compartment_response_contract():
+    schemas = app.openapi()["components"]["schemas"]
+    bin_schema = schemas["BinResponse"]
+    for field, reference in [
+        ("compartment_layout", "CompartmentLayoutSettings"),
+        ("compartment_dimensions", "StorageBinDimensionsSettings"),
+    ]:
+        assert field not in bin_schema["required"]
+        assert bin_schema["properties"][field]["anyOf"] == [
+            {"$ref": f"#/components/schemas/{reference}"}, {"type": "null"},
+        ]
+    for field in ("rows", "columns"):
+        layout_field = schemas["CompartmentLayoutSettings"]["properties"][field]
+        assert layout_field["type"] == "integer"
+        assert layout_field["minimum"] == 1
+        assert layout_field["maximum"] == 32
+    for field in ("width", "height", "length"):
+        dimension = schemas["StorageBinDimensionsSettings"]["properties"][field]
+        assert dimension["type"] == "number"
+        assert dimension["exclusiveMinimum"] == 0
+    for model in ("BinItemSummary", "BinContentsResponse", "BinWorkflowResponse"):
+        schema = schemas[model]
+        assert "compartment" not in schema["required"]
+        field = schema["properties"]["compartment"]
+        assert field["anyOf"] == [
+            {"type": "integer", "minimum": 1, "maximum": 1024}, {"type": "null"},
+        ]
+        assert "starting at 1 at the top left" in field["description"]
+        assert "left-to-right then top-to-bottom at IO" in field["description"]
+
+
 def test_streaming_and_development_operations_are_explicit():
     paths = app.openapi()["paths"]
     for path, media in [

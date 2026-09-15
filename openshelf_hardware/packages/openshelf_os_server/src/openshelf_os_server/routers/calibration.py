@@ -35,11 +35,7 @@ from openshelf_os_server.core.laser_auto_calibration import (
 	get_laser_auto_calibration_manager,
 )
 from openshelf_os_server.core.manual_motion import manual_motion_guard
-from openshelf_os_server.core.bin_storage import (
-	bin_workflow_command_admission_guard,
-	ensure_no_active_bin_workflow_for_motion,
-	is_reserved_bin_location,
-)
+from openshelf_os_server.core.bin_storage import reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers.auth_deps import get_current_user
 from openshelf_os_server.core.storage_module import side_to_s
@@ -150,17 +146,9 @@ def _build_test_location(request: TestRequest) -> StorageModuleCellLocation:
 UNTESTABLE_CELL_STATUSES = (CellStatus.DISABLED, CellStatus.MAINTENANCE)
 
 
-async def _ensure_cell_is_testable(grid, location: StorageModuleCellLocation) -> Cell:
-	async with AsyncSessionLocal() as session:
-		is_reserved = await is_reserved_bin_location(
-			(location.side.value, location.shelf_idx, location.cell_idx), session
-		)
-	if is_reserved:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Storage bin homes cannot be used for calibration tests",
-		)
-
+async def _ensure_cell_is_testable(
+	grid, location: StorageModuleCellLocation
+) -> Cell:
 	try:
 		cell = grid.get_cell(location)
 	except (IndexError, ValueError) as exc:
@@ -652,7 +640,7 @@ async def _move_tool_to_coordinate(
 	tool = worker._robot._tool
 
 	try:
-		async with manual_motion_guard("calibration_move", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_move", worker=worker):
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await tool.move(coord)
 
@@ -744,7 +732,7 @@ def _validate_stage_target(value: float, limit: float, label: str) -> None:
     "/status",
     response_model=CalibrationStatusResponse,
     summary="Read calibration readiness",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def get_calibration_status() -> CalibrationStatusResponse:
 	"""Read calibration readiness.
@@ -764,7 +752,7 @@ async def get_calibration_status() -> CalibrationStatusResponse:
 @router.get(
     "/storage",
     summary="Read the calibration grid",
-    responses=response_docs(model=StorageGrid, errors=(401, 409, 423, 503)),
+    responses=response_docs(model=StorageGrid, errors=(401, 409, 503)),
 )
 async def get_storage():
 	"""Read the calibration grid.
@@ -782,7 +770,7 @@ async def get_storage():
     "/laser/read",
     response_model=LaserReadingResponse,
     summary="Read laser distance",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def read_laser() -> LaserReadingResponse:
 	"""Read laser distance.
@@ -809,7 +797,7 @@ async def read_laser() -> LaserReadingResponse:
     "/laser/status",
     response_model=LaserAutoCalibrationSnapshot,
     summary="Read automatic calibration progress",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def get_laser_auto_calibration_status() -> LaserAutoCalibrationSnapshot:
 	"""Read automatic calibration progress.
@@ -825,7 +813,7 @@ async def get_laser_auto_calibration_status() -> LaserAutoCalibrationSnapshot:
     "/laser/abort",
     response_model=LaserAutoCalibrationSnapshot,
     summary="Abort automatic laser calibration",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
 	"""Abort automatic laser calibration.
@@ -852,7 +840,7 @@ TERMINAL_LASER_AUTO_CALIBRATION_STATES = {"completed", "failed", "cancelled"}
     "/laser/stream",
     summary="Start or observe automatic laser calibration",
     responses=response_docs(
-        errors=(400, 401, 409, 423, 503),
+        errors=(400, 401, 409, 503),
         existing=stream_docs(
             "text/event-stream",
             "Automatic calibration snapshots encoded as JSON in SSE data frames. GET may start motion unless subscribe_only=true.",
@@ -922,9 +910,7 @@ async def stream_laser_auto_calibration(
 		try:
 			# Reserve laser motion under the same gate as bin workflow creation.
 			# The manager records its task synchronously before this gate is released.
-			async with bin_workflow_command_admission_guard():
-				await ensure_no_active_bin_workflow_for_motion()
-				await manager.ensure_session_started(worker, requested_scope)
+			await manager.ensure_session_started(worker, requested_scope)
 		except RuntimeError as exc:
 			raise HTTPException(
 				status_code=status.HTTP_409_CONFLICT,
@@ -986,7 +972,7 @@ async def stream_laser_auto_calibration(
     "/move",
     response_model=PositionResponse,
     summary="Move to a cell calibration point",
-    responses=response_docs(errors=(400, 401, 409, 423, 503)),
+    responses=response_docs(errors=(400, 401, 409, 503)),
 )
 @serialize_calibration_state
 async def move_to_cell(request: MoveRequest) -> PositionResponse:
@@ -1028,7 +1014,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
     "/move/position",
     response_model=PositionResponse,
     summary="Move to a calibration coordinate",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 @serialize_calibration_state
 async def move_to_position(request: MovePositionRequest) -> PositionResponse:
@@ -1054,7 +1040,7 @@ async def move_to_position(request: MovePositionRequest) -> PositionResponse:
     "/jog",
     response_model=PositionResponse,
     summary="Jog the active calibration position",
-    responses=response_docs(errors=(400, 401, 409, 423, 500, 503)),
+    responses=response_docs(errors=(400, 401, 409, 500, 503)),
 )
 @serialize_calibration_state
 async def jog_axis(request: JogRequest) -> PositionResponse:
@@ -1091,7 +1077,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 	warnings: list[str] = []
 
 	try:
-		async with manual_motion_guard("calibration_jog", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_jog", worker=worker):
 			if request.axis == "x":
 				if tool._mx is None:
 					raise HTTPException(
@@ -1159,7 +1145,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 @router.post(
     "/test",
     summary="Test a cell pick or place",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
 )
 @serialize_calibration_state
 async def test_gripper(
@@ -1169,7 +1155,8 @@ async def test_gripper(
 	"""Test a cell pick or place.
 
 	Runs the selected cell gripper test on physical hardware. Optional `lift` requests a
-	bounded pick/lift/place test. Reserved or unsuitable cells are rejected. This tests
+	bounded pick/lift/place test. Tray homes are supported; disabled or maintenance cells
+	are rejected. This tests
 	motion without saving new calibration coordinates.
 	"""
 	global _current_position, _current_side
@@ -1195,7 +1182,7 @@ async def test_gripper(
 
 	tool = worker._robot._tool
 
-	async with manual_motion_guard("calibration_test_gripper", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("calibration_test_gripper", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await tool.retract()
@@ -1227,14 +1214,14 @@ async def test_gripper(
 @router.post(
     "/test/cycle",
     summary="Test an IO transfer cycle",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 500, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 500, 503)),
 )
 async def test_cycle(request: TestRequest):
 	"""Test an IO transfer cycle.
 
-	Runs the IO pick/place cycle for the selected calibration cell. This moves the tool
-	through the IO box; use only with the physical setup prepared for the test. Does not
-	save calibration.
+	Runs the IO pick/place cycle for the selected calibration cell. Tray homes are supported;
+	disabled or maintenance cells are rejected. This moves the tool through the IO box; use
+	only with the physical setup prepared for the test. Does not save calibration.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
@@ -1264,7 +1251,7 @@ async def test_cycle(request: TestRequest):
 	if is_initially_occupied is False:
 		cycle_item = _build_cycle_test_item(cell, location)
 
-	async with manual_motion_guard("calibration_test_cycle", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("calibration_test_cycle", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 
@@ -1288,14 +1275,13 @@ async def test_cycle(request: TestRequest):
 @router.post(
     "/save",
     summary="Save a cell calibration point",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
 )
 async def save_calibration(request: SaveRequest):
 	"""Save a cell calibration point.
 
-	Persists coordinates and optional status/manual marker for the selected cell. Configured
-	bin homes cannot be changed here. Invalid status returns `400`; an active workflow can
-	block geometry changes.
+	Persists coordinates and optional status/manual marker for the selected cell. Tray homes
+	allow coordinate, manual-marker, and status updates. Invalid status returns `400`.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
@@ -1304,15 +1290,6 @@ async def save_calibration(request: SaveRequest):
 	grid = worker._robot._grid
 	_validate_non_negative_index(request.shelf_idx, "shelf_idx")
 	_validate_non_negative_index(request.cell_idx, "cell_idx")
-	async with AsyncSessionLocal() as session:
-		is_reserved = await is_reserved_bin_location(
-			(request.side.value, request.shelf_idx, request.cell_idx), session
-		)
-	if is_reserved:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Storage bin homes cannot be changed through calibration",
-		)
 
 	new_status = None
 	if request.status is not None:
@@ -1324,29 +1301,36 @@ async def save_calibration(request: SaveRequest):
 				detail=f"Invalid status: {request.status}. Must be one of: available, occupied, maintenance, disabled",
 			)
 
-	# Keep calibration persistence inseparable from bin workflow admission so a
-	# newly checked-out bin cannot return using coordinates changed by a rejected save.
-	async with bin_workflow_command_admission_guard():
-		await ensure_no_active_bin_workflow_for_motion()
+	# Read tray homes while the caller's request session is open, so a coordinate save
+	# cannot silently change the cell a checked-out tray returns to.
+	async with AsyncSessionLocal() as session:
+		reserved_homes = await reserved_bin_locations(session)
+	if (request.side.value, request.shelf_idx, request.cell_idx) in reserved_homes:
+		try:
+			grid.get_cell(StorageModuleCellLocation(
+				side=request.side, shelf_idx=request.shelf_idx, cell_idx=request.cell_idx
+			))
+		except (IndexError, ValueError) as exc:
+			raise HTTPException(status_code=409, detail="Tray home cell is missing from storage") from exc
 
-		side_enum = request.side
-		shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
-		cell = _ensure_cell(grid, side_enum, shelf, request.cell_idx)
+	side_enum = request.side
+	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
+	cell = _ensure_cell(grid, side_enum, shelf, request.cell_idx)
 
-		cell.calibration_point = CalibrationCoordinate(
-			x=request.x,
-			y=request.y,
-			s=_side_to_s(request.side),
-			z_offset=request.z_offset,
-		)
+	cell.calibration_point = CalibrationCoordinate(
+		x=request.x,
+		y=request.y,
+		s=_side_to_s(request.side),
+		z_offset=request.z_offset,
+	)
 
-		if request.is_manual is not None:
-			cell.is_manual = request.is_manual
+	if request.is_manual is not None:
+		cell.is_manual = request.is_manual
 
-		if new_status is not None:
-			cell.status = new_status
+	if new_status is not None:
+		cell.status = new_status
 
-		grid.save()
+	grid.save()
 
 	return {"success": True}
 
@@ -1355,7 +1339,7 @@ async def save_calibration(request: SaveRequest):
     "/home_tool_motors",
     response_model=CalibrationStatusResponse,
     summary="Home the tool stage and gripper",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def home_tool_motors() -> CalibrationStatusResponse:
 	"""Home the tool stage and gripper.
@@ -1377,7 +1361,7 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 		)
 
 	try:
-		async with manual_motion_guard("calibration_home_tool_motors", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_home_tool_motors", worker=worker):
 			await tool._ms.home()
 			await tool._mg.home()
 	except (MotorError, HardwareMotorError) as e:
@@ -1490,7 +1474,7 @@ def _with_iobox_door_positions(door_config, close: float, open: float):
     "/iobox/door",
     response_model=IOBoxDoorPositionResponse,
     summary="Read IO door travel limits",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def get_iobox_door_position() -> IOBoxDoorPositionResponse:
 	"""Read IO door travel limits.
@@ -1510,7 +1494,7 @@ async def get_iobox_door_position() -> IOBoxDoorPositionResponse:
 @router.post(
     "/iobox/door/move",
     summary="Test an IO door position",
-    responses=response_docs(model=DoorMoveResponse, errors=(400, 401, 409, 423, 503)),
+    responses=response_docs(model=DoorMoveResponse, errors=(400, 401, 409, 503)),
 )
 async def move_iobox_door(request: IOBoxDoorMoveRequest):
 	"""Test an IO door position.
@@ -1558,7 +1542,7 @@ async def move_iobox_door(request: IOBoxDoorMoveRequest):
 @router.post(
     "/iobox/door/save",
     summary="Save IO door travel limits",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
 )
 async def save_iobox_door_position(request: IOBoxDoorPositionRequest):
 	"""Save IO door travel limits.
@@ -1616,7 +1600,7 @@ def _load_iobox_calibration() -> IOBoxPositionResponse:
     "/iobox",
     response_model=IOBoxPositionResponse,
     summary="Read IO box pickup calibration",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 @serialize_calibration_state
 async def get_iobox_calibration() -> IOBoxPositionResponse:
@@ -1639,7 +1623,7 @@ async def _get_iobox_current_or_error() -> IOBoxPositionResponse:
     "/iobox/move",
     response_model=IOBoxPositionResponse,
     summary="Move to an IO pickup position",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 @serialize_calibration_state
 async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPositionResponse:
@@ -1668,7 +1652,7 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 		x = iobox_current.pickup_high_x
 		y = iobox_current.pickup_high_y
 
-	async with manual_motion_guard("calibration_iobox_move", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("calibration_iobox_move", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await tool.rotate_to_position("front")
@@ -1694,7 +1678,7 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
     "/iobox/jog",
     response_model=IOBoxPositionResponse,
     summary="Jog an IO pickup position",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 @serialize_calibration_state
 async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
@@ -1722,7 +1706,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	warnings: list[str] = []
 
 	try:
-		async with manual_motion_guard("calibration_iobox_jog", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_iobox_jog", worker=worker):
 			if request.axis == "x":
 				if tool._mx is None:
 					raise HTTPException(
@@ -1793,7 +1777,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 @router.post(
     "/iobox/test",
     summary="Test the IO pickup sequence",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 500, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 500, 503)),
 )
 @serialize_calibration_state
 async def test_iobox_sequence(with_gripper: bool = False):
@@ -1816,7 +1800,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 	tool = worker._robot._tool
 	io = worker._robot._io
 
-	async with manual_motion_guard("calibration_iobox_test", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("calibration_iobox_test", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await tool.rotate_to_position("front")
@@ -1870,7 +1854,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 @router.post(
     "/iobox/save",
     summary="Save IO pickup calibration",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
 )
 @serialize_calibration_state
 async def save_iobox_calibration(request: IOBoxSaveRequest):
@@ -1892,7 +1876,7 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	_validate_stage_target(request.stage_extension, stage_limit, "STAGE_EXTENSION_IO_BOX")
 	_validate_stage_target(request.stage_extension + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
 
-	async with manual_motion_guard("calibration_iobox_save_home", worker=worker, check_bin_workflow=True):
+	async with manual_motion_guard("calibration_iobox_save_home", worker=worker):
 		params_dict = config.robot.tool.parameters.model_dump()
 		params_dict["PICKUP_POSITION_L"] = (int(request.pickup_low_x), int(request.pickup_low_y))
 		params_dict["PICKUP_POSITION_H"] = (int(request.pickup_high_x), int(request.pickup_high_y))
@@ -1948,7 +1932,7 @@ class RotateSaveRequest(BaseModel):
     "/rotation",
     response_model=RotationAnglesResponse,
     summary="Read tool orientation positions",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def get_rotation_angles() -> RotationAnglesResponse:
 	"""Read tool orientation positions.
@@ -1968,7 +1952,7 @@ async def get_rotation_angles() -> RotationAnglesResponse:
 @router.post(
     "/rotation/rotate",
     summary="Test tool rotation",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 423, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 503)),
 )
 async def rotate_to_angle(angle: float):
 	"""Test tool rotation.
@@ -1990,7 +1974,7 @@ async def rotate_to_angle(angle: float):
 	rotation_limit = tool._mr._params.lim
 	clamped_angle = max(0, min(rotation_limit, angle))
 	try:
-		async with manual_motion_guard("calibration_rotation", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_rotation", worker=worker):
 			await _clear_motors_for_move(tool, gantry=True, stage=True, rotation=True)
 			if await tool.is_rotation_at_position(clamped_angle):
 				return {"success": True}
@@ -2009,13 +1993,13 @@ async def rotate_to_angle(angle: float):
 @router.post(
     "/rotation/save",
     summary="Save tool orientation positions",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 423, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 503)),
 )
 async def save_rotation_angles(request: RotateSaveRequest):
 	"""Save tool orientation positions.
 
-	Persists the front/back rotation values in the active configuration. An active bin
-	workflow blocks the change. Test rotation separately before saving.
+	Persists the front/back rotation values in the active configuration. Test rotation
+	separately before saving.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
@@ -2025,16 +2009,14 @@ async def save_rotation_angles(request: RotateSaveRequest):
 	params_dict["ROTATION_FRONT"] = request.front
 	params_dict["ROTATION_BACK"] = request.back
 
-	async with bin_workflow_command_admission_guard():
-		await ensure_no_active_bin_workflow_for_motion()
-		config.robot.tool.parameters = Parameters.model_validate(params_dict)
-		save_root_config(config)
+	config.robot.tool.parameters = Parameters.model_validate(params_dict)
+	save_root_config(config)
 
-		try:
-			worker = await get_robot_worker()
-			worker._robot.reload_parameters()
-		except ValueError:
-			pass
+	try:
+		worker = await get_robot_worker()
+		worker._robot.reload_parameters()
+	except ValueError:
+		pass
 
 	return {"success": True}
 
@@ -2053,7 +2035,7 @@ class ShelfStageExtensionSaveRequest(BaseModel):
     "/shelf",
     response_model=ShelfStageExtensionResponse,
     summary="Read shelf stage extensions",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def get_shelf_stage_extension() -> ShelfStageExtensionResponse:
 	"""Read shelf stage extensions.
@@ -2073,13 +2055,13 @@ async def get_shelf_stage_extension() -> ShelfStageExtensionResponse:
 @router.post(
     "/shelf/save",
     summary="Save shelf stage extensions",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 423, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
 )
 async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 	"""Save shelf stage extensions.
 
-	Persists front/back extension distances after checking the configured stage limit. An
-	active bin workflow blocks the change. Does not execute a test move.
+	Persists front/back extension distances after checking the configured stage limit. Does
+	not execute a test move.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
@@ -2105,16 +2087,14 @@ async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 	params_dict["STAGE_EXTENSION_SHELF_FRONT"] = request.front
 	params_dict["STAGE_EXTENSION_SHELF_BACK"] = request.back
 
-	async with bin_workflow_command_admission_guard():
-		await ensure_no_active_bin_workflow_for_motion()
-		config.robot.tool.parameters = Parameters.model_validate(params_dict)
-		save_root_config(config)
+	config.robot.tool.parameters = Parameters.model_validate(params_dict)
+	save_root_config(config)
 
-		try:
-			worker = await get_robot_worker()
-			worker._robot.reload_parameters()
-		except ValueError:
-			pass
+	try:
+		worker = await get_robot_worker()
+		worker._robot.reload_parameters()
+	except ValueError:
+		pass
 
 	return {"success": True}
 
@@ -2126,7 +2106,7 @@ class StageMoveRequest(BaseModel):
 @router.post(
     "/stage/move",
     summary="Test a stage extension",
-    responses=response_docs(model=StageMoveResponse, errors=(401, 409, 423, 503)),
+    responses=response_docs(model=StageMoveResponse, errors=(401, 409, 503)),
 )
 async def move_stage(request: StageMoveRequest):
 	"""Test a stage extension.
@@ -2155,7 +2135,7 @@ async def move_stage(request: StageMoveRequest):
 	target = _clamp_value(request.position, stage_limit, "Stage", warnings)
 
 	try:
-		async with manual_motion_guard("calibration_stage", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_stage", worker=worker):
 			await _clear_motors_for_move(tool, stage=True)
 			await tool._ms.move_to_position(target)
 			await tool._ms.stop()
@@ -2168,7 +2148,7 @@ async def move_stage(request: StageMoveRequest):
 @router.post(
     "/abort",
     summary="Abort manual calibration and home the tool",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 423, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 503)),
 )
 async def abort_calibration():
 	"""Abort manual calibration and home the tool.
@@ -2184,7 +2164,7 @@ async def abort_calibration():
 	tool = worker._robot._tool
 
 	try:
-		async with manual_motion_guard("calibration_abort", worker=worker, check_bin_workflow=True):
+		async with manual_motion_guard("calibration_abort", worker=worker):
 			await tool.home()
 		worker.clear_needs_home()
 		await worker.get_status_snapshot(force_refresh=True)

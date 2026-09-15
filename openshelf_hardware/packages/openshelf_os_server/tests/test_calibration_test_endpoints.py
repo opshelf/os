@@ -83,8 +83,10 @@ def build_worker(grid: StorageGrid):
 
 
 @pytest.mark.asyncio
-async def test_quick_test_picks_and_places_selected_cell(client) -> None:
-	grid = build_grid(is_occupied=False)
+@pytest.mark.parametrize("reserved", [False, True])
+async def test_quick_test_picks_and_places_selected_cell(client, monkeypatch, reserved) -> None:
+	grid = build_grid(is_occupied=reserved)
+	original_cell = grid.left_module[0].cells[0].model_copy(deep=True)
 	worker = build_worker(grid)
 
 	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
@@ -99,6 +101,7 @@ async def test_quick_test_picks_and_places_selected_cell(client) -> None:
 	pick_coordinate = worker._robot._tool.pick.await_args.args[0]
 	place_coordinate = worker._robot._tool.place.await_args.args[0]
 
+	assert grid.left_module[0].cells[0] == original_cell
 	assert pick_coordinate.x == pytest.approx(123.0)
 	assert pick_coordinate.y == pytest.approx(456.0)
 	assert pick_coordinate.z_offset == pytest.approx(7.5)
