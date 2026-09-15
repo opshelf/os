@@ -7,8 +7,11 @@ offset (one revolution, 40 mm) appears.
 
   inspect  read-only snapshots; run after the app has homed and been stopped
   home     runs Motor.configure() + Motor.home() with checkpoint reads
+  move     absolute Y move within 0-150 mm, sampled from the motor's own wait
+           loop, with cruise speed against commanded speed
 
-Checkpoint reads add ~100 ms of bus traffic between homing steps.
+Checkpoint reads add ~100 ms of bus traffic between homing steps. Move samples
+add none.
 """
 
 from __future__ import annotations
@@ -27,6 +30,12 @@ from hardware.motor import Motor  # noqa: E402
 
 HOME_CONFIRMATION = "SUPERVISED-Y-HOME-ZERO-DIAGNOSTIC"
 HOME_TIMEOUT_S = 120.0
+MOVE_CONFIRMATION = "SUPERVISED-Y-SPEED-DIAGNOSTIC-MOVE"
+MOVE_MIN_MM = 0.0
+MOVE_MAX_MM = 150.0
+MOVE_MIN_DISTANCE_MM = 1.0
+MOVE_TIMEOUT_S = 30.0
+HOMED_STATUS_BIT = 6
 
 # (address, word count). Two-word entries are signed 32-bit, high word first.
 REGISTERS = {
@@ -176,6 +185,79 @@ async def run_home(args: argparse.Namespace, controller: Any, params: Any) -> in
     return 0
 
 
+def cruise_speed_mm_s(samples: list[tuple[float, float]], start_mm: float, target_mm: float) -> float | None:
+    """Mean speed across 20-80 % of the commanded travel."""
+    span = target_mm - start_mm
+    points = [(t, p) for t, p in samples if 0.2 <= (p - start_mm) / span <= 0.8]
+    if len(points) < 2:
+        return None
+    (t0, p0), (t1, p1) = points[0], points[-1]
+    return round(abs(p1 - p0) / (t1 - t0), 1)
+
+
+async def run_move(args: argparse.Namespace, controller: Any, params: Any) -> int:
+    if args.confirm != MOVE_CONFIRMATION:
+        raise RuntimeError(f"--confirm must be {MOVE_CONFIRMATION}")
+    if not MOVE_MIN_MM <= args.target_mm <= MOVE_MAX_MM:
+        raise RuntimeError(f"--target-mm must be within {MOVE_MIN_MM:g}-{MOVE_MAX_MM:g} mm")
+    rpm = args.rpm or int(params.rpm)
+    if not 0 < rpm <= int(params.rpm):
+        raise RuntimeError(f"--rpm must be within 1-{params.rpm}")
+
+    before = await snapshot(controller, params)
+    if not before["status"] & (1 << HOMED_STATUS_BIT):
+        raise RuntimeError("drive does not report homing complete; home Y first")
+    if before["alarm"] != 0:
+        raise RuntimeError(f"drive alarm 0x{before['alarm']:04X} is active")
+
+    motor = Motor(controller, params)
+    start_mm = await motor.get_position()
+    if abs(args.target_mm - start_mm) < MOVE_MIN_DISTANCE_MM:
+        raise RuntimeError(f"target is within {MOVE_MIN_DISTANCE_MM:g} mm of {start_mm:.3f} mm")
+
+    commanded_mm_s = round(rpm * float(params.mpr) / 60, 1)
+    base.emit("move_preflight", start_mm=start_mm, target_mm=args.target_mm, rpm=rpm,
+              commanded_mm_s=commanded_mm_s, **before)
+    await base.arm_countdown("move", args.arm_delay_s)
+
+    samples: list[tuple[float, float]] = []
+    record = motor._record_flight_snapshot
+
+    def record_wrapper(*record_args: Any) -> None:
+        record(*record_args)
+        entry = motor._flight_recorder[-1]
+        if entry.logical_position_mm is not None:
+            samples.append((entry.elapsed_s, entry.logical_position_mm))
+        base.emit("move_sample", elapsed_s=round(entry.elapsed_s, 3), position_mm=entry.logical_position_mm,
+                  status=entry.status_word, alarm=entry.alarm_code)
+
+    motor._record_flight_snapshot = record_wrapper
+
+    def summary() -> dict[str, Any]:
+        cruise = cruise_speed_mm_s(samples, start_mm, args.target_mm)
+        return {
+            "commanded_mm_s": commanded_mm_s,
+            "cruise_mm_s": cruise,
+            "speed_ratio": None if cruise is None else round(cruise / commanded_mm_s, 2),
+        }
+
+    try:
+        await motor.move_config()
+        async with asyncio.timeout(MOVE_TIMEOUT_S):
+            await motor.move_to_position(args.target_mm, rpm=rpm)
+    except BaseException as exc:
+        await base.stop_after_motion_error(motor, exc)
+        base.emit("move_failed", error=str(exc), **summary(), **await snapshot(controller, params))
+        raise
+
+    base.emit("move_complete", **summary())
+    for i in range(args.samples):
+        base.emit("post_move", sample=i, host_position_mm=await motor.get_position(),
+                  **await snapshot(controller, params))
+        await asyncio.sleep(args.interval_ms / 1000)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", default=base.DEFAULT_PORT)
@@ -184,7 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=2.0)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    for name in ("inspect", "home"):
+    for name in ("inspect", "home", "move"):
         cmd = sub.add_parser(name)
         base.add_common_command_arguments(cmd)
         cmd.add_argument("--samples", type=int, default=10)
@@ -195,6 +277,12 @@ def build_parser() -> argparse.ArgumentParser:
     home.add_argument("--arm-delay-s", type=float, default=5.0)
     home.add_argument("--startup", action="store_true",
                       help="Use the tool startup profile: 10 mm clearance, no approach, reduced current.")
+
+    move = sub.choices["move"]
+    move.add_argument("--confirm", required=True)
+    move.add_argument("--arm-delay-s", type=float, default=5.0)
+    move.add_argument("--target-mm", type=float, required=True)
+    move.add_argument("--rpm", type=int, help="Defaults to the configured Y rpm, which is also the ceiling.")
     return parser
 
 
@@ -207,6 +295,8 @@ async def async_main(args: argparse.Namespace) -> int:
         try:
             if args.command == "inspect":
                 return await run_inspect(args, controller, params)
+            if args.command == "move":
+                return await run_move(args, controller, params)
             return await run_home(args, controller, params)
         finally:
             await controller.close()
