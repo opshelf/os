@@ -175,7 +175,7 @@ async def test_process_robot_event_updates_weight_from_scale() -> None:
 
 
 @pytest.mark.anyio
-async def test_mock_debug_scanner_restores_unavailable_bin_without_motion(
+async def test_mock_debug_scanner_publishes_outside_tray_without_motion(
     monkeypatch: pytest.MonkeyPatch,
     client: AsyncClient,
 ) -> None:
@@ -211,14 +211,10 @@ async def test_mock_debug_scanner_restores_unavailable_bin_without_motion(
         await session.commit()
 
         service = BinStorageService(session)
-        unavailable = await service.begin("retrieve", item, None)
-        assert unavailable is not None
-        await service.transition(unavailable, "recovery_required", "bin unavailable")
-        await service.reconcile(
-            unavailable,
-            resolution="quarantined",
-            target_item_in_bin=True,
-        )
+        checkout = await service.begin("retrieve", item, None)
+        assert checkout is not None
+        await service.transition(checkout, "awaiting_operator")
+        await service.close(checkout)
 
     async with AsyncSessionLocal() as session:
         commands_before_scan = len((await session.execute(select(MockRobotCommand))).scalars().all())
@@ -231,17 +227,11 @@ async def test_mock_debug_scanner_restores_unavailable_bin_without_motion(
     assert response.json() == {"message": "success"}
 
     event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
-    assert event["kind"] == "bin_workflow_updated"
-    assert event["payload"]["operation"] == "restore"
-    assert event["payload"]["state"] == "awaiting_bin_scan"
-
+    assert event["kind"] == "tray_scanned"
+    assert event["payload"] == "scanner-restore-bin"
     async with AsyncSessionLocal() as session:
-        workflow = await BinStorageService(session).active_workflow()
-        assert workflow is not None
-        assert workflow.operation == "restore"
-        assert workflow.state == "awaiting_bin_scan"
+        assert await BinStorageService(session).active_workflows() == []
         assert len((await session.execute(select(MockRobotCommand))).scalars().all()) == commands_before_scan
-
 
 @pytest.mark.anyio
 async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
@@ -274,7 +264,7 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
 
         workflow = await BinStorageService(session).begin("retrieve", item, None)
         assert workflow is not None
-        await BinStorageService(session).transition(workflow, "awaiting_item_scan")
+        await BinStorageService(session).transition(workflow, "awaiting_operator")
 
     async with AsyncSessionLocal() as session:
         commands_before_scans = len((await session.execute(select(MockRobotCommand))).scalars().all())
@@ -284,18 +274,18 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
         None,
     )
     async with AsyncSessionLocal() as session:
-        workflow = await BinStorageService(session).active_workflow()
+        workflow = (await BinStorageService(session).active_workflows())[0]
         assert workflow is not None
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
 
     await robot_router.emit_scanner_scan_event(
         robot_router.LabelScanRequest(code="scanner-active-bin"),
         None,
     )
     async with AsyncSessionLocal() as session:
-        workflow = await BinStorageService(session).active_workflow()
+        workflow = (await BinStorageService(session).active_workflows())[0]
         assert workflow is not None
-        assert workflow.state == "awaiting_bin_scan"
+        assert workflow.state == "awaiting_operator"
         assert len((await session.execute(select(MockRobotCommand))).scalars().all()) == commands_before_scans
 
 
@@ -418,7 +408,7 @@ async def test_shutdown_drains_completed_return_before_unsubscribing_listener(
         workflow = await session.get(bin_storage.StorageBinWorkflow, workflow_id)
         assert workflow is not None
         assert workflow.state == "completed"
-        assert BinStorageService(session).physical_return_completed(workflow)
+        assert (workflow.resolution or {}).get("physical_return_completed")
 
 
 @pytest.mark.anyio
@@ -468,7 +458,7 @@ async def test_correlated_bin_event_handler_exception_never_uses_legacy_mutation
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("reservation", ("configured", "durable", "quarantined"))
+@pytest.mark.parametrize("reservation", ("configured", "durable", "outside"))
 async def test_reserved_bin_barcode_and_home_never_use_legacy_mutation_without_workflow(
     monkeypatch: pytest.MonkeyPatch,
     reservation: str,
@@ -502,8 +492,8 @@ async def test_reserved_bin_barcode_and_home_never_use_legacy_mutation_without_w
                     cell_idx=home[2],
                     inner_dimensions={"width": 30.0, "height": 30.0, "length": 30.0},
                     max_items=2,
-                    status="quarantined" if reservation == "quarantined" else "at_home",
-                    active=False,
+                    status="outside" if reservation == "outside" else "at_home",
+                    active=True,
                 )
             )
             await session.commit()
@@ -527,6 +517,48 @@ async def test_reserved_bin_barcode_and_home_never_use_legacy_mutation_without_w
             .all()
         )
         assert items == []
+
+
+@pytest.mark.anyio
+async def test_released_bin_barcode_and_home_allow_legacy_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    barcode = "900000000010"
+    home = ("right_module", 2, 10)
+    async with AsyncSessionLocal() as session:
+        session.add(
+            StorageBin(
+                barcode=barcode,
+                side=home[0],
+                shelf_idx=home[1],
+                cell_idx=home[2],
+                inner_dimensions={"width": 30.0, "height": 30.0, "length": 30.0},
+                max_items=2,
+                status="outside",
+                active=False,
+            )
+        )
+        await session.commit()
+
+    for upca, location in (
+        (barcode, {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}),
+        ("direct-released", {"side": home[0], "shelf_idx": home[1], "cell_idx": home[2]}),
+    ):
+        await process_robot_event(
+            {"command": "store_item", "message": "success", "upca": upca, "location": location}
+        )
+
+    async with AsyncSessionLocal() as session:
+        items = (
+            (
+                await session.execute(
+                    select(Item).where(Item.upca.in_([barcode, "direct-released"]))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert {item.upca for item in items} == {barcode, "direct-released"}
 
 
 @pytest.mark.anyio

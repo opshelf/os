@@ -1897,7 +1897,7 @@ class RobotWorker:
             return False
 
         phase = context.get("phase")
-        return phase in {"io_place.open_door", "io_pick.open_door"}
+        return phase in {"io_place.open_door", "io_pick.open_door", "deliver_tray.open_door", "return_tray.open_door"}
 
     def _should_ignore_light_curtain(self) -> bool:
         return self._is_crashed is True or self._is_emergency_stopped is True

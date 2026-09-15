@@ -1,4 +1,5 @@
 """Role management API endpoints."""
+from openshelf_os_server.documentation import MessageResponse, response_docs
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -48,12 +49,21 @@ async def _build_role_response(db: AsyncSession, role: Role, user_count: int | N
 		updated_at=role.updated_at.isoformat(),
 	)
 
-@router.get("", response_model=List[RoleResponse])
+@router.get(
+    "",
+    response_model=List[RoleResponse],
+    summary="List roles and user counts",
+    responses=response_docs(errors=(401, 403)),
+)
 async def list_roles(
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> List[RoleResponse]:
-	"""List all roles."""
+	"""List roles and user counts.
+
+	Requires `roles:read`. Lists permission strings and the number of assigned users for
+	each role. Counts include inactive users.
+	"""
 	roles_result = await db.execute(select(Role))
 	roles = roles_result.scalars().all()
 	
@@ -62,13 +72,23 @@ async def list_roles(
 
 	return [await _build_role_response(db, role, user_count=user_counts.get(role.id, 0)) for role in roles]
 
-@router.post("", response_model=RoleResponse, dependencies=[Depends(require_permissions("roles:write"))])
+@router.post(
+    "",
+    response_model=RoleResponse,
+    dependencies=[Depends(require_permissions("roles:write"))],
+    summary="Create a role",
+    responses=response_docs(errors=(400, 401, 403)),
+)
 async def create_role(
 	request: RoleCreate,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> RoleResponse:
-	"""Create a new role."""
+	"""Create a role.
+
+	Requires `roles:read` and `roles:write`. Stores the permission list as supplied.
+	Duplicate role names return `400`.
+	"""
 	existing_result = await db.execute(select(Role).filter(Role.name == request.name))
 	existing = existing_result.scalar_one_or_none()
 	if existing is not None:
@@ -88,13 +108,22 @@ async def create_role(
 	
 	return await _build_role_response(db, role, user_count=0)
 
-@router.get("/{role_id}", response_model=RoleResponse)
+@router.get(
+    "/{role_id}",
+    response_model=RoleResponse,
+    summary="Read a role",
+    responses=response_docs(errors=(401, 403, 404)),
+)
 async def get_role(
 	role_id: int,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> RoleResponse:
-	"""Get a specific role."""
+	"""Read a role.
+
+	Requires `roles:read`. Returns its permissions and assigned-user count. An unknown role
+	ID returns `404`.
+	"""
 	role_result = await db.execute(select(Role).filter(Role.id == role_id))
 	role = role_result.scalar_one_or_none()
 	if role is None:
@@ -105,14 +134,24 @@ async def get_role(
 	
 	return await _build_role_response(db, role)
 
-@router.put("/{role_id}", response_model=RoleResponse, dependencies=[Depends(require_permissions("roles:write"))])
+@router.put(
+    "/{role_id}",
+    response_model=RoleResponse,
+    dependencies=[Depends(require_permissions("roles:write"))],
+    summary="Update a role",
+    responses=response_docs(errors=(400, 401, 403, 404)),
+)
 async def update_role(
 	role_id: int,
 	request: RoleUpdate,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> RoleResponse:
-	"""Update a role."""
+	"""Update a role.
+
+	Requires `roles:read` and `roles:write`. A supplied permission list replaces the
+	existing list. Null or omitted fields are unchanged; duplicate names return `400`.
+	"""
 	role_result = await db.execute(select(Role).filter(Role.id == role_id))
 	role = role_result.scalar_one_or_none()
 	if role is None:
@@ -144,13 +183,22 @@ async def update_role(
 	
 	return await _build_role_response(db, role)
 
-@router.delete("/{role_id}", dependencies=[Depends(require_permissions("roles:delete"))])
+@router.delete(
+    "/{role_id}",
+    dependencies=[Depends(require_permissions("roles:delete"))],
+    summary="Delete an unused role",
+    responses=response_docs(model=MessageResponse, errors=(400, 401, 403, 404)),
+)
 async def delete_role(
 	role_id: int,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> dict:
-	"""Delete a role."""
+	"""Delete an unused role.
+
+	Requires `roles:read` and `roles:delete`. Roles assigned to any user, including inactive
+	users, cannot be deleted and return `400`. An absent role returns `404`.
+	"""
 	role_result = await db.execute(select(Role).filter(Role.id == role_id))
 	role = role_result.scalar_one_or_none()
 	if role is None:
