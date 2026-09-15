@@ -1196,7 +1196,10 @@ async def test_y_axis_jog_triggers_after_fresh_brake_readback(mock_controller):
 @pytest.mark.asyncio
 async def test_y_axis_home_triggers_after_fresh_brake_readback(mock_controller):
     params = make_motor_params(
-        motor_name="y_axis", brake_output_function=0x24, brake_release_delay_ms=0
+        motor_name="y_axis",
+        brake_output_function=0x24,
+        brake_release_delay_ms=0,
+        physical_to_logical=lambda value: value,
     )
     motor = Motor(mock_controller, params)
     motor.clear_alarm = AsyncMock()
@@ -1216,9 +1219,13 @@ async def test_y_axis_home_triggers_after_fresh_brake_readback(mock_controller):
 
 
 def echo_registers(mock_controller, registers: dict[int, int]) -> dict[int, int]:
-    """Back register reads with a dict that writes update."""
+    """Back register reads with a dict that writes update.
+
+    0x6002 is a command register whose read is drive status, so writes to it are not echoed.
+    """
     async def write(_unit, address, value):
-        registers[address] = value
+        if address != motor_helpers.TRIGGER:
+            registers[address] = value
 
     mock_controller.write_single_register.side_effect = write
     mock_controller.read_holding_registers.side_effect = (
@@ -1234,7 +1241,11 @@ def y_home_motor(mock_controller, **overrides) -> Motor:
     motor = Motor(
         mock_controller,
         make_motor_params(
-            motor_name="y_axis", brake_output_function=0x24, brake_release_delay_ms=0, **overrides
+            motor_name="y_axis",
+            brake_output_function=0x24,
+            brake_release_delay_ms=0,
+            physical_to_logical=lambda value: value,
+            **overrides,
         ),
     )
     motor.clear_alarm = AsyncMock()
@@ -1291,8 +1302,10 @@ async def test_y_axis_home_zeroes_only_after_clearing_the_trip(mock_controller):
     async def move_config():
         events.append("move_config")
 
-    async def write(_unit, address, value):
-        registers[address] = value
+    echo_write = mock_controller.write_single_register.side_effect
+
+    async def write(unit, address, value):
+        await echo_write(unit, address, value)
         if (address, value) == (0x6002, 0x21):
             events.append("zero")
 
@@ -1311,8 +1324,7 @@ async def test_y_axis_home_zeroes_only_after_clearing_the_trip(mock_controller):
     [
         {0x2203: 0x20},  # trip still latched
         {0x1003: 1 << 2},  # still running
-        {0x1014: 0, 0x1015: 4000},  # feedback leads profile by one rev
-        {0x1012: 0, 0x1013: 4000},  # profile leads feedback by one rev
+        {0x6002: 0x40},  # quick stop still latched; 0x21 would be dropped
     ],
 )
 async def test_y_axis_home_refuses_to_zero_an_unsettled_drive(mock_controller, monkeypatch, unsettled):
@@ -1325,6 +1337,40 @@ async def test_y_axis_home_refuses_to_zero_an_unsettled_drive(mock_controller, m
 
     assert call(1, 0x6002, 0x21) not in mock_controller.write_single_register.await_args_list
     assert motor.is_homed() is False
+
+
+@pytest.mark.asyncio
+async def test_y_axis_home_verifies_the_zero_took(mock_controller):
+    motor = y_home_motor(mock_controller)
+    # 2500 pulses at 80 mm/rev = 20 mm, cleared by the 0x21 write.
+    registers = echo_registers(mock_controller, {0x0159: 0x24, 0x602D: 2500})
+    write = mock_controller.write_single_register.side_effect
+
+    async def zeroing_write(unit, address, value):
+        await write(unit, address, value)
+        if (address, value) == (0x6002, 0x21):
+            registers[0x602C] = registers[0x602D] = 0
+
+    mock_controller.write_single_register.side_effect = zeroing_write
+
+    await motor.home()
+
+    assert motor.is_homed() is True
+    assert motor._cur_pos == 0.0
+
+
+@pytest.mark.asyncio
+async def test_y_axis_home_fails_when_the_drive_drops_the_zero(mock_controller, monkeypatch):
+    monkeypatch.setattr("hardware.motor.ZERO_SETTLE_TIMEOUT_S", 0.0)
+    motor = y_home_motor(mock_controller)
+    echo_registers(mock_controller, {0x0159: 0x24, 0x602D: 2500})
+
+    with pytest.raises(MotorError, match="zero did not take: position=20.000 mm"):
+        await motor.home()
+
+    assert motor.is_homed() is False
+    # Never parked on a bad zero.
+    assert call(1, 0x000F, 0) not in mock_controller.write_single_register.await_args_list
 
 
 @pytest.mark.asyncio
