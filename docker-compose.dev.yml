@@ -9,7 +9,7 @@ services:
       - ./openshelf_hardware/packages/openshelf_os/src/openshelf_os:/app/openshelf_hardware/packages/openshelf_os/src/openshelf_os
       - ./openshelf_hardware/packages/openshelf_os_server/src/openshelf_os_server:/app/openshelf_hardware/packages/openshelf_os_server/src/openshelf_os_server
     environment:
-      - UVICORN_RELOAD=true
+      - UVICORN_RELOAD=${UVICORN_RELOAD:-true}
     command:
       - /app/openshelf_hardware/.venv/bin/python
       - -m

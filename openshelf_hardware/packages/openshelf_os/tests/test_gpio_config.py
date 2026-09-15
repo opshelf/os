@@ -1,4 +1,8 @@
-from openshelf_os.config.models import GpioConfig, Robot
+import logging
+
+from openshelf_os.config.models import GpioConfig, Robot, compare_gpio_pins_to_defaults
+from openshelf_os.robot.core import Robot as RobotCore
+from hardware.gpio.manager import GpioManager
 
 
 def make_robot_config() -> dict[str, object]:
@@ -98,3 +102,68 @@ def test_robot_gpio_empty_object_expands_to_defaults() -> None:
     assert robot.gpio.pins["cabinet_bot_closed"].inverted is True
     assert robot.gpio.pins["cabinet_top_closed"].debounce_ms == 50
     assert robot.gpio.pins["cabinet_bot_closed"].debounce_ms == 50
+
+
+def power_pin(pin: int) -> dict[str, object]:
+    return {"board": "pca9535", "expander": "pca9535_1", "pin": pin, "direction": "output"}
+
+
+def test_legacy_power_control_pin_is_renamed_to_pwr_out0() -> None:
+    """A config declaring pins replaces the defaults, so the old key must migrate."""
+    gpio = GpioConfig.model_validate(
+        {"pins": {"power_control": power_pin(12), "pwr_out1": power_pin(13)}}
+    )
+
+    assert "power_control" not in gpio.pins
+    assert gpio.pins["pwr_out0"].pin == 12
+    assert gpio.pins["pwr_out1"].pin == 13
+
+
+def test_explicit_pwr_out0_wins_over_the_legacy_alias() -> None:
+    raw_pins = {"power_control": power_pin(12), "pwr_out0": power_pin(12)}
+    gpio = GpioConfig.model_validate({"pins": raw_pins})
+
+    assert "power_control" not in gpio.pins
+    assert gpio.pins["pwr_out0"].pin == 12
+    assert GpioManager.from_config(gpio, fake=True).has_pin("pwr_out0")
+
+
+def test_default_pins_already_use_the_new_name() -> None:
+    gpio = GpioConfig()
+
+    assert "pwr_out0" in gpio.pins
+    assert "power_control" not in gpio.pins
+
+
+def test_missing_and_extra_pins_are_reported_against_defaults() -> None:
+    missing, unrecognized = compare_gpio_pins_to_defaults(["pwr_out0", "not_a_real_pin"])
+
+    assert "pwr_out1" in missing
+    assert "pwr_out0" not in missing
+    assert unrecognized == ["not_a_real_pin"]
+
+
+def test_defaults_report_no_drift() -> None:
+    assert compare_gpio_pins_to_defaults(GpioConfig().pins) == ([], [])
+
+
+def test_robot_warns_when_config_pins_drift_from_defaults(caplog) -> None:
+    robot = RobotCore.__new__(RobotCore)
+    robot._logger = logging.getLogger("test")
+    gpio = GpioConfig.model_validate({"pins": {"pwr_out0": power_pin(12), "mystery": power_pin(1)}})
+
+    with caplog.at_level(logging.WARNING):
+        RobotCore._warn_on_gpio_pin_drift(robot, gpio)
+
+    assert "missing defaults" in caplog.text
+    assert "not in the defaults" in caplog.text
+
+
+def test_robot_is_quiet_when_pins_match_defaults(caplog) -> None:
+    robot = RobotCore.__new__(RobotCore)
+    robot._logger = logging.getLogger("test")
+
+    with caplog.at_level(logging.WARNING):
+        RobotCore._warn_on_gpio_pin_drift(robot, GpioConfig())
+
+    assert caplog.text == ""

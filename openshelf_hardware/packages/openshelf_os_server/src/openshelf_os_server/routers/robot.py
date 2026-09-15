@@ -25,6 +25,7 @@ from openshelf_os.robot.commands import (
     StoreItemCommand,
 )
 import logging
+from openshelf_os.robot.core import POWER_CYCLE_HOLD_S, POWER_RAILS
 from openshelf_os.robot.worker import RobotWorker
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -113,6 +114,29 @@ class MotorOperationResponse(BaseModel):
 class DoorOperationResponse(BaseModel):
     success: bool
     action: Literal["open", "close", "home"]
+
+
+class PowerRailStatus(BaseModel):
+    rail: str = Field(description="GPIO output identifier of the switched rail")
+    supplies: str = Field(description="Hardware that loses power when this rail is cut")
+    axes: list[str] = Field(
+        description="Motors that lose their encoder reference when this rail is cut"
+    )
+    gripper: bool = Field(description="Whether the gripper servo drops with this rail")
+    powered: bool | None = Field(description="Current rail state; null when it cannot be read")
+
+
+class PowerRailsResponse(BaseModel):
+    hold_seconds: float = Field(description="How long a cycle cuts the rail before restoring power")
+    rails: list[PowerRailStatus]
+
+
+class PowerCycleResponse(BaseModel):
+    success: bool
+    rail: str
+    axes_needing_home: list[str] = Field(
+        description="Axes that must be re-homed before further motion"
+    )
 
 
 class InitComponentResponse(BaseModel):
@@ -1484,6 +1508,90 @@ async def home_motor(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=_error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
+        ) from exc
+
+
+@router.get(
+    "/debug/power",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Inspect switched power rails",
+    responses=response_docs(model=PowerRailsResponse, errors=(401, 503)),
+)
+async def get_power_rails() -> dict:
+    """Read the four switched power rails.
+
+    Reports what each rail feeds, the axes that lose their encoder reference when it is
+    cut, and the current output state. `powered` is `null` when the rail cannot be read.
+    Cut power only through the rail cycle operation: driving the output directly drops
+    the drives without reconfiguring or re-homing the axes that lose their reference.
+    """
+    states: dict[str, bool | None] = {rail: None for rail in POWER_RAILS}
+    try:
+        worker = await get_robot_worker()
+        states = worker._robot.get_power_rail_states()
+    except ValueError:
+        robot = get_robot_instance()
+        if robot is not None:
+            states = robot.get_power_rail_states()
+
+    return {
+        "hold_seconds": POWER_CYCLE_HOLD_S,
+        "rails": [
+            {
+                "rail": rail,
+                "supplies": spec.supplies,
+                "axes": list(spec.axes),
+                "gripper": spec.gripper,
+                "powered": states.get(rail),
+            }
+            for rail, spec in POWER_RAILS.items()
+        ],
+    }
+
+
+@router.post(
+    "/debug/power/{rail}/cycle",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Power-cycle a switched rail",
+    responses=response_docs(model=PowerCycleResponse, errors=(401, 404, 409, 503)),
+)
+async def power_cycle_rail(
+    rail: str,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> dict:
+    """Cut a switched rail for a few seconds, then restore it.
+
+    Drive parameters that only latch at power-on need this -- any DI/DO function
+    change stays inert until its drive restarts. Returns once power is back; the
+    hardware is still booting, so re-home the axes it dropped before moving. An
+    active command or queued work returns `409`; a tray workflow that is idle between
+    steps does not block the cycle.
+    """
+    if rail not in POWER_RAILS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Power rail '{rail}' not found",
+        )
+
+    try:
+        async with manual_motion_guard(f"power_cycle:{rail}", worker=worker):
+            cut_axes = list(POWER_RAILS[rail].axes)
+
+            def _mark_axes_for_homing() -> None:
+                if cut_axes:
+                    worker.set_needs_home(f"power cycle: {rail}", cut_axes)
+
+            axes = await worker._robot.power_cycle_rail(rail, on_cut=_mark_axes_for_homing)
+
+            await worker.get_status_snapshot(force_refresh=True)
+            return {"success": True, "rail": rail, "axes_needing_home": list(axes)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.error("Power cycle failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_error_detail(f"Power cycle failed: {exc}", "power_cycle_failed"),
         ) from exc
 
 
