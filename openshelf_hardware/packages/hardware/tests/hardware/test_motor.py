@@ -1224,6 +1224,9 @@ def echo_registers(mock_controller, registers: dict[int, int]) -> dict[int, int]
     mock_controller.read_holding_registers.side_effect = (
         lambda _unit, address: registers.get(address, 0)
     )
+    mock_controller.read_holding_register_block.side_effect = (
+        lambda _unit, address, count=1: tuple(registers.get(address + i, 0) for i in range(count))
+    )
     return registers
 
 
@@ -1277,6 +1280,51 @@ async def test_y_axis_home_refuses_to_move_when_trip_readback_mismatches(mock_co
         await motor.home()
 
     assert call(1, 0x6002, 0x10) not in mock_controller.write_single_register.await_args_list
+
+
+@pytest.mark.asyncio
+async def test_y_axis_home_zeroes_only_after_clearing_the_trip(mock_controller):
+    motor = y_home_motor(mock_controller)
+    registers = echo_registers(mock_controller, {0x0159: 0x24})
+    events: list[str] = []
+
+    async def move_config():
+        events.append("move_config")
+
+    async def write(_unit, address, value):
+        registers[address] = value
+        if (address, value) == (0x6002, 0x21):
+            events.append("zero")
+
+    motor.move_config = AsyncMock(side_effect=move_config)
+    mock_controller.write_single_register.side_effect = write
+
+    await motor.home()
+
+    assert events == ["move_config", "zero"]
+    assert motor.is_homed() is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsettled",
+    [
+        {0x2203: 0x20},  # trip still latched
+        {0x1003: 1 << 2},  # still running
+        {0x1010: 0, 0x1011: 4000},  # one rev of following error
+        {0x1010: 0xFFFF, 0x1011: 0xFFFF - 3999},  # same, negative
+    ],
+)
+async def test_y_axis_home_refuses_to_zero_an_unsettled_drive(mock_controller, monkeypatch, unsettled):
+    monkeypatch.setattr("hardware.motor.ZERO_SETTLE_TIMEOUT_S", 0.0)
+    motor = y_home_motor(mock_controller)
+    echo_registers(mock_controller, {0x0159: 0x24, **unsettled})
+
+    with pytest.raises(MotorError, match="did not settle before zeroing"):
+        await motor.home()
+
+    assert call(1, 0x6002, 0x21) not in mock_controller.write_single_register.await_args_list
+    assert motor.is_homed() is False
 
 
 @pytest.mark.asyncio
