@@ -140,12 +140,10 @@ async def test_save_calibration_creates_missing_cell_from_existing_shelf(client,
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("cell_status", [CellStatus.OCCUPIED, CellStatus.MAINTENANCE])
-@pytest.mark.parametrize("status_change", [False, True])
-async def test_save_calibration_preserves_configured_bin_home(client, tmp_path, monkeypatch, cell_status, status_change) -> None:
+async def test_save_calibration_updates_tray_home_cell(client, tmp_path, monkeypatch, cell_status) -> None:
 	grid = build_grid(tmp_path)
 	cell = grid.left_module[0].cells[0]
 	cell.status = cell_status
-	original = cell.model_copy(deep=True)
 	worker = build_worker(grid)
 	configured_bin = SimpleNamespace(
 		home_location=SimpleNamespace(side="left_module", shelf_idx=0, cell_idx=0)
@@ -166,31 +164,38 @@ async def test_save_calibration_preserves_configured_bin_home(client, tmp_path, 
 				"x": 475.0,
 				"y": 630.0,
 				"z_offset": 0.0,
-				"status": "available" if status_change else None,
+				"status": "available",
 				"is_manual": True,
 			},
 		)
 
-	if status_change:
-		assert response.status_code == 409
-		assert response.json()["detail"] == "Tray home status cannot be changed through calibration"
-		assert cell == original
-		assert not (tmp_path / "storage-grid.json").exists()
-	else:
-		assert response.status_code == 200
-		assert cell.status == cell_status
-		assert cell.item == original.item
-		assert cell.is_manual is True
-		assert cell.calibration_point.x == 475.0
-		assert cell.calibration_point.y == 630.0
-		assert cell.calibration_point.z_offset == 0.0
-		assert (tmp_path / "storage-grid.json").exists()
+	assert response.status_code == 200
+	assert cell.status == CellStatus.AVAILABLE
+	assert cell.is_manual is True
+	assert cell.calibration_point.x == 475.0
+	assert cell.calibration_point.y == 630.0
+	assert cell.calibration_point.z_offset == 0.0
+	assert (tmp_path / "storage-grid.json").exists()
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("allow_bin_home", [False, True])
-@pytest.mark.parametrize("cell_status", [CellStatus.OCCUPIED, CellStatus.MAINTENANCE, CellStatus.DISABLED])
-async def test_calibration_test_guard_for_reserved_bin_home(monkeypatch, tmp_path, allow_bin_home, cell_status) -> None:
+@pytest.mark.parametrize("cell_status", [CellStatus.AVAILABLE, CellStatus.OCCUPIED])
+async def test_calibration_test_accepts_tray_homes(tmp_path, cell_status) -> None:
+	grid = build_grid(tmp_path)
+	cell = grid.left_module[0].cells[0]
+	cell.status = cell_status
+	location = calibration.StorageModuleCellLocation(
+		side=calibration.StorageModuleSide.LEFT,
+		shelf_idx=0,
+		cell_idx=0,
+	)
+
+	assert await calibration._ensure_cell_is_testable(grid, location) is cell
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("cell_status", [CellStatus.DISABLED, CellStatus.MAINTENANCE])
+async def test_calibration_test_rejects_untestable_cell_status(tmp_path, cell_status) -> None:
 	grid = build_grid(tmp_path)
 	grid.left_module[0].cells[0].status = cell_status
 	location = calibration.StorageModuleCellLocation(
@@ -199,22 +204,10 @@ async def test_calibration_test_guard_for_reserved_bin_home(monkeypatch, tmp_pat
 		cell_idx=0,
 	)
 
-	class SessionContext:
-		async def __aenter__(self):
-			return object()
+	with pytest.raises(HTTPException) as error:
+		await calibration._ensure_cell_is_testable(grid, location)
 
-		async def __aexit__(self, *_args):
-			return False
-
-	monkeypatch.setattr(calibration, "AsyncSessionLocal", SessionContext)
-	monkeypatch.setattr(calibration, "is_reserved_bin_location", AsyncMock(return_value=True))
-
-	if allow_bin_home and cell_status == CellStatus.OCCUPIED:
-		assert await calibration._ensure_cell_is_testable(grid, location, allow_bin_home=True) is grid.left_module[0].cells[0]
-	else:
-		with pytest.raises(HTTPException) as error:
-			await calibration._ensure_cell_is_testable(grid, location, allow_bin_home=allow_bin_home)
-		assert error.value.status_code == (400 if allow_bin_home else 409)
+	assert error.value.status_code == 400
 
 
 @pytest.mark.anyio

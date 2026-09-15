@@ -35,7 +35,7 @@ from openshelf_os_server.core.laser_auto_calibration import (
 	get_laser_auto_calibration_manager,
 )
 from openshelf_os_server.core.manual_motion import manual_motion_guard
-from openshelf_os_server.core.bin_storage import is_reserved_bin_location
+from openshelf_os_server.core.bin_storage import reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers.auth_deps import get_current_user
 from openshelf_os_server.core.storage_module import side_to_s
@@ -147,18 +147,8 @@ UNTESTABLE_CELL_STATUSES = (CellStatus.DISABLED, CellStatus.MAINTENANCE)
 
 
 async def _ensure_cell_is_testable(
-	grid, location: StorageModuleCellLocation, *, allow_bin_home: bool = False
+	grid, location: StorageModuleCellLocation
 ) -> Cell:
-	async with AsyncSessionLocal() as session:
-		is_reserved = await is_reserved_bin_location(
-			(location.side.value, location.shelf_idx, location.cell_idx), session
-		)
-	if is_reserved and not allow_bin_home:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Tray homes cannot use the item IO cycle test; use the shelf pick/place test",
-		)
-
 	try:
 		cell = grid.get_cell(location)
 	except (IndexError, ValueError) as exc:
@@ -1180,7 +1170,7 @@ async def test_gripper(
 	location = _build_test_location(request)
 	grid = worker._robot._grid
 
-	await _ensure_cell_is_testable(grid, location, allow_bin_home=True)
+	await _ensure_cell_is_testable(grid, location)
 
 	try:
 		coordinate = _build_coordinate_for_location(grid, location)
@@ -1229,9 +1219,9 @@ async def test_gripper(
 async def test_cycle(request: TestRequest):
 	"""Test an IO transfer cycle.
 
-	Runs the IO pick/place cycle for the selected calibration cell. This moves the tool
-	through the IO box; use only with the physical setup prepared for the test. Does not
-	save calibration.
+	Runs the IO pick/place cycle for the selected calibration cell. Tray homes are supported;
+	disabled or maintenance cells are rejected. This moves the tool through the IO box; use
+	only with the physical setup prepared for the test. Does not save calibration.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
@@ -1290,9 +1280,8 @@ async def test_cycle(request: TestRequest):
 async def save_calibration(request: SaveRequest):
 	"""Save a cell calibration point.
 
-	Persists coordinates and optional status/manual marker for the selected cell. Configured
-	tray homes allow coordinate/manual-marker updates while preserving their status and
-	reservation. Invalid status returns `400`.
+	Persists coordinates and optional status/manual marker for the selected cell. Tray homes
+	allow coordinate, manual-marker, and status updates. Invalid status returns `400`.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
@@ -1312,24 +1301,17 @@ async def save_calibration(request: SaveRequest):
 				detail=f"Invalid status: {request.status}. Must be one of: available, occupied, maintenance, disabled",
 			)
 
-	# Read the tray-home reservation while the caller's request session is open, so a
-	# coordinate save cannot silently change the cell a checked-out tray returns to.
+	# Read tray homes while the caller's request session is open, so a coordinate save
+	# cannot silently change the cell a checked-out tray returns to.
 	async with AsyncSessionLocal() as session:
-		is_reserved = await is_reserved_bin_location(
-			(request.side.value, request.shelf_idx, request.cell_idx), session
-		)
-	if is_reserved:
+		reserved_homes = await reserved_bin_locations(session)
+	if (request.side.value, request.shelf_idx, request.cell_idx) in reserved_homes:
 		try:
-			existing_cell = grid.get_cell(StorageModuleCellLocation(
+			grid.get_cell(StorageModuleCellLocation(
 				side=request.side, shelf_idx=request.shelf_idx, cell_idx=request.cell_idx
 			))
 		except (IndexError, ValueError) as exc:
 			raise HTTPException(status_code=409, detail="Tray home cell is missing from storage") from exc
-		if new_status is not None and new_status != existing_cell.status:
-			raise HTTPException(
-				status_code=409,
-				detail="Tray home status cannot be changed through calibration",
-			)
 
 	side_enum = request.side
 	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)

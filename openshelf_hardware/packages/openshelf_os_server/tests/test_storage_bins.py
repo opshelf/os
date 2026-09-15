@@ -91,11 +91,12 @@ def _workflow_bin(barcode: str, side: str, shelf_idx: int, cell_idx: int) -> Sim
 
 
 @pytest.mark.anyio
-async def test_direct_store_rejects_reserved_bin_barcode_and_home_in_both_modes(
+async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     configured = _configured_bin("900000000010", "left_module", 0, 0)
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config(configured))
+    tray_home = {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
 
     async with AsyncSessionLocal() as db:
         with pytest.raises(HTTPException) as barcode_error:
@@ -103,46 +104,26 @@ async def test_direct_store_rejects_reserved_bin_barcode_and_home_in_both_modes(
         assert barcode_error.value.status_code == 409
         assert barcode_error.value.detail["code"] == "reserved_bin_barcode"
 
-        with pytest.raises(HTTPException) as home_error:
-            await robot_router._validate_mock_store(
-                StoreItemCommand(
-                    item={
-                        "upca": "123456789012",
-                        "name": "Direct item",
-                        "dimensions": {"width": 1, "height": 1, "length": 1},
-                        "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
-                    }
-                ),
-                db,
-            )
-        assert home_error.value.status_code == 409
-        assert home_error.value.detail["code"] == "reserved_bin_home"
-
-        worker = MagicMock()
-        worker.needs_home.return_value = False
-        monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
-        monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-        with pytest.raises(HTTPException) as hardware_error:
-            await robot_router.robot_commands(
-                StoreItemCommand(
-                    item={
-                        "upca": "123456789013",
-                        "name": "Direct item",
-                        "dimensions": {"width": 1, "height": 1, "length": 1},
-                        "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
-                    }
-                ),
-                worker=worker,
-                current_user=SimpleNamespace(id=1),
-                db=db,
-            )
-        assert hardware_error.value.status_code == 409
-        assert hardware_error.value.detail["code"] == "reserved_bin_home"
-        worker.enqueue_command.assert_not_called()
+        # A tray home is a usable target in both modes: the tray's return reports the
+        # occupied cell instead of the store being refused up front.
+        await robot_router._validate_mock_store(
+            StoreItemCommand(
+                item={
+                    "upca": "123456789012",
+                    "name": "Direct item",
+                    "dimensions": {"width": 1, "height": 1, "length": 1},
+                    "location": tray_home,
+                }
+            ),
+            db,
+        )
+        await robot_router._validate_direct_store_reservation(
+            {"upca": "123456789013", "location": tray_home}, db
+        )
 
 
 @pytest.mark.anyio
-async def test_item_crud_reserves_configured_and_outside_bin_homes_before_sync(
+async def test_item_barcodes_and_locations_claim_only_live_trays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     configured = _configured_bin("900000000017", "left_module", 0, 0)
@@ -160,13 +141,15 @@ async def test_item_crud_reserves_configured_and_outside_bin_homes_before_sync(
         item = await StorageService(db).create_item(
             "123456789017", "Direct item", {"width": 1, "height": 1, "length": 1}
         )
-        with pytest.raises(HTTPException, match="reserved as a storage bin home"):
-            await storage_router.add_item_location(
-                item.upca,
-                storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
-                db,
-                current_user,
-            )
+        # A live tray home stays reserved for automatic allocation, while an explicit
+        # location edit may use it: the tray's return reports an occupied home instead.
+        await storage_router.add_item_location(
+            item.upca,
+            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
+            db,
+            current_user,
+        )
+        assert await bin_storage.is_reserved_bin_location(("left_module", 0, 0), db) is True
 
         db.add(
             StorageBin(
@@ -181,33 +164,19 @@ async def test_item_crud_reserves_configured_and_outside_bin_homes_before_sync(
             )
         )
         await db.commit()
-        with pytest.raises(HTTPException, match="reserved as a storage bin home"):
-            await storage_router.add_item_location(
-                item.upca,
-                storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=1),
-                db,
-                current_user,
-            )
-
-        member_bin = StorageBin(
-            barcode="900000000019",
-            side="left_module",
-            shelf_idx=0,
-            cell_idx=2,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=1,
-            status="at_home",
-            active=False,
+        # A tray released by config changes stops reserving its home and identity.
+        assert await bin_storage.is_reserved_bin_location(("left_module", 0, 1), db) is False
+        assert await bin_storage.is_reserved_bin_barcode("900000000018", db) is False
+        await storage_router.add_item_location(
+            item.upca,
+            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=1),
+            db,
+            current_user,
         )
-        db.add(member_bin)
-        await db.flush()
-        db.add(StorageBinItem(bin_id=member_bin.id, item_id=item.id))
-        await db.commit()
-        assert await bin_storage.is_reserved_bin_location(("left_module", 0, 2), db) is True
 
 
 @pytest.mark.anyio
-async def test_mock_allocation_excludes_active_and_outside_bin_homes(
+async def test_mock_allocation_excludes_live_bin_homes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
@@ -232,7 +201,7 @@ async def test_mock_allocation_excludes_active_and_outside_bin_homes(
                     inner_dimensions={"width": 30, "height": 30, "length": 30},
                     max_items=1,
                     status="outside",
-                    active=False,
+                    active=True,
                 ),
             ]
         )
@@ -250,6 +219,40 @@ async def test_mock_allocation_excludes_active_and_outside_bin_homes(
         },
     )
     assert result["location"] == {"side": "left_module", "shelf_idx": 0, "cell_idx": 2}
+
+
+@pytest.mark.anyio
+async def test_mock_allocation_uses_released_bin_homes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
+    async with AsyncSessionLocal() as db:
+        db.add(
+            StorageBin(
+                barcode="900000000013",
+                side="left_module",
+                shelf_idx=0,
+                cell_idx=0,
+                inner_dimensions={"width": 30, "height": 30, "length": 30},
+                max_items=1,
+                status="outside",
+                active=False,
+            )
+        )
+        await db.commit()
+
+    result = await MockRobotRuntime()._execute_store(
+        "mock-released-home",
+        {
+            "command": "store_item",
+            "item": {
+                "upca": "123456789014",
+                "name": "Direct item",
+                "dimensions": {"width": 1, "height": 1, "length": 1},
+            },
+        },
+    )
+    assert result["location"] == {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
 
 
 @pytest.mark.anyio
@@ -611,6 +614,38 @@ async def test_delete_item_with_historical_bin_workflow_returns_clear_conflict(s
         )
         assert await db.get(StorageBinWorkflow, workflow.id) is not None
         assert await StorageService(db).get_item(item.upca) is not None
+
+
+@pytest.mark.anyio
+async def test_return_rejects_occupied_tray_home(monkeypatch) -> None:
+    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        tray = trays[0]
+        barcode = tray.barcode
+        home = (tray.side, tray.shelf_idx, tray.cell_idx)
+        service = BinStorageService(db)
+        checkout = await service.begin("retrieve", items[0], None)
+        assert checkout is not None
+        await service.transition(checkout, "awaiting_operator")
+        await service.close(checkout)
+        returned = await service.begin_return(barcode)
+        assert returned is not None
+        returned_id = returned.id
+
+        occupant = await StorageService(db).create_item(
+            "123456788099", "Home occupant", {"width": 10, "length": 10, "height": 10}
+        )
+        occupant_upca = occupant.upca
+        # An item recorded in the cell the tray returns to is rejected at confirmation.
+        await StorageService(db).add_item_location(occupant_upca, *home)
+        with pytest.raises(BinWorkflowConflict, match="home cell is occupied"):
+            await service.prepare_return(returned, [])
+
+        await StorageService(db).remove_item_location(occupant_upca, *home)
+        refreshed = await db.get(StorageBinWorkflow, returned_id)
+        assert refreshed is not None
+        assert await service.prepare_return(refreshed, []) is True
 
 
 @pytest.mark.anyio

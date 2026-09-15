@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+import logging
 import math
 
 
@@ -50,6 +51,8 @@ from openshelf_os_server.settings import get_root_config
 
 
 ACTIVE_STATES = {"retrieving_bin", "awaiting_operator", "returning_bin"}
+
+logger = logging.getLogger(__name__)
 
 
 class RobotEventPublisher(Protocol):
@@ -161,16 +164,24 @@ def configured_bin_locations() -> set[tuple[str, int, int]]:
 
 
 async def reserved_bin_locations(session: AsyncSession) -> set[tuple[str, int, int]]:
-    """Return all homes that direct storage must never use."""
+    """Return homes of registered trays that automatic storage must avoid.
+
+    A tray released by removing its configuration stops reserving its home; an explicit
+    location edit may use a tray home, and the tray's return is what rejects it then.
+    """
     locations = configured_bin_locations()
-    rows = (await session.execute(select(StorageBin))).scalars()
+    rows = (
+        await session.execute(select(StorageBin).where(StorageBin.active.is_(True)))
+    ).scalars()
     locations.update((row.side, row.shelf_idx, row.cell_idx) for row in rows)
     return locations
 
 
 async def reserved_bin_barcodes(session: AsyncSession) -> set[str]:
-    """Return all bin identities that application-created items cannot claim."""
-    rows = (await session.execute(select(StorageBin.barcode))).scalars()
+    """Return identities of registered trays that application-created items cannot claim."""
+    rows = (
+        await session.execute(select(StorageBin.barcode).where(StorageBin.active.is_(True)))
+    ).scalars()
     return configured_bin_barcodes() | set(rows)
 
 
@@ -185,10 +196,11 @@ async def is_reserved_bin_location(location: tuple[str, int, int], session: Asyn
 async def validate_direct_store_reservation(
     item_data: dict[str, Any], session: AsyncSession
 ) -> None:
-    """Reject public direct-store requests that target a bin identity, home, or member.
+    """Reject public direct-store requests that target a bin identity or member.
 
     A tray interaction that merely names the item does not reserve it: the workflow rejects
-    conflicting state when it completes instead of locking the item meanwhile.
+    conflicting state when it completes instead of locking the item meanwhile. A tray home is
+    an ordinary target cell; the tray's return takes it out of service until the cell is free.
     """
     upca = item_data.get("upca")
     if isinstance(upca, str) and await is_reserved_bin_barcode(upca, session):
@@ -206,13 +218,6 @@ async def validate_direct_store_reservation(
                     "Item is stored in a bin; use the storage bin workflow",
                     "reserved_tray_item",
                 )
-
-    location = _location_from_payload(item_data.get("location"))
-    if location is not None and await is_reserved_bin_location(location, session):
-        raise DirectStoreReservationError(
-            "Storage bin homes cannot be used with a direct robot command",
-            "reserved_bin_home",
-        )
 
 
 class BinStorageService:
@@ -245,10 +250,16 @@ class BinStorageService:
                 )
             ).scalar_one_or_none()
             if direct_occupant is not None:
-                raise ValueError(
-                    "Storage bin home "
-                    f"{entry.home_location.side}/{entry.home_location.shelf_idx}/{entry.home_location.cell_idx} "
-                    "is occupied by a direct item"
+                # A recorded item can occupy a tray home while the tray is away; it is the
+                # tray's return, not configuration, that rejects that state.
+                logger.warning(
+                    "bin_home_occupied_by_direct_item",
+                    extra={
+                        "barcode": entry.barcode,
+                        "side": entry.home_location.side,
+                        "shelf_idx": entry.home_location.shelf_idx,
+                        "cell_idx": entry.home_location.cell_idx,
+                    },
                 )
             row = existing.get(entry.barcode)
             inner_dimensions = entry.inner_dimensions.model_dump(mode="json")
@@ -678,6 +689,19 @@ class BinStorageService:
     async def _return_contents_error(
         self, workflow: StorageBinWorkflow, bin_row: StorageBin
     ) -> Optional[str]:
+        occupied_home = (
+            await self.session.execute(
+                select(ItemLocation.id)
+                .where(
+                    ItemLocation.side == bin_row.side,
+                    ItemLocation.shelf_idx == bin_row.shelf_idx,
+                    ItemLocation.cell_idx == bin_row.cell_idx,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if occupied_home is not None:
+            return "Tray home cell is occupied by an item"
         compartment_error = await self._compartment_error(workflow, bin_row)
         if compartment_error:
             return compartment_error

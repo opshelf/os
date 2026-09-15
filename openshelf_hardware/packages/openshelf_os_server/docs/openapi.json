@@ -9191,7 +9191,7 @@
     },
     "/api/calibration/save": {
       "post": {
-        "description": "Save a cell calibration point.\n\nPersists coordinates and optional status/manual marker for the selected cell. Configured\ntray homes allow coordinate/manual-marker updates while preserving their status and\nreservation. Invalid status returns `400`.",
+        "description": "Save a cell calibration point.\n\nPersists coordinates and optional status/manual marker for the selected cell. Tray homes\nallow coordinate, manual-marker, and status updates. Invalid status returns `400`.",
         "operationId": "save_calibration_api_calibration_save_post",
         "parameters": [
           {
@@ -9909,7 +9909,7 @@
     },
     "/api/calibration/test/cycle": {
       "post": {
-        "description": "Test an IO transfer cycle.\n\nRuns the IO pick/place cycle for the selected calibration cell. This moves the tool\nthrough the IO box; use only with the physical setup prepared for the test. Does not\nsave calibration.",
+        "description": "Test an IO transfer cycle.\n\nRuns the IO pick/place cycle for the selected calibration cell. Tray homes are supported;\ndisabled or maintenance cells are rejected. This moves the tool through the IO box; use\nonly with the physical setup prepared for the test. Does not save calibration.",
         "operationId": "test_cycle_api_calibration_test_cycle_post",
         "parameters": [
           {
@@ -17233,7 +17233,7 @@
         ]
       },
       "post": {
-        "description": "Assign an inventory location.\n\nAdds database occupancy for an item without moving hardware. Side and zero-based\nshelf/cell indices identify the location. Occupied or reserved cells and incompatible\nbin state are rejected. The status stream overlays these database locations on the grid.",
+        "description": "Assign an inventory location.\n\nAdds database occupancy for an item without moving hardware. Side and zero-based\nshelf/cell indices identify the location. Occupied cells and incompatible bin state are\nrejected. Tray homes are usable while their tray is away; the tray's return then reports\nthe occupied home instead. The status stream overlays these database locations on the\ngrid.",
         "operationId": "add_item_location_api_storage_items__upca__locations_post",
         "parameters": [
           {
