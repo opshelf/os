@@ -35,6 +35,14 @@ DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
 # overshoot, so the stock 4000 counts (one rev) hides anything under one mpr.
 HOME_FOLLOWING_ERROR_MM = 10.0
 ALARM_DETECT_FOLLOWING_ERROR_BIT = 2
+# Y zeroes only after the homing trip is cleared and the drive has settled:
+# 0x21 against a latched following error keeps that error as a position offset.
+FOLLOWING_ERROR_REGISTER = 0x1010
+ZERO_SETTLE_MAX_FOLLOWING_ERROR = 200
+ZERO_SETTLE_TIMEOUT_S = 1.0
+ZERO_SETTLE_POLL_S = 0.02
+MOTION_STATUS_FAULT_BIT = 0
+MOTION_STATUS_RUNNING_BIT = 2
 # SO2 as the drive's own brake output. 0x24 is BRAKE with no inversion: the
 # output is open-collector common-anode, so asserted sinks the line, energises
 # the relay and releases the brake. 0xA4 inverts that. 0xA1 (inverted
@@ -1546,8 +1554,8 @@ class Motor():
         self._status = MotorStatus.STOPPED
         self._hard_stopped = False
 
-        # Homing parks in home(), after the zero write and move_config -- both
-        # are register writes with no motion, and both want the drive enabled.
+        # Homing parks in home(), after the trip clear and zero write -- register
+        # writes with no motion that want the drive enabled.
         if homing is False:
             await self._park()
 
@@ -1862,6 +1870,41 @@ class Motor():
             0x21,
         )
 
+    async def _read_following_error(self) -> int:
+        high, low = await self._controller.read_holding_register_block(
+            self._motor_id, FOLLOWING_ERROR_REGISTER, count=2
+        )
+        value = ((high & 0xFFFF) << 16) | (low & 0xFFFF)
+        return value - 0x1_0000_0000 if value & 0x8000_0000 else value
+
+    async def _clear_homing_trip(self) -> None:
+        """Clear the homing trip, then wait for no alarm, no motion and a small following error."""
+        await self.move_config()
+
+        deadline = time.monotonic() + ZERO_SETTLE_TIMEOUT_S
+        while True:
+            status = await self.get_param("Motion status")
+            alarm = await self.get_param("Current alarm")
+            following_error = await self._read_following_error()
+
+            settled = (
+                alarm == 0
+                and not status & (1 << MOTION_STATUS_FAULT_BIT)
+                and not status & (1 << MOTION_STATUS_RUNNING_BIT)
+                and abs(following_error) <= ZERO_SETTLE_MAX_FOLLOWING_ERROR
+            )
+            if settled:
+                return
+
+            if time.monotonic() > deadline:
+                raise MotorError(
+                    f"Motor {self._motor_id} did not settle before zeroing: "
+                    f"status=0x{status:04X}, alarm=0x{alarm:04X}, "
+                    f"following_error={following_error}"
+                )
+
+            await asyncio.sleep(ZERO_SETTLE_POLL_S)
+
     async def _set_and_verify_peak_current(self, value: int) -> None:
         peak_current = int(value)
         if peak_current <= 0:
@@ -2037,12 +2080,17 @@ class Motor():
                 self._on_move_complete(elapsed)
 
             if stop == MotorStatus.STOPPED:
+                is_y_axis = getattr(self._params, "motor_name", None) == "y_axis"
+                if is_y_axis:
+                    await self._clear_homing_trip()
+
                 try:
                     await self._set_zero_position()
                 except Exception as e:
                     raise MotorError(f"Failed to set home position as zero: {str(e)}") from e
 
-                await self.move_config()
+                if is_y_axis is False:
+                    await self.move_config()
                 await self._park()
 
                 self._is_homed = True
