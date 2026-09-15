@@ -97,17 +97,13 @@ async def test_power_cycle_request_cancellation_marks_needs_home() -> None:
 
 	mock_worker._robot.power_cycle_rail = AsyncMock(side_effect=_cut_and_hold)
 
-	with patch(
-		"openshelf_os_server.routers.robot._ensure_no_active_bin_workflow_mutation",
-		AsyncMock(return_value=None),
-	):
-		task = asyncio.create_task(
-			robot_router.power_cycle_rail("pwr_out0", worker=mock_worker, db=AsyncMock())
-		)
-		await called.wait()
-		task.cancel()
-		with pytest.raises(asyncio.CancelledError):
-			await task
+	task = asyncio.create_task(
+		robot_router.power_cycle_rail("pwr_out0", worker=mock_worker)
+	)
+	await called.wait()
+	task.cancel()
+	with pytest.raises(asyncio.CancelledError):
+		await task
 
 	assert called.is_set()
 	mock_worker.set_needs_home.assert_called_once_with(

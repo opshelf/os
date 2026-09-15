@@ -184,7 +184,9 @@ async def test_audit_duration_tracking(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_audit_error_response_keeps_cors_header(unauthenticated_client: AsyncClient) -> None:
+async def test_audit_error_response_keeps_cors_header(unauthenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+	# Keep this test-only route out of subsequent live-route/OpenAPI checks.
+	monkeypatch.setattr(app.router, "routes", list(app.router.routes))
 	path = "/api/test/audit-error"
 
 	if all(getattr(route, "path", None) != path for route in app.routes):

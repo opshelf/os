@@ -15,13 +15,16 @@ from ..database.models import User, Item, Role
 from ..core.auth import AuthService
 from ..core.permissions import has_permission
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+# Retain the existing header extraction behavior while documenting JSON login
+# accurately: this API does not implement an OAuth password grant.
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login/json", auto_error=False)
+oauth2_scheme.scheme_name = "UserBearer"
 RELAY_SERVICE_TOKEN_SHA256_ENV = "OPSHELF_RELAY_SERVICE_TOKEN_SHA256"
 
 
 def get_token_from_request(
 	bearer_token: Optional[str] = Depends(oauth2_scheme),
-	query_token: Optional[str] = Query(None, alias="token"),
+	query_token: Optional[str] = Query(None, alias="token", description="User access token for streaming/image clients. A bearer header takes precedence. Relay service credentials are header-only."),
 ) -> Optional[str]:
 	"""Extract token from Authorization header or query parameter."""
 	if bearer_token is not None:

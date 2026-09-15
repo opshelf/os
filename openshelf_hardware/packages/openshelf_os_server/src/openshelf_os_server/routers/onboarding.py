@@ -5,6 +5,7 @@ pending. Wi-Fi bootstrap routes are intentionally unauthenticated while that
 state is pending. Completing onboarding requires the newly created admin to
 authenticate.
 """
+from openshelf_os_server.documentation import response_docs
 import asyncio
 import os
 import uuid
@@ -123,31 +124,86 @@ async def require_first_run(db: AsyncSession = Depends(get_db)) -> None:
 		)
 
 
-@router.get("/status", response_model=OnboardingStatus)
+@router.get(
+    "/status",
+    response_model=OnboardingStatus,
+    summary="Read first-run setup state",
+    responses=response_docs(),
+)
 async def get_onboarding_status(db: AsyncSession = Depends(get_db)) -> OnboardingStatus:
+	"""Read first-run setup state.
+
+	Public endpoint indicating whether onboarding is pending. The check ensures onboarding
+	state exists; it is not a robot health check.
+	"""
 	return OnboardingStatus(needs_onboarding=await ensure_onboarding_state(db) == ONBOARDING_PENDING)
 
 
-@router.get("/wifi/status", response_model=wifi.WifiStatus, dependencies=[Depends(require_first_run)])
+@router.get(
+    "/wifi/status",
+    response_model=wifi.WifiStatus,
+    dependencies=[Depends(require_first_run)],
+    summary="Read Wi-Fi during first-run setup",
+    responses=response_docs(errors=(403,)),
+)
 async def get_wifi_status() -> wifi.WifiStatus:
+	"""Read Wi-Fi during first-run setup.
+
+	Public only while onboarding is pending. Returns the active wireless connection state;
+	after setup, use the authenticated Wi-Fi endpoint.
+	"""
 	return await wifi.active_status()
 
 
-@router.get("/wifi/networks", response_model=wifi.WifiNetworkList, dependencies=[Depends(require_first_run)])
+@router.get(
+    "/wifi/networks",
+    response_model=wifi.WifiNetworkList,
+    dependencies=[Depends(require_first_run)],
+    summary="Scan Wi-Fi during first-run setup",
+    responses=response_docs(errors=(403,)),
+)
 async def list_wifi_networks() -> wifi.WifiNetworkList:
+	"""Scan Wi-Fi during first-run setup.
+
+	Public only while onboarding is pending. Scans for wireless networks; after setup, use
+	the authenticated Wi-Fi endpoint.
+	"""
 	return await wifi.scan_networks()
 
 
-@router.post("/wifi/connect", response_model=wifi.WifiConnectResponse, dependencies=[Depends(require_first_run)])
+@router.post(
+    "/wifi/connect",
+    response_model=wifi.WifiConnectResponse,
+    dependencies=[Depends(require_first_run)],
+    summary="Connect Wi-Fi during first-run setup",
+    responses=response_docs(errors=(403,)),
+)
 async def connect_wifi(request: wifi.WifiConnectRequest) -> wifi.WifiConnectResponse:
+	"""Connect Wi-Fi during first-run setup.
+
+	Public only while onboarding is pending. Activates the supplied connection and persists
+	it on success. Changing the device network can disconnect this client; failures roll
+	back the pending connection.
+	"""
 	return await wifi.perform_connect(request.ssid, request.password)
 
 
-@router.post("/admin-user", response_model=UserResponse)
+@router.post(
+    "/admin-user",
+    response_model=UserResponse,
+    summary="Create the first administrator",
+    responses=response_docs(errors=(403, 409, 503)),
+)
 async def create_admin_user(
 	request: AdminUserCreate,
 	db: AsyncSession = Depends(get_db)
 ) -> UserResponse:
+	"""Create the first administrator.
+
+	Public only while onboarding is pending and no non-system administrator exists. Creates
+	the initial administrator using the provisioned admin role. Returns `409` when already
+	created and `403` after onboarding is complete.
+	"""
 	async with _admin_user_lock:
 		if await ensure_onboarding_state(db) == ONBOARDING_COMPLETED:
 			raise HTTPException(
@@ -195,10 +251,17 @@ async def create_admin_user(
 
 
 @router.post(
-	"/complete",
-	response_model=OnboardingStatus,
-	dependencies=[Depends(require_permissions("users:write"))],
+    "/complete",
+    response_model=OnboardingStatus,
+    dependencies=[Depends(require_permissions("users:write"))],
+    summary="Complete first-run setup",
+    responses=response_docs(errors=(401, 403)),
 )
 async def complete_onboarding() -> OnboardingStatus:
+	"""Complete first-run setup.
+
+	Requires `users:write`. Marks onboarding complete, disabling the public first-run
+	mutation endpoints. Returns `needs_onboarding=false`.
+	"""
 	_write_onboarding_state(ONBOARDING_COMPLETED)
 	return OnboardingStatus(needs_onboarding=False)
