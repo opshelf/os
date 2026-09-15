@@ -1215,18 +1215,40 @@ class Robot:
         if isinstance(item_payload, dict):
             provided_location = item_payload.get("location")
 
+        reserved_locations = getattr(self, "_reserved_cell_locations", set())
         location: StorageModuleCellLocation | None = None
         if provided_location is not None:
-            parsed_location = StorageModuleCellLocation(
-                side=provided_location.get("side", "L"),
-                shelf_idx=int(provided_location.get("shelf_idx", 0)),
-                cell_idx=int(provided_location.get("cell_idx", 0)),
-            )
-            if self._demo_cell_map is None or (
+            try:
+                parsed_location = StorageModuleCellLocation(
+                    side=provided_location.get("side"),
+                    shelf_idx=int(provided_location.get("shelf_idx", 0)),
+                    cell_idx=int(provided_location.get("cell_idx", 0)),
+                )
+            except (AttributeError, TypeError, ValueError):
+                return RobotCommandError(command=command_name, error="Invalid storage location provided")
+
+            is_reserved = (
                 parsed_location.side.value,
                 parsed_location.shelf_idx,
                 parsed_location.cell_idx,
-            ) in getattr(self, "_reserved_cell_locations", set()):
+            ) in reserved_locations
+
+            # Demo mode keeps its barcode-to-cell mapping for ordinary items. Reserved bin
+            # homes stay trusted explicit destinations for the bin workflow, and a tray
+            # return targets a workflow-chosen home rather than a client-requested cell, so
+            # the availability and fit checks apply only to ordinary explicit stores.
+            if self._demo_cell_map is None or is_reserved:
+                if is_reserved is False and tray is False:
+                    cell = self._grid.get_cell_if_present(parsed_location)
+                    if cell is None:
+                        return RobotCommandError(command=command_name, error="Requested storage cell does not exist")
+                    if cell.status != CellStatus.AVAILABLE:
+                        return RobotCommandError(
+                            command=command_name,
+                            error=f"Requested storage cell is {cell.status.value}",
+                        )
+                    if self._grid.cell_fits_item(cell, item) is False:
+                        return RobotCommandError(command=command_name, error="Item does not fit the requested storage cell")
                 location = parsed_location
 
         if location is None and self._demo_cell_map is not None:
@@ -1240,7 +1262,7 @@ class Robot:
                 demo_location.side.value,
                 demo_location.shelf_idx,
                 demo_location.cell_idx,
-            ) in getattr(self, "_reserved_cell_locations", set()):
+            ) in reserved_locations:
                 return RobotCommandError(
                     command=command_name,
                     error="Demo storage location is reserved",
@@ -1249,7 +1271,7 @@ class Robot:
         elif location is None:
             location = self._grid.find_best_slot_for_item(
                 item,
-                excluded_locations=getattr(self, "_reserved_cell_locations", set()),
+                excluded_locations=reserved_locations,
             )
 
         if not location:
