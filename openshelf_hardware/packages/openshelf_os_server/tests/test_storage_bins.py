@@ -514,7 +514,7 @@ async def test_stale_or_direct_robot_results_do_not_change_active_workflow() -> 
 
 
 @pytest.mark.anyio
-async def test_store_target_is_reserved_from_item_and_location_mutations() -> None:
+async def test_parked_tray_interaction_allows_item_and_location_mutations() -> None:
     current_user = SimpleNamespace(role=SimpleNamespace(name="admin"), access_level_id=None)
     async with AsyncSessionLocal() as db:
         item = await StorageService(db).create_item(
@@ -533,30 +533,42 @@ async def test_store_target_is_reserved_from_item_and_location_mutations() -> No
             )
         )
         await db.commit()
-        workflow = await BinStorageService(db).begin("store", item, None)
+        service = BinStorageService(db)
+        workflow = await service.begin("store", item, None)
         assert workflow is not None
+        await service.transition(workflow, "awaiting_operator")
 
-        with pytest.raises(HTTPException, match="reserved by an active"):
-            await storage_router.create_item(
-                storage_router.ItemCreate(upca=item.upca, name="Changed"), db, current_user
-            )
-        with pytest.raises(HTTPException, match="reserved by an active"):
-            await storage_router.update_item(
-                item.upca, storage_router.ItemUpdate(name="Changed"), db, current_user
-            )
-        with pytest.raises(HTTPException, match="reserved by an active"):
+        # A parked tray holds the item for its own completion, not against every edit.
+        await storage_router.create_item(
+            storage_router.ItemCreate(
+                upca=item.upca,
+                name="Changed",
+                dimensions={"width": 10, "height": 10, "length": 10},
+            ),
+            db,
+            current_user,
+        )
+        await storage_router.update_item(
+            item.upca, storage_router.ItemUpdate(name="Changed again"), db, current_user
+        )
+        await storage_router.add_item_location(
+            item.upca,
+            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
+            db,
+            current_user,
+        )
+
+        # Completing the interaction is what rejects the conflicting direct location.
+        with pytest.raises(BinWorkflowConflict, match="direct storage location"):
+            await service.close(workflow)
+
+        await storage_router.remove_item_location(item.upca, "left_module", 0, 0, db, current_user)
+        await service.close(workflow)
+        assert workflow.state == "completed"
+
+        # Deletion stays out of reach once the item is a tray member with retained history.
+        with pytest.raises(HTTPException, match="Retrieve the item before deleting it"):
             await storage_router.delete_item(item.upca, db)
-        with pytest.raises(HTTPException, match="reserved by an active"):
-            await storage_router.add_item_location(
-                item.upca,
-                storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
-                db,
-                current_user,
-            )
-        with pytest.raises(HTTPException, match="reserved by an active"):
-            await storage_router.remove_item_location(
-                item.upca, "left_module", 0, 0, db, current_user
-            )
 
 
 @pytest.mark.anyio
@@ -1033,13 +1045,7 @@ async def test_same_item_cannot_checkout_two_trays():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("mode", [OperatingMode.mock, OperatingMode.development])
-async def test_direct_store_rejects_active_tray_target_in_both_modes(monkeypatch, mode):
-    runtime = SimpleNamespace(replay=AsyncMock(return_value=None), enqueue=AsyncMock())
-    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: mode)
-    monkeypatch.setattr(robot_router, "get_mock_robot_runtime", lambda: runtime)
-    monkeypatch.setattr(robot_router, "replay_robot_command", AsyncMock(return_value=None))
-    monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
+async def test_direct_store_reserves_only_tray_members(monkeypatch):
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
     async with AsyncSessionLocal() as db:
         await setup_trays(db)
@@ -1048,39 +1054,42 @@ async def test_direct_store_rejects_active_tray_target_in_both_modes(monkeypatch
         )
         service = BinStorageService(db)
         w = await service.begin("store", target, None)
+        assert w is not None
         await service.transition(w, "awaiting_operator")
-        with pytest.raises(HTTPException) as rejected:
-            await robot_router.robot_commands(
-                StoreItemCommand(item={"upca": target.upca}),
-                worker=FakeWorker(), current_user=SimpleNamespace(id=1), db=db,
-            )
-        assert rejected.value.status_code == 409
-        assert rejected.value.detail["code"] == "reserved_tray_item"
-        runtime.enqueue.assert_not_awaited()
-        # Another item remains eligible while this tray is outside.
+        # A parked interaction does not reserve its item, and unrelated items stay eligible.
+        await robot_router._validate_direct_store_reservation({"upca": target.upca}, db)
         await robot_router._validate_direct_store_reservation({"upca": "123456788078"}, db)
         await service.close(w)
         with pytest.raises(HTTPException) as stored:
             await robot_router._validate_direct_store_reservation({"upca": target.upca}, db)
         assert stored.value.status_code == 409
+        assert stored.value.detail["code"] == "reserved_tray_item"
 
 
 @pytest.mark.anyio
-async def test_direct_store_rejects_return_candidate_without_membership(monkeypatch):
+async def test_direct_store_allows_return_candidate_until_confirmation(monkeypatch):
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
     async with AsyncSessionLocal() as db:
         items, trays = await setup_trays(db)
+        upca = items[0].upca
+        item_id = items[0].id
         service = BinStorageService(db)
         checkout = await service.begin("retrieve", items[0], None)
         await service.transition(checkout, "awaiting_operator")
         await service.close(checkout)
-        assert await service.item_bin(items[0].id) is None
+        assert await service.item_bin(item_id) is None
         returned = await service.begin_return(trays[0].barcode)
-        with pytest.raises(HTTPException) as rejected:
-            await robot_router._validate_direct_store_reservation({"upca": items[0].upca}, db)
-        assert rejected.value.detail["code"] == "reserved_tray_item"
-        await service.close(returned)
-        await robot_router._validate_direct_store_reservation({"upca": items[0].upca}, db)
+        returned_id = returned.id
+        # The open return dialog names the candidate but does not reserve it for storage.
+        await robot_router._validate_direct_store_reservation({"upca": upca}, db)
+        await StorageService(db).add_item_location(upca, "left_module", shelf_idx=5, cell_idx=0)
+        # Confirming the return, not the open dialog, rejects the conflicting location.
+        with pytest.raises(BinWorkflowConflict, match="direct storage location"):
+            await service.prepare_return(returned, [item_id])
+        await StorageService(db).remove_item_location(upca, "left_module", 5, 0)
+        confirmed = await db.get(StorageBinWorkflow, returned_id)
+        assert confirmed is not None
+        assert await service.prepare_return(confirmed, [item_id]) is True
 
 
 @pytest.mark.anyio

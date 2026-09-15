@@ -525,10 +525,9 @@ async def _validate_mock_retrieve(
     dependencies=[Depends(get_relay_or_current_user)],
     response_model=CommandAcceptedResponse,
     responses=response_docs(
-        errors=(400, 401, 403, 404, 409, 422, 423, 429, 503),
+        errors=(400, 401, 403, 404, 409, 422, 429, 503),
         existing={
             409: {"description": "Idempotency conflict or command precondition failed"},
-            423: {"description": "A multi-item bin workflow currently owns the robot"},
             429: {
                 "description": "The active command queue is full",
                 "headers": {"Retry-After": {"schema": {"type": "string"}}},
@@ -920,7 +919,7 @@ async def stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -
         Depends(check_robot_enabled),
     ],
     summary="Clear queued robot commands",
-    responses=response_docs(errors=(401, 403, 409, 423, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 async def clear_robot_commands(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -941,7 +940,7 @@ async def clear_robot_commands(
     "/gripper",
     dependencies=[Depends(get_current_user)],
     summary="Grip or release directly",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def control_gripper(
     state: Literal["grip", "release"],
@@ -951,8 +950,8 @@ async def control_gripper(
     """Grip or release directly.
 
     Performs an immediate authenticated gripper operation using the `state` query parameter.
-    Changes physical hardware. Blocked while a bin workflow or laser auto-calibration owns
-    the robot.
+    Changes physical hardware. Blocked while laser auto-calibration runs or another operation
+    holds the manual-motion guard.
     """
     await _ensure_laser_auto_calibration_not_running()
 
@@ -1199,7 +1198,7 @@ async def get_scale_calibration_params(
     "/debug/scale/calibration/params",
     dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
     summary="Write scale calibration parameters",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 404, 423, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 404, 503)),
 )
 async def set_scale_calibration_params(
     request: ScaleCalibrationParamsRequest,
@@ -1239,7 +1238,7 @@ async def set_scale_calibration_params(
     "/debug/scale/calibration/zero",
     dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
     summary="Calibrate the scale zero point",
-    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 404, 423, 503)),
+    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 404, 503)),
 )
 async def calibrate_scale_zero(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1272,7 +1271,7 @@ async def calibrate_scale_zero(
     "/debug/scale/calibration/weight",
     dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
     summary="Calibrate with a known weight",
-    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 404, 423, 503)),
+    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 404, 503)),
 )
 async def calibrate_scale_weight(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1305,7 +1304,7 @@ async def calibrate_scale_weight(
     "/debug/scale/calibration/tare",
     dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
     summary="Tare the physical scale",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 404, 423, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 404, 503)),
 )
 async def scale_tare(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1439,7 +1438,7 @@ async def clear_motor_alarm(
     "/debug/motors/{motor_name}/home",
     dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
     summary="Home one motor",
-    responses=response_docs(model=MotorOperationResponse, errors=(400, 401, 403, 404, 423, 503)),
+    responses=response_docs(model=MotorOperationResponse, errors=(400, 401, 403, 404, 503)),
 )
 async def home_motor(
     motor_name: str,
@@ -1451,8 +1450,8 @@ async def home_motor(
 
     Runs the selected motor's homing operation with manual-motion guards. This moves
     hardware and may also position the tool for safe rotation. `skip_pre_home_approach=true`
-    is restricted to the Y axis in development mode. Unknown names return `404`; bin
-    workflows block motion.
+    is restricted to the Y axis in development mode. Unknown names return `404`; motion that
+    another operation already holds returns `409`.
     """
     if skip_pre_home_approach is True:
         if get_operating_mode() != OperatingMode.development:
@@ -1661,7 +1660,7 @@ async def probe_motors(
     "/debug/motors/{motor_name}/move",
     dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
     summary="Move one motor to a position",
-    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 423, 503)),
+    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 503)),
 )
 async def move_motor(
     motor_name: str,
@@ -1672,8 +1671,8 @@ async def move_motor(
     """Move one motor to a position.
 
     Moves the selected motor to `position_mm` using the manual-motion guard. Rotation may
-    require associated stage positioning. Unknown names return `404`; active bin workflows
-    block motion; hardware failures return `503`.
+    require associated stage positioning. Unknown names return `404`; motion that another
+    operation already holds returns `409`; hardware failures return `503`.
     """
     motor = worker._robot._get_motor_by_name(motor_name)
 
@@ -1712,7 +1711,7 @@ async def move_motor(
     "/debug/door",
     dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
     summary="Operate the IO box door",
-    responses=response_docs(model=DoorOperationResponse, errors=(401, 423, 503)),
+    responses=response_docs(model=DoorOperationResponse, errors=(401, 503)),
 )
 async def control_door(
     action: Literal["open", "close", "home"],

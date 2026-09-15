@@ -7122,16 +7122,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -7221,16 +7211,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -7322,16 +7302,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -7421,16 +7391,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -7542,16 +7502,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -7662,16 +7612,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -7771,16 +7711,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -7884,16 +7814,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -8005,16 +7925,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -8124,16 +8034,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "500": {
             "content": {
@@ -8255,16 +8155,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "500": {
             "content": {
               "application/json": {
@@ -8365,16 +8255,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -8465,16 +8345,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -8564,16 +8434,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -8805,16 +8665,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -8925,16 +8775,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9035,16 +8875,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9134,16 +8964,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -9244,16 +9064,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9281,7 +9091,7 @@
     },
     "/api/calibration/rotation/save": {
       "post": {
-        "description": "Save tool orientation positions.\n\nPersists the front/back rotation values in the active configuration. An active bin\nworkflow blocks the change. Test rotation separately before saving.",
+        "description": "Save tool orientation positions.\n\nPersists the front/back rotation values in the active configuration. Test rotation\nseparately before saving.",
         "operationId": "save_rotation_angles_api_calibration_rotation_save_post",
         "parameters": [
           {
@@ -9354,16 +9164,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9391,7 +9191,7 @@
     },
     "/api/calibration/save": {
       "post": {
-        "description": "Save a cell calibration point.\n\nPersists coordinates and optional status/manual marker for the selected cell. Configured\ntray homes allow coordinate/manual-marker updates while preserving their status and\nreservation. Invalid status returns `400`; an active workflow blocks geometry changes.",
+        "description": "Save a cell calibration point.\n\nPersists coordinates and optional status/manual marker for the selected cell. Configured\ntray homes allow coordinate/manual-marker updates while preserving their status and\nreservation. Invalid status returns `400`.",
         "operationId": "save_calibration_api_calibration_save_post",
         "parameters": [
           {
@@ -9473,16 +9273,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -9574,16 +9364,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9611,7 +9391,7 @@
     },
     "/api/calibration/shelf/save": {
       "post": {
-        "description": "Save shelf stage extensions.\n\nPersists front/back extension distances after checking the configured stage limit. An\nactive bin workflow blocks the change. Does not execute a test move.",
+        "description": "Save shelf stage extensions.\n\nPersists front/back extension distances after checking the configured stage limit. Does\nnot execute a test move.",
         "operationId": "save_shelf_stage_extension_api_calibration_shelf_save_post",
         "parameters": [
           {
@@ -9693,16 +9473,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -9804,16 +9574,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -9904,16 +9664,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -10003,16 +9753,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -10142,16 +9882,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -10261,16 +9991,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "500": {
             "content": {
@@ -10781,16 +10501,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -10881,16 +10591,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -10980,16 +10680,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -12558,16 +12248,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -12732,16 +12412,6 @@
               }
             },
             "description": "Request validation failed"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "A multi-item bin workflow currently owns the robot"
           },
           "429": {
             "content": {
@@ -12956,16 +12626,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -13363,7 +13023,7 @@
     },
     "/api/robot/debug/motors/{motor_name}/home": {
       "post": {
-        "description": "Home one motor.\n\nRuns the selected motor's homing operation with manual-motion guards. This moves\nhardware and may also position the tool for safe rotation. `skip_pre_home_approach=true`\nis restricted to the Y axis in development mode. Unknown names return `404`; bin\nworkflows block motion.",
+        "description": "Home one motor.\n\nRuns the selected motor's homing operation with manual-motion guards. This moves\nhardware and may also position the tool for safe rotation. `skip_pre_home_approach=true`\nis restricted to the Y axis in development mode. Unknown names return `404`; motion that\nanother operation already holds returns `409`.",
         "operationId": "home_motor_api_robot_debug_motors__motor_name__home_post",
         "parameters": [
           {
@@ -13469,16 +13129,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -13506,7 +13156,7 @@
     },
     "/api/robot/debug/motors/{motor_name}/move": {
       "post": {
-        "description": "Move one motor to a position.\n\nMoves the selected motor to `position_mm` using the manual-motion guard. Rotation may\nrequire associated stage positioning. Unknown names return `404`; active bin workflows\nblock motion; hardware failures return `503`.",
+        "description": "Move one motor to a position.\n\nMoves the selected motor to `position_mm` using the manual-motion guard. Rotation may\nrequire associated stage positioning. Unknown names return `404`; motion that another\noperation already holds returns `409`; hardware failures return `503`.",
         "operationId": "move_motor_api_robot_debug_motors__motor_name__move_post",
         "parameters": [
           {
@@ -13591,16 +13241,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -14084,16 +13724,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -14280,16 +13910,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -14383,16 +14003,6 @@
             },
             "description": "Validation Error"
           },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
-          },
           "503": {
             "content": {
               "application/json": {
@@ -14485,16 +14095,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -14788,7 +14388,7 @@
     },
     "/api/robot/gripper": {
       "post": {
-        "description": "Grip or release directly.\n\nPerforms an immediate authenticated gripper operation using the `state` query parameter.\nChanges physical hardware. Blocked while a bin workflow or laser auto-calibration owns\nthe robot.",
+        "description": "Grip or release directly.\n\nPerforms an immediate authenticated gripper operation using the `state` query parameter.\nChanges physical hardware. Blocked while laser auto-calibration runs or another operation\nholds the manual-motion guard.",
         "operationId": "control_gripper_api_robot_gripper_post",
         "parameters": [
           {
@@ -14863,16 +14463,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           },
           "503": {
             "content": {
@@ -15990,7 +15580,7 @@
     },
     "/api/storage/bin-workflows": {
       "post": {
-        "description": "Start a bin storage workflow.\n\nChooses storage for the requested item and operation. A `storage_mode=direct` response\nwith `workflow=null` means no tray workflow was started; submit an ordinary command\nseparately. A tray result starts delivery to the IO box. Retrieval\nrequires access to every item in that bin. Clear the IO box first; conflicts return\n`409` or `423`.",
+        "description": "Start a bin storage workflow.\n\nChooses storage for the requested item and operation. A `storage_mode=direct` response\nwith `workflow=null` means no tray workflow was started; submit an ordinary command\nseparately. A tray result starts delivery to the IO box. Retrieval\nrequires access to every item in that bin. Clear the IO box first; a tray or item already\nin use, or an unavailable robot worker, returns `409`.",
         "operationId": "create_bin_workflow_api_storage_bin_workflows_post",
         "parameters": [
           {
@@ -16085,16 +15675,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "423": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "An active workflow owns the robot"
           }
         },
         "security": [
@@ -17076,7 +16656,7 @@
         ]
       },
       "post": {
-        "description": "Create or update an inventory record.\n\nCreates a record or updates the existing UPCA. This does not move the item or assign\nphysical occupancy. New records require valid dimensions; values are millimeters and\nmasses are grams. Both `metadata` and `item_metadata` inputs are accepted; responses use\n`metadata`.\n\nTo enroll an opened container, supply `tare_weight`, `net_weight`, and optionally\n`full_net_weight`; gross becomes tare plus net. Do not supply both `weight` and\n`net_weight`, even if one is null. See the storage group for mass persistence rules.\nPrefer PUT for partial edits to existing records. Reserved bin barcodes, active\nworkflows, and forbidden changes to bin-managed items return `409`.",
+        "description": "Create or update an inventory record.\n\nCreates a record or updates the existing UPCA. This does not move the item or assign\nphysical occupancy. New records require valid dimensions; values are millimeters and\nmasses are grams. Both `metadata` and `item_metadata` inputs are accepted; responses use\n`metadata`.\n\nTo enroll an opened container, supply `tare_weight`, `net_weight`, and optionally\n`full_net_weight`; gross becomes tare plus net. Do not supply both `weight` and\n`net_weight`, even if one is null. See the storage group for mass persistence rules.\nPrefer PUT for partial edits to existing records. Reserved bin barcodes and forbidden\nchanges to bin-managed items return `409`. A tray interaction holding the item does not\nblock the edit; conflicting state is rejected when that interaction completes.",
         "operationId": "create_item_api_storage_items_post",
         "parameters": [
           {
@@ -17186,7 +16766,7 @@
     },
     "/api/storage/items/{upca}": {
       "delete": {
-        "description": "Delete an inventory record.\n\nDeletes the item and its database location records; it does not physically retrieve it.\nBin membership and active workflows block deletion. Use this low-level endpoint only\nafter reconciling physical occupancy. A missing record returns `404`.",
+        "description": "Delete an inventory record.\n\nDeletes the item and its database location records; it does not physically retrieve it.\nBin membership and retained workflow history block deletion. Use this low-level endpoint\nonly after reconciling physical occupancy. A missing record returns `404`.",
         "operationId": "delete_item_api_storage_items__upca__delete",
         "parameters": [
           {
@@ -17397,7 +16977,7 @@
         ]
       },
       "put": {
-        "description": "Update selected inventory fields.\n\nOmitted mass fields retain their values. `net_weight=null` clears gross and derived net;\n`tare_weight=null` or `full_net_weight=null` clears that reference. Legacy `weight=null`\ndoes not clear gross on PUT. Supplying both `weight` and `net_weight` returns `422`.\nSetting net requires a known tare, either stored or supplied.\n\nChanging tare alone preserves gross and recomputes net. Metadata replaces the object\nwhen provided. Bin-managed dimensions/access changes require retrieval first; active\nworkflows reserve their items. Returns `404` for an absent UPCA. These edits do not move\nhardware.",
+        "description": "Update selected inventory fields.\n\nOmitted mass fields retain their values. `net_weight=null` clears gross and derived net;\n`tare_weight=null` or `full_net_weight=null` clears that reference. Legacy `weight=null`\ndoes not clear gross on PUT. Supplying both `weight` and `net_weight` returns `422`.\nSetting net requires a known tare, either stored or supplied.\n\nChanging tare alone preserves gross and recomputes net. Metadata replaces the object\nwhen provided. Bin-managed dimensions/access changes require retrieval first. Returns\n`404` for an absent UPCA. These edits do not move\nhardware.",
         "operationId": "update_item_api_storage_items__upca__put",
         "parameters": [
           {
