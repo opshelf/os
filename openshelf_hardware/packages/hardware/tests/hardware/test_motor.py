@@ -1397,6 +1397,25 @@ async def test_y_axis_home_fails_when_following_error_limit_cannot_be_restored(m
 
 
 @pytest.mark.asyncio
+async def test_y_axis_home_restores_peak_current_even_when_following_error_restore_fails(mock_controller):
+    motor = y_home_motor(mock_controller)
+    registers = echo_registers(mock_controller, {0x0159: 0x24})
+    write = mock_controller.write_single_register.side_effect
+
+    async def refuse_following_error_restore(unit, address, value):
+        if (address, value) != (0x000B, 4000):
+            await write(unit, address, value)
+
+    mock_controller.write_single_register.side_effect = refuse_following_error_restore
+
+    with pytest.raises(MotorConfigError, match="following error limit"):
+        await motor.home(homing_peak_current=5)
+
+    assert call(1, 0x0191, 5) in mock_controller.write_single_register.await_args_list
+    assert registers[0x0191] == 10  # restored to Ip, not left at the homing override
+
+
+@pytest.mark.asyncio
 async def test_non_y_axis_home_leaves_following_error_trip_alone(mock_controller):
     motor = Motor(mock_controller, make_motor_params(motor_name="z_axis"))
     motor.clear_alarm = AsyncMock()
@@ -1524,11 +1543,14 @@ async def test_fault_and_timeout_leave_the_axis_energised(mock_controller, finis
 
 
 @pytest.mark.asyncio
-async def test_disable_warns_when_the_drive_stays_enabled(mock_controller, caplog):
+async def test_disable_warns_when_the_drive_stays_enabled(mock_controller, caplog, monkeypatch):
     """Pr0.07=0 falls back to the IO enable, so the result is read, not assumed."""
+    monkeypatch.setattr("hardware.motor.DISABLE_CONFIRM_MARGIN_S", 0.0)
     motor = Motor(
         mock_controller,
-        make_motor_params(motor_name="y_axis", brake_output_function=0x24),
+        make_motor_params(
+            motor_name="y_axis", brake_output_function=0x24, brake_engagement_delay_ms=0
+        ),
     )
     # Motion status with the enable bit still set.
     mock_controller.read_holding_registers.return_value = 1 << 1
@@ -1536,6 +1558,23 @@ async def test_disable_warns_when_the_drive_stays_enabled(mock_controller, caplo
     await motor.disable()
 
     assert "still reports enabled" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_disable_is_quiet_while_the_drive_holds_through_brake_engagement(mock_controller, caplog):
+    """The drive keeps the enable bit for Pr4.20 while the brake sets."""
+    motor = Motor(
+        mock_controller,
+        make_motor_params(
+            motor_name="y_axis", brake_output_function=0x24, brake_engagement_delay_ms=100
+        ),
+    )
+    mock_controller.read_holding_registers.side_effect = [1 << 1, 1 << 1, 1 << 1, 0]
+
+    await motor.disable()
+
+    assert "still reports enabled" not in caplog.text
+    assert mock_controller.read_holding_registers.await_count == 4
 
 
 @pytest.mark.asyncio
