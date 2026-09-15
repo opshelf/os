@@ -27,7 +27,7 @@ from ..database.models import (
     StorageBinWorkflow,
     User,
 )
-from ..core.bin_storage import BinStorageService, BinWorkflowConflict, ensure_worker_homed_for_bin_motion, ensure_worker_queue_empty_for_bin_start, is_io_box_occupied, is_reserved_bin_barcode, is_reserved_bin_location
+from ..core.bin_storage import BinStorageService, BinWorkflowConflict, ensure_worker_homed_for_bin_motion, ensure_worker_queue_empty_for_bin_start, is_io_box_occupied, is_reserved_bin_barcode
 from ..core.mock_robot import get_mock_robot_runtime
 from ..core.storage import StorageService
 from ..core.validation import CellOccupiedError, ValidationError
@@ -924,8 +924,10 @@ async def add_item_location(
     """Assign an inventory location.
 
     Adds database occupancy for an item without moving hardware. Side and zero-based
-    shelf/cell indices identify the location. Occupied or reserved cells and incompatible
-    bin state are rejected. The status stream overlays these database locations on the grid.
+    shelf/cell indices identify the location. Occupied cells and incompatible bin state are
+    rejected. Tray homes are usable while their tray is away; the tray's return then reports
+    the occupied home instead. The status stream overlays these database locations on the
+    grid.
     """
     storage_service = StorageService(session)
 
@@ -935,11 +937,6 @@ async def add_item_location(
     bin_service = BinStorageService(session)
     if await bin_service.item_bin(db_item.id) is not None:
         raise HTTPException(status_code=409, detail="Item is stored in a bin")
-
-    if await is_reserved_bin_location(
-        (location.side.value, location.shelf_idx, location.cell_idx), session
-    ):
-        raise HTTPException(status_code=409, detail="Cell is reserved as a storage bin home")
 
     try:
         storage_location = await storage_service.add_item_location(

@@ -85,8 +85,6 @@ def build_worker(grid: StorageGrid):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reserved", [False, True])
 async def test_quick_test_picks_and_places_selected_cell(client, monkeypatch, reserved) -> None:
-	from openshelf_os_server.routers import calibration
-	monkeypatch.setattr(calibration, "is_reserved_bin_location", AsyncMock(return_value=reserved))
 	grid = build_grid(is_occupied=reserved)
 	original_cell = grid.left_module[0].cells[0].model_copy(deep=True)
 	worker = build_worker(grid)

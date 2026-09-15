@@ -16,8 +16,6 @@ from hardware.exceptions import MotorError as HardwareMotorError
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from openshelf_os_server.core.robot import get_robot_worker
 from openshelf_os_server.core.manual_motion import manual_motion_guard
-from openshelf_os_server.core.bin_storage import reserved_bin_locations
-from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.routers.auth_deps import get_current_user
@@ -73,38 +71,6 @@ def _build_cell_list(robot) -> list[tuple[StorageModuleCellLocation, AxisCoordin
 		cells.append((location, coord, nudge))
 
 	return cells
-
-
-async def _ensure_demo_cells_are_not_reserved(
-	robot,
-	cells: list[tuple[StorageModuleCellLocation, AxisCoordinate, Optional[float]]],
-) -> None:
-	"""Reject demo mappings that target a server- or runtime-reserved bin home."""
-	mapped_locations = {
-		(location.side.value, location.shelf_idx, location.cell_idx)
-		for location, _, _ in cells
-	}
-	runtime_reserved: set[tuple[str, int, int]] = set()
-	robot_reservations: object = getattr(robot, "_reserved_cell_locations", set())
-	if isinstance(robot_reservations, set):
-		for reservation in robot_reservations:
-			if (
-				isinstance(reservation, tuple)
-				and len(reservation) == 3
-				and isinstance(reservation[0], str)
-				and isinstance(reservation[1], int)
-				and isinstance(reservation[2], int)
-			):
-				runtime_reserved.add(reservation)
-
-	async with AsyncSessionLocal() as session:
-		server_reserved = await reserved_bin_locations(session)
-
-	if mapped_locations.isdisjoint(server_reserved | runtime_reserved) is False:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Demo cell map includes a reserved storage bin home",
-		)
 
 
 async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, AxisCoordinate, Optional[float]]]) -> None:
@@ -188,9 +154,6 @@ async def start_demo_cycle() -> SuccessResponse:
 	tool = robot._tool
 
 	async with manual_motion_guard("demo_cycle_start", worker=worker):
-		# Resolve tray-home reservations under the same manual-motion guard that
-		# serializes bin workflow starts with demo startup.
-		await _ensure_demo_cells_are_not_reserved(robot, cells)
 		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 
 		_stop_event = asyncio.Event()
