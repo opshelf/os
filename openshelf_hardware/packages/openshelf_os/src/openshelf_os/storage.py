@@ -281,6 +281,20 @@ class StorageGrid(BaseModel):
 
 		return shelf.get_cell_location(location.cell_idx)
 
+	def get_cell_if_present(self, location: StorageModuleCellLocation) -> Optional[Cell]:
+		try:
+			return self.get_cell(location)
+		except IndexError:
+			return None
+
+	@staticmethod
+	def cell_fits_item(cell: Cell, item: CellItem) -> bool:
+		return (
+			cell.dimensions.width >= item.dimensions.width
+			and cell.dimensions.length >= item.dimensions.length
+			and cell.dimensions.height >= item.dimensions.height
+		)
+
 	def store_item(self, location: StorageModuleCellLocation, item: Optional[CellItem]) -> None:
 		cell = self.get_cell(location)
 
@@ -375,11 +389,7 @@ class StorageGrid(BaseModel):
 			for cell in shelf.cells:
 				if (StorageModuleSide.LEFT.value, shelf.shelf_idx, cell.cell_idx) in excluded_locations:
 					continue
-				if cell.status == CellStatus.AVAILABLE and (
-					cell.dimensions.width >= item.dimensions.width
-					and cell.dimensions.length >= item.dimensions.length
-					and cell.dimensions.height >= item.dimensions.height
-				):
+				if cell.status == CellStatus.AVAILABLE and self.cell_fits_item(cell, item):
 					unused_volume = (
 						cell.dimensions.width * cell.dimensions.length * cell.dimensions.height
 						- item.dimensions.width * item.dimensions.length * item.dimensions.height
@@ -408,11 +418,7 @@ class StorageGrid(BaseModel):
 			for cell in shelf.cells:
 				if (StorageModuleSide.RIGHT.value, shelf.shelf_idx, cell.cell_idx) in excluded_locations:
 					continue
-				if cell.status == CellStatus.AVAILABLE and (
-					cell.dimensions.width >= item.dimensions.width
-					and cell.dimensions.length >= item.dimensions.length
-					and cell.dimensions.height >= item.dimensions.height
-				):
+				if cell.status == CellStatus.AVAILABLE and self.cell_fits_item(cell, item):
 					unused_volume = (
 						cell.dimensions.width * cell.dimensions.length * cell.dimensions.height
 						- item.dimensions.width * item.dimensions.length * item.dimensions.height

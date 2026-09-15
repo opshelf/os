@@ -45,6 +45,20 @@ class RetrieveItemCommand(BaseModel):
 class StoreItemCommand(BaseModel):
     command: Literal["store_item"] = "store_item"
     request_id: Optional[str] = Field(default=None, description="Idempotency ID retained for seven days. Reuse only with the same payload.", examples=["store-001"])
+    location: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Requested destination cell. Must exist, be available, and fit the item. "
+            "Storage bin homes are reserved and cannot be requested; demo mode keeps its "
+            "configured cell mapping."
+        ),
+        examples=[{"side": "left_module", "shelf_idx": 0, "cell_idx": 2}],
+        json_schema_extra={"properties": {
+            "side": {"type": "string", "enum": ["left_module", "right_module"]},
+            "shelf_idx": {"type": "integer", "description": "Zero-based shelf index"},
+            "cell_idx": {"type": "integer", "description": "Zero-based cell index"},
+        }},
+    )
     item: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Existing inventory UPCA, or new item enrollment. Hardware also supports anonymous dimension-based storage; mock requires UPCA, name and dimensions. Existing inventory mass/dimensions take precedence.",

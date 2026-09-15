@@ -66,7 +66,7 @@ def _deterministic_weight(upca: str) -> float:
 	return float(100 + int.from_bytes(digest[:2], "big") % 4901)
 
 
-def _fits(dimensions: dict[str, Any]) -> bool:
+def mock_cell_fits(dimensions: dict[str, Any]) -> bool:
 	try:
 		return all(
 			0 < float(dimensions[key]) <= MOCK_CELL_DIMENSIONS[key]
@@ -74,6 +74,27 @@ def _fits(dimensions: dict[str, Any]) -> bool:
 		)
 	except (KeyError, TypeError, ValueError):
 		return False
+
+
+def _parse_requested_location(raw: Any) -> tuple[str, int, int] | None:
+	if not isinstance(raw, dict):
+		return None
+
+	side = raw.get("side")
+	shelf_idx = raw.get("shelf_idx")
+	cell_idx = raw.get("cell_idx")
+	if (
+		side not in MOCK_SIDES
+		or isinstance(shelf_idx, bool)
+		or isinstance(cell_idx, bool)
+		or not isinstance(shelf_idx, int)
+		or not isinstance(cell_idx, int)
+	):
+		return None
+	if not 0 <= shelf_idx < MOCK_SHELVES_PER_SIDE or not 0 <= cell_idx < MOCK_CELLS_PER_SHELF:
+		return None
+
+	return side, shelf_idx, cell_idx
 
 
 class MockRobotRuntime:
@@ -351,7 +372,7 @@ class MockRobotRuntime:
 			else:
 				dimensions = item_payload.get("dimensions")
 
-			if not isinstance(dimensions, dict) or not _fits(dimensions):
+			if not isinstance(dimensions, dict) or not mock_cell_fits(dimensions):
 				raise MockCommandExecutionError("No suitable storage location found")
 
 			occupied_result = await session.execute(
@@ -360,16 +381,25 @@ class MockRobotRuntime:
 			occupied = {(row.side, row.shelf_idx, row.cell_idx) for row in occupied_result}
 			occupied.update(await reserved_bin_locations(session))
 			location: tuple[str, int, int] | None = None
-			for side in MOCK_SIDES:
-				for shelf_idx in range(MOCK_SHELVES_PER_SIDE):
-					for cell_idx in range(MOCK_CELLS_PER_SHELF):
-						if (side, shelf_idx, cell_idx) not in occupied:
-							location = (side, shelf_idx, cell_idx)
+			requested_location = item_payload.get("location")
+			if requested_location is not None:
+				parsed_location = _parse_requested_location(requested_location)
+				if parsed_location is None:
+					raise MockCommandExecutionError("Invalid location")
+				if parsed_location in occupied:
+					raise MockCommandExecutionError("Requested storage cell is occupied")
+				location = parsed_location
+			else:
+				for side in MOCK_SIDES:
+					for shelf_idx in range(MOCK_SHELVES_PER_SIDE):
+						for cell_idx in range(MOCK_CELLS_PER_SHELF):
+							if (side, shelf_idx, cell_idx) not in occupied:
+								location = (side, shelf_idx, cell_idx)
+								break
+						if location is not None:
 							break
 					if location is not None:
 						break
-				if location is not None:
-					break
 			if location is None:
 				raise MockCommandExecutionError("No suitable storage location found")
 
