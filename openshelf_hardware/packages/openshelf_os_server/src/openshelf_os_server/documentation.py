@@ -111,7 +111,6 @@ def error_responses(*codes: int) -> dict[int, dict[str, Any]]:
         404: "Resource or configured hardware not found",
         409: "Operation conflicts with current state",
         422: "Request validation failed",
-        423: "An active workflow owns the robot",
         429: "Command queue capacity exceeded; retry after the indicated delay",
         500: "Internal failure; retain the correlation ID for diagnosis",
         502: "Invalid or failed dependency response",

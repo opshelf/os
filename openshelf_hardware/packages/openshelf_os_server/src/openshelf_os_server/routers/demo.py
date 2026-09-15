@@ -152,7 +152,7 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
     "/cycle/start",
     response_model=SuccessResponse,
     summary="Start the demonstration cycle",
-    responses=response_docs(errors=(400, 401, 409, 423, 503)),
+    responses=response_docs(errors=(400, 401, 409, 503)),
 )
 async def start_demo_cycle() -> SuccessResponse:
 	"""Start the demonstration cycle.
@@ -188,7 +188,7 @@ async def start_demo_cycle() -> SuccessResponse:
 	tool = robot._tool
 
 	async with manual_motion_guard("demo_cycle_start", worker=worker):
-		# Resolve reservations under the same process-local admission gate that
+		# Resolve tray-home reservations under the same manual-motion guard that
 		# serializes bin workflow starts with demo startup.
 		await _ensure_demo_cells_are_not_reserved(robot, cells)
 		await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
@@ -224,7 +224,7 @@ async def shutdown_demo_cycle() -> None:
     "/cycle/stop",
     response_model=SuccessResponse,
     summary="Request demonstration stop",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def stop_demo_cycle() -> SuccessResponse:
 	"""Request demonstration stop.
@@ -247,7 +247,7 @@ async def stop_demo_cycle() -> SuccessResponse:
     "/cycle/status",
     response_model=DemoCycleStatusResponse,
     summary="Read demonstration progress",
-    responses=response_docs(errors=(401, 409, 423, 503)),
+    responses=response_docs(errors=(401, 409, 503)),
 )
 async def get_demo_cycle_status() -> DemoCycleStatusResponse:
 	"""Read demonstration progress.

@@ -297,7 +297,7 @@ async def test_rejected_mass_enrollment_allows_corrected_retry(
 			await robot_router.robot_commands(
 				command, worker=worker, current_user=SimpleNamespace(id=1), db=db,
 			)
-		assert rejected.value.status_code == (429 if rejection == "queue" else 423)
+		assert rejected.value.status_code == 429
 		# Even committing the request session must not persist rejected enrollment.
 		await db.commit()
 	async with AsyncSessionLocal() as db:

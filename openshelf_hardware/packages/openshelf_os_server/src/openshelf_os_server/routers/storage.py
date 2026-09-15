@@ -334,16 +334,6 @@ def _serialize_capacity(capacity: Union[str, DimensionsPayload, None]) -> Option
     return f"{capacity.width}x{capacity.height}x{capacity.length}"
 
 
-async def _ensure_item_not_reserved_by_bin_workflow(
-    service: BinStorageService,
-    item: Item,
-) -> None:
-    if await service.item_has_active_workflow(item.id):
-        raise HTTPException(
-            status_code=409, detail="Item is reserved by an active storage bin workflow"
-        )
-
-
 def _deserialize_capacity(capacity: str) -> DimensionsPayload:
     stripped = capacity.strip()
     if stripped == "":
@@ -450,7 +440,7 @@ async def get_active_bin_workflow(session: AsyncSession = Depends(get_db)) -> Di
     "/bin-workflows",
     dependencies=[Depends(require_relay_or_permissions("storage:write"))],
     summary="Start a bin storage workflow",
-    responses=response_docs(model=BinWorkflowStartResponse, errors=(401, 403, 404, 409, 423)),
+    responses=response_docs(model=BinWorkflowStartResponse, errors=(401, 403, 404, 409)),
 )
 async def create_bin_workflow(
     request: BinWorkflowCreate,
@@ -462,8 +452,8 @@ async def create_bin_workflow(
     Chooses storage for the requested item and operation. A `storage_mode=direct` response
     with `workflow=null` means no tray workflow was started; submit an ordinary command
     separately. A tray result starts delivery to the IO box. Retrieval
-    requires access to every item in that bin. Clear the IO box first; conflicts return
-    `409` or `423`.
+    requires access to every item in that bin. Clear the IO box first; a tray or item already
+    in use, or an unavailable robot worker, returns `409`.
     """
     storage = StorageService(session)
     service = BinStorageService(session)
@@ -511,7 +501,7 @@ async def create_bin_workflow(
                 if workflow is not None:
                     await service.transition(workflow, "awaiting_operator", "mock tray delivered")
         except BinWorkflowConflict as exc:
-            raise HTTPException(status_code=423, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if workflow is None:
             if request.operation == "store" and request.storage_mode == "bin":
                 raise HTTPException(
@@ -527,7 +517,7 @@ async def create_bin_workflow(
         try:
             workflow = await service.begin(request.operation, item, current_user.id)
         except BinWorkflowConflict as exc:
-            raise HTTPException(status_code=423, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if workflow is None:
             if request.operation == "store" and request.storage_mode == "bin":
                 raise HTTPException(
@@ -753,8 +743,9 @@ async def create_item(
     To enroll an opened container, supply `tare_weight`, `net_weight`, and optionally
     `full_net_weight`; gross becomes tare plus net. Do not supply both `weight` and
     `net_weight`, even if one is null. See the storage group for mass persistence rules.
-    Prefer PUT for partial edits to existing records. Reserved bin barcodes, active
-    workflows, and forbidden changes to bin-managed items return `409`.
+    Prefer PUT for partial edits to existing records. Reserved bin barcodes and forbidden
+    changes to bin-managed items return `409`. A tray interaction holding the item does not
+    block the edit; conflicting state is rejected when that interaction completes.
     """
     storage_service = StorageService(session)
 
@@ -766,8 +757,6 @@ async def create_item(
         dimensions = item.dimensions
         metadata = item.item_metadata or {}
         access_level_id = item.access_level_id
-        if existing is not None:
-            await _ensure_item_not_reserved_by_bin_workflow(bin_service, existing)
         if existing is not None and await bin_service.item_bin(existing.id) is not None:
             provided_fields = item.model_fields_set
             dimensions_changed = (
@@ -831,16 +820,14 @@ async def update_item(
     Setting net requires a known tare, either stored or supplied.
 
     Changing tare alone preserves gross and recomputes net. Metadata replaces the object
-    when provided. Bin-managed dimensions/access changes require retrieval first; active
-    workflows reserve their items. Returns `404` for an absent UPCA. These edits do not move
+    when provided. Bin-managed dimensions/access changes require retrieval first. Returns
+    `404` for an absent UPCA. These edits do not move
     hardware.
     """
     storage_service = StorageService(session)
 
     existing = await storage_service.get_item(upca)
     bin_service = BinStorageService(session)
-    if existing is not None:
-        await _ensure_item_not_reserved_by_bin_workflow(bin_service, existing)
     if existing is not None and await bin_service.item_bin(existing.id) is not None:
         dimensions_changed = item.dimensions is not None and item.dimensions != existing.dimensions
         access_changed = (
@@ -894,22 +881,20 @@ async def delete_item(
     """Delete an inventory record.
 
     Deletes the item and its database location records; it does not physically retrieve it.
-    Bin membership and active workflows block deletion. Use this low-level endpoint only
-    after reconciling physical occupancy. A missing record returns `404`.
+    Bin membership and retained workflow history block deletion. Use this low-level endpoint
+    only after reconciling physical occupancy. A missing record returns `404`.
     """
     storage_service = StorageService(session)
 
     existing = await storage_service.get_item(upca)
     bin_service = BinStorageService(session)
-    if existing is not None:
-        await _ensure_item_not_reserved_by_bin_workflow(bin_service, existing)
-        if await bin_service.item_bin(existing.id) is not None:
-            raise HTTPException(status_code=409, detail="Retrieve the item before deleting it")
-        if await bin_service.item_has_workflow_history(existing.id):
-            raise HTTPException(
-                status_code=409,
-                detail="Item cannot be deleted because storage bin workflow history is retained",
-            )
+    if existing is not None and await bin_service.item_bin(existing.id) is not None:
+        raise HTTPException(status_code=409, detail="Retrieve the item before deleting it")
+    if existing is not None and await bin_service.item_has_workflow_history(existing.id):
+        raise HTTPException(
+            status_code=409,
+            detail="Item cannot be deleted because storage bin workflow history is retained",
+        )
 
     deleted = await storage_service.delete_item(upca)
 
@@ -948,7 +933,6 @@ async def add_item_location(
     if db_item is None:
         raise HTTPException(status_code=404, detail="Item not found")
     bin_service = BinStorageService(session)
-    await _ensure_item_not_reserved_by_bin_workflow(bin_service, db_item)
     if await bin_service.item_bin(db_item.id) is not None:
         raise HTTPException(status_code=409, detail="Item is stored in a bin")
 
@@ -986,7 +970,6 @@ async def _remove_item_location_impl(
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
     bin_service = BinStorageService(storage_service.session)
-    await _ensure_item_not_reserved_by_bin_workflow(bin_service, item)
     if await bin_service.item_bin(item.id) is not None:
         raise HTTPException(status_code=409, detail="Item is stored in a bin")
     success = await storage_service.remove_item_location(

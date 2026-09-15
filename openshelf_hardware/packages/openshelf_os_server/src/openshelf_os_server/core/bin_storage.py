@@ -185,7 +185,11 @@ async def is_reserved_bin_location(location: tuple[str, int, int], session: Asyn
 async def validate_direct_store_reservation(
     item_data: dict[str, Any], session: AsyncSession
 ) -> None:
-    """Reject public direct-store requests that target a bin identity or home."""
+    """Reject public direct-store requests that target a bin identity, home, or member.
+
+    A tray interaction that merely names the item does not reserve it: the workflow rejects
+    conflicting state when it completes instead of locking the item meanwhile.
+    """
     upca = item_data.get("upca")
     if isinstance(upca, str) and await is_reserved_bin_barcode(upca, session):
         raise DirectStoreReservationError(
@@ -197,11 +201,6 @@ async def validate_direct_store_reservation(
         item_id = await session.scalar(select(Item.id).where(Item.upca == upca))
         if item_id is not None:
             service = BinStorageService(session)
-            if await service.item_has_active_workflow(item_id):
-                raise DirectStoreReservationError(
-                    "An interaction for this item is already in progress",
-                    "reserved_tray_item",
-                )
             if await service.item_bin(item_id) is not None:
                 raise DirectStoreReservationError(
                     "Item is stored in a bin; use the storage bin workflow",
@@ -398,7 +397,7 @@ class BinStorageService:
         return location is not None and await is_reserved_bin_location(location, self.session)
 
     async def item_has_active_workflow(self, item_id: int) -> bool:
-        """Whether an item is the protected target of an unfinished bin workflow."""
+        """Whether an unfinished take, place, or return interaction names this item."""
         workflows = (
             await self.session.execute(
                 select(StorageBinWorkflow).where(StorageBinWorkflow.state.in_(ACTIVE_STATES))
@@ -867,6 +866,8 @@ class BinStorageService:
             await self.session.rollback()
             raise BinWorkflowConflict("This tray is currently outside the system")
         if await self.item_has_active_workflow(item.id):
+            # One interaction per item, not a lock on the item: an open interaction stops a
+            # second one from starting, while edits and commands stay available.
             await self.session.rollback()
             raise BinWorkflowConflict("An interaction for this item is already in progress")
         compartment = (
