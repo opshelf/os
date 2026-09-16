@@ -22,10 +22,8 @@ from openshelf_os.laser_calibration import (
 	capture_shelf_candidates,
 	enter_scan_mode,
 	estimate_seeded_candidate_wall_depths,
-	find_first_positive_run_segment,
 	find_gap_segments_in_line,
 	disable_unreachable_cells,
-	find_gap_run_containing_position,
 	fit_z_delta_line,
 	get_coarse_samples_per_point,
 	get_coarse_settle_ms,
@@ -38,7 +36,6 @@ from openshelf_os.laser_calibration import (
 	GridScanResult,
 	load_continue_scan_context,
 	load_staged_scan_analysis,
-	run_io_box_scout,
 	run_staged_scan,
 	run_with_temp_robot_config,
 	scan_shelf_scout_line,
@@ -484,203 +481,6 @@ async def test_capture_shelf_candidates_does_not_append_floor_edge_for_empty_det
 	assert wall_depth_mm == pytest.approx(0.0)
 	assert candidates == []
 	assert shelf_edges == []
-
-
-def test_find_first_positive_run_segment_handles_descending_positions() -> None:
-	segment = find_first_positive_run_segment(
-		values=[0.0, 0.0, 4.0, 4.1, 4.0, 0.0],
-		positions=[1250.0, 1245.0, 1240.0, 1235.0, 1230.0, 1225.0],
-		step_mm=5.0,
-	)
-
-	assert segment is not None
-	assert segment.start_idx == 2
-	assert segment.end_idx == 4
-	assert segment.start_mm == pytest.approx(1227.5)
-	assert segment.end_mm == pytest.approx(1242.5)
-	assert segment.center_mm == pytest.approx(1235.0)
-
-
-def test_find_gap_run_containing_position_returns_gap_bounds() -> None:
-	segment = find_gap_run_containing_position(
-		values=[5.0, 0.0, 0.0, 0.0, 5.0],
-		positions=[10.0, 11.0, 12.0, 13.0, 14.0],
-		step_mm=1.0,
-		seed_mm=12.0,
-	)
-
-	assert segment is not None
-	assert segment.start_idx == 1
-	assert segment.end_idx == 3
-	assert segment.start_mm == pytest.approx(10.5)
-	assert segment.end_mm == pytest.approx(13.5)
-	assert segment.center_mm == pytest.approx(12.0)
-
-
-@pytest.mark.asyncio
-async def test_run_io_box_scout_derives_center_from_measured_right_edge() -> None:
-	y_motor = SimpleNamespace(
-		get_brake_output_diagnostics=AsyncMock(
-			return_value={"register_function": 0xA4, "output_state": 0x2}
-		),
-	)
-	tool = SimpleNamespace(
-		retract=AsyncMock(),
-		get_param=AsyncMock(return_value=40.0),
-		_my=y_motor,
-	)
-	io_box = SimpleNamespace(open_door=AsyncMock(), home_door=AsyncMock())
-	robot = SimpleNamespace(_tool=tool, _io=io_box)
-
-	async def didScanLine(tool, *, axis, positions, fixed_mm, **kwargs):
-		if kwargs['progress_label'] == 'io_box_coarse_y':
-			return [5.0 if 70.0 <= position <= 80.0 else 0.0 for position in positions]
-
-		if kwargs['progress_label'] in {'io_box_fine_y', 'io_box_final_y'}:
-			return [0.0 if 65.0 <= position <= 85.0 else 5.0 for position in positions]
-
-		if kwargs['progress_label'] == 'io_box_fine_x':
-			return [0.0 if position <= 70.0 else 5.0 for position in positions]
-
-		raise AssertionError(kwargs['progress_label'])
-
-	with patch('openshelf_os.laser_calibration.enter_scan_mode', AsyncMock()):
-		with patch('openshelf_os.laser_calibration.scan_line_positions', side_effect=didScanLine):
-			result = await run_io_box_scout(
-				robot=robot,
-				scan_config=SimpleNamespace(laser_offset_x_mm=10.0, laser_offset_y_mm=2.0),
-				io_box_interior_width_mm=120.0,
-				start_x_mm=0.0,
-				start_y_mm=100.0,
-				y_min_mm=0.0,
-				x_max_mm=100.0,
-				coarse_step_mm=10.0,
-				fine_step_mm=1.0,
-				fine_margin_mm=10.0,
-				settle_ms=0,
-				samples_per_point=1,
-				laser_offset_x_mm=10.0,
-				laser_offset_y_mm=2.0,
-			)
-
-	assert result.measured_x_min_mm is None
-	assert result.measured_x_max_mm == pytest.approx(70.5)
-	assert result.derived_x_min_mm == pytest.approx(-49.5)
-	assert result.laser_center_x_mm == pytest.approx(10.5)
-	assert result.laser_center_y_mm == pytest.approx(75.0)
-	assert result.axis_center_x_mm == pytest.approx(20.5)
-	assert result.axis_center_y_mm == pytest.approx(77.0)
-	assert result.laser_offset_x_mm == pytest.approx(10.0)
-	assert result.laser_offset_y_mm == pytest.approx(2.0)
-	assert result.calibration_low_x_mm == pytest.approx(20.5)
-	assert result.calibration_low_y_mm == pytest.approx(101.5)
-	assert result.calibration_high_x_mm == pytest.approx(20.5)
-	assert result.calibration_high_y_mm == pytest.approx(7.5)
-	assert result.stage_extension_mm == pytest.approx(45.0)
-	assert result.z_extension_mm == pytest.approx(163.5)
-	assert result.final_y_refined is True
-	io_box.open_door.assert_awaited_once()
-	io_box.home_door.assert_awaited_once()
-	tool.retract.assert_awaited_once()
-	assert y_motor.get_brake_output_diagnostics.await_count == 6
-
-
-@pytest.mark.asyncio
-async def test_run_io_box_scout_derives_stage_and_z_extension() -> None:
-	y_motor = SimpleNamespace(
-		get_brake_output_diagnostics=AsyncMock(
-			return_value={"register_function": 0xA4, "output_state": 0x2}
-		),
-	)
-	tool = SimpleNamespace(
-		retract=AsyncMock(),
-		get_param=AsyncMock(return_value=83.0),
-		_my=y_motor,
-	)
-	io_box = SimpleNamespace(open_door=AsyncMock(), home_door=AsyncMock())
-	robot = SimpleNamespace(_tool=tool, _io=io_box)
-
-	async def didScanLine(tool, *, axis, positions, fixed_mm, **kwargs):
-		if kwargs['progress_label'] == 'io_box_coarse_y':
-			return [5.0 if 70.0 <= position <= 80.0 else 0.0 for position in positions]
-
-		if kwargs['progress_label'] in {'io_box_fine_y', 'io_box_final_y'}:
-			return [0.0 if 65.0 <= position <= 85.0 else 5.0 for position in positions]
-
-		if kwargs['progress_label'] == 'io_box_fine_x':
-			return [0.0 if position <= 70.0 else 5.0 for position in positions]
-
-		raise AssertionError(kwargs['progress_label'])
-
-	with patch('openshelf_os.laser_calibration.enter_scan_mode', AsyncMock()):
-		with patch('openshelf_os.laser_calibration.scan_line_positions', side_effect=didScanLine):
-			result = await run_io_box_scout(
-				robot=robot,
-				scan_config=SimpleNamespace(laser_offset_x_mm=0.0, laser_offset_y_mm=0.0),
-				io_box_interior_width_mm=120.0,
-				start_x_mm=0.0,
-				start_y_mm=100.0,
-				y_min_mm=0.0,
-				x_max_mm=100.0,
-				coarse_step_mm=10.0,
-				fine_step_mm=1.0,
-				fine_margin_mm=10.0,
-				settle_ms=0,
-				samples_per_point=1,
-			)
-
-	assert result.calibration_low_x_mm == pytest.approx(10.5)
-	assert result.calibration_low_y_mm == pytest.approx(99.5)
-	assert result.stage_extension_mm == pytest.approx(88.0)
-	assert result.z_extension_mm == pytest.approx(163.5)
-	tool.get_param.assert_awaited_once_with('STAGE_EXTENSION_SHELF_FRONT')
-
-
-@pytest.mark.asyncio
-async def test_run_io_box_scout_stops_x_scan_at_width_limit() -> None:
-	y_motor = SimpleNamespace(
-		get_brake_output_diagnostics=AsyncMock(
-			return_value={"register_function": 0xA4, "output_state": 0x2}
-		),
-	)
-	tool = SimpleNamespace(retract=AsyncMock(), _my=y_motor)
-	io_box = SimpleNamespace(open_door=AsyncMock(), home_door=AsyncMock())
-	robot = SimpleNamespace(_tool=tool, _io=io_box)
-
-	async def didScanLine(tool, *, axis, positions, fixed_mm, **kwargs):
-		if kwargs['progress_label'] == 'io_box_coarse_y':
-			return [5.0 if 70.0 <= position <= 80.0 else 0.0 for position in positions]
-
-		if kwargs['progress_label'] == 'io_box_fine_y':
-			return [0.0 if 65.0 <= position <= 85.0 else 5.0 for position in positions]
-
-		if kwargs['progress_label'] == 'io_box_fine_x':
-			assert max(positions) == pytest.approx(65.0)
-			return [0.0 for _ in positions]
-
-		raise AssertionError(kwargs['progress_label'])
-
-	with patch('openshelf_os.laser_calibration.enter_scan_mode', AsyncMock()):
-		with patch('openshelf_os.laser_calibration.scan_line_positions', side_effect=didScanLine):
-			with pytest.raises(ValueError, match='interior width limit'):
-				await run_io_box_scout(
-					robot=robot,
-					scan_config=SimpleNamespace(laser_offset_x_mm=0.0, laser_offset_y_mm=0.0),
-					io_box_interior_width_mm=65.0,
-					start_x_mm=0.0,
-					start_y_mm=100.0,
-					y_min_mm=0.0,
-					x_max_mm=100.0,
-					coarse_step_mm=10.0,
-					fine_step_mm=1.0,
-					fine_margin_mm=10.0,
-					settle_ms=0,
-					samples_per_point=1,
-				)
-
-	io_box.open_door.assert_awaited_once()
-	io_box.home_door.assert_awaited_once()
-	tool.retract.assert_awaited_once()
 
 
 def test_apply_xy_reference_offsets_requires_fixed_offset() -> None:

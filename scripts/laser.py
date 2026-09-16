@@ -30,7 +30,7 @@ from openshelf_os.storage import StorageModuleSide
 
 def build_parser() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(
-		description='Run tray scan, single-cell rescan, validation, saved-run replay, or IO box scouting.'
+		description='Run tray scan, single-cell rescan, or validation.'
 	)
 	parser.add_argument('--module', choices=['left', 'right'])
 	parser.add_argument('--x', nargs=2, metavar=('MIN', 'MAX'), type=float)
@@ -49,15 +49,6 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--rescan-cell', type=str)
 	parser.add_argument('--validate-cell', type=str)
 	parser.add_argument('--validate-cycles', type=int, default=1)
-	parser.add_argument('--calibrate-io-box', action='store_true')
-	parser.add_argument('--io-box-interior-width-mm', type=float, default=laser_module.IO_BOX_INTERIOR_WIDTH_MM)
-	parser.add_argument('--io-box-x-mm', type=float, default=laser_module.IO_BOX_DEFAULT_START_X_MM)
-	parser.add_argument('--io-box-start-y-mm', type=float, default=laser_module.IO_BOX_DEFAULT_START_Y_MM)
-	parser.add_argument('--io-box-y-min-mm', type=float)
-	parser.add_argument('--io-box-x-max-mm', type=float, default=laser_module.IO_BOX_DEFAULT_X_MAX_MM)
-	parser.add_argument('--io-box-coarse-step-mm', type=float, default=laser_module.IO_BOX_COARSE_STEP_MM)
-	parser.add_argument('--io-box-fine-step-mm', type=float, default=laser_module.IO_BOX_FINE_STEP_MM)
-	parser.add_argument('--io-box-fine-margin-mm', type=float, default=laser_module.IO_BOX_FINE_MARGIN_MM)
 	parser.add_argument('--shutdown-action', choices=['stop', 'shutdown'], default='shutdown')
 	parser.add_argument('--laser-offset-x-mm', type=float)
 	return parser
@@ -166,167 +157,6 @@ def paths_for_selected_config(config_path: str) -> RuntimeStatePaths:
 
 
 
-def validate_io_box_calibration_args(args: argparse.Namespace) -> None:
-	if args.module is not None and args.module != 'left':
-		raise ValueError('--calibrate-io-box only supports the left module side')
-
-	if args.io_box_interior_width_mm <= 0.0:
-		raise ValueError('--io-box-interior-width-mm must be positive')
-
-	if args.continue_scan is True:
-		raise ValueError('--continue cannot be used with --calibrate-io-box')
-
-	if args.npy is not None:
-		raise ValueError('--npy cannot be used with --calibrate-io-box')
-
-	if args.apply is True:
-		raise ValueError('--apply cannot be used with --calibrate-io-box')
-
-	if args.rescan_cell is not None:
-		raise ValueError('--rescan-cell cannot be used with --calibrate-io-box')
-
-	if args.validate_cell is not None:
-		raise ValueError('--validate-cell cannot be used with --calibrate-io-box')
-
-	if args.shelf_scout_only is True:
-		raise ValueError('--shelf-scout-only cannot be used with --calibrate-io-box')
-
-	if args.known_shelf_edge_y is not None:
-		raise ValueError('--known-shelf-edge-y cannot be used with --calibrate-io-box')
-
-	if args.x is not None or args.y is not None:
-		raise ValueError('--x/--y cannot be used with --calibrate-io-box')
-
-	if args.step is not None:
-		raise ValueError('--step cannot be used with --calibrate-io-box; use --io-box-fine-step-mm')
-
-	if args.y_offset != 0.0:
-		raise ValueError('--y-offset cannot be used with --calibrate-io-box')
-
-	if args.io_box_coarse_step_mm <= 0.0:
-		raise ValueError('--io-box-coarse-step-mm must be positive')
-
-	if args.io_box_fine_step_mm <= 0.0:
-		raise ValueError('--io-box-fine-step-mm must be positive')
-
-	if args.io_box_fine_margin_mm < 0.0:
-		raise ValueError('--io-box-fine-margin-mm must be zero or greater')
-
-	if args.io_box_start_y_mm <= 0.0:
-		raise ValueError('--io-box-start-y-mm must be positive')
-
-	if args.io_box_x_max_mm <= args.io_box_x_mm:
-		raise ValueError('--io-box-x-max-mm must be greater than --io-box-x-mm')
-
-	if args.io_box_y_min_mm is not None and args.io_box_start_y_mm <= args.io_box_y_min_mm:
-		raise ValueError('--io-box-start-y-mm must be greater than --io-box-y-min-mm')
-
-
-async def run_io_box_calibration(
-	*,
-	args: argparse.Namespace,
-	config: Any,
-) -> int:
-	validate_io_box_calibration_args(args)
-	scan_config = config.robot.grid.scan
-	settle_ms = (
-		args.settle_ms
-		if args.settle_ms is not None
-		else laser_module.get_fine_settle_ms(
-			laser_module.get_laser_sample_settle_ms(scan_config)
-		)
-	)
-	samples_per_point = (
-		args.samples_per_point
-		if args.samples_per_point is not None
-		else laser_module.get_fine_samples_per_point(
-			laser_module.get_laser_samples_per_point(scan_config)
-		)
-	)
-	y_min_mm = (
-		float(args.io_box_y_min_mm)
-		if args.io_box_y_min_mm is not None
-		else float(getattr(scan_config, 'left_bounds_y_min_mm', 0.0))
-	)
-	laser_offset_x_mm = (
-		float(args.laser_offset_x_mm)
-		if args.laser_offset_x_mm is not None
-		else laser_module.require_scan_config_parameter(scan_config, 'laser_offset_x_mm')
-	)
-	laser_offset_y_mm = laser_module.require_scan_config_parameter(scan_config, 'laser_offset_y_mm')
-
-	laser_module.print_status('phase=io-box-init')
-	laser_module.print_status(
-		f'io_box_setup x={float(args.io_box_x_mm):.2f} '
-		f'y=({float(args.io_box_start_y_mm):.2f},{y_min_mm:.2f}) '
-		f'x_max={float(args.io_box_x_max_mm):.2f} '
-		f'width={float(args.io_box_interior_width_mm):.2f} '
-		f'coarse_step={float(args.io_box_coarse_step_mm):.2f} '
-		f'fine_step={float(args.io_box_fine_step_mm):.2f} '
-		f'laser_offset_x_mm={laser_offset_x_mm:.2f} '
-		f'settle_ms={settle_ms} samples_per_point={samples_per_point}'
-	)
-
-	async def didRunIoBoxCalibration(robot: Any) -> laser_module.IOBoxScoutResult:
-		return await laser_module.run_io_box_scout(
-			robot=robot,
-			scan_config=scan_config,
-			io_box_interior_width_mm=float(args.io_box_interior_width_mm),
-			start_x_mm=float(args.io_box_x_mm),
-			start_y_mm=float(args.io_box_start_y_mm),
-			y_min_mm=y_min_mm,
-			x_max_mm=float(args.io_box_x_max_mm),
-			coarse_step_mm=float(args.io_box_coarse_step_mm),
-			fine_step_mm=float(args.io_box_fine_step_mm),
-			fine_margin_mm=float(args.io_box_fine_margin_mm),
-			settle_ms=int(settle_ms),
-			samples_per_point=int(samples_per_point),
-			laser_offset_x_mm=laser_offset_x_mm,
-			laser_offset_y_mm=laser_offset_y_mm,
-		)
-
-	result = await laser_module.run_with_temp_robot_config(
-		config=config,
-		config_path=args.config,
-		didRun=didRunIoBoxCalibration,
-		shutdown_action=args.shutdown_action,
-	)
-	print_io_box_scout_result(result)
-	return 0
-
-
-def print_io_box_scout_result(result: laser_module.IOBoxScoutResult) -> None:
-	measured_x_min_label = 'none'
-
-	if result.measured_x_min_mm is not None:
-		measured_x_min_label = f'{result.measured_x_min_mm:.2f}'
-
-	print(f'io_box_rough_y_min_mm: {result.rough_y_min_mm:.2f}')
-	print(f'io_box_rough_y_max_mm: {result.rough_y_max_mm:.2f}')
-	print(f'io_box_fine_y_min_mm: {result.fine_y_min_mm:.2f}')
-	print(f'io_box_fine_y_max_mm: {result.fine_y_max_mm:.2f}')
-	print(f'io_box_measured_x_min_mm: {measured_x_min_label}')
-	print(f'io_box_measured_x_max_mm: {result.measured_x_max_mm:.2f}')
-	print(f'io_box_derived_x_min_mm: {result.derived_x_min_mm:.2f}')
-	print(f'io_box_interior_width_mm: {result.io_box_interior_width_mm:.2f}')
-	print(f'io_box_laser_center_x_mm: {result.laser_center_x_mm:.2f}')
-	print(f'io_box_laser_center_y_mm: {result.laser_center_y_mm:.2f}')
-	print(f'io_box_laser_offset_x_mm: {result.laser_offset_x_mm:.2f}')
-	print(f'io_box_laser_offset_y_mm: {result.laser_offset_y_mm:.2f}')
-	print(f'io_box_axis_center_x_mm: {result.axis_center_x_mm:.2f}')
-	print(f'io_box_axis_center_y_mm: {result.axis_center_y_mm:.2f}')
-	print(f'io_box_low_y_offset_mm: {laser_module.IO_BOX_LOW_Y_OFFSET_MM:.2f}')
-	print(f'io_box_high_y_offset_mm: -{laser_module.IO_BOX_HIGH_Y_OFFSET_MM:.2f}')
-	print(f'io_box_calibration_low_x_mm: {result.calibration_low_x_mm:.2f}')
-	print(f'io_box_calibration_low_y_mm: {result.calibration_low_y_mm:.2f}')
-	print(f'io_box_calibration_high_x_mm: {result.calibration_high_x_mm:.2f}')
-	print(f'io_box_calibration_high_y_mm: {result.calibration_high_y_mm:.2f}')
-	print(f'io_box_stage_extension_front_offset_mm: {laser_module.IO_BOX_STAGE_EXTENSION_FRONT_OFFSET_MM:.2f}')
-	print(f'io_box_stage_extension_mm: {result.stage_extension_mm:.2f}')
-	print(f'io_box_z_extension_mm: {result.z_extension_mm:.2f}')
-	print(f'io_box_final_y_refined: {result.final_y_refined}')
-
-
 def load_run_parameters_for_analysis(analysis: Any) -> dict[str, Any]:
 	run_parameters_path = Path(analysis.metadata_path).resolve().parent / 'run_parameters.json'
 
@@ -431,10 +261,6 @@ async def run_scan(args: argparse.Namespace) -> int:
 		if args.npy is not None:
 			raise ValueError('--from-run cannot be used with --npy')
 
-		if args.calibrate_io_box is True:
-			raise ValueError('--from-run cannot be used with --calibrate-io-box')
-
-
 		if args.rescan_cell is not None or args.validate_cell is not None:
 			raise ValueError('--from-run cannot be used with --rescan-cell or --validate-cell')
 
@@ -462,10 +288,6 @@ async def run_scan(args: argparse.Namespace) -> int:
 			print(f'run_parameters_path: {run_parameters_path}')
 
 		return 0
-
-	if args.calibrate_io_box is True:
-		return await run_io_box_calibration(args=args, config=config)
-
 
 	if rescan_target is not None and validation_target is not None:
 		raise ValueError('--rescan-cell cannot be used with --validate-cell')
