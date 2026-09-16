@@ -11,7 +11,8 @@ Obtain a user token from `POST /api/auth/login/json` with JSON `email` and `pin`
 or use the configured [relay service token](../../../../README.md#relay-service-authentication).
 Item writes require `storage:write`, reads require `storage:read`, or the relay
 credential. Robot commands require authentication and enforce their normal item
-access and storage preconditions. See [OpenAPI](openapi.json) for complete schemas.
+access and storage preconditions. See the OpenAPI document served at `/openapi.json`
+on the device for complete schemas.
 
 | Endpoint | Mass input or output |
 | --- | --- |
