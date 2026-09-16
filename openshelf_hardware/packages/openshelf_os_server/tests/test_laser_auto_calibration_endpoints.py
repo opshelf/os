@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import copy
 import json
 from pathlib import Path
@@ -411,6 +412,30 @@ async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> Non
     worker.get_status_snapshot.assert_not_awaited()
     terminal_mock.assert_awaited_once_with('cancelled', None)
     home_mock.assert_awaited_once_with(worker)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hold_y_enabled", [True, False])
+async def test_run_session_holds_y_enabled_only_when_requested(hold_y_enabled: bool) -> None:
+    manager = LaserAutoCalibrationManager()
+    held: list[bool] = []
+
+    @contextlib.asynccontextmanager
+    async def hold_enabled():
+        held.append(True)
+        yield
+
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=SimpleNamespace(_my=SimpleNamespace(hold_enabled=hold_enabled))))
+    scope = LaserAutoCalibrationScope(hold_y_enabled=hold_y_enabled)
+
+    with patch.object(manager, '_get_current_calibration_params', AsyncMock(return_value={})):
+        with patch.object(manager, '_run_requested_scope', AsyncMock()) as run_mock:
+            with patch.object(manager, '_set_terminal_state', AsyncMock()) as terminal_mock:
+                await manager._run_session(worker, 'laser-session', scope)
+
+    run_mock.assert_awaited_once_with(worker, scope)
+    terminal_mock.assert_awaited_once_with('completed', None)
+    assert held == ([True] if hold_y_enabled else [])
 
 
 @pytest.mark.asyncio
@@ -1792,6 +1817,35 @@ async def test_stream_laser_auto_calibration_starts_session_when_idle() -> None:
     assert manager.ensure_calls == 1
     assert manager.last_requested_scope is not None
     assert manager.last_requested_scope.mode == "all"
+    assert manager.last_requested_scope.hold_y_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_stream_laser_auto_calibration_passes_hold_y_enabled_false() -> None:
+    manager = FakeLaserManager(snapshot=_build_snapshot(), is_active=False)
+    worker = SimpleNamespace(
+        _current_command=None,
+        _demo_cycling=False,
+        needs_home=lambda: False,
+        needs_home_reason=lambda: None,
+        needs_home_axes=lambda: [],
+    )
+
+    with patch(
+        "openshelf_os_server.routers.calibration.get_laser_auto_calibration_manager",
+        return_value=manager,
+    ):
+        with patch(
+            "openshelf_os_server.routers.calibration.get_robot_worker",
+            AsyncMock(return_value=worker),
+        ):
+            request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+            response = await calibration_router.stream_laser_auto_calibration(request, hold_y_enabled=False)
+            await anext(response.body_iterator)
+            await response.body_iterator.aclose()
+
+    assert manager.last_requested_scope is not None
+    assert manager.last_requested_scope.hold_y_enabled is False
 
 
 @pytest.mark.asyncio

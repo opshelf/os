@@ -830,6 +830,7 @@ async def stream_laser_auto_calibration(
 	mode: Literal["all", "both"] | None = None,
 	include_angle_calibration: bool | None = None,
 	include_extension_calibration: bool | None = None,
+	hold_y_enabled: bool | None = None,
 	subscribe_only: bool = False,
 ) -> EventSourceResponse:
 	"""Start or observe automatic laser calibration.
@@ -842,7 +843,8 @@ async def stream_laser_auto_calibration(
 	Returns Server-Sent Events with JSON calibration snapshots. A client disconnect
 	unsubscribes that client; use the abort endpoint to stop the session. Do not infer
 	cancellation from a closed connection. Optional scope parameters select cells,
-	both sides, or the angle/extension calibration phases.
+	both sides, or the angle/extension calibration phases. `hold_y_enabled=false` parks
+	Y on its brake between moves instead of holding it energised for the session.
 	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,
@@ -851,7 +853,7 @@ async def stream_laser_auto_calibration(
 		mode,
 		include_angle_calibration,
 		include_extension_calibration,
-	)
+	).model_copy(update={"hold_y_enabled": hold_y_enabled is not False})
 	manager = get_laser_auto_calibration_manager()
 	is_active = await manager.is_active()
 

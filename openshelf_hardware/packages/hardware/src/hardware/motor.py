@@ -6,6 +6,7 @@ import functools
 import logging
 import json
 from collections import deque
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,6 +72,10 @@ MOTION_STATUS_ENABLE_BIT = 1
 # long plus this margin before calling the drive stuck enabled.
 DISABLE_CONFIRM_MARGIN_S = 0.25
 DISABLE_POLL_S = 0.02
+# Relay and armature lag on top of Pr4.19, and how long Pr0.07=1 may take to
+# show as enabled before motion is refused.
+BRAKE_RELEASE_MARGIN_S = 0.1
+ENABLE_CONFIRM_TIMEOUT_S = 0.5
 EEPROM_SAVE_COMMAND = 0x2211
 EEPROM_SAVE_OK = 0x5555
 EEPROM_SAVE_FAILED = 0xAAAA
@@ -207,6 +212,8 @@ class Motor():
         self._move_accel: int | None = None
         self._last_raw_position: int | None = None
         self._last_position_read_latency_s: float | None = None
+        self._disabled_at: float | None = None
+        self._hold_enabled = False
         configured_brake_output = getattr(self._params, "brake_output_function", None)
         self._configured_brake_output_function = (
             None if configured_brake_output is None else int(configured_brake_output)
@@ -785,6 +792,7 @@ class Motor():
         if self._park_when_idle:
             # Deliberate park: the brake sets through Pr4.20 / Pr4.21.
             await self.set_param("Forced enable by software", SOFTWARE_ENABLE_OFF)
+            self._disabled_at = time.monotonic()
 
     async def _configure_brake_control(self) -> None:
         """Audit the drive's persistent brake config; repair and save only if wrong.
@@ -909,10 +917,30 @@ class Motor():
         The wait is not the host sequencing the brake -- nothing here commands
         it. It is the host declining to command motion until the drive has had
         the time it was configured to need. Firing PR0 into a brake that is
-        still set is the failure this axis already has a runbook for.
+        still set is the failure this axis already has a runbook for. A recent
+        disable is first allowed to finish its Pr4.20 engagement, and the
+        enable is read back before any dwell counts.
         """
+        if self._disabled_at is not None:
+            settle_s = (
+                self._disabled_at
+                + self._brake_engagement_delay_ms / 1000.0
+                + DISABLE_CONFIRM_MARGIN_S
+                - time.monotonic()
+            )
+            if settle_s > 0:
+                await asyncio.sleep(settle_s)
+
         await self.set_param("Forced enable by software", SOFTWARE_ENABLE_ON)
-        await asyncio.sleep(self._brake_release_s)
+
+        deadline = time.monotonic() + ENABLE_CONFIRM_TIMEOUT_S
+        while await self.is_drive_enabled() is False:
+            if time.monotonic() > deadline:
+                raise MotorError(f"Motor {self._motor_id} did not report enabled after Pr0.07=1")
+            await asyncio.sleep(DISABLE_POLL_S)
+
+        await asyncio.sleep(self._brake_release_s + BRAKE_RELEASE_MARGIN_S)
+        self._disabled_at = None
 
     async def disable(self) -> None:
         """De-energise. The drive holds current for Pr4.20 while the brake sets.
@@ -925,6 +953,7 @@ class Motor():
         the load, which is not itself dangerous.
         """
         await self.set_param("Forced enable by software", SOFTWARE_ENABLE_OFF)
+        self._disabled_at = time.monotonic()
 
         deadline = time.monotonic() + self._brake_engagement_delay_ms / 1000.0 + DISABLE_CONFIRM_MARGIN_S
         while await self.is_drive_enabled() is True:
@@ -950,16 +979,34 @@ class Motor():
         if self._park_when_idle is False:
             return
 
+        if self._hold_enabled is True and await self.is_drive_enabled() is True:
+            return
+
         await self.enable()
+
+    @asynccontextmanager
+    async def hold_enabled(self):
+        """Keep a parked axis energised across moves; park once on exit."""
+        if self._park_when_idle is False or self._hold_enabled is True:
+            yield
+            return
+
+        self._hold_enabled = True
+        try:
+            await self.enable()
+            yield
+        finally:
+            self._hold_enabled = False
+            await self._park()
 
     async def _park(self) -> None:
         """Disable after motion, tolerating a bus that has already gone wrong.
 
         A failure to park is worth a warning and nothing more: the axis is left
         energised, which is the conservative state for a suspended load, and the
-        caller's outcome is never masked.
+        caller's outcome is never masked. A hold defers the park to its exit.
         """
-        if self._park_when_idle is False:
+        if self._park_when_idle is False or self._hold_enabled is True:
             return
 
         try:
