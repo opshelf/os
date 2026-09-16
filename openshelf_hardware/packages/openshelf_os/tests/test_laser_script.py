@@ -77,8 +77,8 @@ def test_main_prints_help_when_no_args(capsys) -> None:
 	assert result == 0
 	help_output = capsys.readouterr().out
 	assert 'Run tray scan' in help_output
-	assert 'IO box' in help_output
-	assert 'scouting' in help_output
+	assert 'single-cell rescan' in help_output
+	assert 'validation' in help_output
 
 
 def test_derive_scans_dir_uses_config_directory(tmp_path: Path) -> None:
@@ -332,97 +332,3 @@ def test_from_run_apply_uses_single_cell_rescan(
 	assert call_kwargs['target'].cell_idx == 2
 	assert call_kwargs['side'] == StorageModuleSide.LEFT
 	assert call_kwargs['detected_cell'] is detected_cell
-
-
-def test_print_io_box_scout_result_includes_calibration_points(capsys: pytest.CaptureFixture[str]) -> None:
-	module = load_laser_script_module()
-	result = SimpleNamespace(
-		rough_y_min_mm=427.5,
-		rough_y_max_mm=1047.5,
-		fine_y_min_mm=441.0,
-		fine_y_max_mm=795.0,
-		measured_x_min_mm=None,
-		measured_x_max_mm=74.0,
-		derived_x_min_mm=-86.0,
-		laser_center_x_mm=-6.0,
-		laser_center_y_mm=618.0,
-		axis_center_x_mm=45.0,
-		axis_center_y_mm=618.0,
-		laser_offset_x_mm=51.0,
-		laser_offset_y_mm=0.0,
-		calibration_low_x_mm=45.0,
-		calibration_low_y_mm=476.0,
-		calibration_high_x_mm=45.0,
-		calibration_high_y_mm=715.0,
-		io_box_interior_width_mm=160.0,
-		stage_extension_mm=45.0,
-		z_extension_mm=163.5,
-		final_y_refined=False,
-	)
-
-	module.print_io_box_scout_result(result)
-
-	output = capsys.readouterr().out
-	assert 'io_box_calibration_low_x_mm: 45.00' in output
-	assert 'io_box_calibration_low_y_mm: 476.00' in output
-	assert 'io_box_calibration_high_x_mm: 45.00' in output
-	assert 'io_box_calibration_high_y_mm: 715.00' in output
-	assert 'io_box_stage_extension_mm: 45.00' in output
-	assert 'io_box_z_extension_mm: 163.50' in output
-
-
-def test_main_dispatches_io_box_calibration_to_package_method(monkeypatch: pytest.MonkeyPatch) -> None:
-	module = load_laser_script_module()
-	config = build_config()
-	scout_result = SimpleNamespace(
-		rough_y_min_mm=1100.0,
-		rough_y_max_mm=1200.0,
-		fine_y_min_mm=1110.0,
-		fine_y_max_mm=1190.0,
-		measured_x_min_mm=None,
-		measured_x_max_mm=80.0,
-		derived_x_min_mm=-40.0,
-		laser_center_x_mm=20.0,
-		laser_center_y_mm=1150.0,
-		axis_center_x_mm=71.0,
-		axis_center_y_mm=1150.0,
-		laser_offset_x_mm=51.0,
-		laser_offset_y_mm=0.0,
-		calibration_low_x_mm=71.0,
-		calibration_low_y_mm=1145.0,
-		calibration_high_x_mm=71.0,
-		calibration_high_y_mm=1070.0,
-		io_box_interior_width_mm=120.0,
-		stage_extension_mm=45.0,
-		z_extension_mm=163.5,
-		final_y_refined=False,
-	)
-	run_io_box_scout = AsyncMock(return_value=scout_result)
-
-	async def didRunWithTempRobotConfig(*, config, config_path, didRun, shutdown_action):
-		return await didRun(SimpleNamespace(_tool=SimpleNamespace(), _io=SimpleNamespace()))
-
-	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
-	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
-	monkeypatch.setattr(module.laser_module, 'run_io_box_scout', run_io_box_scout)
-	monkeypatch.setattr(
-		module.laser_module,
-		'run_with_temp_robot_config',
-		AsyncMock(side_effect=didRunWithTempRobotConfig),
-	)
-	monkeypatch.setattr(module, 'print_io_box_scout_result', lambda result: None)
-
-	result = module.main(
-		[
-			'--calibrate-io-box',
-			'--io-box-x-max-mm',
-			'140',
-		]
-	)
-
-	assert result == 0
-	run_io_box_scout.assert_awaited_once()
-	assert run_io_box_scout.await_args.kwargs['io_box_interior_width_mm'] == pytest.approx(160.0)
-	assert run_io_box_scout.await_args.kwargs['start_x_mm'] == pytest.approx(0.0)
-	assert run_io_box_scout.await_args.kwargs['x_max_mm'] == pytest.approx(140.0)
-	assert run_io_box_scout.await_args.kwargs['laser_offset_x_mm'] == pytest.approx(51.0)
