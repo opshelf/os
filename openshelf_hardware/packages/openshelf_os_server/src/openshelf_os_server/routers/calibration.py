@@ -4,7 +4,6 @@ from fastapi.responses import Response
 
 import asyncio
 import functools
-import logging
 import re
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Literal, Optional, ParamSpec, TypeVar
@@ -25,7 +24,7 @@ from openshelf_os.storage import (
 	StorageModuleCellLocation,
 	StorageModuleSide,
 )
-from openshelf_os.exceptions import IOBoxError, MotorError, ToolError
+from openshelf_os.exceptions import MotorError, ToolError
 from hardware.exceptions import MotorError as HardwareMotorError
 
 from openshelf_os_server.core.robot import get_robot_worker
@@ -42,12 +41,6 @@ from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
 
 from openshelf_os.storage import StorageGrid
-
-class DoorMoveResponse(BaseModel):
-    success: bool
-    position: Literal["close", "open"]
-    position_mm: float
-
 
 class StageMoveResponse(BaseModel):
     position: float = Field(description="Applied target in millimeters")
@@ -170,8 +163,7 @@ def _build_laser_auto_calibration_scope(
 	side: StorageModuleSide | None,
 	shelf_idx: int | None,
 	cell_idx: int | None,
-	mode: Literal["all", "both", "io_box"] | None,
-	include_io_box: bool | None,
+	mode: Literal["all", "both"] | None,
 	include_angle_calibration: bool | None,
 	include_extension_calibration: bool | None,
 ) -> LaserAutoCalibrationScope:
@@ -187,20 +179,6 @@ def _build_laser_auto_calibration_scope(
 			detail="cell_idx must be non-negative",
 		)
 
-	if mode == "io_box":
-		if side is not None or shelf_idx is not None or cell_idx is not None:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail="side, shelf_idx, and cell_idx cannot be used with io_box mode",
-			)
-
-		return LaserAutoCalibrationScope(
-			mode="io_box",
-			include_io_box=True,
-			include_angle_calibration=False,
-			include_extension_calibration=False,
-		)
-
 	if mode == "both":
 		if side is not None or shelf_idx is not None or cell_idx is not None:
 			raise HTTPException(
@@ -210,7 +188,6 @@ def _build_laser_auto_calibration_scope(
 
 		return LaserAutoCalibrationScope(
 			mode="both",
-			include_io_box=include_io_box is not False,
 			include_angle_calibration=include_angle_calibration is not False,
 			include_extension_calibration=include_extension_calibration is not False,
 		)
@@ -224,7 +201,6 @@ def _build_laser_auto_calibration_scope(
 
 		return LaserAutoCalibrationScope(
 			mode="all",
-			include_io_box=include_io_box is not False,
 			include_angle_calibration=include_angle_calibration is not False,
 			include_extension_calibration=include_extension_calibration is not False,
 		)
@@ -239,7 +215,6 @@ def _build_laser_auto_calibration_scope(
 		return LaserAutoCalibrationScope(
 			mode="side",
 			side=side,
-			include_io_box=include_io_box is True,
 			include_angle_calibration=include_angle_calibration is not False,
 			include_extension_calibration=include_extension_calibration is not False,
 		)
@@ -249,7 +224,6 @@ def _build_laser_auto_calibration_scope(
 			mode="shelf",
 			side=side,
 			shelf_idx=shelf_idx,
-			include_io_box=include_io_box is True,
 			include_angle_calibration=False,
 			include_extension_calibration=False,
 		)
@@ -259,7 +233,6 @@ def _build_laser_auto_calibration_scope(
 		side=side,
 		shelf_idx=shelf_idx,
 		cell_idx=cell_idx,
-		include_io_box=include_io_box is True,
 		include_angle_calibration=False,
 		include_extension_calibration=False,
 	)
@@ -854,8 +827,7 @@ async def stream_laser_auto_calibration(
 	side: StorageModuleSide | None = None,
 	shelf_idx: int | None = None,
 	cell_idx: int | None = None,
-	mode: Literal["all", "both", "io_box"] | None = None,
-	include_io_box: bool | None = None,
+	mode: Literal["all", "both"] | None = None,
 	include_angle_calibration: bool | None = None,
 	include_extension_calibration: bool | None = None,
 	subscribe_only: bool = False,
@@ -869,15 +841,14 @@ async def stream_laser_auto_calibration(
 
 	Returns Server-Sent Events with JSON calibration snapshots. A client disconnect
 	unsubscribes that client; use the abort endpoint to stop the session. Do not infer
-	cancellation from a closed connection. Optional scope parameters select cells, both
-	sides, or the IO box and the angle/extension calibration phases.
+	cancellation from a closed connection. Optional scope parameters select cells,
+	both sides, or the angle/extension calibration phases.
 	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,
 		shelf_idx,
 		cell_idx,
 		mode,
-		include_io_box,
 		include_angle_calibration,
 		include_extension_calibration,
 	)
@@ -1376,546 +1347,6 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 		needs_home_reason=worker.needs_home_reason(),
 		needs_home_axes=worker.needs_home_axes(),
 	)
-
-
-class IOBoxPositionResponse(BaseModel):
-	pickup_low_x: float = Field(description="Position or extension in millimeters")
-	pickup_low_y: float = Field(description="Position or extension in millimeters")
-	pickup_high_x: float = Field(description="Position or extension in millimeters")
-	pickup_high_y: float = Field(description="Position or extension in millimeters")
-	z_extension: float = Field(description="Position or extension in millimeters")
-	stage_extension: float = Field(description="Position or extension in millimeters")
-	warnings: Optional[list[str]] = None
-
-
-IOBOX_CALIBRATION_DECIMAL_PLACES = 2
-
-
-def _round_iobox_calibration_value(value: float) -> float:
-	return round(float(value), IOBOX_CALIBRATION_DECIMAL_PLACES)
-
-
-def _round_iobox_position(position: IOBoxPositionResponse) -> IOBoxPositionResponse:
-	position.pickup_low_x = _round_iobox_calibration_value(position.pickup_low_x)
-	position.pickup_low_y = _round_iobox_calibration_value(position.pickup_low_y)
-	position.pickup_high_x = _round_iobox_calibration_value(position.pickup_high_x)
-	position.pickup_high_y = _round_iobox_calibration_value(position.pickup_high_y)
-	position.z_extension = _round_iobox_calibration_value(position.z_extension)
-	position.stage_extension = _round_iobox_calibration_value(position.stage_extension)
-	return position
-
-
-class IOBoxJogRequest(BaseModel):
-	position: Literal["low", "high"]
-	axis: Literal["x", "y", "z", "stage"]
-	delta: float = Field(description="Signed displacement in millimeters")
-
-
-class IOBoxSaveRequest(BaseModel):
-	pickup_low_x: float = Field(description="Position or extension in millimeters")
-	pickup_low_y: float = Field(description="Position or extension in millimeters")
-	pickup_high_x: float = Field(description="Position or extension in millimeters")
-	pickup_high_y: float = Field(description="Position or extension in millimeters")
-	z_extension: float = Field(description="Position or extension in millimeters")
-	stage_extension: float = Field(description="Position or extension in millimeters")
-
-
-class IOBoxDoorPositionResponse(BaseModel):
-	close: float
-	open: float
-
-
-class IOBoxDoorPositionRequest(BaseModel):
-	close: float = Field(ge=0, le=1000)
-	open: float = Field(gt=0, le=1000)
-
-
-class IOBoxDoorMoveRequest(IOBoxDoorPositionRequest):
-	position: Literal["close", "open"]
-
-
-_iobox_position: Literal["low", "high"] = "low"
-_iobox_current: Optional[IOBoxPositionResponse] = None
-
-
-def _get_iobox_door_config(config):
-	try:
-		return config.robot.io.motors.by_name("door")
-	except KeyError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="IO door motor is not configured",
-		) from exc
-
-
-def _validate_iobox_door_positions(close: float, open: float) -> None:
-	if close >= open:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="IO door close position must be less than open position",
-		)
-
-
-def _with_iobox_door_positions(door_config, close: float, open: float):
-	config_dict = door_config.model_dump()
-	config_dict["lower_lim"] = close
-	config_dict["lim"] = open
-
-	try:
-		return type(door_config).model_validate(config_dict)
-	except ValueError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid IO door positions: {exc}",
-		) from exc
-
-
-@router.get(
-    "/iobox/door",
-    response_model=IOBoxDoorPositionResponse,
-    summary="Read IO door travel limits",
-    responses=response_docs(errors=(401, 409, 503)),
-)
-async def get_iobox_door_position() -> IOBoxDoorPositionResponse:
-	"""Read IO door travel limits.
-
-	Returns configured closed/open positions in millimeters. Reading these limits does not
-	move the door.
-	"""
-	config = get_root_config()
-	door_config = _get_iobox_door_config(config)
-
-	return IOBoxDoorPositionResponse(
-		close=float(door_config.lower_lim),
-		open=float(door_config.lim),
-	)
-
-
-@router.post(
-    "/iobox/door/move",
-    summary="Test an IO door position",
-    responses=response_docs(model=DoorMoveResponse, errors=(400, 401, 409, 503)),
-)
-async def move_iobox_door(request: IOBoxDoorMoveRequest):
-	"""Test an IO door position.
-
-	Moves the physical door to the selected open/closed position using the supplied travel
-	values. Returns the target position in millimeters. Save separately to persist the
-	tested limits.
-	"""
-	await ensure_laser_auto_calibration_not_running()
-	_validate_iobox_door_positions(request.close, request.open)
-
-	worker = await get_robot_worker_or_503()
-	_ensure_ready(worker)
-
-	io = worker._robot._io
-	motor = io._md
-	if motor is None:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="IO door motor is not configured",
-		)
-
-	temporary_config = _with_iobox_door_positions(motor._params, request.close, request.open)
-	target = request.close if request.position == "close" else request.open
-	original_config = motor._params
-
-	try:
-		async with manual_motion_guard("calibration_iobox_door_move", worker=worker):
-			async with io._door_motion_lock:
-				motor._params = temporary_config
-				try:
-					await motor.move_to_position(target)
-				finally:
-					motor._params = original_config
-			await io.refresh_door_state(force=True)
-	except (IOBoxError, MotorError, HardwareMotorError) as exc:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail=f"Failed to move IO door: {exc}",
-		) from exc
-
-	return {"success": True, "position": request.position, "position_mm": target}
-
-
-@router.post(
-    "/iobox/door/save",
-    summary="Save IO door travel limits",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
-)
-async def save_iobox_door_position(request: IOBoxDoorPositionRequest):
-	"""Save IO door travel limits.
-
-	Persists the supplied closed/open positions in the active configuration. Use the move
-	endpoint to test physical travel before saving.
-	"""
-	await ensure_laser_auto_calibration_not_running()
-	_validate_iobox_door_positions(request.close, request.open)
-
-	config = get_root_config()
-	door_config = _get_iobox_door_config(config)
-	updated_door_config = _with_iobox_door_positions(
-		door_config,
-		request.close,
-		request.open,
-	)
-
-	motors = config.robot.io.motors.root
-	for index, motor_config in enumerate(motors):
-		if motor_config.motor_name == "door":
-			motors[index] = updated_door_config
-			break
-
-	save_root_config(config)
-
-	try:
-		worker = await get_robot_worker()
-		worker._robot.reload_parameters()
-	except ValueError:
-		pass
-
-	return {"success": True}
-
-
-def _load_iobox_calibration() -> IOBoxPositionResponse:
-	global _iobox_current
-
-	config = get_root_config()
-	params = config.robot.tool.parameters
-
-	_iobox_current = IOBoxPositionResponse(
-		pickup_low_x=_round_iobox_calibration_value(params.PICKUP_POSITION_L[0]),
-		pickup_low_y=_round_iobox_calibration_value(params.PICKUP_POSITION_L[1]),
-		pickup_high_x=_round_iobox_calibration_value(params.PICKUP_POSITION_H[0]),
-		pickup_high_y=_round_iobox_calibration_value(params.PICKUP_POSITION_H[1]),
-		z_extension=_round_iobox_calibration_value(params.Z_EXTENSION_IO),
-		stage_extension=_round_iobox_calibration_value(params.STAGE_EXTENSION_IO_BOX),
-	)
-
-	return _iobox_current
-
-
-@router.get(
-    "/iobox",
-    response_model=IOBoxPositionResponse,
-    summary="Read IO box pickup calibration",
-    responses=response_docs(errors=(401, 409, 503)),
-)
-@serialize_calibration_state
-async def get_iobox_calibration() -> IOBoxPositionResponse:
-	"""Read IO box pickup calibration.
-
-	Returns configured low/high pickup coordinates and tool extensions in millimeters. Does
-	not move hardware.
-	"""
-	return _load_iobox_calibration()
-
-
-async def _get_iobox_current_or_error() -> IOBoxPositionResponse:
-	if _iobox_current is None:
-		return _load_iobox_calibration()
-
-	return _iobox_current
-
-
-@router.post(
-    "/iobox/move",
-    response_model=IOBoxPositionResponse,
-    summary="Move to an IO pickup position",
-    responses=response_docs(errors=(401, 409, 503)),
-)
-@serialize_calibration_state
-async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPositionResponse:
-	"""Move to an IO pickup position.
-
-	Opens the IO door, faces the tool forward, and moves to the configured low or high
-	pickup point. Updates the in-memory IO calibration state returned by the endpoint.
-	"""
-	global _iobox_position, _iobox_current
-
-	await ensure_laser_auto_calibration_not_running()
-
-	worker = await get_robot_worker_or_503()
-
-	_ensure_ready(worker)
-
-	iobox_current = await _get_iobox_current_or_error()
-
-	tool = worker._robot._tool
-	io = worker._robot._io
-
-	if position == "low":
-		x = iobox_current.pickup_low_x
-		y = iobox_current.pickup_low_y
-	else:
-		x = iobox_current.pickup_high_x
-		y = iobox_current.pickup_high_y
-
-	async with manual_motion_guard("calibration_iobox_move", worker=worker):
-		try:
-			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-			await tool.rotate_to_position("front")
-		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=["rotate"])
-
-		try:
-			await io.open_door()
-		except (IOBoxError, MotorError, HardwareMotorError) as e:
-			logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
-
-		try:
-			await tool.move(AxisCoordinate(x, y))
-		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
-	_iobox_position = position
-	iobox_current.warnings = None
-
-	return iobox_current
-
-
-@router.post(
-    "/iobox/jog",
-    response_model=IOBoxPositionResponse,
-    summary="Jog an IO pickup position",
-    responses=response_docs(errors=(401, 409, 503)),
-)
-@serialize_calibration_state
-async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
-	"""Jog an IO pickup position.
-
-	Moves the selected low/high pickup axis by signed `delta` millimeters. Updates in-memory
-	calibration; call the IO save endpoint to persist changes.
-	"""
-	global _iobox_current, _iobox_position
-
-	await ensure_laser_auto_calibration_not_running()
-
-	iobox_current = await _get_iobox_current_or_error()
-
-	worker = await get_robot_worker_or_503()
-
-	_ensure_ready(worker)
-
-	tool = worker._robot._tool
-	_iobox_position = request.position
-
-	x_limit = tool._mx._params.lim if tool._mx is not None else 1000
-	y_limit = tool._my._params.lim if tool._my is not None else 1500
-
-	warnings: list[str] = []
-
-	try:
-		async with manual_motion_guard("calibration_iobox_jog", worker=worker):
-			if request.axis == "x":
-				if tool._mx is None:
-					raise HTTPException(
-						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-						detail="X motor not configured",
-					)
-				await _clear_motors_for_move(tool, gantry=True)
-				if request.position == "low":
-					new_x = _clamp_value(iobox_current.pickup_low_x + request.delta, x_limit, "X axis", warnings)
-					new_x = _round_iobox_calibration_value(new_x)
-					await tool._mx.move_to_position(new_x)
-					iobox_current.pickup_low_x = new_x
-				else:
-					new_x = _clamp_value(iobox_current.pickup_high_x + request.delta, x_limit, "X axis", warnings)
-					new_x = _round_iobox_calibration_value(new_x)
-					await tool._mx.move_to_position(new_x)
-					iobox_current.pickup_high_x = new_x
-			elif request.axis == "y":
-				if tool._my is None:
-					raise HTTPException(
-						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-						detail="Y motor not configured",
-					)
-				await _clear_motors_for_move(tool, gantry=True)
-				if request.position == "low":
-					new_y = _clamp_value(iobox_current.pickup_low_y + request.delta, y_limit, "Y axis", warnings)
-					new_y = _round_iobox_calibration_value(new_y)
-					await tool._my.move_to_position(new_y)
-					iobox_current.pickup_low_y = new_y
-				else:
-					new_y = _clamp_value(iobox_current.pickup_high_y + request.delta, y_limit, "Y axis", warnings)
-					new_y = _round_iobox_calibration_value(new_y)
-					await tool._my.move_to_position(new_y)
-					iobox_current.pickup_high_y = new_y
-			elif request.axis == "z":
-				if tool._mg is None:
-					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
-				await _clear_motors_for_move(tool, gripper=True)
-				z_limit = tool._mg._params.lim
-				new_z = _clamp_value(iobox_current.z_extension + request.delta, z_limit, "Z axis", warnings)
-				new_z = _round_iobox_calibration_value(new_z)
-				grip_rpm = await tool.get_param("Z_MOVE_RPM")
-				grip_accel = await tool.get_param("Z_MOVE_ACCEL")
-				await tool._mg.move_to_position(new_z, rpm=grip_rpm, accel=grip_accel)
-				iobox_current.z_extension = new_z
-			elif request.axis == "stage":
-				if tool._ms is None:
-					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stage motor not configured")
-				await _clear_motors_for_move(tool, stage=True)
-				stage_limit = tool._ms._params.lim
-				new_stage = _clamp_value(iobox_current.stage_extension + request.delta, stage_limit, "Stage", warnings)
-				new_stage = _round_iobox_calibration_value(new_stage)
-				await tool._ms.move_to_position(new_stage)
-				iobox_current.stage_extension = new_stage
-	except (MotorError, HardwareMotorError) as e:
-		axes: Optional[list[str]] = None
-		if request.axis == "z":
-			axes = ["z_axis"]
-		elif request.axis == "stage":
-			axes = ["stage"]
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=axes)
-
-	iobox_current.warnings = warnings if warnings else None
-
-	return iobox_current
-
-
-@router.post(
-    "/iobox/test",
-    summary="Test the IO pickup sequence",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 500, 503)),
-)
-@serialize_calibration_state
-async def test_iobox_sequence(with_gripper: bool = False):
-	"""Test the IO pickup sequence.
-
-	Executes the configured low-to-high pickup sequence and retracts the tool.
-	`with_gripper=true` also operates the gripper. This moves physical hardware using the
-	current in-memory calibration.
-	"""
-	global _iobox_current
-
-	await ensure_laser_auto_calibration_not_running()
-
-	iobox_current = await _get_iobox_current_or_error()
-
-	worker = await get_robot_worker_or_503()
-
-	_ensure_ready(worker)
-
-	tool = worker._robot._tool
-	io = worker._robot._io
-
-	async with manual_motion_guard("calibration_iobox_test", worker=worker):
-		try:
-			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
-			await tool.rotate_to_position("front")
-		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
-
-		try:
-			await io.open_door()
-		except (IOBoxError, MotorError, HardwareMotorError) as e:
-			logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
-
-		try:
-			await tool.move(AxisCoordinate(iobox_current.pickup_low_x, iobox_current.pickup_low_y))
-		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
-
-		stage_ext = iobox_current.stage_extension
-		grip_ext = iobox_current.z_extension
-		grip_rpm = await tool.get_param("Z_MOVE_RPM")
-		grip_accel = await tool.get_param("Z_MOVE_ACCEL")
-		stage_nudge = await tool.get_param("STAGE_NUDGE")
-
-		if tool._ms is None or tool._mg is None:
-			raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Motors not configured")
-
-		if stage_nudge is None:
-			raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="STAGE_NUDGE not configured")
-
-		stage_limit = _get_stage_limit(tool)
-		_validate_stage_target(stage_ext, stage_limit, "STAGE_EXTENSION_IO_BOX")
-		_validate_stage_target(stage_ext + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
-
-		try:
-			await tool._ms.move_to_position(stage_ext)
-			await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
-			await tool._ms.move_to_position(stage_ext + stage_nudge)
-
-			if with_gripper is True:
-				await tool._gs.open()
-
-			await tool.move(AxisCoordinate(iobox_current.pickup_high_x, iobox_current.pickup_high_y))
-			await tool.retract()
-
-			if with_gripper is True:
-				await tool._gs.close()
-		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
-	return {"success": True}
-
-
-@router.post(
-    "/iobox/save",
-    summary="Save IO pickup calibration",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
-)
-@serialize_calibration_state
-async def save_iobox_calibration(request: IOBoxSaveRequest):
-	"""Save IO pickup calibration.
-
-	Persists pickup coordinates and extensions, then closes/homes the tool and homes the IO
-	door. This save operation also moves hardware; a homing failure can occur after
-	configuration has been written.
-	"""
-	global _iobox_current
-
-	await ensure_laser_auto_calibration_not_running()
-
-	worker = await get_robot_worker_or_503()
-
-	stage_limit = _get_stage_limit(worker._robot._tool)
-	config = get_root_config()
-	stage_nudge = config.robot.tool.parameters.STAGE_NUDGE
-	_validate_stage_target(request.stage_extension, stage_limit, "STAGE_EXTENSION_IO_BOX")
-	_validate_stage_target(request.stage_extension + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
-
-	async with manual_motion_guard("calibration_iobox_save_home", worker=worker):
-		params_dict = config.robot.tool.parameters.model_dump()
-		params_dict["PICKUP_POSITION_L"] = (int(request.pickup_low_x), int(request.pickup_low_y))
-		params_dict["PICKUP_POSITION_H"] = (int(request.pickup_high_x), int(request.pickup_high_y))
-		params_dict["Z_EXTENSION_IO"] = _round_iobox_calibration_value(request.z_extension)
-		params_dict["STAGE_EXTENSION_IO_BOX"] = _round_iobox_calibration_value(request.stage_extension)
-
-		config.robot.tool.parameters = Parameters.model_validate(params_dict)
-		save_root_config(config)
-		worker._robot.reload_parameters()
-
-		try:
-			await worker._robot._tool._gs.close()
-		except Exception:
-			pass
-
-		try:
-			await worker._robot._tool.home()
-		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Failed to home tool: {str(e)}", e)
-
-		try:
-			await worker._robot._io.home_door()
-		except Exception:
-			pass
-
-		_iobox_current = _round_iobox_position(
-			IOBoxPositionResponse(
-				pickup_low_x=request.pickup_low_x,
-				pickup_low_y=request.pickup_low_y,
-				pickup_high_x=request.pickup_high_x,
-				pickup_high_y=request.pickup_high_y,
-				z_extension=request.z_extension,
-				stage_extension=request.stage_extension,
-			)
-		)
-	worker.clear_needs_home()
-	await worker.get_status_snapshot(force_refresh=True)
-
-	return {"success": True}
 
 
 class RotationAnglesResponse(BaseModel):

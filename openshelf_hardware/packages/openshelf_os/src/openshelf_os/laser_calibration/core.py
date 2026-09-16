@@ -65,18 +65,6 @@ FINE_X_REFINEMENT_STEP_MM = 1.0
 FINE_X_REFINEMENT_MARGIN_MM = 4.0
 COARSE_WALL_SEARCH_STEPS = 2
 CURRENT_SCAN_LOG_PATH: Optional[Path] = None
-IO_BOX_DEFAULT_START_X_MM = 0.0
-IO_BOX_DEFAULT_START_Y_MM = 1250.0
-IO_BOX_DEFAULT_X_MAX_MM = 250.0
-IO_BOX_INTERIOR_WIDTH_MM = 160.0
-IO_BOX_COARSE_STEP_MM = 5.0
-IO_BOX_FINE_STEP_MM = 1.0
-IO_BOX_FINE_MARGIN_MM = 20.0
-IO_BOX_LOW_Y_OFFSET_MM = 35.0
-IO_BOX_HIGH_Y_OFFSET_MM = 80.0
-IO_BOX_STAGE_EXTENSION_FRONT_OFFSET_MM = 5.0
-IO_BOX_Z_EXTENSION_MM = 163.5
-IO_BOX_MIN_POSITIVE_RUN_COUNT = 2
 MAX_LASER_OFFSET_ABS_MM = 1000.0
 MAX_SCAN_POINT_COUNT = 250_000
 
@@ -437,32 +425,6 @@ class StagedScanRecorder:
 class SingleCellRescanTarget:
 	shelf_idx: int
 	cell_idx: int
-
-
-@dataclass
-class IOBoxScoutResult:
-	rough_y_min_mm: float
-	rough_y_max_mm: float
-	fine_y_min_mm: float
-	fine_y_max_mm: float
-	measured_x_min_mm: float | None
-	measured_x_max_mm: float
-	derived_x_min_mm: float
-	laser_center_x_mm: float
-	laser_center_y_mm: float
-	axis_center_x_mm: float
-	axis_center_y_mm: float
-	laser_offset_x_mm: float
-	laser_offset_y_mm: float
-	calibration_low_x_mm: float
-	calibration_low_y_mm: float
-	calibration_high_x_mm: float
-	calibration_high_y_mm: float
-	io_box_interior_width_mm: float
-	stage_extension_mm: float
-	z_extension_mm: float
-	final_y_refined: bool
-
 
 
 def get_current_timestamp() -> str:
