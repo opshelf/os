@@ -49,8 +49,6 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--rescan-cell', type=str)
 	parser.add_argument('--validate-cell', type=str)
 	parser.add_argument('--validate-cycles', type=int, default=1)
-	parser.add_argument('--shutdown-action', choices=['stop', 'shutdown'], default='shutdown')
-	parser.add_argument('--laser-offset-x-mm', type=float)
 	return parser
 
 
