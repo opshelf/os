@@ -144,6 +144,7 @@ class LaserAutoCalibrationScope(BaseModel):
     cell_idx: int | None = None
     include_angle_calibration: bool = True
     include_extension_calibration: bool = True
+    hold_y_enabled: bool = True
 
 class LaserAutoCalibrationError(BaseModel):
     error_type: str
