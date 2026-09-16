@@ -3,10 +3,11 @@
 	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
 	import CellAutoCalibration from '$lib/components/calibration/CellAutoCalibration.svelte';
 	import CellCalibrationTest from '$lib/components/calibration/CellCalibrationTest.svelte';
+	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
 	import { devicePath } from '$lib/nav';
 
-	type CalibrationView = 'cell_auto' | 'cell_manual' | 'rotation' | 'test';
+	type CalibrationView = 'cell_auto' | 'cell_manual' | 'io' | 'rotation' | 'test';
 
 	let { selectedView = 'cell_auto' }: { selectedView?: CalibrationView } = $props();
 
@@ -31,6 +32,7 @@
 <div class="toggle-group">
 	<a class:selected={selectedView === 'cell_auto'} href={tabHref('/calibration/auto')}>auto</a>
 	<a class:selected={selectedView === 'cell_manual'} href={tabHref('/calibration/cells')}>manual</a>
+	<a class:selected={selectedView === 'io'} href={tabHref('/calibration/io-box')}>io box</a>
 	<a class:selected={selectedView === 'rotation'} href={tabHref('/calibration/tool-rotation')}>
 		rotation
 	</a>
@@ -43,6 +45,8 @@
 	<CellAutoCalibration />
 {:else if selectedView === 'test'}
 	<CellCalibrationTest {initialSide} {initialShelf} {initialCell} />
+{:else if selectedView === 'io'}
+	<IOBoxCalibration />
 {:else if selectedView === 'rotation'}
 	<RotationCalibration />
 {/if}
