@@ -23,7 +23,6 @@ from openshelf_os_server.core.laser_auto_calibration import (
     _build_stage_stall_fine_rotation_positions,
     _build_stage_stall_rotation_positions,
     _build_stage_stall_rotation_center_deg,
-    _resolve_io_box_laser_offset_x_mm,
     _SideState,
     LaserAutoCalibrationAngleResult,
     LaserAutoCalibrationScope,
@@ -86,7 +85,7 @@ def _build_snapshot(state: str = "running") -> LaserAutoCalibrationSnapshot:
         state=state,
         session_id="laser-session",
         run_id="left-run",
-        requested_scope=LaserAutoCalibrationScope(include_io_box=True),
+        requested_scope=LaserAutoCalibrationScope(),
         current_side="left_module",
         current_stage="shelf-scout",
         bounds=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1250.0),
@@ -916,7 +915,6 @@ async def test_run_requested_scope_both_runs_full_two_side_scan() -> None:
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=SimpleNamespace()))
     requested_scope = LaserAutoCalibrationScope(
         mode="both",
-        include_io_box=False,
         include_angle_calibration=False,
         include_extension_calibration=True,
     )
@@ -926,12 +924,10 @@ async def test_run_requested_scope_both_runs_full_two_side_scan() -> None:
         return_value=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1210.0),
     ):
         with patch.object(manager, '_run_all_sides', AsyncMock()) as run_all_mock:
-            with patch.object(manager, '_run_io_box_calibration', AsyncMock()) as io_box_mock:
-                await manager._run_requested_scope(worker, requested_scope)
+            await manager._run_requested_scope(worker, requested_scope)
 
     run_all_mock.assert_awaited_once()
     assert run_all_mock.await_args.args[:3] == (worker, False, True)
-    io_box_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1332,75 +1328,6 @@ def test_preserve_manual_cells_noop_without_manual_cells() -> None:
     existing = [_manual_shelf(0, [_manual_cell(0, 100.0, 300.0)])]
 
     assert _preserve_manual_cells(scanned, existing) is scanned
-
-
-@pytest.mark.asyncio
-async def test_run_io_box_calibration_passes_configured_laser_offset_and_persists_axis_values() -> None:
-    manager = LaserAutoCalibrationManager()
-    manager._update_snapshot = AsyncMock()
-    params = Parameters.model_validate(
-        {
-            'IDLE_POSITION': [0, 0],
-            'PICKUP_POSITION_L': [0, 0],
-            'PICKUP_POSITION_H': [0, 0],
-            'SCAN_POSITION': [0, 0],
-            'STAGE_EXTENSION_IO_BOX': 0,
-            'STAGE_NUDGE': 0,
-            'STAGE_EXTENSION_SHELF_FRONT': 43,
-            'STAGE_EXTENSION_SHELF_BACK': 0,
-            'Z_EXTENSION_PICK': 0,
-            'Z_EXTENSION_PLACE': 0,
-            'Z_EXTENSION_IO': 0,
-            'Z_MOVE_RPM': 1,
-            'Z_MOVE_ACCEL': 1,
-            'ROTATION_FRONT': 0,
-            'ROTATION_BACK': 180,
-        }
-    )
-    scan_config = SimpleNamespace(
-        laser_sample_settle_ms=50,
-        laser_samples_per_point=3,
-        laser_offset_x_mm=51.0,
-        laser_offset_y_mm=0.0,
-    )
-    config = SimpleNamespace(
-        robot=SimpleNamespace(
-            tool=SimpleNamespace(parameters=params),
-            grid=SimpleNamespace(scan=scan_config),
-        )
-    )
-    config.model_copy = lambda deep=True: copy.deepcopy(config)
-    scout_result = SimpleNamespace(
-        calibration_low_x_mm=37.5,
-        calibration_low_y_mm=476.0,
-        calibration_high_x_mm=37.5,
-        calibration_high_y_mm=715.0,
-        z_extension_mm=163.5,
-        stage_extension_mm=48.0,
-    )
-    saved_configs: list[object] = []
-    worker = SimpleNamespace(_robot=SimpleNamespace(reload_parameters=MagicMock()))
-
-    with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
-        with patch.object(laser_module, 'run_io_box_scout', AsyncMock(return_value=scout_result)) as scout_mock:
-            with patch('openshelf_os_server.core.laser_auto_calibration.save_root_config', side_effect=lambda next_config: saved_configs.append(next_config)):
-                with patch('openshelf_os_server.core.laser_auto_calibration.clear_config_cache'):
-                    await manager._run_io_box_calibration(worker)
-
-    assert scout_mock.await_args.kwargs['laser_offset_x_mm'] == pytest.approx(51.0)
-    assert scout_mock.await_args.kwargs['laser_offset_y_mm'] == pytest.approx(0.0)
-    assert saved_configs[0].robot.tool.parameters.PICKUP_POSITION_L == (37, 476)
-    assert saved_configs[0].robot.tool.parameters.PICKUP_POSITION_H == (37, 715)
-    assert saved_configs[0].robot.tool.parameters.Z_EXTENSION_IO == pytest.approx(163.5)
-    assert saved_configs[0].robot.tool.parameters.STAGE_EXTENSION_IO_BOX == pytest.approx(48.0)
-    worker._robot.reload_parameters.assert_called_once_with()
-
-
-def test_resolve_io_box_laser_offset_rejects_default_zero() -> None:
-    with pytest.raises(ValueError, match='laser_offset_x_mm must be configured'):
-        _resolve_io_box_laser_offset_x_mm(SimpleNamespace(laser_offset_x_mm=0.0))
-
-    assert _resolve_io_box_laser_offset_x_mm(SimpleNamespace(laser_offset_x_mm=51.0)) == pytest.approx(51.0)
 
 
 @pytest.mark.asyncio

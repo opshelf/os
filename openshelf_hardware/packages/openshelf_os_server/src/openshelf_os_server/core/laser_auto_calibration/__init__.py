@@ -100,10 +100,6 @@ class LaserAutoCalibrationManager(_LaserAutoCalibrationManagerImpl):
         _sync_patch_targets()
         return await super()._resolve_stage_extension_probe_y_mm(*args, **kwargs)
 
-    async def _run_io_box_calibration(self, *args, **kwargs):
-        _sync_patch_targets()
-        return await super()._run_io_box_calibration(*args, **kwargs)
-
     async def _persist_completed_results(self, *args, **kwargs):
         _sync_patch_targets()
         return await super()._persist_completed_results(*args, **kwargs)

@@ -25,7 +25,6 @@
 	let isStreamOpen = $state<boolean>(false);
 	let isAborting = $state<boolean>(false);
 	let isAllSelected = $state<boolean>(true);
-	let isIoBoxSelected = $state<boolean>(true);
 	let isAngleCalibrationSelected = $state<boolean>(true);
 	let isExtensionCalibrationSelected = $state<boolean>(true);
 	let selectedSide = $state<'' | 'left_module' | 'right_module'>('');
@@ -89,7 +88,6 @@
 	const startButtonLabel = 'calibrate';
 	const defaultRequestedScope: LaserAutoCalibrationRequest = {
 		mode: 'all',
-		include_io_box: true,
 		include_angle_calibration: true,
 		include_extension_calibration: true
 	};
@@ -248,13 +246,11 @@
 	}
 
 	function syncScopeSelection(requestedScope: LaserAutoCalibrationRequest): void {
-		isIoBoxSelected = requestedScope.include_io_box === true || requestedScope.mode === 'io_box';
 		isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
 		isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
 
 		if (requestedScope.mode === 'all') {
 			isAllSelected = true;
-			isIoBoxSelected = true;
 			isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
 			isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
 			selectedSide = '';
@@ -264,15 +260,6 @@
 		}
 
 		isAllSelected = false;
-
-		if (requestedScope.mode === 'io_box') {
-			selectedSide = '';
-			selectedShelf = '';
-			selectedCell = '';
-			isAngleCalibrationSelected = false;
-			isExtensionCalibrationSelected = false;
-			return;
-		}
 
 		if (requestedScope.mode === 'both') {
 			selectedSide = '';
@@ -301,7 +288,6 @@
 		if (isAllSelected === true) {
 			return {
 				mode: 'all',
-				include_io_box: true,
 				include_angle_calibration: isAngleCalibrationSelected,
 				include_extension_calibration: isExtensionCalibrationSelected
 			};
@@ -310,7 +296,6 @@
 		if (selectedSide === '') {
 			return {
 				mode: 'both',
-				include_io_box: isIoBoxSelected,
 				include_angle_calibration: isAngleCalibrationSelected,
 				include_extension_calibration: isExtensionCalibrationSelected
 			};
@@ -320,7 +305,6 @@
 			return {
 				mode: 'side',
 				side: selectedSide,
-				include_io_box: isIoBoxSelected,
 				include_angle_calibration: isAngleCalibrationSelected,
 				include_extension_calibration: isExtensionCalibrationSelected
 			};
@@ -331,7 +315,6 @@
 				mode: 'shelf',
 				side: selectedSide,
 				shelf_idx: Number(selectedShelf),
-				include_io_box: isIoBoxSelected,
 				include_angle_calibration: false,
 				include_extension_calibration: false
 			};
@@ -342,7 +325,6 @@
 			side: selectedSide,
 			shelf_idx: Number(selectedShelf),
 			cell_idx: Number(selectedCell),
-			include_io_box: isIoBoxSelected,
 			include_angle_calibration: false,
 			include_extension_calibration: false
 		};
@@ -439,7 +421,6 @@
 		const target = event.target as HTMLInputElement;
 
 		isAllSelected = target.checked;
-		isIoBoxSelected = isAllSelected;
 		isAngleCalibrationSelected = true;
 		isExtensionCalibrationSelected = true;
 
@@ -482,14 +463,6 @@
 			isAngleCalibrationSelected = false;
 			isExtensionCalibrationSelected = false;
 		}
-		error = '';
-		message = '';
-	}
-
-	function didChangeIOBox(event: Event): void {
-		const target = event.target as HTMLInputElement;
-
-		isIoBoxSelected = target.checked;
 		error = '';
 		message = '';
 	}
@@ -735,19 +708,6 @@
 			</tr>
 			<tr>
 				<td colspan="3">
-					<label class="all-toggle">
-						<input
-							type="checkbox"
-							checked={isIoBoxSelected}
-							onchange={didChangeIOBox}
-							disabled={isAllSelected === true || isSelectionDisabled}
-						/>
-						<span>io box</span>
-					</label>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
 					<div class="actions">
 						<button type="button" onclick={didClickStart} disabled={isStartDisabled}>
 							{startButtonLabel}
@@ -811,21 +771,6 @@
 					<td>stage extension</td>
 					<td>{getStageExtensionValue('left_module')}</td>
 					<td>{getStageExtensionValue('right_module')}</td>
-				</tr>
-				<tr>
-					<td>io box low</td>
-					<td>{formatNumber(snapshot?.io_box_result?.pickup_low_x)}</td>
-					<td>{formatNumber(snapshot?.io_box_result?.pickup_low_y)}</td>
-				</tr>
-				<tr>
-					<td>io box high</td>
-					<td>{formatNumber(snapshot?.io_box_result?.pickup_high_x)}</td>
-					<td>{formatNumber(snapshot?.io_box_result?.pickup_high_y)}</td>
-				</tr>
-				<tr>
-					<td>io box z / stage</td>
-					<td>{formatNumber(snapshot?.io_box_result?.z_extension)}</td>
-					<td>{formatNumber(snapshot?.io_box_result?.stage_extension)}</td>
 				</tr>
 			</tbody>
 		</table>
