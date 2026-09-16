@@ -266,6 +266,49 @@ async def test_save_calibration_rejects_negative_indices(client, tmp_path) -> No
 	assert response.json()['detail'] == 'Invalid shelf_idx: -1'
 
 
+
+
+
+
+
+
+@pytest.mark.anyio
+async def test_iobox_save_persists_reloads_and_updates_cache_after_admission(monkeypatch) -> None:
+	config = build_parameter_config()
+	worker = build_parameter_worker()
+	save_config = Mock()
+	monkeypatch.setattr(calibration, "get_root_config", lambda: config)
+	monkeypatch.setattr(calibration, "save_root_config", save_config)
+	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
+	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
+	calibration._iobox_current = None
+
+	try:
+		assert await calibration.save_iobox_calibration(
+			calibration.IOBoxSaveRequest(
+				pickup_low_x=120.0,
+				pickup_low_y=220.0,
+				pickup_high_x=130.0,
+				pickup_high_y=230.0,
+				z_extension=10.0,
+				stage_extension=25.0,
+			)
+		) == {"success": True}
+
+		params = config.robot.tool.parameters
+		assert params.PICKUP_POSITION_L == (120, 220)
+		assert params.PICKUP_POSITION_H == (130, 230)
+		assert params.Z_EXTENSION_IO == 10.0
+		assert params.STAGE_EXTENSION_IO_BOX == 25.0
+		assert save_config.call_args.args == (config,)
+		assert worker._robot.reload_parameters.call_count == 1
+		assert calibration._iobox_current is not None
+		assert calibration._iobox_current.pickup_low_x == 120.0
+		assert calibration._iobox_current.stage_extension == 25.0
+	finally:
+		calibration._iobox_current = None
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize(
 	("save_function", "save_request", "expected_parameters"),
