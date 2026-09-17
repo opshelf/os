@@ -1,4 +1,5 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import response_docs
 
 import asyncio
 import fcntl
@@ -212,8 +213,19 @@ async def _rollback(previous_connection: str | None) -> None:
 		)
 
 
-@router.get("/status", response_model=WifiStatus, dependencies=[Depends(get_current_user)])
+@router.get(
+    "/status",
+    response_model=WifiStatus,
+    dependencies=[Depends(get_current_user)],
+    summary="Read Wi-Fi connection state",
+    responses=response_docs(errors=(401, 500)),
+)
 async def get_wifi_status() -> WifiStatus:
+	"""Read Wi-Fi connection state.
+
+	Returns the active wireless SSID, signal, and IP when available. Requires
+	authentication. A disconnected state is represented in the body.
+	"""
 	return await active_status()
 
 
@@ -282,15 +294,35 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 	)
 
 
-@router.get("/networks", response_model=WifiNetworkList, dependencies=[Depends(get_current_user)])
+@router.get(
+    "/networks",
+    response_model=WifiNetworkList,
+    dependencies=[Depends(get_current_user)],
+    summary="Scan available Wi-Fi networks",
+    responses=response_docs(errors=(401, 500, 502)),
+)
 async def list_wifi_networks() -> WifiNetworkList:
+	"""Scan available Wi-Fi networks.
+
+	Scans using NetworkManager and returns visible SSIDs, signal, security, and
+	active-network markers. Requires authentication; this can take longer than a cached
+	status read.
+	"""
 	return await scan_networks()
 
 
 @router.post(
-	"/connect",
-	response_model=WifiConnectResponse,
-	dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))],
+    "/connect",
+    response_model=WifiConnectResponse,
+    dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control"))],
+    summary="Connect and persist Wi-Fi",
+    responses=response_docs(errors=(400, 401, 403, 500, 502)),
 )
 async def connect_wifi(request: WifiConnectRequest) -> WifiConnectResponse:
+	"""Connect and persist Wi-Fi.
+
+	Requires `robot:control`. Creates a pending NetworkManager connection, activates it, and
+	writes boot Wi-Fi configuration on success. Failure rolls back the pending connection.
+	Changing networks may disconnect the requesting client.
+	"""
 	return await perform_connect(request.ssid, request.password)

@@ -9,7 +9,6 @@ _MODULE_NAMES = (
     "recording",
     "motion",
     "shelf_scan",
-    "io_box",
     "fine_scan",
     "staged_scan",
 )
@@ -138,11 +137,6 @@ async def capture_shelf_candidates(*args: Any, **kwargs: Any) -> Any:
 
     with _synced_patch_targets():
         return await implementation(*args, **kwargs)
-
-
-async def run_io_box_scout(*args: Any, **kwargs: Any) -> Any:
-    with _synced_patch_targets():
-        return await _load_module("io_box").run_io_box_scout(*args, **kwargs)
 
 
 async def run_staged_scan(*args: Any, **kwargs: Any) -> Any:

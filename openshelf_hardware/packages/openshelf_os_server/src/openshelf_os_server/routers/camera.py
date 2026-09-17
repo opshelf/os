@@ -1,10 +1,13 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import response_docs, stream_docs
+from fastapi.responses import Response
 
 import asyncio
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from openshelf_os_server.core.camera import (
 	CameraManager,
@@ -17,6 +20,20 @@ from openshelf_os_server.core.logging_config import get_logger
 from .auth_deps import get_current_user
 
 logger = get_logger(__name__)
+
+
+class CameraInfo(BaseModel):
+    id: str
+    type: str
+    online: bool
+    running: bool
+    consumers: int
+    has_frame: bool
+
+
+class CamerasResponse(BaseModel):
+    cameras: list[CameraInfo]
+
 
 router = APIRouter(tags=["camera"])
 
@@ -54,18 +71,48 @@ async def mjpeg_stream_generator_for_camera(
 		pass
 
 
-@router.get("", dependencies=[Depends(get_current_user)])
+@router.get(
+    "",
+    dependencies=[Depends(get_current_user)],
+    summary="List available cameras",
+    responses=response_docs(model=CamerasResponse, errors=(401,)),
+)
 async def list_cameras() -> dict:
+	"""List available cameras.
+
+	Returns configured camera IDs and status for selecting a stream. Requires a user token.
+	Use a returned ID with the camera streaming endpoint.
+	"""
 	cameras = await get_all_cameras_status()
 
 	return {"cameras": cameras}
 
 
-@router.get("/{camera_id}", dependencies=[Depends(get_current_user)])
+@router.get(
+    "/{camera_id}",
+    dependencies=[Depends(get_current_user)],
+    summary="Stream camera frames",
+    responses=response_docs(
+        errors=(401, 404, 503),
+        existing=stream_docs(
+            "multipart/x-mixed-replace; boundary=frame",
+            "Multipart JPEG frames; each part has Content-Type: image/jpeg.",
+            None,
+        ),
+    ),
+    response_class=Response,
+)
 async def stream_camera(
 	camera_id: str,
 	request: Request,
 ) -> StreamingResponse:
+	"""Stream camera frames.
+
+	Returns an MJPEG stream (`multipart/x-mixed-replace; boundary=frame`) with JPEG frames.
+	Starts the selected stream and releases it on disconnect. Unknown IDs return `404`; no
+	available frames or camera failures return `503`. A user token may be sent through
+	`?token=` for image clients.
+	"""
 	manager = get_camera_manager_by_id(camera_id)
 
 	if manager is None:

@@ -75,7 +75,14 @@ else
 fi
 
 start_api() {
-	cd /app/openshelf_hardware && exec uv run start
+	cd /app/openshelf_hardware
+	# Run the environment the image was built with. `uv run` re-syncs on every start,
+	# which installs dev tooling into the runtime environment and can replace installed
+	# versions with a resolution the image was not built or tested against.
+	if [ -x "${ENV_PATH}/bin/start" ]; then
+		exec "${ENV_PATH}/bin/start"
+	fi
+	exec uv run start
 }
 
 if [ "$#" -gt 0 ]; then

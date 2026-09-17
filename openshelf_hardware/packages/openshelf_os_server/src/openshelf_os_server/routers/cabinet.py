@@ -1,4 +1,5 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import response_docs
 
 import logging
 from typing import Literal
@@ -77,10 +78,21 @@ async def ensure_laser_auto_calibration_not_running() -> None:
     )
 
 
-@router.get("/status", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.get(
+    "/status",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Read cabinet doors and latches",
+    responses=response_docs(errors=(401, 503)),
+)
 async def get_cabinet_status(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> CabinetStatusResponse:
+    """Read cabinet doors and latches.
+
+    Reports cabinet GPIO door/latch state. `configured=false` means this hardware is not
+    configured, rather than a closed-door guarantee. Requires authentication and an enabled
+    robot.
+    """
     cabinet = worker._robot._cabinet
     if cabinet.is_configured() is False:
         return CabinetStatusResponse(configured=False)
@@ -102,11 +114,22 @@ async def get_cabinet_status(
         ) from exc
 
 
-@router.post("/release", dependencies=[Depends(require_permissions("storage:access")), Depends(check_robot_enabled)])
+@router.post(
+    "/release",
+    dependencies=[Depends(require_permissions("storage:access")), Depends(check_robot_enabled)],
+    summary="Control cabinet latch release",
+    responses=response_docs(errors=(401, 403, 409, 503)),
+)
 async def control_cabinet_release(
     action: Literal["passive", "release"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> CabinetReleaseResponse:
+    """Control cabinet latch release.
+
+    Requires `storage:access`. Sets the physical latch output to `release` or `passive` and
+    returns updated door/latch state. Unconfigured GPIO returns `409`; hardware failures
+    return `503`. Blocked during automatic laser calibration.
+    """
     try:
         await ensure_laser_auto_calibration_not_running()
         cabinet = worker._robot._cabinet
@@ -120,7 +143,7 @@ async def control_cabinet_release(
             )
 
         async with manual_motion_guard(
-            f"cabinet_release:{action}", worker=worker, check_bin_workflow=True
+            f"cabinet_release:{action}", worker=worker
         ):
             if action == "passive":
                 cabinet_status = await cabinet.set_passive()

@@ -314,7 +314,7 @@ def test_error_report_adds_crash_video_attachments_to_sentry_scope(
     scope = MagicMock()
     scope_context = MagicMock()
     scope_context.__enter__.return_value = scope
-    monkeypatch.setattr(robot_worker.sentry_sdk, "push_scope", lambda: scope_context)
+    monkeypatch.setattr(robot_worker.sentry_sdk, "new_scope", lambda: scope_context)
     monkeypatch.setattr(robot_worker.sentry_sdk, "capture_message", lambda *args, **kwargs: None)
 
     worker._report_error(

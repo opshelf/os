@@ -1,4 +1,5 @@
 """User management API endpoints."""
+from openshelf_os_server.documentation import MessageResponse, response_docs
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -93,7 +94,12 @@ def _build_user_response(user: User) -> UserResponse:
 		updated_at=user.updated_at.isoformat() if user.updated_at else "",
 	)
 
-@router.get("", response_model=UserListResponse)
+@router.get(
+    "",
+    response_model=UserListResponse,
+    summary="List managed users",
+    responses=response_docs(errors=(401, 403)),
+)
 async def list_users(
 	offset: int = Query(0, ge=0),
 	limit: int = Query(100, ge=1, le=1000),
@@ -102,7 +108,11 @@ async def list_users(
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> UserListResponse:
-	"""List all users with pagination."""
+	"""List managed users.
+
+	Returns an offset page of non-system users with optional active-state and role filters.
+	Requires `users:read`; the total reflects the same filters.
+	"""
 	query = select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(~User.is_system)
 
 	if is_active is not None:
@@ -130,13 +140,24 @@ async def list_users(
 		limit=limit
 	)
 
-@router.post("", response_model=UserResponse, dependencies=[Depends(require_permissions("users:write"))])
+@router.post(
+    "",
+    response_model=UserResponse,
+    dependencies=[Depends(require_permissions("users:write"))],
+    summary="Create a user",
+    responses=response_docs(errors=(400, 401, 403)),
+)
 async def create_user(
 	request: UserCreate,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
-	"""Create a new user."""
+	"""Create a user.
+
+	Requires both `users:read` and `users:write`. PINs contain exactly four digits and are
+	stored hashed. Email must be unique; role and optional access level must exist. Invalid
+	references or duplicate email return `400`.
+	"""
 	existing_result = await db.execute(select(User).filter(User.email == request.email))
 	existing = existing_result.scalar_one_or_none()
 	if existing is not None:
@@ -188,13 +209,22 @@ async def create_user(
 	
 	return _build_user_response(user)
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get(
+    "/{user_id}",
+    response_model=UserResponse,
+    summary="Read a managed user",
+    responses=response_docs(errors=(401, 403, 404)),
+)
 async def get_user(
 	user_id: int,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
-	"""Get a specific user."""
+	"""Read a managed user.
+
+	Requires `users:read`. Returns role/access-level details for a non-system user. Absent
+	and system users return `404`.
+	"""
 	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id, ~User.is_system))
 	user = user_result.scalar_one_or_none()
 	if user is None:
@@ -205,14 +235,25 @@ async def get_user(
 	
 	return _build_user_response(user)
 
-@router.put("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_permissions("users:write"))])
+@router.put(
+    "/{user_id}",
+    response_model=UserResponse,
+    dependencies=[Depends(require_permissions("users:write"))],
+    summary="Update a managed user",
+    responses=response_docs(errors=(400, 401, 403, 404)),
+)
 async def update_user(
 	user_id: int,
 	request: UserUpdate,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
-	"""Update a user."""
+	"""Update a managed user.
+
+	Requires both `users:read` and `users:write`. Supplied non-null values update the
+	account; PIN replacement is hashed. Null or omitted values are not a general
+	field-clearing mechanism. System users are excluded.
+	"""
 	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id, ~User.is_system))
 	user = user_result.scalar_one_or_none()
 	if user is None:
@@ -282,13 +323,23 @@ async def update_user(
 	
 	return _build_user_response(user)
 
-@router.delete("/{user_id}", dependencies=[Depends(require_permissions("users:delete"))])
+@router.delete(
+    "/{user_id}",
+    dependencies=[Depends(require_permissions("users:delete"))],
+    summary="Deactivate a user",
+    responses=response_docs(model=MessageResponse, errors=(400, 401, 403, 404)),
+)
 async def delete_user(
 	user_id: int,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> dict:
-	"""Soft delete a user by setting inactive."""
+	"""Deactivate a user.
+
+	Requires both `users:read` and `users:delete`. Soft-deletes a non-system account by
+	setting `is_active=false`; it does not erase the user or audit history. Deactivating
+	your own account returns `400`.
+	"""
 	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id, ~User.is_system))
 	user = user_result.scalar_one_or_none()
 	if user is None:
