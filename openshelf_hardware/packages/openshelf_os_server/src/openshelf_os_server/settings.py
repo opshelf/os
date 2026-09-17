@@ -22,6 +22,7 @@ from openshelf_os.common import (
     RobotAppSettings,
     ConfigValidationError,
     CONFIG_PATH,
+    INSECURE_PUBLISHED_SECRETS,
     OperatingMode,
     write_json_file_with_backup,
     load_and_validate_config,
@@ -259,11 +260,20 @@ def _apply_env_overrides(data: dict) -> dict:
         data["auth"]["require_auth"] = True
         data["auth"]["enabled"] = True
 
-    jwt_secret = os.getenv("JWT_SECRET")
-    if jwt_secret is not None:
-        data["auth"]["jwt_secret"] = jwt_secret
-    elif data["auth"].get("jwt_secret") is None:
-        data["auth"]["jwt_secret"] = secrets.token_urlsafe(32)
+    # A blank JWT_SECRET (e.g. an unset compose passthrough) must not override a
+    # usable secret, otherwise tokens would be signed with an empty key. The literal
+    # docker-compose.yml used to publish is rejected as well: anyone who can read the
+    # repository could forge a session with it, and it leaked into config.json on
+    # devices that saved their config while it was in effect.
+    jwt_secret = os.getenv("JWT_SECRET") or data["auth"].get("jwt_secret")
+    if not jwt_secret or jwt_secret in INSECURE_PUBLISHED_SECRETS:
+        if jwt_secret:
+            logger.warning(
+                "JWT_SECRET is a published default, using a generated secret instead; "
+                "existing tokens stop verifying"
+            )
+        jwt_secret = secrets.token_urlsafe(32)
+    data["auth"]["jwt_secret"] = jwt_secret
 
     return data
 

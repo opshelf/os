@@ -1,6 +1,8 @@
 """Authentication core functionality."""
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Optional, Dict, Any, cast
+import hashlib
 import secrets
 
 from argon2 import PasswordHasher
@@ -10,11 +12,40 @@ from jwt.exceptions import InvalidTokenError
 
 ph = PasswordHasher()
 
+# RFC 7518 section 3.2 requires an HMAC key at least as long as the hash output,
+# so a configured secret (which may be short or operator-chosen) is stretched
+# instead of being used verbatim. The salt is constant because derived keys must
+# keep verifying across processes and restarts.
+_KEY_DERIVATION_SALT = b"openshelf_os:jwt-hmac-key"
+_PBKDF2_ITERATIONS = 100_000
+_HMAC_KEY_LENGTHS = {"HS256": 32, "HS384": 48, "HS512": 64}
+
+@lru_cache(maxsize=8)
+def _signing_key(secret_key: str, algorithm: str) -> str | bytes:
+	"""Return a key of RFC 7518 length for the given secret and algorithm."""
+	key_length = _HMAC_KEY_LENGTHS.get(algorithm)
+	if key_length is None:
+		# Asymmetric algorithms are configured as key material, leave them alone.
+		return secret_key
+	return hashlib.pbkdf2_hmac(
+		"sha256",
+		secret_key.encode("utf-8"),
+		_KEY_DERIVATION_SALT,
+		_PBKDF2_ITERATIONS,
+		dklen=key_length,
+	)
+
 class AuthService:
 	"""Authentication service for managing tokens and passwords."""
 	
 	def __init__(self, secret_key: str, algorithm: str = "HS256"):
-		self.secret_key = secret_key
+		# The settings layer is what guarantees a non-empty, non-published
+		# secret: PyJWT on the locked version signs and verifies with an empty
+		# or short HMAC key without complaint, so reject it here. The derived
+		# key exists so any configured secret reaches an RFC 7518-sized key.
+		if not secret_key:
+			raise ValueError("AuthService secret_key must not be empty")
+		self.secret_key = _signing_key(secret_key, algorithm)
 		self.algorithm = algorithm
 	
 	def hash_pin(self, pin: str) -> str:
