@@ -129,16 +129,29 @@ every machine. Migration 4 removes them; the scan reads them from
 | Moved out of `robot.grid.scan` | Now |
 | --- | --- |
 | hole detection: `wall_depth_tolerance_mm`, `expected_hole_{width,height}_mm`, `hole_{width,height}_tolerance_mm`, `min_{vertical,horizontal}_wall_coverage_mm` | `laser_calibration.defaults` |
-| sampling: `laser_sample_settle_ms`, `laser_samples_per_point`, `fine_cell_scan_y_margin_mm` | `laser_calibration.defaults` |
+| sampling: `laser_sample_settle_ms`, `laser_samples_per_point` | `laser_calibration.defaults` |
 | `z_offset_model_param_tolerance_mm` | `laser_calibration.defaults` |
 | `z_stall_probe_*` probe geometry, speed and timeouts | `laser_calibration.defaults` |
-| `angle_calibration_x_{min,step}_mm`, `angle_calibration_x_count`, `angle_calibration_rotation_step_deg` | `laser_calibration.defaults` |
-| `angle_calibration_stage_stall_*` coarse/fine sweep, validation and probe settings | `laser_calibration.defaults` |
-| `angle_calibration_stage_stall_rotation_{min,max}_deg` | dropped: the stage-stall `coarse_*` pair always shadowed them, so a value set here never reached the sweep |
+| `angle_calibration_x_{min,step}_mm`, `angle_calibration_x_count` | `laser_calibration.defaults` |
+| `angle_calibration_stage_stall_*` coarse/fine sweep, validation and probe settings, except the keys named below | `laser_calibration.defaults` |
+| `angle_calibration_stage_stall_rotation_{min,max}_deg`, `angle_calibration_rotation_step_deg` | dropped: the stage-stall `coarse_*` keys always shadowed them, so a value set here never reached the sweep |
 
 The promoted values are the ones every machine already carried or defaulted to, so
-this step changes no calculation. It does remove the ability to retune a single
-machine's scan through its config: change the constant and release instead.
+this step changes no calculation. It enforces that: a stored value that no longer
+matches its promoted constant is refused, naming the affected keys without printing
+their values, instead of silently retuning that machine. The step does remove the
+ability to retune a single machine's scan through its config: change the constant
+and release instead.
+
+`fine_cell_scan_y_margin_mm` is the one tuning value the fleet does not agree on:
+one machine stores 24.0 while the rest store null, which the getter treats as "use
+the 6.0 code default". Promoting it would have silently retuned that machine, so
+it stays in `robot.grid.scan` as a per-machine setting, with the code default as
+the fallback.
+
+The same applies to two angle-sweep keys, which is what the table row above excludes:
+`angle_calibration_x_max_mm` and `angle_calibration_stage_stall_no_progress_timeout_s`
+stay in `robot.grid.scan` because machines configure them differently.
 
 ## Add a migration
 

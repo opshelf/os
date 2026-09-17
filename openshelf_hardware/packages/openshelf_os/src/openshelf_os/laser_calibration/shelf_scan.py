@@ -507,7 +507,7 @@ def build_fine_scan_bounds(
 	overall_bounds: ScanBounds,
 	scan_config: Any,
 ) -> ScanBounds:
-	fine_cell_scan_y_margin_mm = get_fine_cell_scan_y_margin_mm()
+	fine_cell_scan_y_margin_mm = get_fine_cell_scan_y_margin_mm(scan_config)
 	y_margin_mm = max(
 		fine_cell_scan_y_margin_mm + 10.0,
 		(EXPECTED_HOLE_HEIGHT_MM / 2.0) + 12.0,
