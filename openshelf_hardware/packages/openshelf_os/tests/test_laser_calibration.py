@@ -106,17 +106,11 @@ def test_laser_scan_config_rejects_legacy_field_names() -> None:
 		)
 
 
-def build_replay_scan_config(*, expected_hole_width_mm: float) -> SimpleNamespace:
+def build_replay_scan_config() -> SimpleNamespace:
+	"""Only the per-machine calibration still reaches a replay from the scan config."""
 	return SimpleNamespace(
 		laser_offset_x_mm=1.0,
 		laser_offset_y_mm=2.0,
-		expected_hole_width_mm=expected_hole_width_mm,
-		expected_hole_height_mm=25.0,
-		hole_width_tolerance_mm=1.0,
-		hole_height_tolerance_mm=1.0,
-		wall_depth_tolerance_mm=1.0,
-		min_vertical_wall_coverage_mm=0.0,
-		min_horizontal_wall_coverage_mm=0.0,
 	)
 
 
@@ -203,13 +197,13 @@ def test_load_staged_scan_analysis_replays_raw_fine_scan_with_current_config(
 	monkeypatch.setattr(staged_scan_module, "EXPECTED_HOLE_WIDTH_MM", 25.0)
 	matching_analysis = load_staged_scan_analysis(
 		run_dir,
-		scan_config=build_replay_scan_config(expected_hole_width_mm=25.0),
+		scan_config=build_replay_scan_config(),
 	)
 
 	monkeypatch.setattr(staged_scan_module, "EXPECTED_HOLE_WIDTH_MM", 40.0)
 	changed_analysis = load_staged_scan_analysis(
 		run_dir,
-		scan_config=build_replay_scan_config(expected_hole_width_mm=40.0),
+		scan_config=build_replay_scan_config(),
 	)
 
 	assert len(matching_analysis.shelves) == 1
@@ -226,7 +220,7 @@ def test_load_staged_scan_analysis_replays_copied_raw_fine_scan(tmp_path: Path) 
 
 	analysis = load_staged_scan_analysis(
 		run_dir,
-		scan_config=build_replay_scan_config(expected_hole_width_mm=25.0),
+		scan_config=build_replay_scan_config(),
 	)
 
 	assert len(analysis.shelves) == 1
@@ -238,9 +232,6 @@ def test_find_gap_segments_in_line_matches_expected_hole_width() -> None:
 	positions = [float(idx * 4) for idx in range(12)]
 	values = [10.0, 10.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0]
 	scan_config = SimpleNamespace(
-		expected_hole_width_mm=26.0,
-		hole_width_tolerance_mm=2.0,
-		wall_depth_tolerance_mm=1.0,
 	)
 
 	wall_depth_mm, segments = find_gap_segments_in_line(
@@ -373,8 +364,6 @@ async def test_run_staged_scan_uses_candidate_wall_depth_for_fine_scan(tmp_path:
 		wall_depth_mm=4.61,
 	)
 	scan_config = SimpleNamespace(
-		expected_hole_height_mm=30.0,
-		fine_cell_scan_y_margin_mm=None,
 		laser_offset_x_mm=1.0,
 		laser_offset_y_mm=0.0,
 		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
@@ -546,8 +535,6 @@ def test_build_single_cell_rescan_candidate_requires_laser_offsets() -> None:
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=None,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
 	)
 
 	with pytest.raises(ValueError, match='robot.grid.scan.laser_offset_y_mm must be configured'):
@@ -568,8 +555,6 @@ def test_build_single_cell_rescan_candidate_rejects_invalid_offset_value() -> No
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=float('nan'),
 		laser_offset_y_mm=0.0,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
 	)
 
 	with pytest.raises(ValueError, match='robot.grid.scan.laser_offset_x_mm must be a finite number'):
@@ -590,8 +575,6 @@ def test_build_single_cell_rescan_candidate_allows_scan_estimated_wall_depth() -
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=0.0,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -712,8 +695,6 @@ def test_build_single_cell_rescan_candidate_without_xy_offset_falls_back_to_side
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=0.0,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
 		left_gripper_xy_correction_mm=None,
 		right_gripper_xy_correction_mm=None,
 	)
@@ -741,8 +722,6 @@ def test_build_single_cell_rescan_candidate_without_xy_offset_adds_x_offset_for_
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=0.0,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
 		left_gripper_xy_correction_mm=None,
 		right_gripper_xy_correction_mm=None,
 	)
@@ -790,8 +769,6 @@ def test_build_single_cell_rescan_candidate_round_trips_forward_mapping(
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=laser_offset_x_mm,
 		laser_offset_y_mm=laser_offset_y_mm,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
 		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-4.0, y_mm=3.0),
 		right_gripper_xy_correction_mm=SimpleNamespace(x_mm=-97.0, y_mm=0.0),
 	)
@@ -821,9 +798,6 @@ async def test_estimate_seeded_candidate_wall_depth_initializes_empty_coarse_sca
 	)
 	coarse_scan = GridScanResult(x_positions=[], y_positions=[], depth_rows=[])
 	scan_config = SimpleNamespace(
-		expected_hole_width_mm=26.0,
-		hole_width_tolerance_mm=4.0,
-		wall_depth_tolerance_mm=1.0,
 	)
 
 	async def didScanLinePositions(*args, **kwargs):
