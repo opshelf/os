@@ -536,7 +536,7 @@ def apply_xy_reference_offsets(
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> None:
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
 	if xy_offset is None:
 		require_scan_xy_correction(scan_config=scan_config, side=side)
@@ -994,7 +994,7 @@ def build_single_shelf_known_edge_y(
 		shelf_idx=shelf_idx,
 	)
 	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	candidate_center_y_values: list[float] = []
 
 	for cell in target_shelf.cells:
@@ -1065,7 +1065,7 @@ def apply_single_cell_rescan(
 		)
 
 	calibration_point = target_cell.calibration_point
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
 	if xy_offset is not None:
 		print_status(
@@ -1128,7 +1128,7 @@ def apply_single_shelf_analysis(
 	scanned_shelf.divider_width = float(target_shelf.divider_width)
 	detected_output_keys = set(detected_cell_key_map.values()) if len(detected_cell_key_map) > 0 else None
 
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
 	if xy_offset is not None:
 		print_status(

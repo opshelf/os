@@ -193,19 +193,19 @@ def validate_scan_plan(
 
 
 
-def get_laser_scan_stage_extension_mm(scan_config: Any) -> float:
-	configured_value = getattr(scan_config, "laser_scan_stage_extension_mm", None)
+def get_laser_scan_pose_stage_mm(scan_config: Any) -> float:
+	configured_value = getattr(scan_config, "laser_scan_pose_stage_mm", None)
 
 	if configured_value is None:
 		return LASER_SCAN_STAGE_EXTENSION_MM
 
-	return validate_finite_value(configured_value, "robot.grid.scan.laser_scan_stage_extension_mm")
+	return validate_finite_value(configured_value, "robot.grid.scan.laser_scan_pose_stage_mm")
 
 
-def get_laser_scan_z_offset_from_place_mm(scan_config: Any) -> float:
+def get_laser_scan_pose_z_delta_from_place_mm(scan_config: Any) -> float:
 	configured_value = getattr(
 		scan_config,
-		"laser_scan_z_offset_from_place_mm",
+		"laser_scan_pose_z_delta_from_place_mm",
 		None,
 	)
 
@@ -214,7 +214,7 @@ def get_laser_scan_z_offset_from_place_mm(scan_config: Any) -> float:
 
 	return validate_finite_value(
 		configured_value,
-		"robot.grid.scan.laser_scan_z_offset_from_place_mm",
+		"robot.grid.scan.laser_scan_pose_z_delta_from_place_mm",
 	)
 
 
@@ -226,41 +226,41 @@ def get_laser_samples_per_point(scan_config: Any) -> int:
 	return int(scan_config.laser_samples_per_point)
 
 
-def get_scan_xy_offset(
+def get_gripper_xy_correction(
 	*,
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> tuple[float, float] | None:
 	prefix = "left" if side == StorageModuleSide.LEFT else "right"
-	configured_offset = getattr(scan_config, f"{prefix}_xy_offset", None)
+	configured_offset = getattr(scan_config, f"{prefix}_gripper_xy_correction_mm", None)
 
 	if configured_offset is None:
 		return None
 
-	offset_x_mm = validate_finite_value(configured_offset.x_mm, f"robot.grid.scan.{prefix}_xy_offset.x_mm")
-	offset_y_mm = validate_finite_value(configured_offset.y_mm, f"robot.grid.scan.{prefix}_xy_offset.y_mm")
+	offset_x_mm = validate_finite_value(configured_offset.x_mm, f"robot.grid.scan.{prefix}_gripper_xy_correction_mm.x_mm")
+	offset_y_mm = validate_finite_value(configured_offset.y_mm, f"robot.grid.scan.{prefix}_gripper_xy_correction_mm.y_mm")
 
 	return offset_x_mm, offset_y_mm
 
 
-def get_scan_z_offset_model(
+def get_wall_depth_to_gripper_z_model(
 	*,
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> Any | None:
 	prefix = "left" if side == StorageModuleSide.LEFT else "right"
-	configured_model = getattr(scan_config, f"{prefix}_z_offset_model", None)
+	configured_model = getattr(scan_config, f"{prefix}_wall_depth_to_gripper_z_model", None)
 
 	if configured_model is None:
 		return None
 
-	validate_finite_value(configured_model.intercept_mm, f"robot.grid.scan.{prefix}_z_offset_model.intercept_mm")
-	validate_finite_value(configured_model.slope_per_mm, f"robot.grid.scan.{prefix}_z_offset_model.slope_per_mm")
+	validate_finite_value(configured_model.intercept_mm, f"robot.grid.scan.{prefix}_wall_depth_to_gripper_z_model.intercept_mm")
+	validate_finite_value(configured_model.x_slope_mm_per_mm, f"robot.grid.scan.{prefix}_wall_depth_to_gripper_z_model.x_slope_mm_per_mm")
 	validate_finite_value(
-		configured_model.stage_extension_mm,
-		f"robot.grid.scan.{prefix}_z_offset_model.stage_extension_mm",
+		configured_model.reference_stage_mm,
+		f"robot.grid.scan.{prefix}_wall_depth_to_gripper_z_model.reference_stage_mm",
 	)
-	validate_finite_value(configured_model.z_place_mm, f"robot.grid.scan.{prefix}_z_offset_model.z_place_mm")
+	validate_finite_value(configured_model.reference_z_place_mm, f"robot.grid.scan.{prefix}_wall_depth_to_gripper_z_model.reference_z_place_mm")
 
 	return configured_model
 
@@ -281,19 +281,19 @@ def require_z_offset_model_matches_tool(
 	prefix = "left" if side == StorageModuleSide.LEFT else "right"
 	drifted: list[str] = []
 
-	if abs(float(model.stage_extension_mm) - float(stage_extension_mm)) > tolerance_mm:
+	if abs(float(model.reference_stage_mm) - float(stage_extension_mm)) > tolerance_mm:
 		drifted.append(
-			f"stage extension {float(model.stage_extension_mm):.2f}mm -> {float(stage_extension_mm):.2f}mm"
+			f"stage extension {float(model.reference_stage_mm):.2f}mm -> {float(stage_extension_mm):.2f}mm"
 		)
 
-	if abs(float(model.z_place_mm) - float(z_place_mm)) > tolerance_mm:
-		drifted.append(f"Z_EXTENSION_PLACE {float(model.z_place_mm):.2f}mm -> {float(z_place_mm):.2f}mm")
+	if abs(float(model.reference_z_place_mm) - float(z_place_mm)) > tolerance_mm:
+		drifted.append(f"Z_EXTENSION_PLACE {float(model.reference_z_place_mm):.2f}mm -> {float(z_place_mm):.2f}mm")
 
 	if len(drifted) == 0:
 		return
 
 	raise ValueError(
-		f"robot.grid.scan.{prefix}_z_offset_model was derived at a different tool geometry "
+		f"robot.grid.scan.{prefix}_wall_depth_to_gripper_z_model was derived at a different tool geometry "
 		f"({', '.join(drifted)}). Every cell's z offset would be wrong by that difference. "
 		"Re-derive the model or restore the tool parameters."
 	)
@@ -304,12 +304,12 @@ def require_scan_xy_correction(
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> None:
-	if get_scan_xy_offset(scan_config=scan_config, side=side) is not None:
+	if get_gripper_xy_correction(scan_config=scan_config, side=side) is not None:
 		return
 
 	prefix = "left" if side == StorageModuleSide.LEFT else "right"
 	raise ValueError(
-		f"robot.grid.scan.{prefix}_xy_offset must be configured for laser calibration"
+		f"robot.grid.scan.{prefix}_gripper_xy_correction_mm must be configured for laser calibration"
 	)
 
 

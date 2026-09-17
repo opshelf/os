@@ -267,8 +267,8 @@ class AngleRunnerMixin:
         )
         settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
         samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
-        laser_scan_z_offset_from_place_mm = laser_module.get_laser_scan_z_offset_from_place_mm(scan_config)
-        stage_extension_mm = laser_module.get_laser_scan_stage_extension_mm(scan_config)
+        laser_scan_pose_z_delta_from_place_mm = laser_module.get_laser_scan_pose_z_delta_from_place_mm(scan_config)
+        stage_extension_mm = laser_module.get_laser_scan_pose_stage_mm(scan_config)
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
         z_move_rpm = await tool.get_param("Z_MOVE_RPM")
         z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
@@ -276,7 +276,7 @@ class AngleRunnerMixin:
         if z_extension_place is None or z_move_rpm is None or z_move_accel is None:
             raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
 
-        base_z_mm = float(z_extension_place) + laser_scan_z_offset_from_place_mm
+        base_z_mm = float(z_extension_place) + laser_scan_pose_z_delta_from_place_mm
         probe_x_mm = _resolve_stage_stall_probe_x_mm(scan_config)
         stage_limit_mm = float(stage_motor._params.lim)
         probe_start_mm = float(getattr(scan_config, "angle_calibration_stage_stall_start_mm", 3.0))

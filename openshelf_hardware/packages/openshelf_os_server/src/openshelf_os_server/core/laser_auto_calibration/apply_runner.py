@@ -229,7 +229,7 @@ class ApplyRunnerMixin:
         scan_config = config.robot.grid.scan
         tool = worker._robot._tool
 
-        xy_offset = laser_module.get_scan_xy_offset(scan_config=scan_config, side=side)
+        xy_offset = laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side)
         offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
         offset_y_mm = 0.0 if xy_offset is None else float(xy_offset[1])
 
@@ -499,7 +499,7 @@ class ApplyRunnerMixin:
         the rack, whereas the stall probe presses it and measures the compliance of everything in
         between. Fall back to the probe only when no model is configured.
         """
-        configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
+        configured_model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
 
         if configured_model is not None:
             tool = worker._robot._tool
@@ -521,7 +521,7 @@ class ApplyRunnerMixin:
             )
 
             intercept_mm = float(configured_model.intercept_mm)
-            slope_per_mm = float(configured_model.slope_per_mm)
+            slope_per_mm = float(configured_model.x_slope_mm_per_mm)
             laser_module.print_status(
                 f"z_offset_model=config side={'left' if side == StorageModuleSide.LEFT else 'right'} "
                 f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.6f} "
@@ -538,7 +538,7 @@ class ApplyRunnerMixin:
         side_name = "left" if side == StorageModuleSide.LEFT else "right"
         raise ValueError(
             f"no z offset source for the {side_name} module: configure "
-            f"robot.grid.scan.{side_name}_z_offset_model, or enable robot.grid.scan.z_stall_anchor_enabled. "
+            f"robot.grid.scan.{side_name}_wall_depth_to_gripper_z_model, or enable robot.grid.scan.z_stall_anchor_enabled. "
             "Persisting without one would write z_offset=0 to every cell."
         )
 

@@ -441,6 +441,7 @@ async def test_report_error_skips_sentry_in_development(tmp_path) -> None:
 		"device_id": "dev",
 		"hostname": "host",
 		"environment": "development",
+		"schema_version": 2,
 		"version": "1",
 	}
 	fake_user = SimpleNamespace(

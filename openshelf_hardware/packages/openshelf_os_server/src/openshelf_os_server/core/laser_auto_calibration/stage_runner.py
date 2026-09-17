@@ -81,8 +81,8 @@ class StageRunnerMixin:
             raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
 
         probe_x_mm = float((bounds.x_min + bounds.x_max) / 2.0)
-        laser_scan_z_offset_from_place_mm = laser_module.get_laser_scan_z_offset_from_place_mm(scan_config)
-        base_z_mm = float(z_extension_place) + laser_scan_z_offset_from_place_mm
+        laser_scan_pose_z_delta_from_place_mm = laser_module.get_laser_scan_pose_z_delta_from_place_mm(scan_config)
+        base_z_mm = float(z_extension_place) + laser_scan_pose_z_delta_from_place_mm
         stage_limit_mm = float(tool._ms._params.lim)
         probe_rpm = min(int(tool._ms._params.rpm), 100)
 
@@ -241,14 +241,14 @@ class StageRunnerMixin:
                 raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
 
             x_positions = _build_angle_x_positions(scan_config)
-            laser_scan_stage_extension_mm = laser_module.get_laser_scan_stage_extension_mm(scan_config)
-            laser_scan_z_offset_from_place_mm = laser_module.get_laser_scan_z_offset_from_place_mm(scan_config)
+            laser_scan_pose_stage_mm = laser_module.get_laser_scan_pose_stage_mm(scan_config)
+            laser_scan_pose_z_delta_from_place_mm = laser_module.get_laser_scan_pose_z_delta_from_place_mm(scan_config)
             absolute_rotation_value = await tool.get_param(_side_to_rotation_param_name(side))
             if absolute_rotation_value is None:
                 raise ValueError(f"{_side_to_rotation_param_name(side)} is required")
 
             absolute_rotation_deg = float(absolute_rotation_value)
-            base_z_mm = float(z_extension_place) + laser_scan_z_offset_from_place_mm
+            base_z_mm = float(z_extension_place) + laser_scan_pose_z_delta_from_place_mm
             angle_args = argparse.Namespace(
                 y_mm=None,
                 y_range=(bounds.y_min, bounds.y_max),
@@ -277,7 +277,7 @@ class StageRunnerMixin:
                     side_number=side_number,
                     x_positions=x_positions,
                     rotation_center_deg=absolute_rotation_deg,
-                    stage_extension_mm=laser_scan_stage_extension_mm,
+                    stage_extension_mm=laser_scan_pose_stage_mm,
                     base_z_mm=base_z_mm,
                     z_move_rpm=float(z_move_rpm),
                     z_move_accel=float(z_move_accel),
