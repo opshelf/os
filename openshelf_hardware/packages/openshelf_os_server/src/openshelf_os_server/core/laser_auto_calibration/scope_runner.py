@@ -111,10 +111,6 @@ def _validate_laser_auto_calibration_config(
 ) -> None:
     laser_module.require_laser_offsets(scan_config)
 
-    if requested_scope.mode == "io_box":
-        _resolve_io_box_laser_offset_x_mm(scan_config)
-        return
-
     if left_bounds is None:
         left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
 
@@ -182,9 +178,6 @@ class ScopeRunnerMixin:
                 right_bounds=right_bounds,
             )
 
-            if requested_scope.include_io_box is True:
-                await self._run_io_box_calibration(worker)
-
             return
 
         if requested_scope.mode == "both":
@@ -196,13 +189,6 @@ class ScopeRunnerMixin:
                 right_bounds=right_bounds,
             )
 
-            if requested_scope.include_io_box is True:
-                await self._run_io_box_calibration(worker)
-
-            return
-
-        if requested_scope.mode == "io_box":
-            await self._run_io_box_calibration(worker)
             return
 
         if requested_scope.side is None:
@@ -217,8 +203,6 @@ class ScopeRunnerMixin:
                 requested_scope.include_angle_calibration,
                 requested_scope.include_extension_calibration,
             )
-            if requested_scope.include_io_box is True:
-                await self._run_io_box_calibration(worker)
 
             return
 
@@ -227,9 +211,6 @@ class ScopeRunnerMixin:
                 raise ValueError("Single-shelf auto calibration requires a shelf index")
 
             await self._run_single_shelf(worker, side, int(requested_scope.shelf_idx))
-
-            if requested_scope.include_io_box is True:
-                await self._run_io_box_calibration(worker)
 
             return
 
@@ -245,9 +226,6 @@ class ScopeRunnerMixin:
                     cell_idx=int(requested_scope.cell_idx),
                 ),
             )
-
-            if requested_scope.include_io_box is True:
-                await self._run_io_box_calibration(worker)
 
             return
 

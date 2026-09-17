@@ -76,16 +76,6 @@ STAGE_EXTENSION_PROBE_TIMEOUT_S = 60.0
 STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
 STAGE_EXTENSION_STALL_BACKOFF_MM = 5.0
 ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM = 475.0
-IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM = 1.0
-
-
-def _resolve_io_box_laser_offset_x_mm(scan_config: Any) -> float:
-    laser_offset_x_mm = laser_module.require_scan_config_parameter(scan_config, "laser_offset_x_mm")
-
-    if abs(laser_offset_x_mm) < IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM:
-        raise ValueError("robot.grid.scan.laser_offset_x_mm must be configured before IO box calibration")
-
-    return laser_offset_x_mm
 
 
 def _should_skip_motion_cleanup_on_cancel() -> bool:
@@ -147,23 +137,14 @@ class LaserAutoCalibrationAngleResult(BaseModel):
     stage_position_mm: float | None = None
 
 
-class LaserAutoCalibrationIOBoxResult(BaseModel):
-    pickup_low_x: float
-    pickup_low_y: float
-    pickup_high_x: float
-    pickup_high_y: float
-    z_extension: float
-    stage_extension: float
-
-
 class LaserAutoCalibrationScope(BaseModel):
-    mode: Literal["all", "both", "side", "shelf", "cell", "io_box"] = "all"
+    mode: Literal["all", "both", "side", "shelf", "cell"] = "all"
     side: StorageModuleSide | None = None
     shelf_idx: int | None = None
     cell_idx: int | None = None
-    include_io_box: bool = False
     include_angle_calibration: bool = True
     include_extension_calibration: bool = True
+    hold_y_enabled: bool = True
 
 class LaserAutoCalibrationError(BaseModel):
     error_type: str
@@ -200,7 +181,6 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     shelf_candidates: list[LaserAutoCalibrationCandidate] = Field(default_factory=list)
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
     angle_results: list[LaserAutoCalibrationAngleResult] = Field(default_factory=list)
-    io_box_result: LaserAutoCalibrationIOBoxResult | None = None
     stage_detail: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     error_detail: LaserAutoCalibrationError | None = None
@@ -550,15 +530,12 @@ __all__ = [
     "STAGE_EXTENSION_PROBE_TIMEOUT_S",
     "STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S",
     "STAGE_EXTENSION_STALL_BACKOFF_MM",
-    "IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM",
     "ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM",
-    "_resolve_io_box_laser_offset_x_mm",
     "_should_skip_motion_cleanup_on_cancel",
     "LaserAutoCalibrationShelfEdge",
     "LaserAutoCalibrationCandidate",
     "LaserAutoCalibrationCell",
     "LaserAutoCalibrationAngleResult",
-    "LaserAutoCalibrationIOBoxResult",
     "LaserAutoCalibrationScope",
     "LaserAutoCalibrationSnapshot",
     "_SideState",

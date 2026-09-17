@@ -170,8 +170,7 @@ def _build_laser_auto_calibration_scope(
 	side: StorageModuleSide | None,
 	shelf_idx: int | None,
 	cell_idx: int | None,
-	mode: Literal["all", "both", "io_box"] | None,
-	include_io_box: bool | None,
+	mode: Literal["all", "both"] | None,
 	include_angle_calibration: bool | None,
 	include_extension_calibration: bool | None,
 ) -> LaserAutoCalibrationScope:
@@ -187,20 +186,6 @@ def _build_laser_auto_calibration_scope(
 			detail="cell_idx must be non-negative",
 		)
 
-	if mode == "io_box":
-		if side is not None or shelf_idx is not None or cell_idx is not None:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail="side, shelf_idx, and cell_idx cannot be used with io_box mode",
-			)
-
-		return LaserAutoCalibrationScope(
-			mode="io_box",
-			include_io_box=True,
-			include_angle_calibration=False,
-			include_extension_calibration=False,
-		)
-
 	if mode == "both":
 		if side is not None or shelf_idx is not None or cell_idx is not None:
 			raise HTTPException(
@@ -210,7 +195,6 @@ def _build_laser_auto_calibration_scope(
 
 		return LaserAutoCalibrationScope(
 			mode="both",
-			include_io_box=include_io_box is not False,
 			include_angle_calibration=include_angle_calibration is not False,
 			include_extension_calibration=include_extension_calibration is not False,
 		)
@@ -224,7 +208,6 @@ def _build_laser_auto_calibration_scope(
 
 		return LaserAutoCalibrationScope(
 			mode="all",
-			include_io_box=include_io_box is not False,
 			include_angle_calibration=include_angle_calibration is not False,
 			include_extension_calibration=include_extension_calibration is not False,
 		)
@@ -239,7 +222,6 @@ def _build_laser_auto_calibration_scope(
 		return LaserAutoCalibrationScope(
 			mode="side",
 			side=side,
-			include_io_box=include_io_box is True,
 			include_angle_calibration=include_angle_calibration is not False,
 			include_extension_calibration=include_extension_calibration is not False,
 		)
@@ -249,7 +231,6 @@ def _build_laser_auto_calibration_scope(
 			mode="shelf",
 			side=side,
 			shelf_idx=shelf_idx,
-			include_io_box=include_io_box is True,
 			include_angle_calibration=False,
 			include_extension_calibration=False,
 		)
@@ -259,7 +240,6 @@ def _build_laser_auto_calibration_scope(
 		side=side,
 		shelf_idx=shelf_idx,
 		cell_idx=cell_idx,
-		include_io_box=include_io_box is True,
 		include_angle_calibration=False,
 		include_extension_calibration=False,
 	)
@@ -854,10 +834,10 @@ async def stream_laser_auto_calibration(
 	side: StorageModuleSide | None = None,
 	shelf_idx: int | None = None,
 	cell_idx: int | None = None,
-	mode: Literal["all", "both", "io_box"] | None = None,
-	include_io_box: bool | None = None,
+	mode: Literal["all", "both"] | None = None,
 	include_angle_calibration: bool | None = None,
 	include_extension_calibration: bool | None = None,
+	hold_y_enabled: bool | None = None,
 	subscribe_only: bool = False,
 ) -> EventSourceResponse:
 	"""Start or observe automatic laser calibration.
@@ -869,18 +849,18 @@ async def stream_laser_auto_calibration(
 
 	Returns Server-Sent Events with JSON calibration snapshots. A client disconnect
 	unsubscribes that client; use the abort endpoint to stop the session. Do not infer
-	cancellation from a closed connection. Optional scope parameters select cells, both
-	sides, or the IO box and the angle/extension calibration phases.
+	cancellation from a closed connection. Optional scope parameters select cells,
+	both sides, or the angle/extension calibration phases. `hold_y_enabled=false` parks
+	Y on its brake between moves instead of holding it energised for the session.
 	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,
 		shelf_idx,
 		cell_idx,
 		mode,
-		include_io_box,
 		include_angle_calibration,
 		include_extension_calibration,
-	)
+	).model_copy(update={"hold_y_enabled": hold_y_enabled is not False})
 	manager = get_laser_auto_calibration_manager()
 	is_active = await manager.is_active()
 
