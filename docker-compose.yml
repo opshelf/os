@@ -1,4 +1,7 @@
-name: openshelf_os
+# Every checkout shares this project name, so starting one replaces another
+# checkout's containers. Set OPSHELF_COMPOSE_PROJECT per worktree to keep stacks
+# separate; the default keeps device and relay tooling on openshelf_os-*.
+name: ${OPSHELF_COMPOSE_PROJECT:-openshelf_os}
 
 services:
   api:
@@ -30,8 +33,14 @@ services:
       - DEVICE_ID=${DEVICE_ID:-}
       - OPENSHELF_BARCODE_PORT
       - OPENSHELF_BARCODE_BAUDRATE=115200
-      - JWT_SECRET=${JWT_SECRET:-INSECURE_JWT_SECRET}
-      - AUDIT_HMAC_KEY=${AUDIT_HMAC_KEY:-INSECURE_AUDIT_HMAC_KEY}
+      # Passed through only when set; settings.py otherwise keeps the persisted
+      # auth.jwt_secret or generates a strong one, so no weak default is injected.
+      - JWT_SECRET
+      # Passed through only when set; scripts/start provisions a per-mode key when
+      # unset, so no weak default is injected. AUDIT_HMAC_KEY_ID must reach the
+      # container with its key or rotated audit rows verify against the wrong key.
+      - AUDIT_HMAC_KEY
+      - AUDIT_HMAC_KEY_ID
       - OPSHELF_RELAY_SERVICE_TOKEN_SHA256=${OPSHELF_RELAY_SERVICE_TOKEN_SHA256:-}
       - CAS_COMMON_CHEMISTRY_API_KEY=${CAS_COMMON_CHEMISTRY_API_KEY:-}
       - SENTRY_DSN_API=${SENTRY_DSN_API:-}
