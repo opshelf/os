@@ -27,6 +27,8 @@
 	let isAllSelected = $state<boolean>(true);
 	let isAngleCalibrationSelected = $state<boolean>(true);
 	let isExtensionCalibrationSelected = $state<boolean>(true);
+	let preferredAngleCalibration = $state<boolean>(true);
+	let preferredExtensionCalibration = $state<boolean>(true);
 	let selectedSide = $state<'' | 'left_module' | 'right_module'>('');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
@@ -249,10 +251,15 @@
 		isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
 		isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
 
+		// Shelf and cell scopes always drop both options, so only a scope that honours them
+		// may replace the remembered user choice.
+		if (requestedScope.mode !== 'shelf' && requestedScope.mode !== 'cell') {
+			preferredAngleCalibration = isAngleCalibrationSelected;
+			preferredExtensionCalibration = isExtensionCalibrationSelected;
+		}
+
 		if (requestedScope.mode === 'all') {
 			isAllSelected = true;
-			isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
-			isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
 			selectedSide = '';
 			selectedShelf = '';
 			selectedCell = '';
@@ -282,6 +289,22 @@
 			isAngleCalibrationSelected = false;
 			isExtensionCalibrationSelected = false;
 		}
+	}
+
+	/**
+	 * Angle and extension calibration only apply to all-, both- and side-scoped runs, so a
+	 * shelf or cell selection forces both off and remembering the last user choice keeps a
+	 * later scope change from silently re-enabling what was just unchecked.
+	 */
+	function applyCalibrationOptionSelection(): void {
+		if (selectedShelf !== '' || selectedCell !== '') {
+			isAngleCalibrationSelected = false;
+			isExtensionCalibrationSelected = false;
+			return;
+		}
+
+		isAngleCalibrationSelected = preferredAngleCalibration;
+		isExtensionCalibrationSelected = preferredExtensionCalibration;
 	}
 
 	function getRequestedScope(): LaserAutoCalibrationRequest {
@@ -421,14 +444,14 @@
 		const target = event.target as HTMLInputElement;
 
 		isAllSelected = target.checked;
-		isAngleCalibrationSelected = true;
-		isExtensionCalibrationSelected = true;
 
 		if (isAllSelected === true) {
 			selectedSide = '';
 			selectedShelf = '';
 			selectedCell = '';
 		}
+
+		applyCalibrationOptionSelection();
 
 		error = '';
 		message = '';
@@ -439,8 +462,7 @@
 
 		selectedSide = target.value as '' | 'left_module' | 'right_module';
 		syncSelection();
-		isAngleCalibrationSelected = selectedShelf === '';
-		isExtensionCalibrationSelected = selectedShelf === '';
+		applyCalibrationOptionSelection();
 		error = '';
 		message = '';
 	}
@@ -449,8 +471,7 @@
 		const target = event.target as HTMLSelectElement;
 
 		syncSelection(target.value);
-		isAngleCalibrationSelected = selectedShelf === '';
-		isExtensionCalibrationSelected = selectedShelf === '';
+		applyCalibrationOptionSelection();
 		error = '';
 		message = '';
 	}
@@ -459,10 +480,7 @@
 		const target = event.target as HTMLSelectElement;
 
 		selectedCell = target.value;
-		if (selectedCell !== '') {
-			isAngleCalibrationSelected = false;
-			isExtensionCalibrationSelected = false;
-		}
+		applyCalibrationOptionSelection();
 		error = '';
 		message = '';
 	}
@@ -471,6 +489,7 @@
 		const target = event.target as HTMLInputElement;
 
 		isAngleCalibrationSelected = target.checked;
+		preferredAngleCalibration = target.checked;
 		error = '';
 		message = '';
 	}
@@ -479,6 +498,7 @@
 		const target = event.target as HTMLInputElement;
 
 		isExtensionCalibrationSelected = target.checked;
+		preferredExtensionCalibration = target.checked;
 		error = '';
 		message = '';
 	}
