@@ -14,13 +14,16 @@ if [ "$RUNTIME_MODE" != "mock" ] && command -v cupsd >/dev/null 2>&1; then
 	cupsd || true
 fi
 
-# Ensure serial_asyncio is available (needed by robot worker)
-if command -v uv >/dev/null 2>&1; then
-	if [ -n "$PYTHON_BIN" ]; then
+# Ensure serial_asyncio is available (needed by robot worker). Install only when the
+# image environment is missing it: an unconditional unpinned install replaces the
+# version the image was built and locked with.
+if [ -n "$PYTHON_BIN" ]; then
+	if ! "$PYTHON_BIN" -c 'import serial_asyncio' >/dev/null 2>&1; then
+		echo "serial_asyncio missing from the image environment, installing it"
 		uv pip install --python "$PYTHON_BIN" pyserial-asyncio >/dev/null 2>&1 || true
-	else
-		uv pip install pyserial-asyncio >/dev/null 2>&1 || true
 	fi
+elif command -v uv >/dev/null 2>&1; then
+	uv pip install pyserial-asyncio >/dev/null 2>&1 || true
 fi
 
 # Resolve printer queue/URI from the configured runtime config.
