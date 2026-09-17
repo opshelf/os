@@ -14,13 +14,21 @@ import pytest
 from openshelf_os.config.loader import load_config_file
 from openshelf_os.config.exceptions import ConfigValidationError
 from openshelf_os.config.root import RootConfig
-from openshelf_os.config_migrations import cli, runner, v003_remove_unused_scan_keys as v003
+from openshelf_os.config_migrations import (
+    cli,
+    runner,
+    v003_remove_unused_scan_keys as v003,
+    v004_promote_scan_constants as v004,
+)
 from openshelf_os.config_migrations.v002_laser_parameter_names import (
     SCAN_KEY_RENAMES,
     REMOVED_SCAN_KEYS,
 )
 from openshelf_os.config_migrations.v003_remove_unused_scan_keys import (
     REMOVED_SCAN_KEYS as UNUSED_SCAN_KEYS,
+)
+from openshelf_os.config_migrations.v004_promote_scan_constants import (
+    REMOVED_SCAN_KEYS as PROMOTED_SCAN_KEYS,
 )
 from openshelf_os.laser_calibration.core import (
     get_gripper_xy_correction,
@@ -88,6 +96,9 @@ def legacy_config():
                     "angle_calibration_alpha_max_deg": 10,
                     "angle_calibration_stage_stall_fall_threshold_mm": 0.15,
                     "angle_calibration_stage_stall_stop_after_fall_count": 1,
+                    "wall_depth_tolerance_mm": 2,
+                    "laser_sample_settle_ms": 50,
+                    "angle_calibration_stage_stall_coarse_max_deg": 5.5,
                     "unknown_scan_setting": {"preserve": True},
                 },
             },
@@ -101,7 +112,7 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
     original = copy.deepcopy(legacy_config)
     migrated, changes = runner.migrate_config(legacy_config)
     assert legacy_config == original
-    assert migrated["schema_version"] == 3
+    assert migrated["schema_version"] == 4
     assert migrated["version"] == original["version"]
     assert migrated["auth"] == original["auth"]
     assert migrated["unknown_root_setting"] == original["unknown_root_setting"]
@@ -109,7 +120,7 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
     assert migrated["robot"]["grid"]["scan"]["unknown_scan_setting"] == {"preserve": True}
     assert not set(REMOVED_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
     assert not set(UNUSED_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
-    assert changes[-1] == "schema_version: 2 -> 3"
+    assert changes[-1] == "schema_version: 3 -> 4"
     config = RootConfig.model_validate(migrated)
     scan = config.robot.grid.scan
 
@@ -159,7 +170,7 @@ def test_unread_scan_keys_are_removed_without_touching_calibration(legacy_config
     # Calibration values and unknown keys survive unchanged.
     assert scan["left_gripper_xy_correction_mm"] == {"x_mm": -0.8, "y_mm": -3.25}
     assert scan["unknown_scan_setting"] == {"preserve": True}
-    assert RootConfig.model_validate(migrated).schema_version == 3
+    assert RootConfig.model_validate(migrated).schema_version == 4
 
 
 def test_scan_without_the_unread_keys_is_a_noop_step(legacy_config):
@@ -168,6 +179,51 @@ def test_scan_without_the_unread_keys_is_a_noop_step(legacy_config):
         scan.pop(key, None)
     migrated, changes = v003.migrate(copy.deepcopy(legacy_config))
     assert migrated == legacy_config and changes == []
+
+
+def test_uniform_scan_tuning_moves_to_code(legacy_config):
+    original = copy.deepcopy(legacy_config)
+    migrated, changes = runner.migrate_config(legacy_config)
+    assert legacy_config == original
+    scan = migrated["robot"]["grid"]["scan"]
+    assert not set(PROMOTED_SCAN_KEYS) & scan.keys()
+    assert "robot.grid.scan.wall_depth_tolerance_mm removed (moved to code)" in changes
+    # Only per-machine calibration and the tuning values the fleet disagrees on remain.
+    assert set(scan) == {
+        "laser_offset_x_mm",
+        "laser_offset_y_mm",
+        "laser_scan_pose_stage_mm",
+        "laser_scan_pose_z_delta_from_place_mm",
+        "left_gripper_xy_correction_mm",
+        "right_gripper_xy_correction_mm",
+        "left_wall_depth_to_gripper_z_model",
+        "right_wall_depth_to_gripper_z_model",
+        "unknown_scan_setting",
+    }
+    assert RootConfig.model_validate(migrated).schema_version == 4
+
+
+def test_promoted_constants_keep_the_values_the_fleet_configured():
+    from openshelf_os.laser_calibration import defaults
+
+    # Pinned so an edit to the code constants cannot silently retune every machine.
+    assert defaults.WALL_DEPTH_TOLERANCE_MM == 2.0
+    assert defaults.EXPECTED_HOLE_WIDTH_MM == 26.0
+    assert defaults.EXPECTED_HOLE_HEIGHT_MM == 30.0
+    assert defaults.HOLE_WIDTH_TOLERANCE_MM == 10.0
+    assert defaults.HOLE_HEIGHT_TOLERANCE_MM == 10.0
+    assert defaults.MIN_VERTICAL_WALL_COVERAGE_MM == 10.0
+    assert defaults.MIN_HORIZONTAL_WALL_COVERAGE_MM == 30.0
+    assert defaults.LASER_SAMPLE_SETTLE_MS == 50
+    assert defaults.LASER_SAMPLES_PER_POINT == 3
+    assert defaults.Z_OFFSET_MODEL_PARAM_TOLERANCE_MM == 0.2
+    assert defaults.Z_STALL_PROBE_START_MM == 5.0
+    assert defaults.Z_STALL_PROBE_FAST_APPROACH_MM == 130.0
+    assert defaults.Z_STALL_PROBE_TARGET_MM == 180.0
+    assert defaults.STAGE_STALL_COARSE_MAX_DEG == 5.5
+    assert defaults.STAGE_STALL_START_MM == 3.0
+    assert defaults.STAGE_STALL_TARGET_MM is None
+    assert defaults.ANGLE_SWEEP_X_COUNT == 5
 
 
 @pytest.mark.parametrize("version", [None, 1])
@@ -200,8 +256,8 @@ def test_legacy_grid_path_forms_migrate_without_rewriting(tmp_path, legacy_confi
     original = copy.deepcopy(legacy_config)
     migrated, changes = runner.migrate_config(legacy_config)
     assert legacy_config == original
-    assert migrated == {**original, "schema_version": 3}
-    assert changes == ["schema_version: 1 -> 2", "schema_version: 2 -> 3"]
+    assert migrated == {**original, "schema_version": 4}
+    assert changes == ["schema_version: 1 -> 2", "schema_version: 2 -> 3", "schema_version: 3 -> 4"]
     assert RootConfig.model_validate(migrated).robot.grid.path == "storage.json"
 
     path = tmp_path / "config.json"
@@ -218,22 +274,22 @@ def test_legacy_grid_path_forms_migrate_without_rewriting(tmp_path, legacy_confi
 
 def test_chain_runs_in_order_and_advances_only_after_success(legacy_config, monkeypatch):
     def third(config):
-        assert config["schema_version"] == 3
+        assert config["schema_version"] == 4
         config["third_step"] = True
         return config, ["third step"]
 
-    monkeypatch.setattr(runner, "CURRENT_SCHEMA_VERSION", 4)
-    monkeypatch.setitem(runner.MIGRATIONS, 4, third)
+    monkeypatch.setattr(runner, "CURRENT_SCHEMA_VERSION", 5)
+    monkeypatch.setitem(runner.MIGRATIONS, 5, third)
     result, changes = runner.migrate_config(legacy_config)
-    assert result["schema_version"] == 4 and result["third_step"] is True
-    assert changes[-3:] == ["schema_version: 2 -> 3", "third step", "schema_version: 3 -> 4"]
-    monkeypatch.delitem(runner.MIGRATIONS, 4)
-    with pytest.raises(ValueError, match="Missing config migration 3 -> 4"):
+    assert result["schema_version"] == 5 and result["third_step"] is True
+    assert changes[-3:] == ["schema_version: 3 -> 4", "third step", "schema_version: 4 -> 5"]
+    monkeypatch.delitem(runner.MIGRATIONS, 5)
+    with pytest.raises(ValueError, match="Missing config migration 4 -> 5"):
         runner.migrate_config(legacy_config)
     assert "schema_version" not in legacy_config
 
 
-@pytest.mark.parametrize("version", [0, -1, True, "2", 2.0, None, 4])
+@pytest.mark.parametrize("version", [0, -1, True, "2", 2.0, None, 5])
 def test_bad_or_future_versions_are_rejected(legacy_config, version):
     legacy_config["schema_version"] = version
     with pytest.raises(ValueError):
@@ -246,13 +302,16 @@ def test_startup_rejects_unmigrated_config_without_writing(tmp_path, legacy_conf
     path = tmp_path / "config.json"
     raw = json.dumps(legacy_config).encode()
     path.write_bytes(raw)
-    with pytest.raises(ConfigValidationError, match="requires migration to 3"):
+    with pytest.raises(ConfigValidationError, match="requires migration to 4"):
         load_config_file(path)
     assert path.read_bytes() == raw
     assert list(tmp_path.iterdir()) == [path]
 
 
-@pytest.mark.parametrize("old", list(SCAN_KEY_RENAMES) + list(REMOVED_SCAN_KEYS) + list(UNUSED_SCAN_KEYS))
+@pytest.mark.parametrize(
+    "old",
+    list(SCAN_KEY_RENAMES) + list(REMOVED_SCAN_KEYS) + list(UNUSED_SCAN_KEYS) + list(PROMOTED_SCAN_KEYS),
+)
 def test_marking_old_fields_current_does_not_silently_drop_them(legacy_config, old):
     migrated, _ = runner.migrate_config(legacy_config)
     migrated["robot"]["grid"]["scan"][old] = 0
@@ -292,7 +351,7 @@ def test_cli_preview_write_backup_permissions_and_idempotency(tmp_path, legacy_c
     for path in paths:
         assert path.with_name(path.name + ".schema-v1.bak").read_bytes() == originals[path]
         assert stat.S_IMODE(path.stat().st_mode) == 0o640
-        assert load_config_file(path).schema_version == 3
+        assert load_config_file(path).schema_version == 4
     modified_times = [path.stat().st_mtime_ns for path in paths]
     assert cli.main([str(tmp_path), "--write"]) == 0
     assert [path.stat().st_mtime_ns for path in paths] == modified_times
@@ -365,5 +424,5 @@ def test_script_uses_checkout_migrations_from_any_cwd(tmp_path, legacy_config):
     )
     assert result.returncode == 0, result.stderr
     assert "schema_version: 1 -> 2" in result.stdout
-    assert "schema_version: 2 -> 3" in result.stdout
+    assert "schema_version: 3 -> 4" in result.stdout
     assert "schema_version" not in json.loads(path.read_text())

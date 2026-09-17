@@ -142,7 +142,7 @@ class StageRunnerMixin:
                 tool,
                 target_stage_mm=stage_limit_mm,
                 retract_stage_mm=STAGE_EXTENSION_PROBE_START_MM,
-                settle_ms=int(laser_module.get_laser_sample_settle_ms(scan_config)),
+                settle_ms=int(laser_module.get_laser_sample_settle_ms()),
                 timeout_s=STAGE_EXTENSION_PROBE_TIMEOUT_S,
                 probe_rpm=probe_rpm,
                 no_progress_s=STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S,
@@ -281,8 +281,8 @@ class StageRunnerMixin:
                     base_z_mm=base_z_mm,
                     z_move_rpm=float(z_move_rpm),
                     z_move_accel=float(z_move_accel),
-                    settle_ms=int(laser_module.get_laser_sample_settle_ms(scan_config)),
-                    samples_per_point=int(laser_module.get_laser_samples_per_point(scan_config)),
+                    settle_ms=int(laser_module.get_laser_sample_settle_ms()),
+                    samples_per_point=int(laser_module.get_laser_samples_per_point()),
                     should_abort=self._should_abort_work,
                 )
             except angle_module.ShelfScoutError as exc:

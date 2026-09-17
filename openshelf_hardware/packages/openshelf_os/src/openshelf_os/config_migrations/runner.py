@@ -6,13 +6,18 @@ import copy
 from typing import Any, Callable
 
 from openshelf_os.config.schema import CURRENT_SCHEMA_VERSION, read_schema_version
-from openshelf_os.config_migrations import v002_laser_parameter_names, v003_remove_unused_scan_keys
+from openshelf_os.config_migrations import (
+    v002_laser_parameter_names,
+    v003_remove_unused_scan_keys,
+    v004_promote_scan_constants,
+)
 
 Migration = Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]
 # Each key is the destination version; step N always migrates N-1 → N.
 MIGRATIONS: dict[int, Migration] = {
     2: v002_laser_parameter_names.migrate,
     3: v003_remove_unused_scan_keys.migrate,
+    4: v004_promote_scan_constants.migrate,
 }
 
 

@@ -6,6 +6,28 @@ import argparse
 import json
 from pathlib import Path
 
+from openshelf_os.laser_calibration.defaults import (
+    STAGE_STALL_BACKOFF_MM,
+    STAGE_STALL_COARSE_RETRY_COUNT,
+    STAGE_STALL_COARSE_VALIDATION_COUNT,
+    STAGE_STALL_FAST_APPROACH_MARGIN_MM,
+    STAGE_STALL_FAST_APPROACH_MM,
+    STAGE_STALL_FAST_APPROACH_RPM,
+    STAGE_STALL_LOW_CONTACT_RETRY_COUNT,
+    STAGE_STALL_MIN_VALID_STAGE_POSITION_MM,
+    STAGE_STALL_PROBE_RPM,
+    STAGE_STALL_PROBE_STEP_MM,
+    STAGE_STALL_START_MM,
+    STAGE_STALL_TARGET_MM,
+    STAGE_STALL_TIMEOUT_S,
+    STAGE_STALL_VALIDATION_COUNT,
+    STAGE_STALL_VALIDATION_HIGH_SIDE_WINDOW_DEG,
+    STAGE_STALL_VALIDATION_MIN_VALID_SAMPLE_COUNT,
+    STAGE_STALL_VALIDATION_PLATEAU_TOLERANCE_MM,
+    STAGE_STALL_VALIDATION_REPEATS,
+    STAGE_STALL_VALIDATION_RETRY_COUNT,
+)
+
 from .models import *
 
 def _write_stage_stall_angle_debug_document(
@@ -265,8 +287,8 @@ class AngleRunnerMixin:
             rotation_center_deg,
             rotation_limit_deg,
         )
-        settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
-        samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
+        settle_ms = int(laser_module.get_laser_sample_settle_ms())
+        samples_per_point = int(laser_module.get_laser_samples_per_point())
         laser_scan_pose_z_delta_from_place_mm = laser_module.get_laser_scan_pose_z_delta_from_place_mm(scan_config)
         stage_extension_mm = laser_module.get_laser_scan_pose_stage_mm(scan_config)
         z_extension_place = await tool.get_param("Z_EXTENSION_PLACE")
@@ -279,51 +301,32 @@ class AngleRunnerMixin:
         base_z_mm = float(z_extension_place) + laser_scan_pose_z_delta_from_place_mm
         probe_x_mm = _resolve_stage_stall_probe_x_mm(scan_config)
         stage_limit_mm = float(stage_motor._params.lim)
-        probe_start_mm = float(getattr(scan_config, "angle_calibration_stage_stall_start_mm", 3.0))
-        raw_probe_target_mm = getattr(scan_config, "angle_calibration_stage_stall_target_mm", None)
-        probe_target_mm = float(raw_probe_target_mm if raw_probe_target_mm is not None else stage_limit_mm)
-        probe_step_mm = float(getattr(scan_config, "angle_calibration_stage_stall_probe_step_mm", 0.5))
-        probe_rpm = int(getattr(scan_config, "angle_calibration_stage_stall_probe_rpm", 20))
-        fast_approach_rpm = int(getattr(scan_config, "angle_calibration_stage_stall_fast_approach_rpm", probe_rpm))
+        probe_start_mm = float(STAGE_STALL_START_MM)
+        probe_target_mm = float(
+            STAGE_STALL_TARGET_MM if STAGE_STALL_TARGET_MM is not None else stage_limit_mm
+        )
+        probe_step_mm = float(STAGE_STALL_PROBE_STEP_MM)
+        probe_rpm = int(STAGE_STALL_PROBE_RPM)
+        fast_approach_rpm = int(STAGE_STALL_FAST_APPROACH_RPM)
         fast_approach_mm = angle_module.resolve_stage_stall_fast_approach_mm(
-            requested_fast_approach_mm=getattr(
-                scan_config,
-                "angle_calibration_stage_stall_fast_approach_mm",
-                0.0,
-            ),
+            requested_fast_approach_mm=STAGE_STALL_FAST_APPROACH_MM,
             parameters=worker._robot._tool._params.parameters,
             side_name=side_name,
             probe_start_mm=probe_start_mm,
             probe_target_mm=probe_target_mm,
-            margin_mm=float(getattr(scan_config, "angle_calibration_stage_stall_fast_approach_margin_mm", 2.0)),
+            margin_mm=float(STAGE_STALL_FAST_APPROACH_MARGIN_MM),
         )
-        stage_backoff_mm = float(getattr(scan_config, "angle_calibration_stage_stall_backoff_mm", 8.0))
-        stage_timeout_s = float(getattr(scan_config, "angle_calibration_stage_stall_timeout_s", 30.0))
+        stage_backoff_mm = float(STAGE_STALL_BACKOFF_MM)
+        stage_timeout_s = float(STAGE_STALL_TIMEOUT_S)
         no_progress_timeout_s = float(getattr(scan_config, "angle_calibration_stage_stall_no_progress_timeout_s", 0.25))
-        min_valid_stage_position_mm = float(
-            getattr(scan_config, "angle_calibration_stage_stall_min_valid_stage_position_mm", 40.0)
-        )
-        validation_retry_count = int(
-            getattr(scan_config, "angle_calibration_stage_stall_validation_retry_count", 1)
-        )
-        coarse_retry_count = int(
-            getattr(scan_config, "angle_calibration_stage_stall_coarse_retry_count", 1)
-        )
-        validation_plateau_tolerance_mm = float(
-            getattr(scan_config, "angle_calibration_stage_stall_validation_plateau_tolerance_mm", 0.75)
-        )
-        coarse_validation_count = int(
-            getattr(scan_config, "angle_calibration_stage_stall_coarse_validation_count", 1)
-        )
-        validation_high_side_window_deg = float(
-            getattr(scan_config, "angle_calibration_stage_stall_validation_high_side_window_deg", 0.75)
-        )
-        low_contact_retry_count = int(
-            getattr(scan_config, "angle_calibration_stage_stall_low_contact_retry_count", 1)
-        )
-        validation_min_valid_sample_count = int(
-            getattr(scan_config, "angle_calibration_stage_stall_validation_min_valid_sample_count", 2)
-        )
+        min_valid_stage_position_mm = float(STAGE_STALL_MIN_VALID_STAGE_POSITION_MM)
+        validation_retry_count = int(STAGE_STALL_VALIDATION_RETRY_COUNT)
+        coarse_retry_count = int(STAGE_STALL_COARSE_RETRY_COUNT)
+        validation_plateau_tolerance_mm = float(STAGE_STALL_VALIDATION_PLATEAU_TOLERANCE_MM)
+        coarse_validation_count = int(STAGE_STALL_COARSE_VALIDATION_COUNT)
+        validation_high_side_window_deg = float(STAGE_STALL_VALIDATION_HIGH_SIDE_WINDOW_DEG)
+        low_contact_retry_count = int(STAGE_STALL_LOW_CONTACT_RETRY_COUNT)
+        validation_min_valid_sample_count = int(STAGE_STALL_VALIDATION_MIN_VALID_SAMPLE_COUNT)
         angle_args = argparse.Namespace(
             y_mm=None,
             y_range=(bounds.y_min, bounds.y_max),
@@ -558,12 +561,8 @@ class AngleRunnerMixin:
                     )
 
                     if fine_best_summary is not None:
-                        validation_count = int(
-                            getattr(scan_config, "angle_calibration_stage_stall_validation_count", 3)
-                        )
-                        validation_repeats = int(
-                            getattr(scan_config, "angle_calibration_stage_stall_validation_repeats", 3)
-                        )
+                        validation_count = int(STAGE_STALL_VALIDATION_COUNT)
+                        validation_repeats = int(STAGE_STALL_VALIDATION_REPEATS)
                         validation_rotation_positions = _build_stage_stall_validation_rotation_positions(
                             fine_summaries=fine_summaries,
                             coarse_summaries=_coarse_summaries,

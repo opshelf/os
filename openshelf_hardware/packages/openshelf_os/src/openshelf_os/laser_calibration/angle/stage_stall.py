@@ -202,12 +202,12 @@ async def run_stage_stall_capture(
 	settle_ms = int(
 		args.settle_ms
 		if args.settle_ms is not None
-		else get_laser_sample_settle_ms(scan_config)
+		else get_laser_sample_settle_ms()
 	)
 	samples_per_point = int(
 		args.samples_per_point
 		if args.samples_per_point is not None
-		else get_laser_samples_per_point(scan_config)
+		else get_laser_samples_per_point()
 	)
 	rotation_positions = build_axis_positions(
 		args.rotation_range[0],

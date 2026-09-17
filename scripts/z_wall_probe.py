@@ -160,9 +160,9 @@ async def run(args: argparse.Namespace) -> int:
 	config, _ = resolve_probe_runtime(args)
 	probe_x_mm, probe_y_mm = resolve_probe_xy(args)
 	scan_config = config.robot.grid.scan
-	settle_ms = int(args.settle_ms if args.settle_ms is not None else get_laser_sample_settle_ms(scan_config))
+	settle_ms = int(args.settle_ms if args.settle_ms is not None else get_laser_sample_settle_ms())
 	samples_per_point = int(
-		args.samples_per_point if args.samples_per_point is not None else get_laser_samples_per_point(scan_config)
+		args.samples_per_point if args.samples_per_point is not None else get_laser_samples_per_point()
 	)
 
 	async def did_run(robot: object) -> int:
