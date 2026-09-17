@@ -7,7 +7,7 @@ from openshelf_os.common import ConfigError, RootConfig, assert_config
 
 MINIMAL_CONFIG_DICT = {
     "name": "test",
-    "schema_version": 2,
+    "schema_version": 3,
     "version": "0.1.0",
     "robot": {
         "tool": {
