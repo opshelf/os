@@ -13,7 +13,7 @@ from ..database.session import get_db
 from ..database.models import AuditLog, User
 from .auth_deps import get_current_user, require_permissions
 from ..utils.audit_constants import LEGACY_COMMAND_RECORDS_FIELD
-from ..utils.audit_integrity import canonicalize_payload, sha256_hex, hmac_sha256_hex, build_binding_message
+from ..utils.audit_integrity import canonicalize_payload, sha256_hex, build_binding_message, verify_binding_hmac
 
 router = APIRouter(
 	prefix="/api/audit",
@@ -271,10 +271,10 @@ async def verify_audit_chain(
 
 		# Check HMAC over binding
 		binding = build_binding_message(int(log.seq_no) if log.seq_no is not None else 0, str(log.prev_hash), str(log.entry_hash))
-		expected_hmac = hmac_sha256_hex(binding)
-		if log.hmac != expected_hmac:
+		hmac_error = verify_binding_hmac(log.hmac, binding, log.hmac_key_id)
+		if hmac_error is not None:
 			first_error_seq = log.seq_no
-			error_message = "HMAC mismatch"
+			error_message = hmac_error
 			break
 
 		prev_hash = log.entry_hash

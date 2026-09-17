@@ -108,6 +108,12 @@ class OverviewCameraSettings(BaseModel):
     rtsp_url: str = ""
 
 
+# Literals that docker-compose.yml published as signing secret defaults. Anyone who
+# can read this repository can forge tokens and audit rows signed with them, so they
+# are never used to sign; audit integrity keeps them only to verify old rows.
+INSECURE_PUBLISHED_SECRETS = frozenset({"INSECURE_JWT_SECRET", "INSECURE_AUDIT_HMAC_KEY"})
+
+
 class AuthSettings(BaseModel):
     enabled: bool = True
     require_auth: bool = True
@@ -115,6 +121,7 @@ class AuthSettings(BaseModel):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = Field(30, gt=0)
     jwt_refresh_expire_days: int = Field(7, gt=0)
+    audit_hmac_key: Optional[str] = None
     dev_mode: bool = False
     dev_auto_user: Optional[str] = None
 
