@@ -11,6 +11,7 @@ from openshelf_os.storage import StorageGrid, StorageValidationError
 
 MINIMAL_CONFIG_DICT = {
 	"name": "test",
+	"schema_version": 2,
 	"version": "0.1.0",
 	"robot": {
 		"tool": {

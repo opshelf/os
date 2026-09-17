@@ -4,8 +4,15 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from openshelf_os.config.schema import reject_legacy_keys
+from openshelf_os.config_migrations.v002_laser_parameter_names import (
+    REMOVED_SCAN_KEYS, SCAN_KEY_RENAMES, Z_MODEL_KEY_RENAMES,
+)
+
 
 class LaserScanXYOffsetConfig(BaseModel):
+    """Per-side translation added after the shared laser XY conversion."""
+
     x_mm: float
     y_mm: float
 
@@ -13,7 +20,7 @@ class LaserScanXYOffsetConfig(BaseModel):
 class LaserScanZOffsetModelConfig(BaseModel):
     """Turns a laser wall depth reading into a gripper z offset, without touching the rack.
 
-    z_offset = wall_depth + intercept_mm + slope_per_mm * grab_x
+    z_offset = wall_depth + intercept_mm + x_slope_mm_per_mm * grab_x
 
     The laser and the gripper ride the same carriage, so the carriage-to-rack distance cancels
     out of this model: what is left is the fixed laser-to-gripper geometry (intercept) and the
@@ -25,9 +32,15 @@ class LaserScanZOffsetModelConfig(BaseModel):
     """
 
     intercept_mm: float
-    slope_per_mm: float = 0.0
-    stage_extension_mm: float
-    z_place_mm: float
+    x_slope_mm_per_mm: float = 0.0
+    reference_stage_mm: float
+    reference_z_place_mm: float
+
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_model_keys(cls, value):
+        return reject_legacy_keys(value, Z_MODEL_KEY_RENAMES)
 
 
 class LaserScanConfig(BaseModel):
@@ -40,9 +53,9 @@ class LaserScanConfig(BaseModel):
     min_horizontal_wall_coverage_mm: float = Field(30.0, gt=0)
     laser_offset_x_mm: Optional[float] = None
     laser_offset_y_mm: Optional[float] = None
-    z_extension_mm: Optional[float] = None
-    laser_scan_stage_extension_mm: Optional[float] = Field(default=None, ge=0)
-    laser_scan_z_offset_from_place_mm: Optional[float] = None
+    # Scan pose: absolute stage position and Z delta relative to Z_EXTENSION_PLACE.
+    laser_scan_pose_stage_mm: Optional[float] = Field(default=None, ge=0)
+    laser_scan_pose_z_delta_from_place_mm: Optional[float] = None
     shelf_hole_probe_y_offsets_mm: Optional[List[float]] = None
     fine_cell_scan_y_margin_mm: Optional[float] = Field(default=None, gt=0)
     fine_scan_step_mm: float = Field(1.0, gt=0)
@@ -53,11 +66,11 @@ class LaserScanConfig(BaseModel):
     shelf_scout_post_edge_skip_mm: float = Field(40.0, ge=0)
     shelf_brim_max_height_mm: float = Field(13.0, gt=0)
 
-    left_xy_offset: Optional[LaserScanXYOffsetConfig] = None
-    right_xy_offset: Optional[LaserScanXYOffsetConfig] = None
+    left_gripper_xy_correction_mm: Optional[LaserScanXYOffsetConfig] = None
+    right_gripper_xy_correction_mm: Optional[LaserScanXYOffsetConfig] = None
 
-    left_z_offset_model: Optional[LaserScanZOffsetModelConfig] = None
-    right_z_offset_model: Optional[LaserScanZOffsetModelConfig] = None
+    left_wall_depth_to_gripper_z_model: Optional[LaserScanZOffsetModelConfig] = None
+    right_wall_depth_to_gripper_z_model: Optional[LaserScanZOffsetModelConfig] = None
     z_offset_model_param_tolerance_mm: float = Field(0.2, gt=0)
 
     z_stall_anchor_enabled: bool = False
@@ -94,7 +107,6 @@ class LaserScanConfig(BaseModel):
     angle_calibration_rotation_min_deg: float = -8.0
     angle_calibration_rotation_max_deg: float = 8.0
     angle_calibration_rotation_step_deg: float = Field(1.0, gt=0)
-    angle_calibration_beam_zero_deg: float = 0.0
     angle_calibration_alpha_min_deg: float = -10.0
     angle_calibration_alpha_max_deg: float = 10.0
     angle_calibration_coarse_step_deg: float = Field(0.1, gt=0)
@@ -136,33 +148,4 @@ class LaserScanConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _reject_legacy_scan_keys(cls, value):
-        if isinstance(value, dict) is False:
-            return value
-
-        legacy_field_names = {
-            "step_mm": "fine_scan_step_mm",
-            "settle_ms": "laser_sample_settle_ms",
-            "samples_per_point": "laser_samples_per_point",
-            "scan_stage_extension_mm": "laser_scan_stage_extension_mm",
-            "scan_z_offset_mm": "laser_scan_z_offset_from_place_mm",
-            "shelf_hole_sweep_offsets_mm": "shelf_hole_probe_y_offsets_mm",
-            "fine_scan_margin_y_mm": "fine_cell_scan_y_margin_mm",
-        }
-
-        configured_legacy_names = [
-            legacy_name
-            for legacy_name in legacy_field_names
-            if legacy_name in value
-        ]
-
-        if len(configured_legacy_names) == 0:
-            return value
-
-        replacement_names = [
-            f"{legacy_name}->{legacy_field_names[legacy_name]}"
-            for legacy_name in configured_legacy_names
-        ]
-
-        replacement_label = ", ".join(replacement_names)
-
-        raise ValueError(f"Legacy laser scan config keys are not supported: {replacement_label}")
+        return reject_legacy_keys(value, SCAN_KEY_RENAMES, REMOVED_SCAN_KEYS)

@@ -317,7 +317,7 @@ async def test_ensure_session_started_rejects_invalid_config_before_starting_bac
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
 
     with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
-        with pytest.raises(ValueError, match="left_xy_offset must be configured"):
+        with pytest.raises(ValueError, match="left_gripper_xy_correction_mm must be configured"):
             await manager.ensure_session_started(
                 SimpleNamespace(),
                 LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
@@ -505,8 +505,8 @@ async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -
         angle_calibration_stage_stall_fine_step_deg=0.25,
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
-        laser_scan_z_offset_from_place_mm=0.0,
-        laser_scan_stage_extension_mm=60.0,
+        laser_scan_pose_z_delta_from_place_mm=0.0,
+        laser_scan_pose_stage_mm=60.0,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
 
@@ -600,8 +600,8 @@ async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> No
         angle_calibration_stage_stall_validation_min_valid_sample_count=2,
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
-        laser_scan_z_offset_from_place_mm=0.0,
-        laser_scan_stage_extension_mm=60.0,
+        laser_scan_pose_z_delta_from_place_mm=0.0,
+        laser_scan_pose_stage_mm=60.0,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     probe_results = [
@@ -692,8 +692,8 @@ async def test_run_angle_calibration_retries_low_validation_contacts() -> None:
         angle_calibration_stage_stall_validation_min_valid_sample_count=2,
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
-        laser_scan_z_offset_from_place_mm=0.0,
-        laser_scan_stage_extension_mm=60.0,
+        laser_scan_pose_z_delta_from_place_mm=0.0,
+        laser_scan_pose_stage_mm=60.0,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     probe_results = [
@@ -749,8 +749,8 @@ async def test_run_angle_calibration_skips_final_retract_when_cancelled() -> Non
     scan_config = SimpleNamespace(
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
-        laser_scan_stage_extension_mm=None,
-        laser_scan_z_offset_from_place_mm=None,
+        laser_scan_pose_stage_mm=None,
+        laser_scan_pose_z_delta_from_place_mm=None,
         angle_calibration_x_min_mm=50.0,
         angle_calibration_x_max_mm=940.0,
         angle_calibration_x_step_mm=100.0,
@@ -808,8 +808,8 @@ async def test_run_angle_calibration_raises_when_abort_requested_during_capture(
     scan_config = SimpleNamespace(
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
-        laser_scan_stage_extension_mm=None,
-        laser_scan_z_offset_from_place_mm=None,
+        laser_scan_pose_stage_mm=None,
+        laser_scan_pose_z_delta_from_place_mm=None,
         angle_calibration_x_min_mm=50.0,
         angle_calibration_x_max_mm=940.0,
         angle_calibration_x_step_mm=100.0,
@@ -1378,7 +1378,7 @@ async def test_run_stage_extension_calibration_accepts_no_progress_terminal_stat
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
                     laser_sample_settle_ms=0,
-                    laser_scan_z_offset_from_place_mm=None,
+                    laser_scan_pose_z_delta_from_place_mm=None,
                 )
             )
         )
@@ -1432,7 +1432,7 @@ async def test_run_stage_extension_calibration_rejects_timeout_terminal_state() 
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
                     laser_sample_settle_ms=0,
-                    laser_scan_z_offset_from_place_mm=None,
+                    laser_scan_pose_z_delta_from_place_mm=None,
                 )
             )
         )
@@ -1480,7 +1480,7 @@ async def test_run_stage_extension_calibration_skips_final_retract_when_cancelle
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
                     laser_sample_settle_ms=0,
-                    laser_scan_z_offset_from_place_mm=None,
+                    laser_scan_pose_z_delta_from_place_mm=None,
                 )
             )
         )
@@ -1535,7 +1535,7 @@ async def test_run_stage_extension_calibration_raises_when_abort_requested_durin
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
                     laser_sample_settle_ms=0,
-                    laser_scan_z_offset_from_place_mm=None,
+                    laser_scan_pose_z_delta_from_place_mm=None,
                 )
             )
         )
@@ -1574,8 +1574,8 @@ async def test_resolve_stage_extension_probe_y_uses_right_scout_and_offset() -> 
     scan_config = SimpleNamespace(
         laser_sample_settle_ms=0,
         laser_samples_per_point=1,
-        laser_scan_stage_extension_mm=None,
-        laser_scan_z_offset_from_place_mm=None,
+        laser_scan_pose_stage_mm=None,
+        laser_scan_pose_z_delta_from_place_mm=None,
         angle_calibration_x_min_mm=50.0,
         angle_calibration_x_max_mm=940.0,
         angle_calibration_x_step_mm=100.0,

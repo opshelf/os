@@ -9,6 +9,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from openshelf_os.config.schema import CURRENT_SCHEMA_VERSION
+
 from openshelf_os.common import (
     RootConfig,
     StorageSettings,
@@ -108,6 +110,7 @@ def _build_minimal_config(data: dict) -> dict:
     # Production deployments MUST provide data/config.json with real calibrated values.
     # The application will fail to start if config.json is missing in production.
     return {
+        "schema_version": CURRENT_SCHEMA_VERSION,
         "name": "openshelf_os",
         "version": "0.1.0",
         "description": "OpenShelf OS configuration",
@@ -179,7 +182,6 @@ def _build_minimal_config(data: dict) -> dict:
                         "angle_calibration_rotation_min_deg": -8.0,
                         "angle_calibration_rotation_max_deg": 8.0,
                         "angle_calibration_rotation_step_deg": 1.0,
-                        "angle_calibration_beam_zero_deg": 0.0,
                         "angle_calibration_alpha_min_deg": -10.0,
                         "angle_calibration_alpha_max_deg": 10.0,
                         "angle_calibration_coarse_step_deg": 0.1,

@@ -33,10 +33,10 @@ def build_run_parameters(
 		scan_config=scan_config,
 		side=side,
 	)
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	hole_probe_y_offsets_mm = get_shelf_hole_probe_y_offsets_mm(scan_config)
-	laser_scan_stage_extension_mm = get_laser_scan_stage_extension_mm(scan_config)
-	laser_scan_z_offset_from_place_mm = get_laser_scan_z_offset_from_place_mm(scan_config)
+	laser_scan_pose_stage_mm = get_laser_scan_pose_stage_mm(scan_config)
+	laser_scan_pose_z_delta_from_place_mm = get_laser_scan_pose_z_delta_from_place_mm(scan_config)
 	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
 	post_edge_skip_mm = get_shelf_scout_post_edge_skip_mm(scan_config)
 	brim_max_height_mm = get_shelf_brim_max_height_mm(scan_config)
@@ -84,8 +84,8 @@ def build_run_parameters(
 			"samples_per_point": samples_per_point,
 			"coarse_settle_ms": coarse_settle_ms,
 			"coarse_samples_per_point": coarse_samples_per_point,
-			"laser_scan_stage_extension_mm": laser_scan_stage_extension_mm,
-			"laser_scan_z_offset_from_place_mm": laser_scan_z_offset_from_place_mm,
+			"laser_scan_pose_stage_mm": laser_scan_pose_stage_mm,
+			"laser_scan_pose_z_delta_from_place_mm": laser_scan_pose_z_delta_from_place_mm,
 			"laser_offset_x_mm": laser_offset_x_mm,
 			"laser_offset_y_mm": laser_offset_y_mm,
 			"xy_offset": (

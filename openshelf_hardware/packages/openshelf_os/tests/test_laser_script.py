@@ -31,7 +31,7 @@ def build_config():
 					laser_samples_per_point=3,
 					laser_offset_x_mm=51.0,
 					laser_offset_y_mm=0.0,
-					left_xy_offset=SimpleNamespace(x_mm=10.0, y_mm=20.0),
+					left_gripper_xy_correction_mm=SimpleNamespace(x_mm=10.0, y_mm=20.0),
 					wall_depth_tolerance_mm=2.0,
 					expected_hole_width_mm=26.0,
 					expected_hole_height_mm=30.0,

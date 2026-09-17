@@ -623,7 +623,7 @@ def build_single_cell_rescan_candidate(
 	)
 
 	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	grab_x_mm = float(target_cell.calibration_point.x)
 	grab_y_mm = float(target_cell.calibration_point.y)
 
