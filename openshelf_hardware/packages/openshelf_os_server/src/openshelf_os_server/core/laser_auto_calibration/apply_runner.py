@@ -7,6 +7,16 @@ from pathlib import Path
 
 from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
 from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
+from openshelf_os.laser_calibration.defaults import (
+    Z_OFFSET_MODEL_PARAM_TOLERANCE_MM,
+    Z_STALL_PROBE_FAST_APPROACH_MM,
+    Z_STALL_PROBE_NO_PROGRESS_S,
+    Z_STALL_PROBE_RPM,
+    Z_STALL_PROBE_START_MM,
+    Z_STALL_PROBE_STEP_MM,
+    Z_STALL_PROBE_TARGET_MM,
+    Z_STALL_PROBE_TIMEOUT_S,
+)
 
 from .models import *
 
@@ -283,8 +293,8 @@ class ApplyRunnerMixin:
 
         rotation_center_deg = float(rotation_center_value)
         stage_extension_mm = float(stage_extension_value)
-        probe_rpm = scan_config.z_stall_probe_rpm
-        probe_target_mm = float(scan_config.z_stall_probe_target_mm)
+        probe_rpm = Z_STALL_PROBE_RPM
+        probe_target_mm = float(Z_STALL_PROBE_TARGET_MM)
         z_axis_limit_mm = _get_z_axis_limit_mm(worker)
         laser_module.print_status(
             f"z_stall_anchor=start side={side_name} rotation_deg={rotation_center_deg:.3f} "
@@ -327,7 +337,7 @@ class ApplyRunnerMixin:
                 y_mm=probe_y_mm,
                 absolute_rotation_deg=rotation_center_deg,
                 stage_extension_mm=stage_extension_mm,
-                z_mm=float(scan_config.z_stall_probe_start_mm),
+                z_mm=float(Z_STALL_PROBE_START_MM),
                 z_move_rpm=float(z_move_rpm),
                 z_move_accel=float(z_move_accel),
                 should_abort=self._should_abort_work,
@@ -335,14 +345,14 @@ class ApplyRunnerMixin:
 
             did_stall, z_contact_mm, reason, alarm_code = await probe_z_until_stall(
                 tool,
-                target_z_mm=float(scan_config.z_stall_probe_target_mm),
-                retract_z_mm=float(scan_config.z_stall_probe_start_mm),
-                settle_ms=laser_module.get_laser_sample_settle_ms(scan_config),
-                timeout_s=float(scan_config.z_stall_probe_timeout_s),
+                target_z_mm=float(Z_STALL_PROBE_TARGET_MM),
+                retract_z_mm=float(Z_STALL_PROBE_START_MM),
+                settle_ms=laser_module.get_laser_sample_settle_ms(),
+                timeout_s=float(Z_STALL_PROBE_TIMEOUT_S),
                 probe_rpm=None if probe_rpm is None else int(probe_rpm),
-                no_progress_s=float(scan_config.z_stall_probe_no_progress_s),
-                probe_step_mm=float(scan_config.z_stall_probe_step_mm),
-                fast_approach_mm=float(scan_config.z_stall_probe_fast_approach_mm),
+                no_progress_s=float(Z_STALL_PROBE_NO_PROGRESS_S),
+                probe_step_mm=float(Z_STALL_PROBE_STEP_MM),
+                fast_approach_mm=float(Z_STALL_PROBE_FAST_APPROACH_MM),
                 fast_approach_rpm=None if probe_rpm is None else int(probe_rpm),
                 auto_retract=True,
                 should_abort=self._should_abort_work,
@@ -384,12 +394,12 @@ class ApplyRunnerMixin:
 
             # The rapid approach already traversed to fast_approach_mm unobstructed, so a wall
             # cannot sit closer than that. Anything shallower is the tool hitting something else.
-            if z_contact_mm < float(scan_config.z_stall_probe_fast_approach_mm):
+            if z_contact_mm < float(Z_STALL_PROBE_FAST_APPROACH_MM):
                 laser_module.print_status(
                     f"z_stall_anchor=reject_shallow side={side_name} "
                     f"probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
                     f"reason={reason} z_mm={z_contact_mm:.3f} "
-                    f"fast_approach_mm={float(scan_config.z_stall_probe_fast_approach_mm):.3f}"
+                    f"fast_approach_mm={float(Z_STALL_PROBE_FAST_APPROACH_MM):.3f}"
                 )
                 continue
 
@@ -517,7 +527,7 @@ class ApplyRunnerMixin:
                 side=side,
                 stage_extension_mm=float(stage_extension_value),
                 z_place_mm=float(z_place_value),
-                tolerance_mm=float(scan_config.z_offset_model_param_tolerance_mm),
+                tolerance_mm=float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM),
             )
 
             intercept_mm = float(configured_model.intercept_mm)

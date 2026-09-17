@@ -11,9 +11,12 @@ from openshelf_os.config_migrations.v002_laser_parameter_names import (
 from openshelf_os.config_migrations.v003_remove_unused_scan_keys import (
     REMOVED_SCAN_KEYS as UNUSED_SCAN_KEYS,
 )
+from openshelf_os.config_migrations.v004_promote_scan_constants import (
+    REMOVED_SCAN_KEYS as PROMOTED_SCAN_KEYS,
+)
 
 # Keys removed by any schema step; a current-schema config must not carry them.
-REJECTED_SCAN_KEYS = (*REMOVED_SCAN_KEYS, *UNUSED_SCAN_KEYS)
+REJECTED_SCAN_KEYS = (*REMOVED_SCAN_KEYS, *UNUSED_SCAN_KEYS, *PROMOTED_SCAN_KEYS)
 
 
 class LaserScanXYOffsetConfig(BaseModel):
@@ -50,23 +53,19 @@ class LaserScanZOffsetModelConfig(BaseModel):
 
 
 class LaserScanConfig(BaseModel):
-    wall_depth_tolerance_mm: float = Field(2.0, gt=0)
-    expected_hole_width_mm: float = Field(26.0, gt=0)
-    expected_hole_height_mm: float = Field(30.0, gt=0)
-    hole_width_tolerance_mm: float = Field(10.0, gt=0)
-    hole_height_tolerance_mm: float = Field(10.0, gt=0)
-    min_vertical_wall_coverage_mm: float = Field(10.0, gt=0)
-    min_horizontal_wall_coverage_mm: float = Field(30.0, gt=0)
+    """Per-machine laser scan calibration and the tuning values machines disagree on.
+
+    Everything the scan algorithm needs but machines agree on lives in
+    `openshelf_os.laser_calibration.defaults` instead of here.
+    """
+
     laser_offset_x_mm: Optional[float] = None
     laser_offset_y_mm: Optional[float] = None
     # Scan pose: absolute stage position and Z delta relative to Z_EXTENSION_PLACE.
     laser_scan_pose_stage_mm: Optional[float] = Field(default=None, ge=0)
     laser_scan_pose_z_delta_from_place_mm: Optional[float] = None
     shelf_hole_probe_y_offsets_mm: Optional[List[float]] = None
-    fine_cell_scan_y_margin_mm: Optional[float] = Field(default=None, gt=0)
     fine_scan_step_mm: float = Field(1.0, gt=0)
-    laser_sample_settle_ms: int = Field(50, ge=0)
-    laser_samples_per_point: int = Field(3, ge=1)
     left_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     right_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     shelf_scout_post_edge_skip_mm: float = Field(40.0, ge=0)
@@ -77,18 +76,10 @@ class LaserScanConfig(BaseModel):
 
     left_wall_depth_to_gripper_z_model: Optional[LaserScanZOffsetModelConfig] = None
     right_wall_depth_to_gripper_z_model: Optional[LaserScanZOffsetModelConfig] = None
-    z_offset_model_param_tolerance_mm: float = Field(0.2, gt=0)
 
     z_stall_anchor_enabled: bool = False
     z_stall_tray_engagement_mm: float = 0.0
     z_stall_probe_x_shift_mm: float = 40.0
-    z_stall_probe_start_mm: float = 5.0
-    z_stall_probe_fast_approach_mm: float = 130.0
-    z_stall_probe_target_mm: float = 180.0
-    z_stall_probe_step_mm: float = Field(0.5, gt=0)
-    z_stall_probe_rpm: Optional[int] = Field(default=20, gt=0)
-    z_stall_probe_no_progress_s: float = Field(0.25, gt=0)
-    z_stall_probe_timeout_s: float = Field(60.0, gt=0)
 
     left_bounds_x_min_mm: float = 0.0
     left_bounds_x_max_mm: float = 950.0
@@ -100,41 +91,9 @@ class LaserScanConfig(BaseModel):
     right_bounds_y_min_mm: float = 0.0
     right_bounds_y_max_mm: float = 1250.0
 
-    angle_calibration_x_min_mm: float = 0.0
     angle_calibration_x_max_mm: float = 950.0
-    angle_calibration_x_step_mm: float = Field(100.0, gt=0)
-    angle_calibration_x_count: int = Field(5, gt=0)
-    angle_calibration_rotation_step_deg: float = Field(1.0, gt=0)
 
-    angle_calibration_stage_stall_rotation_min_deg: float = 0.0
-    angle_calibration_stage_stall_rotation_max_deg: float = 5.5
-    angle_calibration_stage_stall_coarse_min_deg: float = 0.0
-    angle_calibration_stage_stall_coarse_max_deg: float = 5.5
-    angle_calibration_stage_stall_coarse_step_deg: float = Field(1.0, gt=0)
-    angle_calibration_stage_stall_coarse_start_deg: Optional[float] = 4.5
-    angle_calibration_stage_stall_fine_window_deg: float = Field(1.5, ge=0)
-    angle_calibration_stage_stall_fine_step_deg: float = Field(0.25, gt=0)
-    angle_calibration_stage_stall_fast_approach_mm: Optional[float] = Field(default=0.0, ge=0)
-    angle_calibration_stage_stall_validation_count: int = Field(3, ge=0)
-    angle_calibration_stage_stall_validation_repeats: int = Field(3, ge=1)
-    angle_calibration_stage_stall_validation_retry_count: int = Field(1, ge=0)
-    angle_calibration_stage_stall_coarse_retry_count: int = Field(1, ge=0)
-    angle_calibration_stage_stall_min_valid_stage_position_mm: float = Field(40.0, ge=0)
-    angle_calibration_stage_stall_validation_plateau_tolerance_mm: float = Field(0.75, ge=0)
-    angle_calibration_stage_stall_coarse_validation_count: int = Field(1, ge=0)
-    angle_calibration_stage_stall_validation_high_side_window_deg: float = Field(0.75, ge=0)
-    angle_calibration_stage_stall_low_contact_retry_count: int = Field(1, ge=0)
-    angle_calibration_stage_stall_validation_min_valid_sample_count: int = Field(2, ge=1)
-    angle_calibration_stage_stall_probe_x_mm: Optional[float] = 475.0
-    angle_calibration_stage_stall_start_mm: float = Field(3.0, ge=0)
-    angle_calibration_stage_stall_target_mm: Optional[float] = Field(default=None, gt=0)
-    angle_calibration_stage_stall_probe_step_mm: float = Field(0.5, gt=0)
-    angle_calibration_stage_stall_probe_rpm: int = Field(20, gt=0)
-    angle_calibration_stage_stall_fast_approach_margin_mm: float = Field(2.0, ge=0)
-    angle_calibration_stage_stall_fast_approach_rpm: int = Field(20, gt=0)
-    angle_calibration_stage_stall_timeout_s: float = Field(30.0, gt=0)
     angle_calibration_stage_stall_no_progress_timeout_s: float = Field(0.25, gt=0)
-    angle_calibration_stage_stall_backoff_mm: float = Field(8.0, ge=0)
 
     @model_validator(mode="before")
     @classmethod

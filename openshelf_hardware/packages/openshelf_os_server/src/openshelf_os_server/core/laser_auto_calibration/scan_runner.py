@@ -26,8 +26,8 @@ class ScanRunnerMixin:
         side_name = _side_to_module_name(side)
         config = get_root_config()
         scan_config = scan_config_override or config.robot.grid.scan
-        config_settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
-        config_samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
+        config_settle_ms = int(laser_module.get_laser_sample_settle_ms())
+        config_samples_per_point = int(laser_module.get_laser_samples_per_point())
         # Fine and coarse scans both honor the configured settling and sample count. Reducing
         # either pass to one read defeats the median filter and lets a transient laser reading
         # erase a narrow wall or move a detected edge by one scan step.

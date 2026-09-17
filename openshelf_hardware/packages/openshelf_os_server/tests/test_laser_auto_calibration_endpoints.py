@@ -29,10 +29,12 @@ from openshelf_os_server.core.laser_auto_calibration import (
     LaserAutoCalibrationScope,
     LaserAutoCalibrationManager,
 )
+from openshelf_os_server.core.laser_auto_calibration import models as models_module
 from openshelf_os_server.core.laser_auto_calibration.angle_runner import (
     _build_stage_stall_validation_rotation_positions,
     _select_stage_stall_best_summary,
 )
+from openshelf_os_server.core.laser_auto_calibration import angle_runner as angle_runner_module
 from openshelf_os_server.core.laser_auto_calibration.apply_runner import (
     _preserve_manual_cells,
     _select_z_stall_probes,
@@ -44,6 +46,68 @@ from openshelf_os_server.core.laser_auto_calibration.scope_runner import (
 from openshelf_os_server.routers import robot as robot_router
 from openshelf_os_server.core.laser_auto_calibration import LaserAutoCalibrationSnapshot
 from openshelf_os_server.routers import calibration as calibration_router
+
+
+# Stage-stall tuning moved out of config and into laser_calibration.defaults. Tests that used
+# to shape a scan through the scan config pin the constants instead.
+_STAGE_STALL_KNOBS = {
+    "angle_calibration_stage_stall_rotation_min_deg": ("STAGE_STALL_COARSE_MIN_DEG", float),
+    "angle_calibration_stage_stall_rotation_max_deg": ("STAGE_STALL_COARSE_MAX_DEG", float),
+    "angle_calibration_rotation_step_deg": ("STAGE_STALL_COARSE_STEP_DEG", float),
+    "angle_calibration_stage_stall_coarse_min_deg": ("STAGE_STALL_COARSE_MIN_DEG", float),
+    "angle_calibration_stage_stall_coarse_max_deg": ("STAGE_STALL_COARSE_MAX_DEG", float),
+    "angle_calibration_stage_stall_coarse_step_deg": ("STAGE_STALL_COARSE_STEP_DEG", float),
+    "angle_calibration_stage_stall_coarse_start_deg": ("STAGE_STALL_COARSE_START_DEG", float),
+    "angle_calibration_stage_stall_fine_window_deg": ("STAGE_STALL_FINE_WINDOW_DEG", float),
+    "angle_calibration_stage_stall_fine_step_deg": ("STAGE_STALL_FINE_STEP_DEG", float),
+    "angle_calibration_stage_stall_fast_approach_mm": ("STAGE_STALL_FAST_APPROACH_MM", float),
+    "angle_calibration_stage_stall_validation_count": ("STAGE_STALL_VALIDATION_COUNT", int),
+    "angle_calibration_stage_stall_validation_repeats": ("STAGE_STALL_VALIDATION_REPEATS", int),
+    "angle_calibration_stage_stall_validation_retry_count": ("STAGE_STALL_VALIDATION_RETRY_COUNT", int),
+    "angle_calibration_stage_stall_coarse_retry_count": ("STAGE_STALL_COARSE_RETRY_COUNT", int),
+    "angle_calibration_stage_stall_min_valid_stage_position_mm": (
+        "STAGE_STALL_MIN_VALID_STAGE_POSITION_MM",
+        float,
+    ),
+    "angle_calibration_stage_stall_validation_plateau_tolerance_mm": (
+        "STAGE_STALL_VALIDATION_PLATEAU_TOLERANCE_MM",
+        float,
+    ),
+    "angle_calibration_stage_stall_coarse_validation_count": (
+        "STAGE_STALL_COARSE_VALIDATION_COUNT",
+        int,
+    ),
+    "angle_calibration_stage_stall_validation_high_side_window_deg": (
+        "STAGE_STALL_VALIDATION_HIGH_SIDE_WINDOW_DEG",
+        float,
+    ),
+    "angle_calibration_stage_stall_low_contact_retry_count": ("STAGE_STALL_LOW_CONTACT_RETRY_COUNT", int),
+    "angle_calibration_stage_stall_validation_min_valid_sample_count": (
+        "STAGE_STALL_VALIDATION_MIN_VALID_SAMPLE_COUNT",
+        int,
+    ),
+    "angle_calibration_stage_stall_probe_x_mm": ("STAGE_STALL_PROBE_X_MM", float),
+    "angle_calibration_stage_stall_start_mm": ("STAGE_STALL_START_MM", float),
+    "angle_calibration_stage_stall_target_mm": ("STAGE_STALL_TARGET_MM", float),
+    "angle_calibration_stage_stall_probe_step_mm": ("STAGE_STALL_PROBE_STEP_MM", float),
+    "angle_calibration_stage_stall_probe_rpm": ("STAGE_STALL_PROBE_RPM", int),
+    "angle_calibration_stage_stall_fast_approach_margin_mm": ("STAGE_STALL_FAST_APPROACH_MARGIN_MM", float),
+    "angle_calibration_stage_stall_fast_approach_rpm": ("STAGE_STALL_FAST_APPROACH_RPM", int),
+    "angle_calibration_stage_stall_timeout_s": ("STAGE_STALL_TIMEOUT_S", float),
+    "angle_calibration_stage_stall_backoff_mm": ("STAGE_STALL_BACKOFF_MM", float),
+}
+
+
+def pin_scan_tuning(monkeypatch: pytest.MonkeyPatch, scan_config: SimpleNamespace) -> None:
+    """Apply a test's scan-config tuning values to the code constants that replaced them."""
+    for config_name, (constant_name, cast) in _STAGE_STALL_KNOBS.items():
+        if not hasattr(scan_config, config_name):
+            continue
+        value = getattr(scan_config, config_name)
+        patched = None if value is None else cast(value)
+        for module in (models_module, angle_runner_module):
+            if hasattr(module, constant_name):
+                monkeypatch.setattr(module, constant_name, patched)
 
 
 class FakeLaserManager:
@@ -459,7 +523,7 @@ async def test_scan_status_callback_does_not_overwrite_terminal_state(tmp_path: 
     assert snapshot.current_stage == "completed"
 
 @pytest.mark.asyncio
-async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -> None:
+async def test_run_angle_calibration_uses_stage_stall_method_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
     stage_motor = SimpleNamespace(
@@ -509,6 +573,7 @@ async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -
         laser_scan_pose_stage_mm=60.0,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    pin_scan_tuning(monkeypatch, scan_config)
 
     with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
         with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1144.0)):
@@ -545,7 +610,7 @@ async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -
 
 
 @pytest.mark.asyncio
-async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> None:
+async def test_run_angle_calibration_validates_top_fine_angles_by_median(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
     stage_motor = SimpleNamespace(
@@ -604,6 +669,7 @@ async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> No
         laser_scan_pose_stage_mm=60.0,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    pin_scan_tuning(monkeypatch, scan_config)
     probe_results = [
         (True, 20.0, 'no_progress', 0),
         (True, 25.0, 'no_progress', 0),
@@ -637,7 +703,7 @@ async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> No
 
 
 @pytest.mark.asyncio
-async def test_run_angle_calibration_retries_low_validation_contacts() -> None:
+async def test_run_angle_calibration_retries_low_validation_contacts(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
     stage_motor = SimpleNamespace(
@@ -696,6 +762,7 @@ async def test_run_angle_calibration_retries_low_validation_contacts() -> None:
         laser_scan_pose_stage_mm=60.0,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    pin_scan_tuning(monkeypatch, scan_config)
     probe_results = [
         (True, 20.0, 'no_progress', 0),
         (True, 40.0, 'no_progress', 0),

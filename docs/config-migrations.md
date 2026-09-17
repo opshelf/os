@@ -2,7 +2,7 @@
 
 `schema_version` is a top-level positive integer, independent of the existing
 application/config `version` string. A missing `schema_version` means **1**, the
-provisioning schema used before this release. The current schema is **3**.
+provisioning schema used before this release. The current schema is **4**.
 Version 1 identifies field meanings, not a canonical set of machine values.
 
 The application requires the current schema. It does not migrate on startup and
@@ -120,12 +120,32 @@ No calibration value is moved, rewritten or defaulted by this step: the removed
 keys influenced no calculation. Values are dropped, so the backup is the only
 remaining copy.
 
+## Schema 3 → 4
+
+The scan block also carried its algorithm's tuning values, copied identically onto
+every machine. Migration 4 removes them; the scan reads them from
+`openshelf_os.laser_calibration.defaults` instead.
+
+| Moved out of `robot.grid.scan` | Now |
+| --- | --- |
+| hole detection: `wall_depth_tolerance_mm`, `expected_hole_{width,height}_mm`, `hole_{width,height}_tolerance_mm`, `min_{vertical,horizontal}_wall_coverage_mm` | `laser_calibration.defaults` |
+| sampling: `laser_sample_settle_ms`, `laser_samples_per_point`, `fine_cell_scan_y_margin_mm` | `laser_calibration.defaults` |
+| `z_offset_model_param_tolerance_mm` | `laser_calibration.defaults` |
+| `z_stall_probe_*` probe geometry, speed and timeouts | `laser_calibration.defaults` |
+| `angle_calibration_x_{min,step}_mm`, `angle_calibration_x_count`, `angle_calibration_rotation_step_deg` | `laser_calibration.defaults` |
+| `angle_calibration_stage_stall_*` coarse/fine sweep, validation and probe settings | `laser_calibration.defaults` |
+| `angle_calibration_stage_stall_rotation_{min,max}_deg` | dropped: the stage-stall `coarse_*` pair always shadowed them, so a value set here never reached the sweep |
+
+The promoted values are the ones every machine already carried or defaulted to, so
+this step changes no calculation. It does remove the ability to retune a single
+machine's scan through its config: change the constant and release instead.
+
 ## Add a migration
 
-Add `v003_<description>.py` under
+Add `v005_<description>.py` under
 `openshelf_hardware/packages/openshelf_os/src/openshelf_os/config_migrations/`.
-Its `migrate(config)` function accepts raw schema-2 data and returns the transformed
-dictionary plus a list of changed field paths. Register it under destination `3`
+Its `migrate(config)` function accepts raw schema-4 data and returns the transformed
+dictionary plus a list of changed field paths. Register it under destination `5`
 in `runner.MIGRATIONS` and increment `config.schema.CURRENT_SCHEMA_VERSION`.
 The runner advances the version only after each step succeeds. It rejects missing
 steps and validates the complete result before persistence.

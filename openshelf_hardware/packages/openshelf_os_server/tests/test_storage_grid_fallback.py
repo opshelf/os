@@ -9,7 +9,7 @@ from openshelf_os_server.routers.storage import _get_robot_grid
 
 MINIMAL_CONFIG = {
 	"name": "test",
-	"schema_version": 3,
+	"schema_version": 4,
 	"version": "0.1.0",
 	"robot": {
 		"tool": {

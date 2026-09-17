@@ -383,14 +383,14 @@ async def run_scan(args: argparse.Namespace) -> int:
 			args.settle_ms
 			if args.settle_ms is not None
 			else laser_module.get_fine_settle_ms(
-				laser_module.get_laser_sample_settle_ms(scan_config)
+				laser_module.get_laser_sample_settle_ms()
 			)
 		)
 		samples_per_point = (
 			args.samples_per_point
 			if args.samples_per_point is not None
 			else laser_module.get_fine_samples_per_point(
-				laser_module.get_laser_samples_per_point(scan_config)
+				laser_module.get_laser_samples_per_point()
 			)
 		)
 

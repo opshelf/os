@@ -15,6 +15,10 @@ from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from openshelf_os.common import AxisCoordinate
+from openshelf_os.laser_calibration.defaults import (
+	LASER_SAMPLES_PER_POINT,
+	LASER_SAMPLE_SETTLE_MS,
+)
 from openshelf_os.laser_calibration.scan import (
 	ScanBounds,
 	ScanAnalysisResult,
@@ -218,12 +222,12 @@ def get_laser_scan_pose_z_delta_from_place_mm(scan_config: Any) -> float:
 	)
 
 
-def get_laser_sample_settle_ms(scan_config: Any) -> int:
-	return int(scan_config.laser_sample_settle_ms)
+def get_laser_sample_settle_ms() -> int:
+	return LASER_SAMPLE_SETTLE_MS
 
 
-def get_laser_samples_per_point(scan_config: Any) -> int:
-	return int(scan_config.laser_samples_per_point)
+def get_laser_samples_per_point() -> int:
+	return LASER_SAMPLES_PER_POINT
 
 
 def get_gripper_xy_correction(
@@ -371,13 +375,8 @@ def get_shelf_brim_max_height_mm(scan_config: Any) -> float:
 	return validated_max_height_mm
 
 
-def get_fine_cell_scan_y_margin_mm(scan_config: Any) -> float:
-	configured_margin_mm = getattr(scan_config, "fine_cell_scan_y_margin_mm", None)
-
-	if configured_margin_mm is None:
-		return FINE_SCAN_MARGIN_Y_MM
-
-	return float(configured_margin_mm)
+def get_fine_cell_scan_y_margin_mm() -> float:
+	return FINE_SCAN_MARGIN_Y_MM
 
 
 @dataclass

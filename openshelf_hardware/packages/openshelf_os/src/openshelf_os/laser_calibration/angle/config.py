@@ -2,15 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from openshelf_os.laser_calibration.core import (
+	get_laser_sample_settle_ms,
+	get_laser_samples_per_point,
+)
+
 from .constants import LASER_SCAN_STAGE_EXTENSION_MM, LASER_SCAN_Z_OFFSET_MM
 
-
-def get_laser_sample_settle_ms(scan_config: Any) -> int:
-	return int(scan_config.laser_sample_settle_ms)
-
-
-def get_laser_samples_per_point(scan_config: Any) -> int:
-	return int(scan_config.laser_samples_per_point)
+__all__ = [
+	"build_standalone_config",
+	"get_laser_sample_settle_ms",
+	"get_laser_samples_per_point",
+	"get_laser_scan_pose_stage_mm",
+	"get_laser_scan_pose_z_delta_from_place_mm",
+]
 
 
 def get_laser_scan_pose_stage_mm(scan_config: Any) -> float:

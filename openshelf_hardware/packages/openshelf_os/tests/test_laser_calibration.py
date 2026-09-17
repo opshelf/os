@@ -8,6 +8,8 @@ import pytest
 
 from openshelf_os.common import LaserScanConfig
 from openshelf_os.laser_calibration import (
+	get_laser_sample_settle_ms,
+	get_laser_samples_per_point,
 	get_wall_depth_to_gripper_z_model,
 	require_z_offset_model_matches_tool,
 	apply_wall_depth_z_offsets,
@@ -53,24 +55,24 @@ def test_laser_scan_config_uses_clear_field_names() -> None:
 	scan_config = LaserScanConfig.model_validate(
 		{
 			"fine_scan_step_mm": 0.5,
-			"laser_sample_settle_ms": 40,
-			"laser_samples_per_point": 2,
 			"laser_scan_pose_stage_mm": 13.0,
 			"laser_scan_pose_z_delta_from_place_mm": 10.0,
 			"shelf_hole_probe_y_offsets_mm": [32.25],
-			"fine_cell_scan_y_margin_mm": 12.0,
 		}
 	)
 
 	assert scan_config.fine_scan_step_mm == pytest.approx(0.5)
-	assert scan_config.laser_sample_settle_ms == 40
-	assert scan_config.laser_samples_per_point == 2
 	assert scan_config.laser_scan_pose_stage_mm == pytest.approx(13.0)
 	assert scan_config.laser_scan_pose_z_delta_from_place_mm == pytest.approx(10.0)
 	assert scan_config.shelf_hole_probe_y_offsets_mm == [pytest.approx(32.25)]
-	assert scan_config.fine_cell_scan_y_margin_mm == pytest.approx(12.0)
 	assert LaserScanConfig().fine_scan_step_mm == pytest.approx(1.0)
 	assert LaserScanConfig().shelf_scout_post_edge_skip_mm == pytest.approx(40.0)
+
+	# Scanning and hole detection are code constants; only calibration stays in config.
+	from openshelf_os.laser_calibration import defaults
+
+	assert get_laser_sample_settle_ms() == defaults.LASER_SAMPLE_SETTLE_MS
+	assert get_laser_samples_per_point() == defaults.LASER_SAMPLES_PER_POINT
 
 	assert get_shelf_hole_probe_y_offsets_mm(scan_config) == [pytest.approx(32.25)]
 
@@ -181,13 +183,30 @@ def write_replay_run(tmp_path: Path) -> Path:
 	return run_dir
 
 
-def test_load_staged_scan_analysis_replays_raw_fine_scan_with_current_config(tmp_path: Path) -> None:
+def test_load_staged_scan_analysis_replays_raw_fine_scan_with_current_config(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
+	import openshelf_os.laser_calibration.staged_scan as staged_scan_module
+
 	run_dir = write_replay_run(tmp_path)
 
+	# Hole detection is a code constant now, so pin the values this fixture was tuned for.
+	for module in (fine_scan_module, staged_scan_module):
+		monkeypatch.setattr(module, "WALL_DEPTH_TOLERANCE_MM", 1.0)
+		monkeypatch.setattr(module, "HOLE_WIDTH_TOLERANCE_MM", 1.0)
+		monkeypatch.setattr(module, "HOLE_HEIGHT_TOLERANCE_MM", 1.0)
+		monkeypatch.setattr(module, "MIN_VERTICAL_WALL_COVERAGE_MM", 0.0)
+		monkeypatch.setattr(module, "MIN_HORIZONTAL_WALL_COVERAGE_MM", 0.0)
+		monkeypatch.setattr(module, "EXPECTED_HOLE_HEIGHT_MM", 25.0)
+
+	monkeypatch.setattr(staged_scan_module, "EXPECTED_HOLE_WIDTH_MM", 25.0)
 	matching_analysis = load_staged_scan_analysis(
 		run_dir,
 		scan_config=build_replay_scan_config(expected_hole_width_mm=25.0),
 	)
+
+	monkeypatch.setattr(staged_scan_module, "EXPECTED_HOLE_WIDTH_MM", 40.0)
 	changed_analysis = load_staged_scan_analysis(
 		run_dir,
 		scan_config=build_replay_scan_config(expected_hole_width_mm=40.0),
