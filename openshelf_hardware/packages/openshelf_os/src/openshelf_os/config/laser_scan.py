@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -8,6 +8,12 @@ from openshelf_os.config.schema import reject_legacy_keys
 from openshelf_os.config_migrations.v002_laser_parameter_names import (
     REMOVED_SCAN_KEYS, SCAN_KEY_RENAMES, Z_MODEL_KEY_RENAMES,
 )
+from openshelf_os.config_migrations.v003_remove_unused_scan_keys import (
+    REMOVED_SCAN_KEYS as UNUSED_SCAN_KEYS,
+)
+
+# Keys removed by any schema step; a current-schema config must not carry them.
+REJECTED_SCAN_KEYS = (*REMOVED_SCAN_KEYS, *UNUSED_SCAN_KEYS)
 
 
 class LaserScanXYOffsetConfig(BaseModel):
@@ -94,24 +100,11 @@ class LaserScanConfig(BaseModel):
     right_bounds_y_min_mm: float = 0.0
     right_bounds_y_max_mm: float = 1250.0
 
-    angle_calibration_method: Literal["stage_stall"] = "stage_stall"
-
     angle_calibration_x_min_mm: float = 0.0
     angle_calibration_x_max_mm: float = 950.0
     angle_calibration_x_step_mm: float = Field(100.0, gt=0)
     angle_calibration_x_count: int = Field(5, gt=0)
-    angle_calibration_z_offset_min_mm: float = -8.0
-    angle_calibration_z_offset_max_mm: float = 8.0
-    angle_calibration_z_offset_step_mm: float = Field(4.0, gt=0)
-    angle_calibration_z_offset_count: int = Field(1, gt=0)
-    angle_calibration_rotation_min_deg: float = -8.0
-    angle_calibration_rotation_max_deg: float = 8.0
     angle_calibration_rotation_step_deg: float = Field(1.0, gt=0)
-    angle_calibration_alpha_min_deg: float = -10.0
-    angle_calibration_alpha_max_deg: float = 10.0
-    angle_calibration_coarse_step_deg: float = Field(0.1, gt=0)
-    angle_calibration_fine_window_deg: float = Field(0.3, gt=0)
-    angle_calibration_fine_step_deg: float = Field(0.005, gt=0)
 
     angle_calibration_stage_stall_rotation_min_deg: float = 0.0
     angle_calibration_stage_stall_rotation_max_deg: float = 5.5
@@ -142,10 +135,8 @@ class LaserScanConfig(BaseModel):
     angle_calibration_stage_stall_timeout_s: float = Field(30.0, gt=0)
     angle_calibration_stage_stall_no_progress_timeout_s: float = Field(0.25, gt=0)
     angle_calibration_stage_stall_backoff_mm: float = Field(8.0, ge=0)
-    angle_calibration_stage_stall_fall_threshold_mm: float = Field(0.15, ge=0)
-    angle_calibration_stage_stall_stop_after_fall_count: int = Field(1, ge=1)
 
     @model_validator(mode="before")
     @classmethod
     def _reject_legacy_scan_keys(cls, value):
-        return reject_legacy_keys(value, SCAN_KEY_RENAMES, REMOVED_SCAN_KEYS)
+        return reject_legacy_keys(value, SCAN_KEY_RENAMES, REJECTED_SCAN_KEYS)

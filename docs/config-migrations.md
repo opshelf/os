@@ -2,7 +2,7 @@
 
 `schema_version` is a top-level positive integer, independent of the existing
 application/config `version` string. A missing `schema_version` means **1**, the
-provisioning schema used before this release. The current schema is **2**.
+provisioning schema used before this release. The current schema is **3**.
 Version 1 identifies field meanings, not a canonical set of machine values.
 
 The application requires the current schema. It does not migrate on startup and
@@ -101,6 +101,24 @@ cell z_offset = wall depth + intercept_mm + x_slope_mm_per_mm * gripper X
 Z-model reference fields describe the **shelf engagement** geometry, not the scan
 pose. Their existing comparison against live tool parameters remains unchanged.
 The two XY correction layers have not been combined.
+
+## Schema 2 → 3
+
+The laser scan block shipped many keys that no code path read. Migration 3 removes
+them and nothing else:
+
+| Removed key in `robot.grid.scan` | Why |
+| --- | --- |
+| `angle_calibration_method` | the method is `stage_stall` in the model itself |
+| `angle_calibration_z_offset_{min,max,step}_mm`, `angle_calibration_z_offset_count` | legacy beam-angle sweep |
+| `angle_calibration_rotation_{min,max}_deg` | superseded by the `*_stage_stall_rotation_*` pair |
+| `angle_calibration_alpha_{min,max}_deg` | legacy beam-angle sweep |
+| `angle_calibration_{coarse_step,fine_window,fine_step}_deg` | legacy beam-angle sweep |
+| `angle_calibration_stage_stall_fall_threshold_mm`, `..._stop_after_fall_count` | only the standalone CLI argparse uses these |
+
+No calibration value is moved, rewritten or defaulted by this step: the removed
+keys influenced no calculation. Values are dropped, so the backup is the only
+remaining copy.
 
 ## Add a migration
 
