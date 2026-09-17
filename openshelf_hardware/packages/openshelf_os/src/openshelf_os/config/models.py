@@ -442,7 +442,22 @@ def compare_gpio_pins_to_defaults(configured: Iterable[str]) -> Tuple[List[str],
 #: Pin names that existing config files still use. A config that declares
 #: robot.gpio.pins replaces the defaults wholesale, so renaming a default is
 #: invisible to those machines until the old key is translated here.
-GPIO_PIN_ALIASES = {"power_control": "pwr_out0"}
+GPIO_PIN_ALIASES = {
+    "power_control": "pwr_out0",
+    "x_limit_min": "x_lim_min",
+    "x_limit_max": "x_lim_max",
+    "x_1": "x_lim_minunsafe",
+    "x_2": "x_lim_maxunsafe",
+    "y_limit_min": "y_lim_min",
+    "y_limit_max": "y_lim_max",
+    "y_1": "y_lim_minunsafe",
+    "y_2": "y_lim_maxunsafe",
+    "tool_limit_r": "r_lim_min",
+    "tool_limit_s": "s_lim_min",
+    "tool_limit_z": "z_lim_min",
+    "io_limit_min": "io_lim_min",
+    "io_limit_max": "io_lim_max",
+}
 
 
 class GpioConfig(BaseModel):
@@ -463,8 +478,10 @@ class GpioConfig(BaseModel):
         for name, spec in pins.items():
             alias = GPIO_PIN_ALIASES.get(name)
             # An explicit modern key always wins over its legacy alias.
-            use_alias = alias is not None and alias not in pins
-            renamed[alias if use_alias else name] = spec
+            if alias is not None and alias in pins:
+                continue
+
+            renamed[alias if alias is not None else name] = spec
 
         if renamed == pins:
             return data

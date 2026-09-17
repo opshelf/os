@@ -1,4 +1,6 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import BooleanSuccess, response_docs, stream_docs
+from fastapi.responses import Response
 from openshelf_os_server.core.mass import MASS_FIELDS, apply_mass, validate_mass
 from openshelf_os_server.core.validation import ItemValidator, ValidationError
 
@@ -14,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from openshelf_os.common import ConfigError
 from openshelf_os.operating_mode import OperatingMode
+from openshelf_os.storage import CellItem, CellStatus, Dimensions, StorageModuleCellLocation
 from openshelf_os.robot.commands import (
     HomeCommand,
     InitializeCommand,
@@ -47,6 +50,7 @@ from openshelf_os_server.core.mock_robot import (
     MockQueueFullError,
     MockRequestConflictError,
     get_mock_robot_runtime,
+    mock_cell_fits,
 )
 from openshelf_os_server.core.command_lifecycle import (
     CommandQueueFullError,
@@ -59,9 +63,8 @@ from openshelf_os_server.core.command_lifecycle import (
 )
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import (
-    BinStorageService,
     DirectStoreReservationError,
-    bin_workflow_command_admission_guard,
+    is_reserved_bin_location,
     validate_direct_store_reservation,
 )
 from openshelf_os_server.routers.common import SuccessResponse
@@ -75,6 +78,88 @@ from .auth_deps import (
     can_user_retrieve_item,
 )
 
+from openshelf_os.robot.status import SafetyStatus
+
+class ScannerStatusResponse(BaseModel):
+    connected: bool
+    enabled: bool
+
+
+class ScaleReadingResponse(BaseModel):
+    weight_grams: float = Field(description="Live gross scale reading in grams")
+    decimal_position: int
+    status: dict[str, bool | int]
+    raw_registers: dict[str, int]
+
+
+class ScaleCalibrationStatusResponse(BaseModel):
+    zero_ok: bool
+    weight_ok: bool
+    raw: int
+
+
+class ScaleCalibrationResult(BaseModel):
+    success: bool
+    error: str | None = None
+    status: ScaleCalibrationStatusResponse | None = None
+
+
+class ScaleCalibrationParameters(BaseModel):
+    full_scale: int = Field(description="Scale range in grams")
+    calibration_weight: int = Field(description="Known calibration weight in grams")
+    precision: int
+    division: int
+
+
+class MotorOperationResponse(BaseModel):
+    success: bool
+    motor: str
+    position_mm: float | None = Field(default=None, description="Requested target, when this is a move")
+
+
+class DoorOperationResponse(BaseModel):
+    success: bool
+    action: Literal["open", "close", "home"]
+
+
+class PowerRailStatus(BaseModel):
+    rail: str = Field(description="GPIO output identifier of the switched rail")
+    supplies: str = Field(description="Hardware that loses power when this rail is cut")
+    axes: list[str] = Field(
+        description="Motors that lose their encoder reference when this rail is cut"
+    )
+    gripper: bool = Field(description="Whether the gripper servo drops with this rail")
+    powered: bool | None = Field(description="Current rail state; null when it cannot be read")
+
+
+class PowerRailsResponse(BaseModel):
+    hold_seconds: float = Field(description="How long a cycle cuts the rail before restoring power")
+    rails: list[PowerRailStatus]
+
+
+class PowerCycleResponse(BaseModel):
+    success: bool
+    rail: str
+    axes_needing_home: list[str] = Field(
+        description="Axes that must be re-homed before further motion"
+    )
+
+
+class InitComponentResponse(BaseModel):
+    component: str
+    phase: str
+    detail: str
+    reason: str | None
+    updated_at: float
+
+
+class MotorsResponse(BaseModel):
+    io: list[dict[str, Any]] = Field(description="Configured IO motors and their diagnostic identifiers")
+    tool: list[dict[str, Any]] = Field(description="Configured tool motors and their diagnostic identifiers")
+    init_phase: str
+    init_components: list[InitComponentResponse]
+
+
 router = APIRouter(tags=["robot"])
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
@@ -85,45 +170,10 @@ def _error_detail(message: str, code: str) -> dict[str, str]:
     return {"message": message, "code": code}
 
 
-async def _ensure_no_active_bin_workflow(
-    command: RobotCommands,
-    db: AsyncSession,
-    current_user: User,
-    worker: RobotWorker | None = None,
-) -> None:
-    active_bin_workflow = await BinStorageService(db).active_workflow()
-    is_admin_workflow_home = (
-        isinstance(command, HomeCommand)
-        and active_bin_workflow is not None
-        and active_bin_workflow.state in {"awaiting_item_scan", "awaiting_bin_scan", "recovery_required"}
-        and worker is not None
-        and (
-            worker.needs_home()
-            or getattr(worker, "_is_emergency_stopped", False)
-            or getattr(worker, "_is_crashed", False)
-        )
-        and getattr(getattr(current_user, "role", None), "name", None) == "admin"
-    )
-    if active_bin_workflow is not None and not isinstance(command, StopCommand) and not is_admin_workflow_home:
-        _raise_active_bin_workflow_lock(active_bin_workflow.id)
 
 
-def _raise_active_bin_workflow_lock(workflow_id: str) -> NoReturn:
-    raise HTTPException(
-        status_code=status.HTTP_423_LOCKED,
-        detail={
-            "message": "A storage bin must be returned before another robot command can run",
-            "code": "bin_workflow_active",
-            "workflow_id": workflow_id,
-        },
-    )
 
 
-async def _ensure_no_active_bin_workflow_mutation(db: AsyncSession) -> None:
-    """Block public motion and queue mutations while a bin workflow owns the robot."""
-    active_bin_workflow = await BinStorageService(db).active_workflow()
-    if active_bin_workflow is not None:
-        _raise_active_bin_workflow_lock(active_bin_workflow.id)
 
 
 def _is_scale_not_enabled(exc: Exception) -> bool:
@@ -365,6 +415,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
     if not isinstance(upca, str) or upca.strip() == "" or len(upca) > 50:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="item.upca is required")
 
+    _parse_requested_store_location(item_data)
     await _validate_direct_store_reservation(item_data, db)
 
     item = (await db.execute(select(Item).where(Item.upca == upca))).scalar_one_or_none()
@@ -385,6 +436,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Item is already stored; retrieve it before storing again",
             )
+        await _validate_mock_store_location(item_data, item.dimensions, db)
         return
 
     name = item_data.get("name")
@@ -410,6 +462,8 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
             detail="Item dimensions and weight must be positive numbers",
         ) from exc
 
+    await _validate_mock_store_location(item_data, dimensions, db)
+
     try:
         validate_mass(item_data)
     except ValidationError as exc:
@@ -428,6 +482,143 @@ async def _validate_direct_store_reservation(item_data: dict[str, Any], db: Asyn
             status_code=status.HTTP_409_CONFLICT,
             detail=_error_detail(str(exc), exc.code),
         ) from exc
+
+
+def _fold_store_location_into_item(command: StoreItemCommand) -> StoreItemCommand:
+    """Keep one internal representation of the requested destination cell.
+
+    Public requests use a top-level `location`; the robot worker, the bin workflow, and
+    admission validation read `item.location`. Folding here also keeps the durable
+    idempotency payload canonical.
+    """
+    location = command.location
+    if location is None:
+        return command
+
+    item = dict(command.item or {})
+    item["location"] = dict(location)
+    return StoreItemCommand(request_id=command.request_id, item=item)
+
+
+def _parse_requested_store_location(item_data: dict[str, Any]) -> StorageModuleCellLocation | None:
+    raw_location = item_data.get("location")
+    if raw_location is None:
+        return None
+    try:
+        if (
+            not isinstance(raw_location, dict)
+            or not isinstance(raw_location.get("side"), str)
+            or any(
+                not isinstance(raw_location.get(key), int)
+                or isinstance(raw_location.get(key), bool)
+                for key in ("shelf_idx", "cell_idx")
+            )
+        ):
+            raise ValueError
+        return StorageModuleCellLocation.model_validate(raw_location)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=_error_detail("location requires side, shelf_idx and cell_idx", "invalid_location"),
+        ) from None
+
+
+def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -> None:
+    location = _parse_requested_store_location(item_data)
+    if location is None:
+        return
+
+    robot = getattr(worker, "_robot", None)
+    grid = getattr(robot, "_grid", None)
+    if getattr(robot, "_demo_cell_map", None) is not None:
+        # Demo execution uses its barcode mapping instead of ordinary requested cells.
+        return
+    if grid is None:
+        # Lightweight worker doubles expose no grid; execution re-validates.
+        return
+
+    cell = grid.get_cell_if_present(location)
+    if cell is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=_error_detail("Requested storage cell does not exist", "cell_not_found"),
+        )
+    if cell.status != CellStatus.AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail(f"Requested storage cell is {cell.status.value}", "cell_unavailable"),
+        )
+
+    dimensions = item_data.get("dimensions")
+    if not isinstance(dimensions, dict):
+        return
+    try:
+        item = CellItem(
+            dimensions=Dimensions(
+                width=float(dimensions["width"]),
+                height=float(dimensions["height"]),
+                length=float(dimensions["length"]),
+            )
+        )
+    except (KeyError, TypeError, ValueError):
+        return
+    if grid.cell_fits_item(cell, item) is False:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail("Item does not fit the requested storage cell", "cell_too_small"),
+        )
+
+
+async def _validate_mock_store_location(
+    item_data: dict[str, Any],
+    dimensions: Any,
+    db: AsyncSession,
+) -> None:
+    location = _parse_requested_store_location(item_data)
+    if location is None:
+        return
+
+    side = location.side.value
+    shelf_idx = location.shelf_idx
+    cell_idx = location.cell_idx
+    if (
+        side not in MOCK_SIDES
+        or not 0 <= shelf_idx < MOCK_SHELVES_PER_SIDE
+        or not 0 <= cell_idx < MOCK_CELLS_PER_SHELF
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=_error_detail("Requested storage cell does not exist", "cell_not_found"),
+        )
+
+    occupied = (
+        await db.execute(
+            select(ItemLocation.id).where(
+                ItemLocation.side == side,
+                ItemLocation.shelf_idx == shelf_idx,
+                ItemLocation.cell_idx == cell_idx,
+            )
+        )
+    ).scalar_one_or_none()
+    if occupied is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail("Requested storage cell is occupied", "cell_unavailable"),
+        )
+
+    # A live bin home is unavailable for explicit stores, matching the maintenance status
+    # production applies to reserved cells; automatic allocation avoids it instead.
+    if await is_reserved_bin_location((side, shelf_idx, cell_idx), db):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail("Requested storage cell is reserved", "cell_unavailable"),
+        )
+
+    if isinstance(dimensions, dict) and mock_cell_fits(dimensions) is False:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail("Item does not fit the requested storage cell", "cell_too_small"),
+        )
 
 
 async def _validate_mock_retrieve(
@@ -480,14 +671,17 @@ async def _validate_mock_retrieve(
     "/commands",
     dependencies=[Depends(get_relay_or_current_user)],
     response_model=CommandAcceptedResponse,
-    responses={
-        409: {"description": "Idempotency conflict or command precondition failed"},
-        423: {"description": "A multi-item bin workflow currently owns the robot"},
-        429: {
-            "description": "The active command queue is full",
-            "headers": {"Retry-After": {"schema": {"type": "string"}}},
+    responses=response_docs(
+        errors=(400, 401, 403, 404, 409, 422, 429, 503),
+        existing={
+            409: {"description": "Idempotency conflict or command precondition failed"},
+            429: {
+                "description": "The active command queue is full",
+                "headers": {"Retry-After": {"schema": {"type": "string"}}},
+            },
         },
-    },
+    ),
+    summary="Queue a robot command",
 )
 async def robot_commands(
     command: RobotCommands,
@@ -495,7 +689,44 @@ async def robot_commands(
     current_user: User = Depends(get_relay_or_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CommandAcceptedResponse:
+    """Queue a robot command.
+
+    Returns a durable `command_id` and current state after admission, not after physical
+    completion. Poll `/api/robot/commands/{command_id}` for the result or subscribe to
+    `/api/robot/events` before submitting. The status stream is not a command receipt.
+
+    For store/retrieve commands, reuse the same `request_id` and payload after an uncertain
+    submission. Identical replays return the existing record; a different payload returns
+    `409`. Records and idempotency are retained for seven days. A terminal failure requires
+    a new ID for a new attempt. Interrupted commands are failed at startup rather than
+    replayed.
+
+    Create inventory first, then submit
+    `{"command":"store_item","request_id":"store-001","item":{"upca":"880000000001"}}`. New
+    command-enrolled items require positive complete dimensions; include a name for
+    compatibility with mock mode. Existing items use stored dimensions and mass: update
+    inventory before submitting if these must change. Accepted enrollment survives execution
+    failure.
+
+    To choose the destination cell, add a top-level `location`
+    (`{"side":"left_module","shelf_idx":0,"cell_idx":0}`). The cell must exist in the
+    storage grid, be available, and fit the item; a live bin home stays reserved and is
+    reported unavailable. Omitting `location` keeps automatic allocation, and demo mode
+    keeps its configured cell mapping.
+
+    For retrieval, read the item first and supply its `location` (`side`, zero-based
+    `shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box
+    before retrieving. Home when `home_required` is reported. An item reserved by a tray interaction returns
+    `409`; a full queue returns `429` with `Retry-After`.
+
+    Mock mode supports only store/retrieve, with one FIFO worker and simulated completion.
+    Hardware modes also accept the engineering commands in the schema. A queued stop is not
+    an emergency stop; use the physical emergency stop for immediate safety-critical
+    stopping.
+    """
     operating_mode = get_operating_mode()
+    if isinstance(command, StoreItemCommand):
+        command = _fold_store_location_into_item(command)
     submission_payload = command.model_dump(mode="json", exclude_none=True)
     request_id = getattr(command, "request_id", None)
     if operating_mode == OperatingMode.mock:
@@ -518,20 +749,12 @@ async def robot_commands(
                 {"message": "success", "command_id": replay.command_id, "status": replay.status}
             )
 
-        async with bin_workflow_command_admission_guard():
-            # Direct unit callers often supply light-weight test doubles; API
-            # requests always receive a real AsyncSession and enforce the durable lock.
-            if isinstance(db, AsyncSession):
-                await _ensure_no_active_bin_workflow(command, db, current_user)
+        async with robot_command_enqueue_guard():
+            if isinstance(command, StoreItemCommand):
+                await _validate_mock_store(command, db)
+            else:
+                await _validate_mock_retrieve(command, current_user, db)
 
-        if isinstance(command, StoreItemCommand):
-            await _validate_mock_store(command, db)
-        else:
-            await _validate_mock_retrieve(command, current_user, db)
-
-        async with bin_workflow_command_admission_guard():
-            if isinstance(db, AsyncSession):
-                await _ensure_no_active_bin_workflow(command, db, current_user)
             try:
                 row, _ = await runtime.enqueue(
                     payload,
@@ -582,7 +805,6 @@ async def robot_commands(
     if isinstance(command, StoreItemCommand):
         logging.info("Processing StoreItemCommand: item=%s", command.item)
         item_data = deepcopy(command.item or {})
-        await _validate_direct_store_reservation(item_data, db)
         upca = item_data.get("upca")
         if any(key in item_data for key in MASS_FIELDS) and (
             not isinstance(upca, str) or not upca.strip() or len(upca) > 50
@@ -591,6 +813,7 @@ async def robot_commands(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="item.upca is required for container mass enrollment",
             )
+        _parse_requested_store_location(item_data)
         await _validate_direct_store_reservation(item_data, db)
         human_dimensions_source = "command_payload" if item_data.get("dimensions") is not None else "none"
 
@@ -659,6 +882,7 @@ async def robot_commands(
 
         logging.info("Final StoreItemCommand: item=%s", command.item)
         final_item_data = command.item or {}
+        _validate_requested_store_location(final_item_data, worker)
         try:
             await capture_store_observer_measurement(
                 upca=final_item_data.get("upca"),
@@ -742,34 +966,34 @@ async def robot_commands(
                 detail="You do not have permission to retrieve this item"
             )
 
-    async with bin_workflow_command_admission_guard():
-        await _ensure_no_active_bin_workflow(command, db, current_user, worker)
-        async with robot_command_enqueue_guard():
-            try:
-                row, was_replay = await admit_robot_command(
-                    submission_payload,
-                    request_id=request_id,
-                    correlation_id=correlation_id_var.get(),
-                    enrollment_item=enrollment_item,
-                )
-            except CommandRequestConflictError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="request_id was already used with a different payload",
-                ) from exc
-            except CommandQueueFullError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Robot command queue is full",
-                    headers={"Retry-After": "1"},
-                ) from exc
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=str(exc),
-                ) from exc
-            if was_replay is False:
-                await enqueue_persisted(worker, command, row)
+    async with robot_command_enqueue_guard():
+        if isinstance(command, StoreItemCommand):
+            await _validate_direct_store_reservation(command.item or {}, db)
+        try:
+            row, was_replay = await admit_robot_command(
+                submission_payload,
+                request_id=request_id,
+                correlation_id=correlation_id_var.get(),
+                enrollment_item=enrollment_item,
+            )
+        except CommandRequestConflictError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="request_id was already used with a different payload",
+            ) from exc
+        except CommandQueueFullError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Robot command queue is full",
+                headers={"Retry-After": "1"},
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        if was_replay is False:
+            await enqueue_persisted(worker, command, row)
     return CommandAcceptedResponse(
         message="success",
         command_id=row.command_id,
@@ -781,52 +1005,114 @@ async def robot_commands(
     "/commands/{command_id}",
     dependencies=[Depends(get_relay_or_current_user)],
     response_model=CommandLifecycleResponse,
-    responses={404: {"description": "Robot command not found"}},
+    responses=response_docs(
+        errors=(401, 404, 503), existing={404: {"description": "Robot command not found"}}
+    ),
+    summary="Read a durable command result",
 )
 async def get_robot_command(command_id: str) -> CommandLifecycleResponse:
+    """Read a durable command result.
+
+    Available for mock and hardware command records. `result` is null before a terminal
+    result is persisted and may contain a command-specific success or failure payload
+    afterward. Unknown or expired IDs return `404`. For measurement semantics, see the
+    storage group; a successful retrieval does not guarantee a weight reading.
+    """
     row = await get_lifecycle_command(command_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Robot command not found")
     return CommandLifecycleResponse.model_validate(serialize_command(row))
 
 
-@router.post("/start", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+@router.post(
+    "/start",
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_permissions("robot:control")),
+        Depends(check_robot_enabled),
+    ],
+    summary="Start the robot worker",
+    responses=response_docs(errors=(401, 403, 409, 503)),
+)
 async def start_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    """Start the robot worker.
+
+    Starts worker processing; requires `robot:control`. This is a worker lifecycle
+    operation, not command submission. Returns `409` while laser auto-calibration is active
+    and `503` if the robot is unavailable.
+    """
     await _ensure_laser_auto_calibration_not_running()
     await worker.start()
     return SuccessResponse()
 
 
-@router.post("/stop", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+@router.post(
+    "/stop",
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_permissions("robot:control")),
+        Depends(check_robot_enabled),
+    ],
+    summary="Shut down the robot worker",
+    responses=response_docs(errors=(401, 403, 409, 503)),
+)
 async def stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
+    """Shut down the robot worker.
+
+    Waits for worker shutdown; requires `robot:control`. This differs from submitting a
+    queued `stop` command and is not a physical emergency stop. Unavailable during laser
+    auto-calibration.
+    """
     await _ensure_laser_auto_calibration_not_running()
     await worker.shutdown()
     return SuccessResponse()
 
 
-@router.post("/clear_commands", dependencies=[Depends(get_current_user), Depends(require_permissions("robot:control")), Depends(check_robot_enabled)])
+@router.post(
+    "/clear_commands",
+    dependencies=[
+        Depends(get_current_user),
+        Depends(require_permissions("robot:control")),
+        Depends(check_robot_enabled),
+    ],
+    summary="Clear queued robot commands",
+    responses=response_docs(errors=(401, 403, 409, 503)),
+)
 async def clear_robot_commands(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse:
+    """Clear queued robot commands.
+
+    Removes waiting commands through the worker; requires `robot:control`. An active bin
+    workflow or laser calibration prevents this mutation. Read durable command results to
+    reconcile interrupted work.
+    """
     await _ensure_laser_auto_calibration_not_running()
-    async with bin_workflow_command_admission_guard():
-        await _ensure_no_active_bin_workflow_mutation(db)
-        await worker.clear_commands()
+    await worker.clear_commands()
     return SuccessResponse()
 
 
-@router.post("/gripper", dependencies=[Depends(get_current_user)])
+@router.post(
+    "/gripper",
+    dependencies=[Depends(get_current_user)],
+    summary="Grip or release directly",
+    responses=response_docs(errors=(401, 409, 503)),
+)
 async def control_gripper(
     state: Literal["grip", "release"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse:
+    """Grip or release directly.
+
+    Performs an immediate authenticated gripper operation using the `state` query parameter.
+    Changes physical hardware. Blocked while laser auto-calibration runs or another operation
+    holds the manual-motion guard.
+    """
     await _ensure_laser_auto_calibration_not_running()
 
     async with manual_motion_guard(f"gripper:{state}", worker=worker):
-        async with bin_workflow_command_admission_guard():
-            await _ensure_no_active_bin_workflow_mutation(db)
         if state == "release":
             await worker.release_gripper()
         else:
@@ -834,10 +1120,21 @@ async def control_gripper(
     return SuccessResponse()
 
 
-@router.post("/safety/acknowledge", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/safety/acknowledge",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Acknowledge a cleared safety interruption",
+    responses=response_docs(errors=(401, 409, 503)),
+)
 async def acknowledge_safety_guard(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> SuccessResponse:
+    """Acknowledge a cleared safety interruption.
+
+    Acknowledges the worker safety guard only after all interruption sources are clear.
+    Returns `409` with `active_sources` while an interruption remains active. This does not
+    bypass sensors or home the robot.
+    """
     result = await worker.acknowledge_safety_guard()
 
     if result["accepted"] is False:
@@ -861,11 +1158,19 @@ async def acknowledge_safety_guard(
         Depends(require_permissions("robot:control")),
         Depends(check_robot_enabled),
     ],
+    summary="Set the safety guard bypass",
+    responses=response_docs(model=SafetyStatus, errors=(401, 403, 503)),
 )
 async def override_safety_guard(
     request: SafetyGuardOverrideRequest,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict[str, Any]:
+    """Set the safety guard bypass.
+
+    Engineering control requiring `robot:control`. `bypass=true` disables the worker safety
+    guard; false restores it. Returns the resulting safety state. This changes physical
+    safety behavior and must only be used in a controlled engineering procedure.
+    """
     return await worker.set_safety_guard_bypassed(request.bypass)
 
 
@@ -876,29 +1181,55 @@ async def override_safety_guard(
         Depends(require_permissions("robot:control")),
         Depends(check_robot_enabled),
     ],
+    summary="Set a component safety bypass",
+    responses=response_docs(model=SafetyStatus, errors=(401, 403, 503)),
 )
 async def override_safety_component(
     request: SafetyComponentOverrideRequest,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict[str, Any]:
+    """Set a component safety bypass.
+
+    Engineering control requiring `robot:control`. Changes bypass for `light_curtain` or
+    `cabinet_doors` and returns the resulting safety state. Restore the component after the
+    controlled diagnostic procedure.
+    """
     return await worker.set_safety_component_bypassed(request.component, request.bypass)
 
 
-@router.get("/debug/scanner/status", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.get(
+    "/debug/scanner/status",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Read scanner diagnostics",
+    responses=response_docs(model=ScannerStatusResponse, errors=(401, 503)),
+)
 async def get_scanner_status(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
+    """Read scanner diagnostics.
+
+    Reports scanner connection and enabled state from the initialized worker. This does not
+    trigger a hardware scan. Requires an authenticated user and an enabled robot.
+    """
     return worker.get_scanner_status()
 
 
 @router.post(
     "/debug/scanner/scan",
     dependencies=[Depends(require_permissions("robot:control"))],
+    summary="Inject a barcode scan event",
+    responses=response_docs(errors=(401, 403, 503)),
 )
 async def emit_scanner_scan_event(
     request: LabelScanRequest,
     worker: RobotWorker | None = Depends(get_command_worker_for_mode),
 ) -> SuccessResponse:
+    """Inject a barcode scan event.
+
+    Publishes a `label_scanned` event as if the scanner had read `code`; requires
+    `robot:control`. Available in mock mode as well as hardware modes. The event can advance
+    a waiting bin workflow, so this is not a read-only scanner test.
+    """
     payload = {"kind": "label_scanned", "payload": request.code}
     try:
         if get_operating_mode() == OperatingMode.mock:
@@ -919,10 +1250,22 @@ async def emit_scanner_scan_event(
     return SuccessResponse()
 
 
-@router.get("/debug/scale", dependencies=[Depends(get_current_user)])
+@router.get(
+    "/debug/scale",
+    dependencies=[Depends(get_current_user)],
+    summary="Read live scale registers",
+    responses=response_docs(model=ScaleReadingResponse, errors=(401, 404, 503)),
+)
 async def get_scale_reading(
     worker: RobotWorker | None = Depends(get_command_worker_for_mode),
 ) -> dict:
+    """Read live scale registers.
+
+    Reads current scale weight in grams, stability/validity flags, decimal position, and raw
+    registers. This is live telemetry, not a command-correlated result or inventory update.
+    Mock mode returns a deterministic 350-gram reading. A disabled scale returns `404`;
+    communication failure returns `503`.
+    """
     if get_operating_mode() == OperatingMode.mock:
         return {"weight_grams": 350.0, "decimal_position": 1,
                 "status": {"stable": True, "valid": True, "zero": False, "overload": False, "raw": 17},
@@ -950,10 +1293,20 @@ async def get_scale_reading(
         ) from exc
 
 
-@router.get("/debug/scale/calibration/status", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.get(
+    "/debug/scale/calibration/status",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Read scale calibration status",
+    responses=response_docs(model=ScaleCalibrationStatusResponse, errors=(401, 404, 503)),
+)
 async def get_scale_calibration_status(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
+    """Read scale calibration status.
+
+    Reads the physical scale calibration status through the worker. A disabled scale returns
+    `404`; unavailable hardware or a failed read returns `503`.
+    """
     try:
         return await worker.get_scale_calibration_status()
     except ConfigError as exc:
@@ -969,10 +1322,20 @@ async def get_scale_calibration_status(
         ) from exc
 
 
-@router.get("/debug/scale/calibration/params", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.get(
+    "/debug/scale/calibration/params",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Read scale calibration parameters",
+    responses=response_docs(model=ScaleCalibrationParameters, errors=(401, 404, 503)),
+)
 async def get_scale_calibration_params(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
+    """Read scale calibration parameters.
+
+    Reads physical scale range, calibration weight, precision, and division settings. These
+    settings belong to the hardware scale, not inventory container-mass fields.
+    """
     try:
         return await worker.get_scale_calibration_params()
     except ConfigError as exc:
@@ -988,21 +1351,30 @@ async def get_scale_calibration_params(
         ) from exc
 
 
-@router.post("/debug/scale/calibration/params", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/scale/calibration/params",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Write scale calibration parameters",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 404, 503)),
+)
 async def set_scale_calibration_params(
     request: ScaleCalibrationParamsRequest,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Write scale calibration parameters.
+
+    Writes the supplied range, known weight, precision, and division to the physical scale.
+    Inspect `success` in the response. An active bin workflow prevents mutation; this does
+    not update item mass.
+    """
     try:
-        async with bin_workflow_command_admission_guard():
-            await _ensure_no_active_bin_workflow_mutation(db)
-            ok = await worker.set_scale_calibration_params(
-                full_scale=request.full_scale,
-                calibration_weight=request.calibration_weight,
-                precision=request.precision,
-                division=request.division,
-            )
+        ok = await worker.set_scale_calibration_params(
+            full_scale=request.full_scale,
+            calibration_weight=request.calibration_weight,
+            precision=request.precision,
+            division=request.division,
+        )
         return {"success": ok}
     except HTTPException:
         raise
@@ -1019,15 +1391,24 @@ async def set_scale_calibration_params(
         ) from exc
 
 
-@router.post("/debug/scale/calibration/zero", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/scale/calibration/zero",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Calibrate the scale zero point",
+    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 404, 503)),
+)
 async def calibrate_scale_zero(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Calibrate the scale zero point.
+
+    Runs the hardware zero-calibration operation. Prepare the scale according to the
+    engineering calibration procedure before calling. An active bin workflow prevents
+    mutation. The response reports the hardware calibration result.
+    """
     try:
-        async with bin_workflow_command_admission_guard():
-            await _ensure_no_active_bin_workflow_mutation(db)
-            return await worker.calibrate_scale_zero()
+        return await worker.calibrate_scale_zero()
     except HTTPException:
         raise
     except ConfigError as exc:
@@ -1043,15 +1424,24 @@ async def calibrate_scale_zero(
         ) from exc
 
 
-@router.post("/debug/scale/calibration/weight", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/scale/calibration/weight",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Calibrate with a known weight",
+    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 404, 503)),
+)
 async def calibrate_scale_weight(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Calibrate with a known weight.
+
+    Runs span calibration using the configured known calibration weight. Place the reference
+    weight on the scale before calling. An active bin workflow prevents mutation; this does
+    not change inventory mass.
+    """
     try:
-        async with bin_workflow_command_admission_guard():
-            await _ensure_no_active_bin_workflow_mutation(db)
-            return await worker.calibrate_scale_weight()
+        return await worker.calibrate_scale_weight()
     except HTTPException:
         raise
     except ConfigError as exc:
@@ -1067,15 +1457,24 @@ async def calibrate_scale_weight(
         ) from exc
 
 
-@router.post("/debug/scale/calibration/tare", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/scale/calibration/tare",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Tare the physical scale",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 404, 503)),
+)
 async def scale_tare(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Tare the physical scale.
+
+    Sets the scale tare and returns a `success` flag. This changes the scale reading
+    baseline; it does not set an inventory item's `tare_weight`. An active bin workflow
+    prevents mutation.
+    """
     try:
-        async with bin_workflow_command_admission_guard():
-            await _ensure_no_active_bin_workflow_mutation(db)
-            ok = await worker.scale_tare()
+        ok = await worker.scale_tare()
         return {"success": ok}
     except HTTPException:
         raise
@@ -1092,8 +1491,18 @@ async def scale_tare(
         ) from exc
 
 
-@router.get("/debug/motors", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.get(
+    "/debug/motors",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="List configured motors",
+    responses=response_docs(model=MotorsResponse, errors=(401, 503)),
+)
 async def get_motors() -> dict:
+    """List configured motors.
+
+    Lists motor identifiers and configuration used by the diagnostic routes. Use returned
+    identifiers as `motor_name`; this endpoint does not command motion.
+    """
     tracker = get_init_tracker()
     try:
         worker = await get_robot_worker()
@@ -1109,11 +1518,21 @@ async def get_motors() -> dict:
     return response
 
 
-@router.post("/debug/motors/{motor_name}/crash", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/motors/{motor_name}/crash",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Inject a motor crash",
+    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 503)),
+)
 async def simulate_motor_crash(
     motor_name: str,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
+    """Inject a motor crash.
+
+    Engineering fault-injection endpoint that sets the selected motor's crash state. The
+    worker can react as it would to a real crash. Unknown motor names return `404`.
+    """
     success = await worker.simulate_motor_crash(motor_name)
 
     if success is False:
@@ -1125,11 +1544,22 @@ async def simulate_motor_crash(
     return {"success": True, "motor": motor_name}
 
 
-@router.post("/debug/motors/{motor_name}/clear", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/motors/{motor_name}/clear",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Clear a motor alarm",
+    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 503)),
+)
 async def clear_motor_alarm(
     motor_name: str,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> dict:
+    """Clear a motor alarm.
+
+    Clears the hardware alarm and matching worker crash state, then refreshes status. This
+    does not home the motor. Unknown names return `404`; a failed hardware operation returns
+    `503`.
+    """
     motor = worker._robot._get_motor_by_name(motor_name)
 
     if motor is None:
@@ -1161,13 +1591,25 @@ async def clear_motor_alarm(
         ) from exc
 
 
-@router.post("/debug/motors/{motor_name}/home", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/motors/{motor_name}/home",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Home one motor",
+    responses=response_docs(model=MotorOperationResponse, errors=(400, 401, 403, 404, 503)),
+)
 async def home_motor(
     motor_name: str,
     skip_pre_home_approach: bool = False,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Home one motor.
+
+    Runs the selected motor's homing operation with manual-motion guards. This moves
+    hardware and may also position the tool for safe rotation. `skip_pre_home_approach=true`
+    is restricted to the Y axis in development mode. Unknown names return `404`; motion that
+    another operation already holds returns `409`.
+    """
     if skip_pre_home_approach is True:
         if get_operating_mode() != OperatingMode.development:
             raise HTTPException(
@@ -1190,8 +1632,6 @@ async def home_motor(
 
     try:
         async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker):
-            async with bin_workflow_command_admission_guard():
-                await _ensure_no_active_bin_workflow_mutation(db)
             if motor_name == "rotate":
                 original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
                 try:
@@ -1227,8 +1667,20 @@ async def home_motor(
         ) from exc
 
 
-@router.get("/debug/power", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.get(
+    "/debug/power",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Inspect switched power rails",
+    responses=response_docs(model=PowerRailsResponse, errors=(401, 503)),
+)
 async def get_power_rails() -> dict:
+    """Read the four switched power rails.
+
+    Reports what each rail feeds, the axes that lose their encoder reference when it is
+    cut, and the current output state. `powered` is `null` when the rail cannot be read.
+    Cut power only through the rail cycle operation: driving the output directly drops
+    the drives without reconfiguring or re-homing the axes that lose their reference.
+    """
     states: dict[str, bool | None] = {rail: None for rail in POWER_RAILS}
     try:
         worker = await get_robot_worker()
@@ -1253,17 +1705,23 @@ async def get_power_rails() -> dict:
     }
 
 
-@router.post("/debug/power/{rail}/cycle", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/power/{rail}/cycle",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Power-cycle a switched rail",
+    responses=response_docs(model=PowerCycleResponse, errors=(401, 404, 409, 503)),
+)
 async def power_cycle_rail(
     rail: str,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Cut a switched rail for a few seconds, then restore it.
 
     Drive parameters that only latch at power-on need this -- any DI/DO function
     change stays inert until its drive restarts. Returns once power is back; the
-    hardware is still booting, so re-home the axes it dropped before moving.
+    hardware is still booting, so re-home the axes it dropped before moving. An
+    active command or queued work returns `409`; a tray workflow that is idle between
+    steps does not block the cycle.
     """
     if rail not in POWER_RAILS:
         raise HTTPException(
@@ -1273,13 +1731,14 @@ async def power_cycle_rail(
 
     try:
         async with manual_motion_guard(f"power_cycle:{rail}", worker=worker):
-            async with bin_workflow_command_admission_guard():
-                await _ensure_no_active_bin_workflow_mutation(db)
+            cut_axes = list(POWER_RAILS[rail].axes)
 
-            axes = await worker._robot.power_cycle_rail(rail)
+            def _mark_axes_for_homing() -> None:
+                if cut_axes:
+                    worker.set_needs_home(f"power cycle: {rail}", cut_axes)
 
-            if axes:
-                worker.set_needs_home(f"power cycle: {rail}", list(axes))
+            axes = await worker._robot.power_cycle_rail(rail, on_cut=_mark_axes_for_homing)
+
             await worker.get_status_snapshot(force_refresh=True)
             return {"success": True, "rail": rail, "axes_needing_home": list(axes)}
     except HTTPException:
@@ -1292,10 +1751,21 @@ async def power_cycle_rail(
         ) from exc
 
 
-@router.post("/debug/motors/probe", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/motors/probe",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Probe motor responsiveness",
+    responses=response_docs(errors=(401, 503)),
+)
 async def probe_motors(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
 ) -> MotorProbeResponse:
+    """Probe motor responsiveness.
+
+    Performs diagnostic position reads without commanding movement. Returns `busy=true` and
+    a reason instead of probing when commands, manual motion, or demo cycling own the robot.
+    Each result reports responsiveness independently.
+    """
     busy_reason = _probe_busy_reason(worker)
     if busy_reason is not None:
         return MotorProbeResponse(busy=True, reason=busy_reason)
@@ -1343,13 +1813,24 @@ async def probe_motors(
         return MotorProbeResponse(busy=True, reason=reason)
 
 
-@router.post("/debug/motors/{motor_name}/move", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/motors/{motor_name}/move",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Move one motor to a position",
+    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 503)),
+)
 async def move_motor(
     motor_name: str,
     request: MotorMoveRequest,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Move one motor to a position.
+
+    Moves the selected motor to `position_mm` using the manual-motion guard. Rotation may
+    require associated stage positioning. Unknown names return `404`; motion that another
+    operation already holds returns `409`; hardware failures return `503`.
+    """
     motor = worker._robot._get_motor_by_name(motor_name)
 
     if motor is None:
@@ -1360,8 +1841,6 @@ async def move_motor(
 
     try:
         async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker):
-            async with bin_workflow_command_admission_guard():
-                await _ensure_no_active_bin_workflow_mutation(db)
             if motor_name == "rotate":
                 if await worker._robot._tool.is_rotation_at_position(request.position_mm):
                     return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
@@ -1385,16 +1864,25 @@ async def move_motor(
         ) from exc
 
 
-@router.post("/debug/door", dependencies=[Depends(get_current_user), Depends(check_robot_enabled)])
+@router.post(
+    "/debug/door",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Operate the IO box door",
+    responses=response_docs(model=DoorOperationResponse, errors=(401, 503)),
+)
 async def control_door(
     action: Literal["open", "close", "home"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Operate the IO box door.
+
+    Directly opens, closes, or homes the IO door using the `action` query parameter. Runs
+    under the manual-motion guard and cannot interrupt an active bin workflow. Hardware
+    failures return `503`.
+    """
     try:
         async with manual_motion_guard(f"door:{action}", worker=worker):
-            async with bin_workflow_command_admission_guard():
-                await _ensure_no_active_bin_workflow_mutation(db)
             if action == "open":
                 await worker._robot._io.open_door()
             elif action == "close":
@@ -1421,8 +1909,33 @@ async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
         return {(row[0], row[1], row[2]) for row in rows}
 
 
-@router.get("/status", dependencies=[Depends(get_relay_or_current_user)])
+@router.get(
+    "/status",
+    dependencies=[Depends(get_relay_or_current_user)],
+    summary="Stream robot status",
+    responses=response_docs(
+        errors=(401, 503),
+        existing=stream_docs(
+            "text/event-stream",
+            "Live JSON status snapshots in SSE data frames. Heartbeat comments are not JSON.",
+            'data: {"mode":"mock","running":true,"current_command":null,"queue_length":0}\n\n',
+        ),
+    ),
+    response_class=Response,
+)
 async def stream_sse() -> EventSourceResponse:
+    """Stream robot status.
+
+    Server-Sent Events (`text/event-stream`). Each `data:` value is a JSON status snapshot
+    with top-level `mode`; initialization progress may appear before the worker is ready.
+    Database item locations are overlaid on storage occupancy. Subscribe for current state
+    rather than durable command outcomes.
+
+    Supports bearer authentication or the user access token in `?token=` for clients unable
+    to set headers. Sends heartbeat comments while connected. Reconnect to obtain current
+    status; the stream does not provide historical replay. Mock mode uses the same transport
+    with simulated hardware state.
+    """
     if get_operating_mode() == OperatingMode.mock:
         runtime = get_mock_robot_runtime()
         status_queue, snapshot = await runtime.subscribe_status()
@@ -1516,8 +2029,34 @@ async def stream_sse() -> EventSourceResponse:
     )
 
 
-@router.get("/events", dependencies=[Depends(get_relay_or_current_user)])
+@router.get(
+    "/events",
+    dependencies=[Depends(get_relay_or_current_user)],
+    summary="Stream robot events and command results",
+    responses=response_docs(
+        errors=(401, 503),
+        existing=stream_docs(
+            "text/event-stream",
+            "Live JSON robot events in SSE data frames; command, scanner, safety and workflow events share this stream.",
+            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","upca":"880000000001","location":{"side":"left_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
+        ),
+    ),
+    response_class=Response,
+)
 async def stream_events() -> EventSourceResponse:
+    """Stream robot events and command results.
+
+    Server-Sent Events with JSON in each `data:` frame. Subscribe before submitting
+    commands: this is a live stream without historical replay. Events include terminal
+    command results, scanner events, and bin-workflow updates; dispatch by `command`,
+    `message`, or `kind`, rather than assuming every frame is a completion.
+
+    A terminal result includes `command_id`; use durable command polling after a disconnect.
+    `weight`, when present, is the cycle's gross reading in grams, not container net mass.
+    Physical retrieval currently supplies no weight reading. Inventory persistence may
+    briefly lag the event. User tokens can be supplied through the bearer header or
+    `?token=`.
+    """
     if get_operating_mode() == OperatingMode.mock:
         runtime = get_mock_robot_runtime()
         mock_event_queue = await runtime.subscribe_events()

@@ -1,7 +1,15 @@
 import logging
 
-from openshelf_os.config.models import GpioConfig, Robot, compare_gpio_pins_to_defaults
+import pytest
+
+from openshelf_os.config.models import (
+    GPIO_PIN_ALIASES,
+    GpioConfig,
+    Robot,
+    compare_gpio_pins_to_defaults,
+)
 from openshelf_os.robot.core import Robot as RobotCore
+from hardware.gpio.manager import GpioManager
 
 
 def make_robot_config() -> dict[str, object]:
@@ -118,12 +126,23 @@ def test_legacy_power_control_pin_is_renamed_to_pwr_out0() -> None:
     assert gpio.pins["pwr_out1"].pin == 13
 
 
-def test_explicit_pwr_out0_wins_over_the_legacy_alias() -> None:
-    gpio = GpioConfig.model_validate(
-        {"pins": {"power_control": power_pin(2), "pwr_out0": power_pin(12)}}
-    )
+@pytest.mark.parametrize("legacy,modern", sorted(GPIO_PIN_ALIASES.items()))
+def test_legacy_pin_names_map_to_defaults(legacy: str, modern: str) -> None:
+    """Every alias migrates its key and targets a real default pin."""
+    spec = GpioConfig().pins[modern].model_dump()
+    gpio = GpioConfig.model_validate({"pins": {legacy: spec}})
 
+    assert legacy not in gpio.pins
+    assert gpio.pins[modern].pin == spec["pin"]
+
+
+def test_explicit_pwr_out0_wins_over_the_legacy_alias() -> None:
+    raw_pins = {"power_control": power_pin(12), "pwr_out0": power_pin(12)}
+    gpio = GpioConfig.model_validate({"pins": raw_pins})
+
+    assert "power_control" not in gpio.pins
     assert gpio.pins["pwr_out0"].pin == 12
+    assert GpioManager.from_config(gpio, fake=True).has_pin("pwr_out0")
 
 
 def test_default_pins_already_use_the_new_name() -> None:

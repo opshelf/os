@@ -6,12 +6,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from httpx import AsyncClient
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.robot.commands import RetrieveItemCommand, StoreItemCommand
 from openshelf_os.robot.models import QueuedOperation
+from openshelf_os.storage import Cell, CellStatus, Dimensions, Shelf, StorageGrid, StorageModuleCellLocation, StorageModuleSide
 from openshelf_os_server.core import command_lifecycle
 from openshelf_os_server.core.command_lifecycle import (
 	COMMAND_LIMIT,
@@ -59,6 +61,73 @@ def _store(request_id: str, *, name: str = "Lifecycle item") -> StoreItemCommand
 			"dimensions": {"width": 10, "height": 20, "length": 30},
 		},
 	)
+
+
+def _store_grid(occupied: set[int] | None = None) -> StorageGrid:
+	occupied = occupied or set()
+	return StorageGrid(
+		left_module=[
+			Shelf(
+				shelf_idx=0,
+				shelf_height=250.0,
+				shelf_width=400.0,
+				cells=[
+					Cell(
+						cell_idx=cell_idx,
+						status=CellStatus.OCCUPIED if cell_idx in occupied else CellStatus.AVAILABLE,
+						item=None,
+						calibration_point=None,
+						dimensions=Dimensions(width=100.0, length=100.0, height=100.0),
+					)
+					for cell_idx in (0, 1)
+				],
+			)
+		],
+		right_module=[],
+	)
+
+
+def _store_with_location(request_id: str, upca: str, location: dict[str, int | str]) -> StoreItemCommand:
+	request = _store(request_id)
+	item = dict(request.item or {})
+	item["upca"] = upca
+	return StoreItemCommand(request_id=request_id, location=location, item=item)
+
+
+@pytest.mark.anyio
+async def test_demo_store_admits_occupied_requested_cell_for_mapped_barcode(
+	client: AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	await _clear_production_commands()
+	worker = RecordingWorker()
+	worker._robot = SimpleNamespace(
+		_grid=_store_grid(occupied={1}),
+		_demo_cell_map={
+			"880000000200": StorageModuleCellLocation(
+				side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0,
+			),
+		},
+	)
+	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.demo)
+	monkeypatch.setattr(robot_router, "get_settings", lambda: SimpleNamespace(robot=SimpleNamespace(enabled=True)))
+	monkeypatch.setattr(robot_router, "get_robot_worker", AsyncMock(return_value=worker))
+	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
+	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", AsyncMock())
+	try:
+		response = await client.post("/api/robot/commands", json={
+			"command": "store_item",
+			"request_id": "demo-mapped-occupied-request",
+			"location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+			"item": {
+				"upca": "880000000200",
+				"name": "Mapped item",
+				"dimensions": {"width": 10, "height": 20, "length": 30},
+			},
+		})
+		assert response.status_code == 200
+		assert len(worker.enqueued) == 1
+	finally:
+		await _clear_production_commands()
 
 
 @pytest.mark.anyio
@@ -277,7 +346,7 @@ async def test_mass_store_with_identity_persists_baseline_and_replays_before_val
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("rejection", ["queue", "bin"])
+@pytest.mark.parametrize("rejection", ["queue"])
 async def test_rejected_mass_enrollment_allows_corrected_retry(
 	monkeypatch: pytest.MonkeyPatch, rejection: str,
 ) -> None:
@@ -286,12 +355,7 @@ async def test_rejected_mass_enrollment_allows_corrected_retry(
 	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
 	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
 	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", AsyncMock())
-	bin_workflow = AsyncMock(return_value=None)
-	monkeypatch.setattr(robot_router.BinStorageService, "active_workflow", bin_workflow)
-	if rejection == "queue":
-		monkeypatch.setattr(command_lifecycle, "COMMAND_LIMIT", 0)
-	else:
-		bin_workflow.return_value = SimpleNamespace(id="active-bin", state="awaiting_item_scan")
+	monkeypatch.setattr(command_lifecycle, "COMMAND_LIMIT", 0)
 	command = StoreItemCommand(request_id=f"mass-rejected-{rejection}", item={
 		"upca": f"mass-rejected-{rejection}", "name": "Bottle",
 		"dimensions": {"width": 100, "height": 100, "length": 100},
@@ -302,7 +366,7 @@ async def test_rejected_mass_enrollment_allows_corrected_retry(
 			await robot_router.robot_commands(
 				command, worker=worker, current_user=SimpleNamespace(id=1), db=db,
 			)
-		assert rejected.value.status_code == (429 if rejection == "queue" else 423)
+		assert rejected.value.status_code == 429
 		# Even committing the request session must not persist rejected enrollment.
 		await db.commit()
 	async with AsyncSessionLocal() as db:
@@ -311,7 +375,6 @@ async def test_rejected_mass_enrollment_allows_corrected_retry(
 	assert worker.enqueued == []
 
 	monkeypatch.setattr(command_lifecycle, "COMMAND_LIMIT", COMMAND_LIMIT)
-	bin_workflow.return_value = None
 	corrected = StoreItemCommand(request_id=command.request_id, item={**command.item, "net_weight": 300})
 	async with AsyncSessionLocal() as db:
 		accepted = await robot_router.robot_commands(
@@ -489,6 +552,104 @@ async def test_production_command_is_durable_idempotent_and_pollable(
 	assert completed.status == "succeeded"
 	assert completed.result == result
 	assert completed.completed_at is not None
+	await _clear_production_commands()
+
+
+@pytest.mark.anyio
+async def test_production_requested_location_is_validated_and_canonicalized(
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	await _clear_production_commands()
+	worker = RecordingWorker()
+	worker._robot = SimpleNamespace(_grid=_store_grid(occupied={1}))  # type: ignore[attr-defined]
+	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
+	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
+	location = {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
+
+	async with AsyncSessionLocal() as db:
+		accepted = await robot_router.robot_commands(
+			_store_with_location("requested-cell", "880000000111", location),
+			worker=worker,  # type: ignore[arg-type]
+			current_user=SimpleNamespace(id=1),
+			db=db,
+		)
+		assert accepted.status == "queued"
+		enqueued = worker.enqueued[0][0]
+		assert enqueued.location is None
+		assert enqueued.item["location"] == location
+		row = (
+			await db.execute(select(RobotCommand).where(RobotCommand.command_id == accepted.command_id))
+		).scalar_one()
+		assert row.payload["item"]["location"] == location
+		assert "location" not in row.payload
+
+		replayed = await robot_router.robot_commands(
+			_store_with_location("requested-cell", "880000000111", location),
+			worker=worker,  # type: ignore[arg-type]
+			current_user=SimpleNamespace(id=1),
+			db=db,
+		)
+		assert replayed.command_id == accepted.command_id
+		assert len(worker.enqueued) == 1
+
+		with pytest.raises(HTTPException) as conflict:
+			await robot_router.robot_commands(
+				_store_with_location(
+					"requested-cell",
+					"880000000111",
+					{"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+				),
+				worker=worker,  # type: ignore[arg-type]
+				current_user=SimpleNamespace(id=1),
+				db=db,
+			)
+		assert conflict.value.status_code == 409
+
+		with pytest.raises(HTTPException) as unavailable:
+			await robot_router.robot_commands(
+				_store_with_location(
+					"occupied-cell",
+					"880000000112",
+					{"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+				),
+				worker=worker,  # type: ignore[arg-type]
+				current_user=SimpleNamespace(id=1),
+				db=db,
+			)
+		assert unavailable.value.status_code == 409
+		assert unavailable.value.detail["code"] == "cell_unavailable"
+
+		with pytest.raises(HTTPException) as missing:
+			await robot_router.robot_commands(
+				_store_with_location(
+					"missing-cell",
+					"880000000113",
+					{"side": "left_module", "shelf_idx": 5, "cell_idx": 0},
+				),
+				worker=worker,  # type: ignore[arg-type]
+				current_user=SimpleNamespace(id=1),
+				db=db,
+			)
+		assert missing.value.status_code == 422
+		assert missing.value.detail["code"] == "cell_not_found"
+
+		with pytest.raises(HTTPException) as too_small:
+			request = _store_with_location(
+				"too-large-item", "880000000114", {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
+			)
+			item = dict(request.item or {})
+			item["dimensions"] = {"width": 1000, "height": 20, "length": 30}
+			await robot_router.robot_commands(
+				StoreItemCommand(request_id=request.request_id, location=request.location, item=item),
+				worker=worker,  # type: ignore[arg-type]
+				current_user=SimpleNamespace(id=1),
+				db=db,
+			)
+		assert too_small.value.status_code == 409
+		assert too_small.value.detail["code"] == "cell_too_small"
+
+		assert len(worker.enqueued) == 1
+
 	await _clear_production_commands()
 
 
@@ -697,16 +858,14 @@ async def test_production_replay_precedes_worker_and_laser_preconditions(
 
 
 @pytest.mark.anyio
-async def test_mock_replay_precedes_active_bin_workflow_check(
+async def test_mock_command_replay_returns_existing_command(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 	command = _store("mock-replay-during-bin-workflow")
 	row = SimpleNamespace(command_id="mock-command-id", status="running")
 	runtime = SimpleNamespace(replay=AsyncMock(return_value=row))
-	bin_check = AsyncMock(side_effect=HTTPException(status_code=423, detail="bin active"))
 	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.mock)
 	monkeypatch.setattr(robot_router, "get_mock_robot_runtime", lambda: runtime)
-	monkeypatch.setattr(robot_router, "_ensure_no_active_bin_workflow", bin_check)
 
 	async with AsyncSessionLocal() as db:
 		replayed = await robot_router.robot_commands(
@@ -717,4 +876,3 @@ async def test_mock_replay_precedes_active_bin_workflow_check(
 		)
 	assert replayed.command_id == "mock-command-id"
 	assert replayed.status == "running"
-	bin_check.assert_not_awaited()

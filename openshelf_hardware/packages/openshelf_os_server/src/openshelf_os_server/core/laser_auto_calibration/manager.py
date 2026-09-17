@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from uuid import uuid4
 from pathlib import Path
 
@@ -158,8 +159,8 @@ class LaserAutoCalibrationManager(
 
         try:
             async with manual_motion_guard(
-                "laser_auto_calibration", worker=worker, check_bin_workflow=True
-            ):
+                "laser_auto_calibration", worker=worker
+            ), self._hold_y_enabled(worker, requested_scope):
                 await self._run_requested_scope(worker, requested_scope)
             await self._set_terminal_state("completed", None)
         except asyncio.CancelledError:
@@ -206,6 +207,19 @@ class LaserAutoCalibrationManager(
                     self._active_worker = None
                     self._abort_requested = False
 
+
+    def _hold_y_enabled(
+        self,
+        worker: RobotWorker,
+        requested_scope: LaserAutoCalibrationScope,
+    ) -> contextlib.AbstractAsyncContextManager[None]:
+        tool = getattr(getattr(worker, "_robot", None), "_tool", None)
+        y_motor = getattr(tool, "_my", None)
+
+        if requested_scope.hold_y_enabled is False or y_motor is None:
+            return contextlib.nullcontext()
+
+        return y_motor.hold_enabled()
 
     async def _build_error_detail(
         self,

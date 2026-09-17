@@ -1,4 +1,5 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import response_docs
 
 import json
 import os
@@ -89,11 +90,22 @@ async def _capture_camera_images() -> dict[str, bytes]:
     return images
 
 
-@router.post("/report_error", response_model=ReportErrorResponse)
+@router.post(
+    "/report_error",
+    response_model=ReportErrorResponse,
+    summary="Submit an operator error report",
+    responses=response_docs(errors=(401,)),
+)
 async def submit_error_report(
     request: ReportErrorRequest,
     current_user: User = Depends(get_current_user),
 ) -> ReportErrorResponse:
+	"""Submit an operator error report.
+
+	Captures the supplied message with user, robot, system, and available camera context.
+	Sends it to Sentry when enabled and initialized for this mode. An `ok` acknowledgment
+	does not guarantee remote delivery.
+	"""
 	user_context = _build_user_context(current_user)
 	robot_context = await _build_robot_context()
 	system_context = _build_system_context()

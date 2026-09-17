@@ -188,6 +188,118 @@ async def test_mock_duplicate_storage_and_invalid_location_are_realistic_4xx(
 
 
 @pytest.mark.anyio
+async def test_mock_store_honors_requested_location(
+	client: AsyncClient,
+	mock_runtime: MockRobotRuntime,
+) -> None:
+	requested = {"side": "right_module", "shelf_idx": 2, "cell_idx": 7}
+	response = await client.post(
+		"/api/robot/commands",
+		json={
+			"command": "store_item",
+			"request_id": "requested-cell",
+			"location": requested,
+			"item": {
+				"upca": "036000291453",
+				"name": "Placed item",
+				"dimensions": {"width": 10, "height": 20, "length": 30},
+			},
+		},
+	)
+	assert response.status_code == 200
+	completed = await _wait_for_status(client, response.json()["command_id"], "succeeded")
+	assert completed["result"]["location"] == requested
+
+	async with AsyncSessionLocal() as session:
+		locations = (await session.execute(select(ItemLocation))).scalars().all()
+		assert [(row.side, row.shelf_idx, row.cell_idx) for row in locations] == [
+			("right_module", 2, 7)
+		]
+
+
+@pytest.mark.anyio
+async def test_mock_store_rejects_unusable_requested_location(
+	client: AsyncClient,
+	mock_runtime: MockRobotRuntime,
+) -> None:
+	async def store(
+		upca: str,
+		*,
+		location: dict | None = None,
+		dimensions: dict | None = None,
+		nested: bool = False,
+	):
+		item = {
+			"upca": upca,
+			"name": "Item",
+			"dimensions": dimensions or {"width": 1, "height": 1, "length": 1},
+		}
+		payload: dict = {"command": "store_item", "item": item}
+		if location is not None:
+			if nested:
+				item["location"] = location
+			else:
+				payload["location"] = location
+		return await client.post("/api/robot/commands", json=payload)
+
+	first = await store(
+		"036000291454", location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
+	)
+	await _wait_for_status(client, first.json()["command_id"], "succeeded")
+
+	occupied = await store(
+		"036000291455", location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
+	)
+	assert occupied.status_code == 409
+	assert occupied.json()["detail"]["code"] == "cell_unavailable"
+
+	too_small = await store(
+		"036000291456",
+		location={"side": "left_module", "shelf_idx": 1, "cell_idx": 0},
+		dimensions={"width": 1000, "height": 1000, "length": 1000},
+	)
+	assert too_small.status_code == 409
+	assert too_small.json()["detail"]["code"] == "cell_too_small"
+
+	missing = await store(
+		"036000291457", location={"side": "left_module", "shelf_idx": 9, "cell_idx": 0}
+	)
+	assert missing.status_code == 422
+	assert missing.json()["detail"]["code"] == "cell_not_found"
+
+	malformed = await store(
+		"036000291458",
+		location={"side": "left_module", "shelf_idx": "not-a-number", "cell_idx": 0},
+		nested=True,
+	)
+	assert malformed.status_code == 422
+	assert malformed.json()["detail"]["code"] == "invalid_location"
+
+	malformed_top_level = await store(
+		"036000291459",
+		location={"side": "left_module", "shelf_idx": "not-a-number", "cell_idx": 0},
+	)
+	assert malformed_top_level.status_code == 422
+	assert malformed_top_level.json()["detail"]["code"] == "invalid_location"
+
+	for upca, shelf_idx, nested in (
+		("036000291460", "0", False),
+		("036000291461", False, False),
+		("036000291462", "0", True),
+	):
+		wrong_type = await store(
+			upca,
+			location={"side": "left_module", "shelf_idx": shelf_idx, "cell_idx": 0},
+			nested=nested,
+		)
+		assert wrong_type.status_code == 422
+		assert wrong_type.json()["detail"] == {
+			"message": "location requires side, shelf_idx and cell_idx",
+			"code": "invalid_location",
+		}
+
+
+@pytest.mark.anyio
 async def test_mock_status_has_eighty_cells_and_db_occupancy(
 	mock_runtime: MockRobotRuntime,
 ) -> None:
