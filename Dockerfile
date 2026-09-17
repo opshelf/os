@@ -22,8 +22,11 @@ WORKDIR /app
 COPY openshelf_hardware/ /app/openshelf_hardware/
 WORKDIR /app/openshelf_hardware
 
-RUN uv sync --no-group dev \
-	&& uv pip install -e packages/hardware -e packages/openshelf_os -e packages/openshelf_os_server \
+# Install exactly what uv.lock pins for every workspace member. A bare `uv sync`
+# resolves only the root project, and the `uv pip install -e` follow-up then picked
+# the newest release of each member dependency, so images shipped versions the lock
+# never recorded (PyJWT 2.13 against a lock pinning 2.10).
+RUN uv sync --frozen --all-packages --no-group dev \
 	&& rm -rf "$UV_CACHE_DIR"
 
 FROM ghcr.io/astral-sh/uv:debian-slim as runtime
