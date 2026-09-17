@@ -2,9 +2,8 @@
 
 Every key removed here was written by the config generator and carried by every
 machine, but nothing ever read it: the legacy beam-angle sweep it belonged to was
-replaced by the stage-stall method, and `{left,right}_shelf_scout_x_mm` is not
-consulted either. Values are dropped rather than moved because they influenced
-nothing.
+replaced by the stage-stall method. Values are dropped rather than moved because
+they influenced nothing.
 """
 
 from __future__ import annotations

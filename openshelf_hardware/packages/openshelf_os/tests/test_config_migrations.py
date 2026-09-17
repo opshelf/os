@@ -31,6 +31,7 @@ from openshelf_os.config_migrations.v004_promote_scan_constants import (
     REMOVED_SCAN_KEYS as PROMOTED_SCAN_KEYS,
 )
 from openshelf_os.laser_calibration.core import (
+    get_fine_cell_scan_y_margin_mm,
     get_gripper_xy_correction,
     get_laser_scan_pose_stage_mm,
     get_wall_depth_to_gripper_z_model,
@@ -201,6 +202,95 @@ def test_uniform_scan_tuning_moves_to_code(legacy_config):
         "unknown_scan_setting",
     }
     assert RootConfig.model_validate(migrated).schema_version == 4
+
+
+def test_divergent_promoted_values_are_refused_without_printing_them():
+    config = {
+        "schema_version": 3,
+        "name": "divergent-scan",
+        "version": "0.1.0",
+        "robot": {
+            "tool": {"parameters": {}, "motors": [], "poe_camera": {"url": ""}},
+            "io": {"motors": []},
+            "grid": {
+                "path": "storage.json",
+                "scan": {
+                    # Drifted from the fleet: each of these must be refused...
+                    "laser_sample_settle_ms": 120,
+                    "expected_hole_width_mm": 40.0,
+                    "z_stall_probe_rpm": None,
+                    # ...while the fleet's null spellings must not be flagged:
+                    "angle_calibration_stage_stall_target_mm": None,
+                    # Null derived the probe start from the tool parameters, so it
+                    # is not the stored 0.0 and is refused.
+                    "angle_calibration_stage_stall_fast_approach_mm": None,
+                },
+            },
+        },
+        "auth": {"jwt_secret": "test-private-value", "require_auth": False},
+    }
+    with pytest.raises(ValueError) as excinfo:
+        runner.migrate_config(config)
+    message = str(excinfo.value)
+    for key in (
+        "laser_sample_settle_ms",
+        "expected_hole_width_mm",
+        "z_stall_probe_rpm",
+        "angle_calibration_stage_stall_fast_approach_mm",
+    ):
+        assert f"robot.grid.scan.{key}" in message
+    for key in ("angle_calibration_stage_stall_target_mm",):
+        assert f"robot.grid.scan.{key}" not in message
+    # Diagnostics carry paths and key names, never config values.
+    assert "120" not in message
+    assert "40.0" not in message
+    # The step raised before dropping anything: the source document is untouched.
+    assert "laser_sample_settle_ms" in config["robot"]["grid"]["scan"]
+
+
+def test_null_spelling_of_stage_stall_target_still_migrates(legacy_config):
+    scan = legacy_config["robot"]["grid"]["scan"]
+    scan["angle_calibration_stage_stall_target_mm"] = None
+    scan["angle_calibration_stage_stall_fast_approach_mm"] = 0.0
+    migrated, changes = runner.migrate_config(legacy_config)
+    assert migrated["schema_version"] == 4
+    for key in (
+        "angle_calibration_stage_stall_target_mm",
+        "angle_calibration_stage_stall_fast_approach_mm",
+    ):
+        assert f"robot.grid.scan.{key} removed (moved to code)" in changes
+
+
+@pytest.mark.parametrize("stored_margin,expected_margin", [(24.0, 24.0), (None, 6.0)])
+def test_fine_scan_margin_the_fleet_disagrees_on_stays_in_config(
+    legacy_config, stored_margin, expected_margin
+):
+    # Unlike the promoted keys, machines disagree on this one (one stores 24.0, the
+    # rest store null), so migration 4 leaves it in place and the getter applies it.
+    scan = legacy_config["robot"]["grid"]["scan"]
+    scan["fine_cell_scan_y_margin_mm"] = stored_margin
+    migrated, changes = runner.migrate_config(legacy_config)
+    assert migrated["schema_version"] == 4
+    assert migrated["robot"]["grid"]["scan"]["fine_cell_scan_y_margin_mm"] == stored_margin
+    assert not any("fine_cell_scan_y_margin_mm" in change for change in changes)
+    config = RootConfig.model_validate(migrated)
+    assert config.robot.grid.scan.fine_cell_scan_y_margin_mm == stored_margin
+    # The stored value still reaches the fine-scan bounds through the getter, and
+    # the null spelling falls back to the code default.
+    assert get_fine_cell_scan_y_margin_mm(config.robot.grid.scan) == expected_margin
+
+
+def test_shadowed_keys_are_logged_as_unused_not_moved(legacy_config):
+    scan = legacy_config["robot"]["grid"]["scan"]
+    scan["angle_calibration_stage_stall_rotation_min_deg"] = -3.0
+    scan["angle_calibration_stage_stall_rotation_max_deg"] = 3.0
+    _, changes = runner.migrate_config(legacy_config)
+    for key in (
+        "angle_calibration_stage_stall_rotation_min_deg",
+        "angle_calibration_stage_stall_rotation_max_deg",
+    ):
+        assert f"robot.grid.scan.{key} removed (unused)" in changes
+        assert f"robot.grid.scan.{key} removed (moved to code)" not in changes
 
 
 def test_promoted_constants_keep_the_values_the_fleet_configured():

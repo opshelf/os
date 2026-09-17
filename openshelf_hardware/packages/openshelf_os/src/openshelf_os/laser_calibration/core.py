@@ -375,8 +375,13 @@ def get_shelf_brim_max_height_mm(scan_config: Any) -> float:
 	return validated_max_height_mm
 
 
-def get_fine_cell_scan_y_margin_mm() -> float:
-	return FINE_SCAN_MARGIN_Y_MM
+def get_fine_cell_scan_y_margin_mm(scan_config: Any) -> float:
+	configured_margin_mm = getattr(scan_config, "fine_cell_scan_y_margin_mm", None)
+
+	if configured_margin_mm is None:
+		return FINE_SCAN_MARGIN_Y_MM
+
+	return float(configured_margin_mm)
 
 
 @dataclass
