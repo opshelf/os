@@ -12,7 +12,7 @@ Two things make the result trustworthy and both are enforced here:
   any stage back-drive during a probe aborts the run outright (that is the shelf coming out
   of its latches, not a wall).
 * the fit is only as good as the wall depth it subtracts, so probes are taken from cells the
-  sweep measured and are skipped when the cell is a tray home, unavailable, or occupied.
+  sweep measured and are skipped when the cell is disabled, occupied, or the hand-calibrated datum.
 """
 
 from __future__ import annotations
@@ -126,24 +126,36 @@ def excluded_probe_cells(
 	*,
 	grid: Any,
 	side: StorageModuleSide,
-	reserved_locations: set[tuple[str, int, int]] | None = None,
 ) -> set[tuple[int, int]]:
-	"""Cells a probe must not press: tray homes, unavailable cells, and occupied cells.
+	"""Cells a probe must leave alone.
 
-	A tray home holds a tray whose front face stands in front of the shelf plate, and an
-	occupied cell holds an item, so either one becomes the wall the tip finds - and the wall
-	depth subtracted from the contact would be the plate's, not the object's.
+	A reserved tray home is NOT excluded: a tray presents the same gripper interface and the same
+	divider surface to the laser as an empty cell does, so pressing beside its opening measures the
+	same plate. What is excluded is a cell the rack does not actually have (DISABLED, i.e. beyond the
+	carriage travel), a cell holding an item (whose face, not the plate's, would be the wall the tip
+	finds), and a hand-calibrated cell - that datum is the yardstick the fit is judged against, so it
+	must stay out of the sample set.
 	"""
 	excluded: set[tuple[int, int]] = set()
+	datum_cells: set[tuple[int, int]] = set()
+	has_independent_cell = False
 
 	for shelf in grid.get_side(side):
 		for cell in shelf.cells:
-			if cell.status != CellStatus.AVAILABLE or cell.item is not None:
-				excluded.add((int(shelf.shelf_idx), int(cell.cell_idx)))
+			key = (int(shelf.shelf_idx), int(cell.cell_idx))
 
-	for reserved_side, shelf_idx, cell_idx in reserved_locations or set():
-		if reserved_side == side.value:
-			excluded.add((int(shelf_idx), int(cell_idx)))
+			if cell.status == CellStatus.DISABLED or cell.item is not None:
+				excluded.add(key)
+			elif getattr(cell, "is_manual", False) is True:
+				datum_cells.add(key)
+			else:
+				has_independent_cell = True
+
+	# A side whose every reachable cell is the operator's datum has nothing independent left to
+	# sample, so the datum cells are the only openings worth pressing - keep them rather than
+	# refuse to probe, and read the agreement as partly self-referential.
+	if has_independent_cell is True:
+		excluded |= datum_cells
 
 	return excluded
 
@@ -321,7 +333,7 @@ async def run_z_stall_anchor(
 	if len(probes) == 0:
 		raise ValueError(
 			"z stall anchor: no reachable detected cell with a wall depth to probe "
-			"(tray homes, unavailable and occupied cells are excluded)"
+			"(disabled, occupied and hand-calibrated cells are excluded)"
 		)
 
 	# Imported here rather than at module scope: the angle subpackage pulls in this package while

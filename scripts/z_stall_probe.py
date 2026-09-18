@@ -184,13 +184,6 @@ def resolve_probe_reach(
 	)
 
 
-def configured_bin_locations(config: Any) -> set[tuple[str, int, int]]:
-	return {
-		(entry.home_location.side, int(entry.home_location.shelf_idx), int(entry.home_location.cell_idx))
-		for entry in config.storage.bins
-	}
-
-
 def resolve_scan_config(config: Any, args: argparse.Namespace) -> Any:
 	scan_config = config.robot.grid.scan
 	overrides: dict[str, Any] = {}
@@ -382,11 +375,7 @@ async def main() -> int:
 		return 1
 
 	z_axis_limit_mm, _z_axis_lower_limit_mm = resolve_motor_limits(config, "z_axis")
-	excluded_cells = laser_module.excluded_probe_cells(
-		grid=grid,
-		side=side,
-		reserved_locations=configured_bin_locations(config),
-	)
+	excluded_cells = laser_module.excluded_probe_cells(grid=grid, side=side)
 	manually_excluded = parse_cells(args.exclude) or set()
 	excluded_cells |= manually_excluded
 	report_exclusions(excluded_cells)
@@ -424,8 +413,8 @@ async def main() -> int:
 
 	if len(probes) == 0:
 		print(
-			"nothing to probe: every detected cell in scope is excluded (tray home, unavailable, "
-			"occupied or --exclude), has no sweep wall depth, or sits past the carriage travel"
+			"nothing to probe: every detected cell in scope is excluded (disabled, occupied, "
+			"hand-calibrated or --exclude), has no sweep wall depth, or sits past the carriage travel"
 		)
 		return 1
 

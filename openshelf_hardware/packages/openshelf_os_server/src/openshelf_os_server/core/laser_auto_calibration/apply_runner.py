@@ -375,11 +375,7 @@ class ApplyRunnerMixin:
             analysis=analysis,
             scan_config=scan_config,
             side=side,
-            excluded_cells=laser_module.excluded_probe_cells(
-                grid=device_grid,
-                side=side,
-                reserved_locations=getattr(worker._robot, "_reserved_cell_locations", None),
-            ),
+            excluded_cells=laser_module.excluded_probe_cells(grid=device_grid, side=side),
             x_axis_limit_mm=_get_x_axis_limit_mm(worker),
             x_axis_lower_limit_mm=_get_x_axis_lower_limit_mm(worker),
             z_axis_limit_mm=_get_z_axis_limit_mm(worker),

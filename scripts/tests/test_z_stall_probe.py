@@ -68,8 +68,15 @@ def build_grid() -> StorageGrid:
 					cell_idx=0,
 					status=CellStatus.AVAILABLE,
 					item=None,
+					calibration_point=CalibrationCoordinate(x=341.75, y=239.5, s=0, z_offset=6.5),
+					dimensions=Dimensions(length=400.0, width=26.0, height=30.0),
+				),
+				Cell(
+					cell_idx=1,
+					status=CellStatus.AVAILABLE,
+					item=None,
 					calibration_point=CalibrationCoordinate(
-						x=341.75,
+						x=476.75,
 						y=239.5,
 						s=0,
 						z_offset=6.5,
@@ -77,13 +84,6 @@ def build_grid() -> StorageGrid:
 					),
 					dimensions=Dimensions(length=400.0, width=26.0, height=30.0),
 					is_manual=True,
-				),
-				Cell(
-					cell_idx=1,
-					status=CellStatus.AVAILABLE,
-					item=None,
-					calibration_point=CalibrationCoordinate(x=476.75, y=239.5, s=0, z_offset=6.5),
-					dimensions=Dimensions(length=400.0, width=26.0, height=30.0),
 				),
 			],
 		)
@@ -127,6 +127,16 @@ def build_run_dir(run_dir: Path) -> Path:
 				"shelf_idx": 1,
 				"x_min": 277.0,
 				"x_max": 303.0,
+				"y_min": 231.25,
+				"y_max": 231.25,
+				"row_count": 1,
+				"wall_depth_mm": 9.58,
+				"wall_sample_count": 4,
+			},
+			{
+				"shelf_idx": 1,
+				"x_min": 412.0,
+				"x_max": 438.0,
 				"y_min": 231.25,
 				"y_max": 231.25,
 				"row_count": 1,
@@ -275,7 +285,7 @@ def test_side_mismatch_is_refused_and_default_picks_the_matching_run(tmp_path: P
 	assert str(left_run) in output
 
 
-def test_explicit_exclusions_shield_tray_cells_from_the_probe(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_explicit_exclusions_shield_a_cell_from_the_probe(tmp_path: Path, monkeypatch, capsys) -> None:
 	probe = load_probe_module()
 	config_path = tmp_path / "config.development.json"
 	config_path.write_text("{}", encoding="utf-8")
@@ -308,9 +318,9 @@ def test_explicit_exclusions_shield_tray_cells_from_the_probe(tmp_path: Path, mo
 	)
 
 	output = capsys.readouterr().out
-	assert "excluded 1 cell(s) from probing: 1:0" in output
-	# 1:0 was the only cell with a wall depth, so shielding it leaves nothing to probe: that is a
-	# refusal, not an empty plan, because a probe run that probes nothing proves nothing.
+	assert "excluded 2 cell(s) from probing: 1:0, 1:1" in output  # 1:0 by --exclude, 1:1 is the datum
+	# Shielding the cell the probe would have used leaves nothing to press, so this is a refusal
+	# rather than an empty plan - a probe run that probes nothing proves nothing.
 	assert exit_code == 1
 	assert "nothing to probe" in output
 
@@ -343,7 +353,7 @@ def test_from_grid_probes_the_stored_positions_with_the_sweep_depths(
 
 	assert exit_code == 0
 	output = capsys.readouterr().out
-	assert "positions: stored calibration points (1 sweep wall depths available)" in output
+	assert "positions: stored calibration points (2 sweep wall depths available)" in output
 	# Grid positions are converted back out of the grab frame, so the probe lands the divider shift
 	# away from the verified point: 341.75 + 20 = 361.75, with the xy offset cancelling.
 	assert "1:0 probe_x=361.75" in output
