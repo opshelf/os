@@ -1039,26 +1039,69 @@ async def test_z_stall_takes_a_probed_slope_when_it_measured_one() -> None:
 
 @pytest.mark.asyncio
 async def test_shelf_scoped_probe_excludes_the_datum_in_the_analysis_key_space() -> None:
-	"""A single-shelf scan re-indexes its shelf to 0, so the exclusion has to be translated.
+	"""A single-shelf scan re-indexes its shelf to 0 and renumbers the openings it saw.
 
-	The stored grid says the datum is `(3, 0)` while the analysis holds that same opening as
-	`(0, 0)`. Passing the grid keys through unchanged excluded nothing, so the probe pressed the
-	datum and the agreement was judged against a point the fit was taken at.
+	The stored datum is `(3, 0)`; the analysis reports that same opening as `(0, 0)`. Matching on
+	stored keys alone excluded nothing, so the probe pressed the datum and the fit was judged
+	against a point it was taken at.
 	"""
 	manager = LaserAutoCalibrationManager()
 	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
 		mode="shelf",
 		side=StorageModuleSide.LEFT,
-		shelf_idx=3,
+		shelf_idx=SECOND_SHELF_IDX,
 		derive_z_model_from_stall=True,
 	)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
 	config = _build_root_config(scan_config)
-	# The datum is stored on shelf 3, while the shelf-scoped analysis reports shelf 0.
 	grid = _build_source_grid(include_second_shelf=True)
+	grid.left_module[0].cells[0].is_manual = False  # only the second shelf's cell is the datum
 	worker = _build_z_worker(grid=grid)
-	analysis = _build_analysis()
+	# The scan saw the datum opening and one independent opening, both re-indexed to shelf 0.
+	analysis = SimpleNamespace(
+		shelves=[
+			ScanDetectedShelf(
+				shelf_idx=0,
+				center_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
+				shelf_height_mm=30.0,
+				shelf_width_mm=200.0,
+				cells=[
+					ScanDetectedCell(
+						shelf_idx=0,
+						cell_idx=0,
+						center_x_mm=SECOND_SHELF_DETECTED_TOOL_X_MM - 51.0,
+						center_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
+						tool_x_mm=SECOND_SHELF_DETECTED_TOOL_X_MM,
+						tool_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
+						width_mm=26.0,
+						height_mm=30.0,
+						point_count=20,
+						bbox_x_min=SECOND_SHELF_DETECTED_TOOL_X_MM - 13.0,
+						bbox_x_max=SECOND_SHELF_DETECTED_TOOL_X_MM + 13.0,
+						bbox_y_min=SECOND_SHELF_DETECTED_TOOL_Y_MM - 15.0,
+						bbox_y_max=SECOND_SHELF_DETECTED_TOOL_Y_MM + 15.0,
+					),
+					ScanDetectedCell(
+						shelf_idx=0,
+						cell_idx=1,
+						center_x_mm=800.0,
+						center_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
+						tool_x_mm=851.0,
+						tool_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
+						width_mm=26.0,
+						height_mm=30.0,
+						point_count=20,
+						bbox_x_min=838.0,
+						bbox_x_max=864.0,
+						bbox_y_min=SECOND_SHELF_DETECTED_TOOL_Y_MM - 15.0,
+						bbox_y_max=SECOND_SHELF_DETECTED_TOOL_Y_MM + 15.0,
+					),
+				],
+			)
+		],
+		metadata_path=Path("/tmp/fake-shelf-scope-metadata.json"),
+	)
 
 	with patch(
 		"openshelf_os_server.core.laser_auto_calibration.apply_runner.get_root_config",
@@ -1069,18 +1112,85 @@ async def test_shelf_scoped_probe_excludes_the_datum_in_the_analysis_key_space()
 			"run_z_stall_anchor",
 			AsyncMock(return_value=_build_z_stall_result()),
 		) as anchor:
-			with patch.object(laser_module, "excluded_probe_cells", return_value={(3, 0)}):
-				await manager._resolve_z_delta_model(
-					worker,
-					StorageModuleSide.LEFT,
-					analysis,
-					scan_config,
-					source_grid=grid,
-					manual_reference=_build_manual_reference(),
-				)
+			await manager._resolve_z_delta_model(
+				worker,
+				StorageModuleSide.LEFT,
+				analysis,
+				scan_config,
+				source_grid=grid,
+				manual_reference=_build_manual_reference(),
+			)
 
 	assert anchor.await_args is not None
+	# Only the datum's detected cell (0, 0) is held out; the independent opening stays probeable.
 	assert anchor.await_args.kwargs["excluded_cells"] == {(0, 0)}
+
+
+@pytest.mark.asyncio
+async def test_datum_only_shelf_scope_keeps_the_datum_probeable() -> None:
+	"""The approved self-check: a scope whose only opening is the datum probes that datum."""
+	manager = LaserAutoCalibrationManager()
+	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
+		mode="shelf",
+		side=StorageModuleSide.LEFT,
+		shelf_idx=SECOND_SHELF_IDX,
+		derive_z_model_from_stall=True,
+	)
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.z_stall_anchor_enabled = True
+	config = _build_root_config(scan_config)
+	grid = _build_source_grid(include_second_shelf=True)
+	grid.left_module[0].cells[0].is_manual = False  # only the second shelf's cell is the datum
+	worker = _build_z_worker(grid=grid)
+	analysis = SimpleNamespace(
+		shelves=[
+			ScanDetectedShelf(
+				shelf_idx=0,
+				center_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
+				shelf_height_mm=30.0,
+				shelf_width_mm=200.0,
+				cells=[
+					ScanDetectedCell(
+						shelf_idx=0,
+						cell_idx=0,
+						center_x_mm=SECOND_SHELF_DETECTED_TOOL_X_MM - 51.0,
+						center_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
+						tool_x_mm=SECOND_SHELF_DETECTED_TOOL_X_MM,
+						tool_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
+						width_mm=26.0,
+						height_mm=30.0,
+						point_count=20,
+						bbox_x_min=SECOND_SHELF_DETECTED_TOOL_X_MM - 13.0,
+						bbox_x_max=SECOND_SHELF_DETECTED_TOOL_X_MM + 13.0,
+						bbox_y_min=SECOND_SHELF_DETECTED_TOOL_Y_MM - 15.0,
+						bbox_y_max=SECOND_SHELF_DETECTED_TOOL_Y_MM + 15.0,
+					)
+				],
+			)
+		],
+		metadata_path=Path("/tmp/fake-shelf-scope-metadata.json"),
+	)
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.apply_runner.get_root_config",
+		return_value=config,
+	):
+		with patch.object(
+			laser_module,
+			"run_z_stall_anchor",
+			AsyncMock(return_value=_build_z_stall_result()),
+		) as anchor:
+			await manager._resolve_z_delta_model(
+				worker,
+				StorageModuleSide.LEFT,
+				analysis,
+				scan_config,
+				source_grid=grid,
+				manual_reference=_build_manual_reference(),
+			)
+
+	assert anchor.await_args is not None
+	assert anchor.await_args.kwargs["excluded_cells"] == set()
 
 
 @pytest.mark.asyncio

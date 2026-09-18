@@ -417,13 +417,11 @@ async def main() -> int:
 
 	z_axis_limit_mm, _z_axis_lower_limit_mm = resolve_motor_limits(config, "z_axis")
 	x_axis_limit_mm, x_axis_lower_limit_mm = resolve_motor_limits(config, "x_axis")
-	scanned_cells = {
-		(int(cell.shelf_idx), int(cell.cell_idx))
-		for shelf in analysis.shelves
-		for cell in shelf.cells
-	}
+	# The exclusion is decided in the analysis' key space: the script's analysis may be built from
+	# grid keys or from a run, and the matcher pairs stored shields with detected openings by key
+	# and by predicted position.
 	excluded_cells = laser_module.excluded_probe_cells(
-		grid=grid, side=side, scanned_cells=scanned_cells
+		grid=grid, side=side, analysis=analysis, scan_config=scan_config
 	)
 	manually_excluded = parse_cells(args.exclude) or set()
 	excluded_cells |= manually_excluded
