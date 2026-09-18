@@ -99,7 +99,7 @@
 						continue;
 					}
 
-					if (cell.is_manual !== true || cell.calibration_point === undefined) {
+					if (cell.is_manual !== true || cell.calibration_point == null) {
 						continue;
 					}
 
