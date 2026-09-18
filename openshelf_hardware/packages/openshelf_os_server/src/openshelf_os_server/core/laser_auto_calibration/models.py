@@ -137,6 +137,38 @@ class LaserAutoCalibrationAngleResult(BaseModel):
     stage_position_mm: float | None = None
 
 
+class LaserAutoCalibrationReferenceOffsetSample(BaseModel):
+    shelf_idx: int
+    cell_idx: int
+    manual_x_mm: float
+    manual_y_mm: float
+    detected_x_mm: float
+    detected_y_mm: float
+    delta_x_mm: float
+    delta_y_mm: float
+    wall_depth_mm: float | None = None
+    derived_intercept_mm: float | None = None
+
+
+class LaserAutoCalibrationReferenceOffset(BaseModel):
+    """Offset derived from the hand-calibrated cells a run used as its reference frame."""
+
+    side: StorageModuleSide
+    offset_x_mm: float
+    offset_y_mm: float
+    spread_x_mm: float
+    spread_y_mm: float
+    sample_count: int
+    intercept_mm: float | None = None
+    slope_per_mm: float = 0.0
+    configured_offset_x_mm: float | None = None
+    configured_offset_y_mm: float | None = None
+    applied: bool = False
+    persisted: bool = False
+    samples: list[LaserAutoCalibrationReferenceOffsetSample] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+
+
 class LaserAutoCalibrationScope(BaseModel):
     mode: Literal["all", "both", "side", "shelf", "cell"] = "all"
     side: StorageModuleSide | None = None
@@ -145,6 +177,7 @@ class LaserAutoCalibrationScope(BaseModel):
     include_angle_calibration: bool = True
     include_extension_calibration: bool = True
     hold_y_enabled: bool = True
+    derive_offsets_from_manual_cells: bool = False
 
 class LaserAutoCalibrationError(BaseModel):
     error_type: str
@@ -181,6 +214,7 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     shelf_candidates: list[LaserAutoCalibrationCandidate] = Field(default_factory=list)
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
     angle_results: list[LaserAutoCalibrationAngleResult] = Field(default_factory=list)
+    reference_offset_results: list[LaserAutoCalibrationReferenceOffset] = Field(default_factory=list)
     stage_detail: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     error_detail: LaserAutoCalibrationError | None = None
@@ -536,6 +570,8 @@ __all__ = [
     "LaserAutoCalibrationCandidate",
     "LaserAutoCalibrationCell",
     "LaserAutoCalibrationAngleResult",
+    "LaserAutoCalibrationReferenceOffsetSample",
+    "LaserAutoCalibrationReferenceOffset",
     "LaserAutoCalibrationScope",
     "LaserAutoCalibrationSnapshot",
     "_SideState",

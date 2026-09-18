@@ -8,9 +8,11 @@
 		getLaserAutoCalibrationStreamError,
 		getStorageGrid,
 		type LaserAutoCalibrationAngleResult,
+		type LaserAutoCalibrationReferenceOffset,
 		type LaserAutoCalibrationRequest,
 		type LaserAutoCalibrationSnapshot,
-		type StorageGrid
+		type StorageGrid,
+		type StorageModuleSide
 	} from '$lib/api';
 	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -27,6 +29,7 @@
 	let isAllSelected = $state<boolean>(true);
 	let isAngleCalibrationSelected = $state<boolean>(true);
 	let isExtensionCalibrationSelected = $state<boolean>(true);
+	let isManualReferenceSelected = $state<boolean>(false);
 	let selectedSide = $state<'' | 'left_module' | 'right_module'>('');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
@@ -72,6 +75,48 @@
 	const isExtensionCalibrationDisabled = $derived.by(() => {
 		return selectedShelf !== '' || isSelectionDisabled === true;
 	});
+
+	/** Cells marked "keep manual" in the selected scope, named the way the operator sees them. */
+	const manualReferenceCells = $derived.by(() => {
+		if (storageGrid === null) {
+			return [];
+		}
+
+		const sides: StorageModuleSide[] =
+			selectedSide === '' ? ['left_module', 'right_module'] : [selectedSide];
+		const labels: string[] = [];
+
+		for (const side of sides) {
+			for (const shelf of storageGrid[side] ?? []) {
+				if (selectedShelf !== '' && shelf.shelf_idx !== Number(selectedShelf)) {
+					continue;
+				}
+
+				for (const cell of shelf.cells) {
+					if (selectedCell !== '' && cell.cell_idx !== Number(selectedCell)) {
+						continue;
+					}
+
+					if (cell.is_manual !== true || cell.calibration_point === undefined) {
+						continue;
+					}
+
+					labels.push(
+						`${side === 'left_module' ? 'L' : 'R'}:${shelf.shelf_idx}:${cell.cell_idx}`
+					);
+				}
+			}
+		}
+
+		return labels;
+	});
+
+	const isManualReferenceActive = $derived(
+		isManualReferenceSelected === true && manualReferenceCells.length > 0
+	);
+	const isManualReferenceDisabled = $derived(
+		isSelectionDisabled === true || manualReferenceCells.length === 0
+	);
 
 	const isStartDisabled = $derived.by(() => {
 		if (isConnecting === true || isStreamOpen === true || isStreamReconnecting === true) {
@@ -248,6 +293,7 @@
 	function syncScopeSelection(requestedScope: LaserAutoCalibrationRequest): void {
 		isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
 		isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
+		isManualReferenceSelected = requestedScope.derive_offsets_from_manual_cells === true;
 
 		if (requestedScope.mode === 'all') {
 			isAllSelected = true;
@@ -284,50 +330,64 @@
 		}
 	}
 
+	/**
+	 * The derivation rides on whatever scope is selected. It is only sent once the scope holds
+	 * a manual cell, so a stale tick cannot start a run the backend would reject.
+	 */
+	function withManualReference(
+		request: LaserAutoCalibrationRequest
+	): LaserAutoCalibrationRequest {
+		if (isManualReferenceActive === false) {
+			return request;
+		}
+
+		return { ...request, derive_offsets_from_manual_cells: true };
+	}
+
 	function getRequestedScope(): LaserAutoCalibrationRequest {
 		if (isAllSelected === true) {
-			return {
+			return withManualReference({
 				mode: 'all',
 				include_angle_calibration: isAngleCalibrationSelected,
 				include_extension_calibration: isExtensionCalibrationSelected
-			};
+			});
 		}
 
 		if (selectedSide === '') {
-			return {
+			return withManualReference({
 				mode: 'both',
 				include_angle_calibration: isAngleCalibrationSelected,
 				include_extension_calibration: isExtensionCalibrationSelected
-			};
+			});
 		}
 
 		if (selectedShelf === '') {
-			return {
+			return withManualReference({
 				mode: 'side',
 				side: selectedSide,
 				include_angle_calibration: isAngleCalibrationSelected,
 				include_extension_calibration: isExtensionCalibrationSelected
-			};
+			});
 		}
 
 		if (selectedCell === '') {
-			return {
+			return withManualReference({
 				mode: 'shelf',
 				side: selectedSide,
 				shelf_idx: Number(selectedShelf),
 				include_angle_calibration: false,
 				include_extension_calibration: false
-			};
+			});
 		}
 
-		return {
+		return withManualReference({
 			mode: 'cell',
 			side: selectedSide,
 			shelf_idx: Number(selectedShelf),
 			cell_idx: Number(selectedCell),
 			include_angle_calibration: false,
 			include_extension_calibration: false
-		};
+		});
 	}
 
 	function didCloseStream(): void {
@@ -483,6 +543,14 @@
 		message = '';
 	}
 
+	function didChangeManualReference(event: Event): void {
+		const target = event.target as HTMLInputElement;
+
+		isManualReferenceSelected = target.checked;
+		error = '';
+		message = '';
+	}
+
 	async function didClickStart(): Promise<void> {
 		if (browser === false) {
 			return;
@@ -555,6 +623,10 @@
 
 	function getAngleResults(): LaserAutoCalibrationAngleResult[] {
 		return snapshot?.angle_results ?? [];
+	}
+
+	function getReferenceOffsetResults(): LaserAutoCalibrationReferenceOffset[] {
+		return snapshot?.reference_offset_results ?? [];
 	}
 
 	function getRotationValue(side: 'left_module' | 'right_module'): string {
@@ -708,6 +780,29 @@
 			</tr>
 			<tr>
 				<td colspan="3">
+					<label class="all-toggle">
+						<input
+							type="checkbox"
+							checked={isManualReferenceSelected}
+							onchange={didChangeManualReference}
+							disabled={isManualReferenceDisabled}
+						/>
+						<span>referenced cell is calibrated manually</span>
+					</label>
+					{#if isManualReferenceSelected === true && manualReferenceCells.length > 0}
+						<p class="selection-hint">
+							deriving offsets from {manualReferenceCells.join(', ')}; the configured xy offset is
+							ignored for this run and replaced by what these cells imply
+						</p>
+					{:else if manualReferenceCells.length === 0}
+						<p class="selection-hint">
+							no cell in this scope is marked manual, so the run uses the configured xy offset
+						</p>
+					{/if}
+				</td>
+			</tr>
+			<tr>
+				<td colspan="3">
 					<div class="actions">
 						<button type="button" onclick={didClickStart} disabled={isStartDisabled}>
 							{startButtonLabel}
@@ -776,6 +871,65 @@
 		</table>
 	{/if}
 
+	{#if snapshot && snapshot.session_id !== null && getReferenceOffsetResults().length > 0}
+		<table style="margin-top: 1.5em">
+			<thead>
+				<tr>
+					<th colspan="2">derived from manual cells</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each getReferenceOffsetResults() as result}
+					<tr>
+						<td>{result.side === 'left_module' ? 'left' : 'right'} xy offset</td>
+						<td>
+							x {formatNumber(result.offset_x_mm, 3)} / y {formatNumber(result.offset_y_mm, 3)}
+							{#if result.configured_offset_x_mm !== null && result.configured_offset_y_mm !== null}
+								(was {formatNumber(result.configured_offset_x_mm, 3)} /
+								{formatNumber(result.configured_offset_y_mm, 3)})
+							{/if}
+						</td>
+					</tr>
+					<tr>
+						<td>{result.side === 'left_module' ? 'left' : 'right'} spread</td>
+						<td>
+							x {formatNumber(result.spread_x_mm, 3)} / y {formatNumber(result.spread_y_mm, 3)}
+							over {result.sample_count} cell{result.sample_count === 1 ? '' : 's'}
+							{result.persisted === true ? '(saved to config)' : '(not saved)'}
+							{#if result.sample_count === 1}(single cell: only as precise as its manual placement){/if}
+						</td>
+					</tr>
+					{#if result.intercept_mm !== null}
+						<tr>
+							<td>{result.side === 'left_module' ? 'left' : 'right'} z intercept</td>
+							<td>
+								{formatNumber(result.intercept_mm, 3)} — derived, not applied; set
+								robot.grid.scan.{result.side === 'left_module' ? 'left' : 'right'}_z_offset_model to
+								use it
+							</td>
+						</tr>
+					{/if}
+					<tr>
+						<td>{result.side === 'left_module' ? 'left' : 'right'} reference cells</td>
+						<td>
+							{#each result.samples as sample}
+								<div>
+									{sample.shelf_idx}:{sample.cell_idx} manual
+									{formatNumber(sample.manual_x_mm, 2)}/{formatNumber(sample.manual_y_mm, 2)} vs detected
+									{formatNumber(sample.detected_x_mm, 2)}/{formatNumber(sample.detected_y_mm, 2)}
+									(delta {formatNumber(sample.delta_x_mm, 2)}/{formatNumber(sample.delta_y_mm, 2)})
+								</div>
+							{/each}
+							{#each result.skipped as skipped}
+								<div class="reference-warning">{skipped}</div>
+							{/each}
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
+
 	{#if snapshot && snapshot.session_id !== null}
 		<table style="margin-top: 1.5em">
 			<thead>
@@ -827,5 +981,14 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
+	}
+
+	.selection-hint {
+		margin: 0.25rem 0 0 1.5rem;
+		opacity: 0.8;
+	}
+
+	.reference-warning {
+		color: var(--warning-color, #b45309);
 	}
 </style>

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from openshelf_os.config.laser_scan import LaserScanXYOffsetConfig
 from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
 from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
 
@@ -13,6 +14,65 @@ from .models import *
 
 _MANUAL_SHELF_MATCH_TOLERANCE_MM = 60.0
 _MANUAL_CELL_MATCH_TOLERANCE_MM = 40.0
+
+
+def _reference_offset_scan_config(
+	scan_config: Any,
+	side: StorageModuleSide,
+	result: laser_module.ReferenceOffsetResult,
+) -> None:
+	"""Install a derived offset on the run's config, in place.
+
+	The apply reads the offset from the scan config, and the caller saves that same config
+	after a successful run: one assignment both frames the run and persists what it derived.
+	"""
+	offset = LaserScanXYOffsetConfig(
+		x_mm=float(result.offset_x_mm),
+		y_mm=float(result.offset_y_mm),
+	)
+
+	if side == StorageModuleSide.LEFT:
+		scan_config.left_xy_offset = offset
+	else:
+		scan_config.right_xy_offset = offset
+
+
+def _build_reference_offset_entry(
+	result: laser_module.ReferenceOffsetResult,
+	*,
+	applied: bool,
+	persisted: bool,
+) -> LaserAutoCalibrationReferenceOffset:
+	return LaserAutoCalibrationReferenceOffset(
+		side=result.side,
+		offset_x_mm=float(result.offset_x_mm),
+		offset_y_mm=float(result.offset_y_mm),
+		spread_x_mm=float(result.spread_x_mm),
+		spread_y_mm=float(result.spread_y_mm),
+		sample_count=int(result.sample_count),
+		intercept_mm=None if result.intercept_mm is None else float(result.intercept_mm),
+		slope_per_mm=float(result.slope_per_mm),
+		configured_offset_x_mm=result.configured_offset_x_mm,
+		configured_offset_y_mm=result.configured_offset_y_mm,
+		applied=applied,
+		persisted=persisted,
+		samples=[
+			LaserAutoCalibrationReferenceOffsetSample(
+				shelf_idx=int(sample.shelf_idx),
+				cell_idx=int(sample.cell_idx),
+				manual_x_mm=float(sample.manual_x_mm),
+				manual_y_mm=float(sample.manual_y_mm),
+				detected_x_mm=float(sample.detected_x_mm),
+				detected_y_mm=float(sample.detected_y_mm),
+				delta_x_mm=float(sample.delta_x_mm),
+				delta_y_mm=float(sample.delta_y_mm),
+				wall_depth_mm=sample.wall_depth_mm,
+				derived_intercept_mm=sample.derived_intercept_mm,
+			)
+			for sample in result.samples
+		],
+		skipped=list(result.skipped),
+	)
 
 # The z probe presses the tray face, and the z axis can out-push the stage it is mounted on
 # (z lead 16.1mm/rev vs stage 50mm/rev). If the contact does not stop the gripper, the load
@@ -219,6 +279,87 @@ def _select_z_stall_probes(
 
 
 class ApplyRunnerMixin:
+    _reference_offset_entries: list[LaserAutoCalibrationReferenceOffset]
+
+    def _record_reference_offset_result(
+        self,
+        entry: LaserAutoCalibrationReferenceOffset,
+    ) -> list[LaserAutoCalibrationReferenceOffset]:
+        """Replace this side's entry, so a re-derived value never reads as two results."""
+        entries: list[LaserAutoCalibrationReferenceOffset] = [
+            existing
+            for existing in self._reference_offset_entries
+            if existing.side != entry.side
+        ]
+        entries.append(entry)
+        self._reference_offset_entries = entries
+
+        return [stored.model_copy(deep=True) for stored in entries]
+
+    async def _derive_reference_offset(
+        self,
+        *,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        analysis: Any,
+        source_grid: Any,
+        shelf_idx: int | None = None,
+        cell_idx: int | None = None,
+    ) -> laser_module.ReferenceOffsetResult | None:
+        """Derive this side's xy offset from the manually calibrated cells it references.
+
+        Returns None when the run was not asked to derive one. The result is published before
+        the apply touches anything, so a failure later still shows what the reference frame
+        implied. The derived value is used and persisted by the caller, not here.
+        """
+        requested_scope = self._snapshot.requested_scope
+
+        if requested_scope.derive_offsets_from_manual_cells is not True:
+            return None
+
+        result = laser_module.derive_reference_offsets(
+            grid=source_grid,
+            analysis=analysis,
+            side=side,
+            scan_config=get_root_config().robot.grid.scan,
+            shelf_idx=shelf_idx,
+            cell_idx=cell_idx,
+        )
+        laser_module.print_status(
+            f"reference_offset_derivation side={_side_to_module_name(side)} "
+            f"samples={result.sample_count} offset_x_mm={result.offset_x_mm:.3f} "
+            f"offset_y_mm={result.offset_y_mm:.3f} spread_x_mm={result.spread_x_mm:.3f} "
+            f"spread_y_mm={result.spread_y_mm:.3f} "
+            f"intercept_mm={'none' if result.intercept_mm is None else f'{result.intercept_mm:.3f}'}"
+        )
+
+        if result.sample_count == 1:
+            laser_module.print_status(
+                "reference_offset_warning single_reference_cell "
+                "(only as precise as that cell's manual placement)"
+            )
+
+        for skipped in result.skipped:
+            laser_module.print_status(f"reference_offset_skipped {skipped}")
+
+        entries = self._record_reference_offset_result(
+            _build_reference_offset_entry(result, applied=False, persisted=False)
+        )
+        await self._update_snapshot(reference_offset_results=entries)
+
+        return result
+
+    async def _publish_reference_offset_applied(
+        self,
+        result: laser_module.ReferenceOffsetResult,
+        *,
+        persisted: bool,
+    ) -> None:
+        entries = self._record_reference_offset_result(
+            _build_reference_offset_entry(result, applied=True, persisted=persisted)
+        )
+        await self._update_snapshot(reference_offset_results=entries)
+
     async def _run_z_stall_anchor(
         self,
         worker: RobotWorker,
@@ -560,6 +701,8 @@ class ApplyRunnerMixin:
         config = get_root_config()
         next_config = config.model_copy(deep=True)
         params_dict = next_config.robot.tool.parameters.model_dump()
+        reference_results: dict[StorageModuleSide, laser_module.ReferenceOffsetResult] = {}
+        reference_persisted: dict[StorageModuleSide, bool] = {}
 
         for completed_result in completed_results:
             rotation_param = _side_to_rotation_param_name(completed_result.side)
@@ -583,6 +726,18 @@ class ApplyRunnerMixin:
         for completed_result in completed_results:
             if len(completed_result.analysis.shelves) == 0:
                 raise ValueError("No tray openings detected from scan")
+
+            reference_result = await self._derive_reference_offset(
+                worker=worker,
+                side=completed_result.side,
+                analysis=completed_result.analysis,
+                source_grid=source_grid,
+            )
+
+            if reference_result is not None:
+                _reference_offset_scan_config(scan_config, completed_result.side, reference_result)
+                reference_results[completed_result.side] = reference_result
+                reference_persisted[completed_result.side] = True
 
             scanned_shelves = laser_module.build_shelves_from_scan(
                 side=completed_result.side,
@@ -661,6 +816,13 @@ class ApplyRunnerMixin:
 
             raise
 
+        for completed_result in completed_results:
+            if reference_results.get(completed_result.side) is not None:
+                await self._publish_reference_offset_applied(
+                    reference_results[completed_result.side],
+                    persisted=reference_persisted.get(completed_result.side, False),
+                )
+
         worker._robot._grid = laser_module.load_grid(grid_path)
 
     async def _persist_single_shelf_result(
@@ -694,16 +856,35 @@ class ApplyRunnerMixin:
             scan_config,
             allow_missing=True,
         )
+        reference_result = await self._derive_reference_offset(
+            worker=worker,
+            side=side,
+            analysis=analysis,
+            source_grid=grid,
+            shelf_idx=shelf_idx,
+        )
+        apply_config = config
+
+        if reference_result is not None:
+            apply_config = config.model_copy(deep=True)
+            _reference_offset_scan_config(apply_config.robot.grid.scan, side, reference_result)
+
         laser_module.apply_single_shelf_analysis(
             analysis=analysis,
             grid=grid,
             grid_path=grid_path,
-            scan_config=scan_config,
+            scan_config=apply_config.robot.grid.scan,
             side=side,
             target_shelf_idx=shelf_idx,
             z_delta_override_mm=None if z_delta_model is None else z_delta_model[0],
             z_delta_slope_per_mm=0.0 if z_delta_model is None else z_delta_model[1],
         )
+
+        if reference_result is not None:
+            save_root_config(apply_config)
+            clear_config_cache()
+            await self._publish_reference_offset_applied(reference_result, persisted=True)
+
         worker._robot._grid = laser_module.load_grid(grid_path)
 
     async def _persist_single_cell_result(
@@ -738,13 +919,35 @@ class ApplyRunnerMixin:
         if detected_cell is None:
             raise ValueError("No detected cell matched the single-cell calibration target")
 
-        laser_module.apply_single_cell_rescan(
-            grid=grid,
-            target=target,
+        reference_result = await self._derive_reference_offset(
+            worker=worker,
             side=side,
-            detected_cell=detected_cell,
-            scan_config=scan_config,
+            analysis=analysis,
+            source_grid=grid,
+            cell_idx=int(target.cell_idx),
         )
+
+        if reference_result is not None:
+            # The scanned cell *is* the reference: rewriting it from its own detection would
+            # replace the operator's datum with the derived frame it just defined.
+            laser_module.print_status(
+                f"single_cell_apply=skipped reason=manual_reference_cell "
+                f"cell={int(target.shelf_idx)}:{int(target.cell_idx)}"
+            )
+            next_config = config.model_copy(deep=True)
+            _reference_offset_scan_config(next_config.robot.grid.scan, side, reference_result)
+            save_root_config(next_config)
+            clear_config_cache()
+            await self._publish_reference_offset_applied(reference_result, persisted=True)
+        else:
+            laser_module.apply_single_cell_rescan(
+                grid=grid,
+                target=target,
+                side=side,
+                detected_cell=detected_cell,
+                scan_config=scan_config,
+            )
+
         worker._robot._grid = laser_module.load_grid(grid_path)
 
     async def _persist_single_cell_shelf_result(

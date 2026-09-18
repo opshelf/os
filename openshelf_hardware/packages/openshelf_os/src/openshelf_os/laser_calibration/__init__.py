@@ -11,6 +11,7 @@ _MODULE_NAMES = (
     "shelf_scan",
     "fine_scan",
     "staged_scan",
+    "reference_offsets",
 )
 
 _PATCH_TARGET_NAMES = (

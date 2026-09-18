@@ -838,6 +838,7 @@ async def stream_laser_auto_calibration(
 	include_angle_calibration: bool | None = None,
 	include_extension_calibration: bool | None = None,
 	hold_y_enabled: bool | None = None,
+	derive_offsets_from_manual_cells: bool | None = None,
 	subscribe_only: bool = False,
 ) -> EventSourceResponse:
 	"""Start or observe automatic laser calibration.
@@ -852,6 +853,9 @@ async def stream_laser_auto_calibration(
 	cancellation from a closed connection. Optional scope parameters select cells,
 	both sides, or the angle/extension calibration phases. `hold_y_enabled=false` parks
 	Y on its brake between moves instead of holding it energised for the session.
+	`derive_offsets_from_manual_cells=true` frames the run by the cells marked manual in
+	scope, deriving each side's xy offset from them instead of using the configured one; it
+	needs at least one manual cell per side in scope and returns `400` without one.
 	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,
@@ -860,7 +864,12 @@ async def stream_laser_auto_calibration(
 		mode,
 		include_angle_calibration,
 		include_extension_calibration,
-	).model_copy(update={"hold_y_enabled": hold_y_enabled is not False})
+	).model_copy(
+		update={
+			"hold_y_enabled": hold_y_enabled is not False,
+			"derive_offsets_from_manual_cells": derive_offsets_from_manual_cells is True,
+		}
+	)
 	manager = get_laser_auto_calibration_manager()
 	is_active = await manager.is_active()
 
