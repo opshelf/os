@@ -1138,6 +1138,45 @@ def test_apply_single_shelf_analysis_shifts_cells_around_a_missing_manual_datum(
 	assert by_idx[2].calibration_point.z_offset == pytest.approx(51.0)
 
 
+def test_apply_single_cell_rescan_leaves_a_manual_datum_alone(tmp_path: Path) -> None:
+	"""The rescan saves the grid before the probe runs, so it must not rewrite the datum's point."""
+	from openshelf_os.laser_calibration.staged_scan import SingleCellRescanTarget, apply_single_cell_rescan
+
+	target_shelf = _existing_calibrated_shelf(3, [100.0, 201.0])
+	datum = target_shelf.cells[0]
+	datum.is_manual = True
+	hand_x_mm = float(datum.calibration_point.x)
+	hand_y_mm = float(datum.calibration_point.y)
+	grid_path = tmp_path / 'grid.json'
+	grid = StorageGrid(left_module=[target_shelf], right_module=[], filename=str(grid_path))
+	grid.save()
+
+	apply_single_cell_rescan(
+		grid=grid,
+		target=SingleCellRescanTarget(shelf_idx=3, cell_idx=0),
+		side=StorageModuleSide.LEFT,
+		detected_cell=SimpleNamespace(tool_x_mm=500.0, tool_y_mm=700.0),
+		scan_config=SimpleNamespace(left_xy_offset=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
+	)
+
+	stored = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells[0]
+	assert stored.calibration_point.x == pytest.approx(hand_x_mm)
+	assert stored.calibration_point.y == pytest.approx(hand_y_mm)
+
+	# A non-manual cell in the same shelf is still reframed from the detection.
+	apply_single_cell_rescan(
+		grid=grid,
+		target=SingleCellRescanTarget(shelf_idx=3, cell_idx=1),
+		side=StorageModuleSide.LEFT,
+		detected_cell=SimpleNamespace(tool_x_mm=500.0, tool_y_mm=700.0),
+		scan_config=SimpleNamespace(left_xy_offset=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
+	)
+
+	framed = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells[1]
+	assert framed.calibration_point.x == pytest.approx(490.0)
+	assert framed.calibration_point.y == pytest.approx(705.0)
+
+
 def test_apply_single_shelf_analysis_preserves_a_shelf_of_only_manual_cells(tmp_path: Path) -> None:
 	"""When every matched cell is manual the filtered key map is empty - and an empty map is not
 	the same as no map: `apply_wall_depth_z_offsets` must still treat those cells as preserved."""

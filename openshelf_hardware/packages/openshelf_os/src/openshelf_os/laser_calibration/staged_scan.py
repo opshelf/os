@@ -1095,7 +1095,16 @@ def apply_single_cell_rescan(
 	calibration_point = target_cell.calibration_point
 	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
 
-	if xy_offset is not None:
+	if getattr(target_cell, "is_manual", False) is True:
+		# A hand-calibrated cell is the datum every derive/probe run is judged against, and this
+		# rescan runs before the probe and saves the grid: rewriting its point from the configured
+		# offset would corrupt the very value the manual calibration exists to correct, even when
+		# the probe is subsequently refused.
+		print_status(
+			f"xy_offset_inference=skipped reason=single_cell_preserves_manual_datum "
+			f"cell={target.shelf_idx}:{target.cell_idx}"
+		)
+	elif xy_offset is not None:
 		print_status(
 			f"xy_offset_inference=fixed_offset offset_x_mm={xy_offset[0]:.3f} "
 			f"offset_y_mm={xy_offset[1]:.3f}"
