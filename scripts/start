@@ -56,6 +56,13 @@ export_container_runtime_env() {
 	fi
 }
 
+# Signing keys are not this script's business. Provisioning delivers JWT_SECRET,
+# AUDIT_HMAC_KEY, and AUDIT_HMAC_KEY_ID in the checkout .env that Compose reads, and
+# docker-compose.yml passes them through without a default. Where provisioning has
+# not reached (a developer checkout, a throwaway container), audit_integrity keeps a
+# generated key of its own in the mode data directory. Do not mint keys here; that
+# duplicated the app's own fallback and had no way to keep a superseded key usable.
+
 write_mode_file() {
 	local path="$1"
 	local value="$2"
