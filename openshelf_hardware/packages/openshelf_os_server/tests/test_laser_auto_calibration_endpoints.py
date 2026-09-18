@@ -36,7 +36,14 @@ from openshelf_os_server.core.laser_auto_calibration.angle_runner import (
 from openshelf_os_server.core.laser_auto_calibration.apply_runner import (
     _preserve_manual_cells,
 )
-from openshelf_os.storage import Cell, CalibrationCoordinate, CellStatus, Dimensions, Shelf
+from openshelf_os.storage import (
+    CalibrationCoordinate,
+    Cell,
+    CellStatus,
+    Dimensions,
+    Shelf,
+    StorageGrid,
+)
 from openshelf_os_server.core.laser_auto_calibration.scope_runner import (
     _validate_laser_auto_calibration_config,
 )
@@ -323,6 +330,55 @@ async def test_ensure_session_started_rejects_invalid_config_before_starting_bac
             )
 
     assert manager._task is None
+
+
+@pytest.mark.asyncio
+async def test_z_stall_anchor_flag_without_manual_cell_rejects_before_motion() -> None:
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config(
+        left_xy_offset=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+        z_stall_anchor_enabled=True,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    grid = StorageGrid()
+    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0)])]
+    worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+
+    with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+        with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
+            with pytest.raises(ValueError, match="marked manual"):
+                await manager.ensure_session_started(
+                    worker,
+                    LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+                )
+
+    run_session_mock.assert_not_awaited()
+    assert manager._task is None
+
+
+@pytest.mark.asyncio
+async def test_z_stall_anchor_flag_starts_when_a_manual_cell_is_in_scope() -> None:
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config(
+        left_xy_offset=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+        z_stall_anchor_enabled=True,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    grid = StorageGrid()
+    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
+    worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+
+    with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+        with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
+            snapshot = await manager.ensure_session_started(
+                worker,
+                LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+            )
+
+    assert snapshot.state == "starting"
+    assert manager._task is not None
+    await manager._task
+    run_session_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
