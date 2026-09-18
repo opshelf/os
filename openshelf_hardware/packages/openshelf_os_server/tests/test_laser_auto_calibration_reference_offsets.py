@@ -641,7 +641,10 @@ async def test_z_stall_replaces_the_configured_model_with_the_probed_one() -> No
 	assert len(entries) == 1
 	assert entries[0].side == StorageModuleSide.LEFT
 	assert entries[0].manual_intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
-	assert entries[0].manual_agreement_mm == pytest.approx(0.0, abs=1e-6)
+	# The gate's number, computed while the config still held the slope the datum was derived with.
+	# The post-install recompute (which re-read the config after the install) reported 0.0 here.
+	assert entries[0].manual_agreement_mm == pytest.approx(0.01593, abs=1e-3)
+	assert entries[0].manual_agreement_mm != 0.0
 	assert entries[0].persisted is True
 	assert entries[0].sample_count == 2
 	assert entries[0].samples[0].z_contact_repeat_mm == pytest.approx(170.1)
