@@ -18,6 +18,7 @@
 		runCalibrationCycleTest,
 		storeItem,
 		retrieveItem,
+		moveMotor,
 		type StorageBin,
 		type StorageModuleSide,
 		type StorageGrid,
@@ -52,6 +53,7 @@
 	let testPassed = $state<number>(0);
 	let testNote = $state<string>('');
 	let testNoteIsError = $state<boolean>(false);
+	let isMovingToCell = $state<boolean>(false);
 
 	const selectedSide = $derived.by(
 		(): StorageModuleSide =>
@@ -460,6 +462,11 @@
 	let bins = $state<StorageBin[]>([]);
 
 	const selectedSingle = $derived(selectedCells.length === 1 ? selectedCells[0] : null);
+
+	// The single selected cell's gantry target; null when none selected or uncalibrated.
+	const moveTarget = $derived(
+		selectedSingle === null ? null : selectedSingle.cell.calibration_point
+	);
 
 	const currentTray = $derived.by((): StorageBin | null => {
 		if (selectedSingle === null || bins.length === 0) {
@@ -1015,29 +1022,16 @@
 		return UNTESTABLE_CELL_STATUSES.has(cell.status.toLowerCase()) === false;
 	}
 
-	// Testable cells on the current side in shelf/cell-ascending order, from the
-	// selected cell onward (cycle_test.py --start behaviour).
+	// The selected testable cells, one test each, in shelf/cell-ascending order
+	// (cycle_test.py walks cells one at a time).
 	function buildTestQueue(): Array<{ shelf: number; cell: Cell }> {
-		if (storageGrid === null || selectedSingle === null) {
+		if (storageGrid === null) {
 			return [];
 		}
-		const shelves = (
-			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module
-		).slice().sort((a, b) => a.shelf_idx - b.shelf_idx);
-		const ordered: Array<{ shelf: number; cell: Cell }> = [];
-		for (const shelf of shelves) {
-			for (const entry of shelf.cells) {
-				ordered.push({ shelf: shelf.shelf_idx, cell: entry });
-			}
-		}
-		const { shelfIdx, cell } = selectedSingle;
-		let startIdx = ordered.findIndex(
-			(entry) => entry.shelf === shelfIdx && entry.cell.cell_idx === cell.cell_idx
-		);
-		if (startIdx === -1) {
-			startIdx = 0;
-		}
-		return ordered.slice(startIdx).filter((entry) => isCellTestable(entry.cell));
+		return selectedCells
+			.filter((entry) => isCellTestable(entry.cell))
+			.map((entry) => ({ shelf: entry.shelfIdx, cell: entry.cell }))
+			.sort((a, b) => a.shelf - b.shelf || a.cell.cell_idx - b.cell.cell_idx);
 	}
 
 	function buildMockStoreItem(cell: Cell): Record<string, unknown> {
@@ -1079,12 +1073,12 @@
 	}
 
 	async function didStartTest(mode: TestMode): Promise<void> {
-		if (testRunning || selectedSingle === null) {
+		if (testRunning || hasSelection === false) {
 			return;
 		}
 		const queue = buildTestQueue();
 		if (queue.length === 0) {
-			testNote = 'no testable cells from the selected cell';
+			testNote = 'no testable cells selected';
 			testNoteIsError = true;
 			return;
 		}
@@ -1120,6 +1114,27 @@
 	function didAbortTest(): void {
 		if (testRunning) {
 			testAborting = true;
+		}
+	}
+
+	// Gantry jog to the selected cell's calibrated x/y (z untouched). Hardware only:
+	// 503 in mock mode, like the quick/cycle tests.
+	async function didMoveToCell(): Promise<void> {
+		if (isMovingToCell) {
+			return;
+		}
+		const point = moveTarget;
+		if (point === null) {
+			return;
+		}
+		isMovingToCell = true;
+		try {
+			await moveMotor('x_axis', point.x);
+			await moveMotor('y_axis', point.y);
+		} catch (err) {
+			error = err instanceof Error ? err.message : String(err);
+		} finally {
+			isMovingToCell = false;
 		}
 	}
 
@@ -1354,23 +1369,31 @@
 				{/each}
 			</div>
 			{#if selectedSingle !== null}
-				<hr class="editor-hr" />
-				<section class="editor-tests">
-					<p class="editor-section-label">testing</p>
-					<div class="editor-group editor-group-tests">
-						<button type="button" onclick={() => void didStartTest('quick')} disabled={testRunning}>quick</button>
-						<button type="button" onclick={() => void didStartTest('cycle')} disabled={testRunning}>cycle</button>
-							<button type="button" onclick={() => void didStartTest('store')} disabled={testRunning}>store</button>
-							<button type="button" onclick={() => void didStartTest('retrieve')} disabled={testRunning}>retrieve</button>
-					</div>
-					{#if testRunning}
-						<p class="editor-test-progress">{testCurrent} • PASS: {testPassed}</p>
-						<button type="button" onclick={() => didAbortTest()} disabled={testAborting}>abort</button>
-					{:else if testNote !== ''}
-						<p class="editor-test-note" class:is-error={testNoteIsError}>{testNote}</p>
-					{/if}
-				</section>
+				<button
+					type="button"
+					class="editor-move-btn"
+					onclick={() => void didMoveToCell()}
+					disabled={isMovingToCell === true || moveTarget === null}
+				>
+					move to cell
+				</button>
 			{/if}
+			<hr class="editor-hr" />
+			<section class="editor-tests">
+				<p class="editor-section-label">testing</p>
+				<div class="editor-group editor-group-tests">
+					<button type="button" onclick={() => void didStartTest('quick')} disabled={testRunning}>quick</button>
+					<button type="button" onclick={() => void didStartTest('cycle')} disabled={testRunning}>cycle</button>
+					<button type="button" onclick={() => void didStartTest('store')} disabled={testRunning}>store</button>
+					<button type="button" onclick={() => void didStartTest('retrieve')} disabled={testRunning}>retrieve</button>
+				</div>
+				{#if testRunning}
+					<p class="editor-test-progress">{testCurrent} • PASS: {testPassed}</p>
+					<button type="button" onclick={() => didAbortTest()} disabled={testAborting}>abort</button>
+				{:else if testNote !== ''}
+					<p class="editor-test-note" class:is-error={testNoteIsError}>{testNote}</p>
+				{/if}
+			</section>
 			<label class="editor-row editor-row-lock">
 				<input
 					type="checkbox"
@@ -1704,6 +1727,12 @@
 
 	.editor-actions button {
 		margin-top: 0;
+	}
+
+	.editor-move-btn {
+		width: 100%;
+		height: 2.5em;
+		margin: 0 0 1.5em 0;
 	}
 
 	.editor-tests {
