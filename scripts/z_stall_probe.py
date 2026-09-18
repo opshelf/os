@@ -303,26 +303,49 @@ def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side:
 	side_name = "left" if side == StorageModuleSide.LEFT else "right"
 	print(f"model for robot.grid.scan.{side_name}_z_offset_model: {model}")
 
-	if manual_reference is None or manual_reference.intercept_mm is None:
+	configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
+	configured_slope_mm = 0.0 if configured_model is None else float(configured_model.slope_per_mm)
+	agreement_mm = laser_module.z_model_datum_agreement_mm(
+		intercept_mm=float(result.intercept_mm),
+		slope_per_mm=float(result.slope_per_mm),
+		configured_slope_per_mm=configured_slope_mm,
+		manual_reference=manual_reference,
+	)
+
+	if manual_reference is None or agreement_mm is None:
 		print("verdict: no reference datum, so the fit is unverified")
 		return 1
 
-	agreement_mm = abs(float(result.intercept_mm) - float(manual_reference.intercept_mm))
 	tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
-	print(
-		f"verdict: agreement with the reference datum "
-		f"{agreement_mm:.3f}mm (tolerance {tolerance_mm:.2f}mm) - "
-		f"{'within tolerance' if agreement_mm <= tolerance_mm else 'OUT OF TOLERANCE'}"
+	agreement_ok = agreement_mm <= tolerance_mm
+	datum_cells = ", ".join(
+		f"{sample.shelf_idx}:{sample.cell_idx}" for sample in manual_reference.samples
 	)
+	print(
+		f"verdict: agreement with the reference datum {agreement_mm:.3f}mm (tolerance {tolerance_mm:.2f}mm) "
+		f"judged at manual cell(s) [{datum_cells}], where the two models put them "
+		f"(probe slope {float(result.slope_per_mm):.5f} vs datum slope {configured_slope_mm:.5f}) - "
+		f"{'within tolerance' if agreement_ok else 'OUT OF TOLERANCE'}"
+	)
+
+	stage_ok = True
 
 	if manual_reference.z_captured_stage_mm is not None:
 		stage_delta_mm = abs(float(manual_reference.z_captured_stage_mm) - float(result.stage_extension_mm))
+		pin_tolerance_mm = float(scan_config.z_offset_model_param_tolerance_mm)
+		stage_ok = stage_delta_mm <= pin_tolerance_mm
 		print(
 			f"           datum captured at stage {float(manual_reference.z_captured_stage_mm):.2f}mm vs probe "
-			f"{float(result.stage_extension_mm):.2f}mm (delta {stage_delta_mm:.2f}mm)"
+			f"{float(result.stage_extension_mm):.2f}mm (delta {stage_delta_mm:.2f}mm, pin tolerance "
+			f"{pin_tolerance_mm:.2f}mm) - "
+			+ (
+				"comparable"
+				if stage_ok
+				else "NOT comparable: the datum was saved at a different stage extension"
+			)
 		)
 
-	return 0 if agreement_mm <= tolerance_mm else 1
+	return 0 if agreement_ok and stage_ok else 1
 
 
 async def main() -> int:
