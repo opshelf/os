@@ -949,6 +949,7 @@ def build_probe_analysis_from_grid(
 	wall_depths: dict[tuple[int, int], float],
 	shelf_idx: int | None = None,
 	cells: set[tuple[int, int]] | None = None,
+	source_analysis: Any | None = None,
 ) -> Any:
 	"""Probe targets taken from the stored calibration points rather than a saved scan.
 
@@ -957,6 +958,12 @@ def build_probe_analysis_from_grid(
 	so they are converted back into the detection frame the probe aims from
 	(`tool = grab - xy_offset`), and the wall depth still comes from a sweep, since the probe
 	subtracts it: a cell without one contributes no delta and is skipped.
+
+	`wall_depths` comes from a saved run, whose analysis re-indexes its shelf to 0 and renumbers
+	the openings it saw, so its keys do not name the same cells as the stored grid. `source_analysis`
+	(the run as the analysis built it) lets the two frames be paired by position, the way
+	`derive_reference_offsets` pairs a manual cell with the opening it predicts; without it the
+	keys are taken as they are.
 	"""
 	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
 	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
@@ -1013,5 +1020,47 @@ def build_probe_analysis_from_grid(
 	return SimpleNamespace(
 		shelves=shelves,
 		metadata_path=None,
-		wall_depths_by_cell=dict(wall_depths),
+		wall_depths_by_cell=_depths_by_grid_key(
+			wall_depths=wall_depths, source_analysis=source_analysis, grid_shelves=shelves
+		),
 	)
+
+
+def _depths_by_grid_key(
+	*,
+	wall_depths: dict[tuple[int, int], float],
+	source_analysis: Any,
+	grid_shelves: list[Any],
+) -> dict[tuple[int, int], float]:
+	"""Re-key run-measured wall depths onto the grid cells whose positions they belong to."""
+	if source_analysis is None or len(wall_depths) == 0:
+		return dict(wall_depths)
+
+	detected = [
+		cell
+		for shelf in getattr(source_analysis, "shelves", [])
+		for cell in shelf.cells
+		if (int(cell.shelf_idx), int(cell.cell_idx)) in wall_depths
+	]
+	mapped: dict[tuple[int, int], float] = {}
+
+	for shelf in grid_shelves:
+		for cell in shelf.cells:
+			candidates = [
+				(
+					abs(float(cell.tool_x_mm) - float(other.tool_x_mm))
+					+ abs(float(cell.tool_y_mm) - float(other.tool_y_mm)),
+					other,
+				)
+				for other in detected
+			]
+			candidates = [pair for pair in candidates if pair[0] <= PROBE_SHIELD_MATCH_WINDOW_MM]
+
+			if len(candidates) == 0:
+				continue
+
+			nearest = min(candidates, key=lambda pair: pair[0])[1]
+			key = (int(cell.shelf_idx), int(cell.cell_idx))
+			mapped[key] = float(wall_depths[(int(nearest.shelf_idx), int(nearest.cell_idx))])
+
+	return mapped

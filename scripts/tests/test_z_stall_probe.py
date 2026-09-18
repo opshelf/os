@@ -511,6 +511,74 @@ def test_probe_slope_the_datum_cannot_corroborate_fails_the_verdict(
 	assert "OUT OF TOLERANCE" in output
 
 
+def test_from_grid_pairs_run_depths_with_stored_cells_by_position(
+	tmp_path: Path, monkeypatch, capsys
+) -> None:
+	"""The run's depths are keyed in its own analysis frame, the probe targets in the grid's.
+
+	A partial run re-indexes its shelf to 0 and renumbers the openings it saw, so keying the
+	depths by grid index would attach the wrong depth - or none at all.
+	"""
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+	metadata["side"] = "left_module"
+	# The run saw one opening, as a partial run does, and re-indexed it to shelf 0.
+	metadata["fine_scans"] = [
+		{
+			"detected_cells": [
+				{
+					"shelf_idx": 0,
+					"cell_idx": 0,
+					"center_x_mm": 290.75,
+					"center_y_mm": 239.5,
+					"tool_x_mm": 341.75,
+					"tool_y_mm": 239.5,
+					"width_mm": 26.0,
+					"height_mm": 30.0,
+					"point_count": 20,
+				}
+			]
+		}
+	]
+	metadata["candidates"] = [
+		{
+			"shelf_idx": 0,
+			"x_min": 277.0,
+			"x_max": 303.0,
+			"y_min": 231.25,
+			"y_max": 231.25,
+			"row_count": 1,
+			"wall_depth_mm": 9.42,
+			"wall_sample_count": 4,
+		}
+	]
+	(run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	exit_code = main_with_args(
+		probe, ["--module", "left", "--from-run", str(run_dir), "--from-grid", "--plan-only"]
+	)
+
+	assert exit_code == 0
+	output = capsys.readouterr().out
+	# The stored cell 1:0 (x 341.75) is the opening the run saw: it gets that run's depth, 9.42mm.
+	assert "probe candidates (1):" in output
+	assert "1:0 probe_x=" in output
+	assert "wall_depth_mm=9.420" in output
+
+
 def test_short_span_probe_reports_the_model_the_product_would_install(
 	tmp_path: Path, monkeypatch, capsys
 ) -> None:
