@@ -1,6 +1,15 @@
 # ruff: noqa: F401, F403, F405
 from __future__ import annotations
 
+from openshelf_os.laser_calibration.defaults import (
+	EXPECTED_HOLE_HEIGHT_MM,
+	EXPECTED_HOLE_WIDTH_MM,
+	HOLE_HEIGHT_TOLERANCE_MM,
+	HOLE_WIDTH_TOLERANCE_MM,
+	MIN_HORIZONTAL_WALL_COVERAGE_MM,
+	MIN_VERTICAL_WALL_COVERAGE_MM,
+	WALL_DEPTH_TOLERANCE_MM,
+)
 from openshelf_os.storage import CellStatus
 
 from . import core as core_module
@@ -449,11 +458,11 @@ async def run_staged_scan(
 		samples_per_point=samples_per_point,
 		settle_ms=settle_ms,
 		wall_depth_mm=wall_depth_mm,
-		wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
-		expected_hole_width_mm=scan_config.expected_hole_width_mm,
-		expected_hole_height_mm=scan_config.expected_hole_height_mm,
-		min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
-		min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
+		wall_depth_tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
+		expected_hole_width_mm=EXPECTED_HOLE_WIDTH_MM,
+		expected_hole_height_mm=EXPECTED_HOLE_HEIGHT_MM,
+		min_vertical_wall_coverage_mm=MIN_VERTICAL_WALL_COVERAGE_MM,
+		min_horizontal_wall_coverage_mm=MIN_HORIZONTAL_WALL_COVERAGE_MM,
 		total_points=count_valid_points(coarse_scan.depth_rows) + sum(
 			count_valid_points(fine_scan.depth_rows)
 			for _, fine_scan, _ in fine_scan_results
@@ -536,7 +545,7 @@ def apply_xy_reference_offsets(
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> None:
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
 	if xy_offset is None:
 		require_scan_xy_correction(scan_config=scan_config, side=side)
@@ -994,7 +1003,7 @@ def build_single_shelf_known_edge_y(
 		shelf_idx=shelf_idx,
 	)
 	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	candidate_center_y_values: list[float] = []
 
 	for cell in target_shelf.cells:
@@ -1065,7 +1074,7 @@ def apply_single_cell_rescan(
 		)
 
 	calibration_point = target_cell.calibration_point
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
 	if xy_offset is not None:
 		print_status(
@@ -1128,7 +1137,7 @@ def apply_single_shelf_analysis(
 	scanned_shelf.divider_width = float(target_shelf.divider_width)
 	detected_output_keys = set(detected_cell_key_map.values()) if len(detected_cell_key_map) > 0 else None
 
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
 	if xy_offset is not None:
 		print_status(
@@ -1469,7 +1478,7 @@ def find_replay_gap_segment(
 		if has_wall_nearby(
 			values,
 			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=scan_config.wall_depth_tolerance_mm,
+			tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
 			start_idx=left_idx,
 			direction=-1,
 		) is False:
@@ -1479,7 +1488,7 @@ def find_replay_gap_segment(
 		if has_wall_nearby(
 			values,
 			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=scan_config.wall_depth_tolerance_mm,
+			tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
 			start_idx=right_idx,
 			direction=1,
 		) is False:
@@ -1521,8 +1530,8 @@ def build_detected_cell_from_saved_fine_scan(
 			positions=fine_scan.x_positions,
 			step_mm=fine_step_mm,
 			wall_depth_mm=wall_depth_mm,
-			expected_width_mm=scan_config.expected_hole_width_mm,
-			width_tolerance_mm=scan_config.hole_width_tolerance_mm + fine_step_mm,
+			expected_width_mm=EXPECTED_HOLE_WIDTH_MM,
+			width_tolerance_mm=HOLE_WIDTH_TOLERANCE_MM + fine_step_mm,
 			center_mm=candidate_center_x_mm,
 			scan_config=scan_config,
 		)
@@ -1550,8 +1559,8 @@ def build_detected_cell_from_saved_fine_scan(
 			positions=fine_scan.y_positions,
 			step_mm=fine_step_mm,
 			wall_depth_mm=wall_depth_mm,
-			expected_width_mm=scan_config.expected_hole_height_mm,
-			width_tolerance_mm=scan_config.hole_height_tolerance_mm + fine_step_mm,
+			expected_width_mm=EXPECTED_HOLE_HEIGHT_MM,
+			width_tolerance_mm=HOLE_HEIGHT_TOLERANCE_MM + fine_step_mm,
 			center_mm=candidate_center_y_mm,
 			scan_config=scan_config,
 		)
@@ -1714,11 +1723,11 @@ def load_staged_scan_analysis(
         samples_per_point=int(metadata["samples_per_point"]),
         settle_ms=int(metadata["settle_ms"]),
         wall_depth_mm=float(metadata.get("wall_depth_mm", 0.0)),
-        wall_depth_tolerance_mm=float(scan_config.wall_depth_tolerance_mm),
-        expected_hole_width_mm=float(scan_config.expected_hole_width_mm),
-        expected_hole_height_mm=float(scan_config.expected_hole_height_mm),
-        min_vertical_wall_coverage_mm=float(scan_config.min_vertical_wall_coverage_mm),
-        min_horizontal_wall_coverage_mm=float(scan_config.min_horizontal_wall_coverage_mm),
+        wall_depth_tolerance_mm=float(WALL_DEPTH_TOLERANCE_MM),
+        expected_hole_width_mm=float(EXPECTED_HOLE_WIDTH_MM),
+        expected_hole_height_mm=float(EXPECTED_HOLE_HEIGHT_MM),
+        min_vertical_wall_coverage_mm=float(MIN_VERTICAL_WALL_COVERAGE_MM),
+        min_horizontal_wall_coverage_mm=float(MIN_HORIZONTAL_WALL_COVERAGE_MM),
         total_points=total_points,
         valid_points=valid_points,
         raw_scan_path=raw_scan_path,
@@ -1748,13 +1757,13 @@ def analyze_depth_rows(
 		samples_per_point=samples_per_point,
 		laser_offset_x_mm=laser_offset_x_mm,
 		laser_offset_y_mm=laser_offset_y_mm,
-		wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
-		expected_hole_width_mm=scan_config.expected_hole_width_mm,
-		expected_hole_height_mm=scan_config.expected_hole_height_mm,
-		hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
-		hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
-		min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
-		min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
+		wall_depth_tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
+		expected_hole_width_mm=EXPECTED_HOLE_WIDTH_MM,
+		expected_hole_height_mm=EXPECTED_HOLE_HEIGHT_MM,
+		hole_width_tolerance_mm=HOLE_WIDTH_TOLERANCE_MM,
+		hole_height_tolerance_mm=HOLE_HEIGHT_TOLERANCE_MM,
+		min_vertical_wall_coverage_mm=MIN_VERTICAL_WALL_COVERAGE_MM,
+		min_horizontal_wall_coverage_mm=MIN_HORIZONTAL_WALL_COVERAGE_MM,
 		depth_rows=depth_rows,
 	)
 

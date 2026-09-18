@@ -13,8 +13,8 @@ from .capture import enter_capture_mode, prepare_capture_pose, resolve_capture_y
 from .config import (
 	get_laser_sample_settle_ms,
 	get_laser_samples_per_point,
-	get_laser_scan_stage_extension_mm,
-	get_laser_scan_z_offset_from_place_mm,
+	get_laser_scan_pose_stage_mm,
+	get_laser_scan_pose_z_delta_from_place_mm,
 )
 from .geometry import build_axis_positions
 from .models import StageStallProbeSample
@@ -202,12 +202,12 @@ async def run_stage_stall_capture(
 	settle_ms = int(
 		args.settle_ms
 		if args.settle_ms is not None
-		else get_laser_sample_settle_ms(scan_config)
+		else get_laser_sample_settle_ms()
 	)
 	samples_per_point = int(
 		args.samples_per_point
 		if args.samples_per_point is not None
-		else get_laser_samples_per_point(scan_config)
+		else get_laser_samples_per_point()
 	)
 	rotation_positions = build_axis_positions(
 		args.rotation_range[0],
@@ -217,9 +217,9 @@ async def run_stage_stall_capture(
 	stage_extension_mm = float(
 		args.stage_extension_mm
 		if args.stage_extension_mm is not None
-		else get_laser_scan_stage_extension_mm(scan_config)
+		else get_laser_scan_pose_stage_mm(scan_config)
 	)
-	laser_scan_z_offset_from_place_mm = get_laser_scan_z_offset_from_place_mm(
+	laser_scan_pose_z_delta_from_place_mm = get_laser_scan_pose_z_delta_from_place_mm(
 		scan_config
 	)
 	samples: list[StageStallProbeSample] = []
@@ -263,7 +263,7 @@ async def run_stage_stall_capture(
 		base_z_mm = float(
 			args.base_z_mm
 			if args.base_z_mm is not None
-			else float(z_extension_place) + laser_scan_z_offset_from_place_mm
+			else float(z_extension_place) + laser_scan_pose_z_delta_from_place_mm
 		)
 		probe_x_mm = resolve_probe_x_mm(args=args, scan_config=scan_config, side_name=side_name)
 		capture_y_mm = await resolve_capture_y_mm(

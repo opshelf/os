@@ -9,6 +9,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from openshelf_os.config.schema import CURRENT_SCHEMA_VERSION
+
 from openshelf_os.common import (
     RootConfig,
     StorageSettings,
@@ -109,6 +111,7 @@ def _build_minimal_config(data: dict) -> dict:
     # Production deployments MUST provide data/config.json with real calibrated values.
     # The application will fail to start if config.json is missing in production.
     return {
+        "schema_version": CURRENT_SCHEMA_VERSION,
         "name": "openshelf_os",
         "version": "0.1.0",
         "description": "OpenShelf OS configuration",
@@ -149,18 +152,9 @@ def _build_minimal_config(data: dict) -> dict:
                 "grid": {
                     "path": "storage.json",
                     "scan": {
-                        "wall_depth_tolerance_mm": 2.0,
-                        "expected_hole_width_mm": 26.0,
-                        "expected_hole_height_mm": 30.0,
-                        "hole_width_tolerance_mm": 10.0,
-                        "hole_height_tolerance_mm": 10.0,
-                        "min_vertical_wall_coverage_mm": 10.0,
-                        "min_horizontal_wall_coverage_mm": 30.0,
                         "laser_offset_x_mm": None,
                         "laser_offset_y_mm": None,
                         "fine_scan_step_mm": 1.0,
-                        "laser_sample_settle_ms": 50,
-                        "laser_samples_per_point": 3,
                         "left_bounds_x_min_mm": 0.0,
                         "left_bounds_x_max_mm": 950.0,
                         "left_bounds_y_min_mm": 0.0,
@@ -169,42 +163,7 @@ def _build_minimal_config(data: dict) -> dict:
                         "right_bounds_x_max_mm": 950.0,
                         "right_bounds_y_min_mm": 0.0,
                         "right_bounds_y_max_mm": 1250.0,
-                        "angle_calibration_x_min_mm": 0.0,
                         "angle_calibration_x_max_mm": 950.0,
-                        "angle_calibration_x_step_mm": 100.0,
-                        "angle_calibration_x_count": 5,
-                        "angle_calibration_z_offset_min_mm": -8.0,
-                        "angle_calibration_z_offset_max_mm": 8.0,
-                        "angle_calibration_z_offset_step_mm": 4.0,
-                        "angle_calibration_z_offset_count": 1,
-                        "angle_calibration_rotation_min_deg": -8.0,
-                        "angle_calibration_rotation_max_deg": 8.0,
-                        "angle_calibration_rotation_step_deg": 1.0,
-                        "angle_calibration_beam_zero_deg": 0.0,
-                        "angle_calibration_alpha_min_deg": -10.0,
-                        "angle_calibration_alpha_max_deg": 10.0,
-                        "angle_calibration_coarse_step_deg": 0.1,
-                        "angle_calibration_fine_window_deg": 0.3,
-                        "angle_calibration_fine_step_deg": 0.005,
-                        "angle_calibration_stage_stall_rotation_min_deg": 0.0,
-                        "angle_calibration_stage_stall_rotation_max_deg": 5.5,
-                        "angle_calibration_stage_stall_coarse_min_deg": 0.0,
-                        "angle_calibration_stage_stall_coarse_max_deg": 5.5,
-                        "angle_calibration_stage_stall_coarse_step_deg": 1.0,
-                        "angle_calibration_stage_stall_coarse_start_deg": 4.5,
-                        "angle_calibration_stage_stall_fine_window_deg": 1.5,
-                        "angle_calibration_stage_stall_fine_step_deg": 0.25,
-                        "angle_calibration_stage_stall_fast_approach_mm": 0.0,
-                        "angle_calibration_stage_stall_validation_count": 3,
-                        "angle_calibration_stage_stall_validation_repeats": 3,
-                        "angle_calibration_stage_stall_validation_retry_count": 1,
-                        "angle_calibration_stage_stall_coarse_retry_count": 1,
-                        "angle_calibration_stage_stall_min_valid_stage_position_mm": 40.0,
-                        "angle_calibration_stage_stall_validation_plateau_tolerance_mm": 0.75,
-                        "angle_calibration_stage_stall_coarse_validation_count": 1,
-                        "angle_calibration_stage_stall_validation_high_side_window_deg": 0.75,
-                        "angle_calibration_stage_stall_low_contact_retry_count": 1,
-                        "angle_calibration_stage_stall_validation_min_valid_sample_count": 2,
                     },
                 },
             "io": {
