@@ -728,6 +728,54 @@ async def test_z_stall_refuses_without_a_manual_datum() -> None:
 					manual_reference=None,
 				)
 
+	# The probe has already moved, so the raw fit must still reach the operator, unjudged.
+	assert len(manager._snapshot.z_stall_results) == 1
+	entry = manager._snapshot.z_stall_results[0]
+	assert entry.side == StorageModuleSide.LEFT
+	assert entry.intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
+	assert entry.manual_intercept_mm is None
+	assert entry.manual_agreement_mm is None
+	assert entry.applied is False
+	assert entry.persisted is False
+
+
+@pytest.mark.asyncio
+async def test_z_stall_refuses_a_datum_without_a_wall_depth() -> None:
+	manager = LaserAutoCalibrationManager()
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.z_stall_anchor_enabled = True
+	config = _build_root_config(scan_config)
+	worker = _build_z_worker()
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
+		return_value=config,
+	):
+		with patch.object(
+			laser_module,
+			"run_z_stall_anchor",
+			AsyncMock(return_value=_build_z_stall_result()),
+		):
+			with pytest.raises(ValueError, match="no hand-calibrated reference cell"):
+				await manager._resolve_z_delta_model(
+					worker,
+					StorageModuleSide.LEFT,
+					_build_analysis(),
+					scan_config,
+					source_grid=_build_source_grid(),
+					manual_reference=_build_manual_reference(intercept_mm=None),
+				)
+
+	# The datum exists but carries no wall depth: the raw fit is still published, unjudged.
+	assert len(manager._snapshot.z_stall_results) == 1
+	entry = manager._snapshot.z_stall_results[0]
+	assert entry.side == StorageModuleSide.LEFT
+	assert entry.intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
+	assert entry.manual_intercept_mm is None
+	assert entry.manual_agreement_mm is None
+	assert entry.applied is False
+	assert entry.persisted is False
+
 
 @pytest.mark.asyncio
 async def test_z_stall_keeps_the_configured_slope_when_the_probe_could_not_span() -> None:
