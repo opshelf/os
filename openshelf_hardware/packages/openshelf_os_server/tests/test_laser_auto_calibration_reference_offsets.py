@@ -1038,6 +1038,52 @@ async def test_z_stall_takes_a_probed_slope_when_it_measured_one() -> None:
 
 
 @pytest.mark.asyncio
+async def test_shelf_scoped_probe_excludes_the_datum_in_the_analysis_key_space() -> None:
+	"""A single-shelf scan re-indexes its shelf to 0, so the exclusion has to be translated.
+
+	The stored grid says the datum is `(3, 0)` while the analysis holds that same opening as
+	`(0, 0)`. Passing the grid keys through unchanged excluded nothing, so the probe pressed the
+	datum and the agreement was judged against a point the fit was taken at.
+	"""
+	manager = LaserAutoCalibrationManager()
+	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
+		mode="shelf",
+		side=StorageModuleSide.LEFT,
+		shelf_idx=3,
+		derive_z_model_from_stall=True,
+	)
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.z_stall_anchor_enabled = True
+	config = _build_root_config(scan_config)
+	# The datum is stored on shelf 3, while the shelf-scoped analysis reports shelf 0.
+	grid = _build_source_grid(include_second_shelf=True)
+	worker = _build_z_worker(grid=grid)
+	analysis = _build_analysis()
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.apply_runner.get_root_config",
+		return_value=config,
+	):
+		with patch.object(
+			laser_module,
+			"run_z_stall_anchor",
+			AsyncMock(return_value=_build_z_stall_result()),
+		) as anchor:
+			with patch.object(laser_module, "excluded_probe_cells", return_value={(3, 0)}):
+				await manager._resolve_z_delta_model(
+					worker,
+					StorageModuleSide.LEFT,
+					analysis,
+					scan_config,
+					source_grid=grid,
+					manual_reference=_build_manual_reference(),
+				)
+
+	assert anchor.await_args is not None
+	assert anchor.await_args.kwargs["excluded_cells"] == {(0, 0)}
+
+
+@pytest.mark.asyncio
 async def test_z_stall_refuses_a_probed_slope_the_datum_cannot_corroborate() -> None:
 	"""Intercepts that agree are not enough: the datum speaks for the model that is installed.
 

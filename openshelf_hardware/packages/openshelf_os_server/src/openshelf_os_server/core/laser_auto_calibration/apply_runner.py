@@ -429,14 +429,30 @@ class ApplyRunnerMixin:
             for shelf in analysis.shelves
             for cell in shelf.cells
         }
+        excluded_cells = laser_module.excluded_probe_cells(
+            grid=device_grid, side=side, scanned_cells=scanned_cells
+        )
+        # The exclusion is computed from the stored grid, but the probe selects from the analysis,
+        # and a single-shelf scan re-indexes its shelf to 0. Without translating the keys the datum
+        # (and any DISABLED cell) of a shelf scope is never excluded and the probe presses it.
+        scope_shelf_idx = self._snapshot.requested_scope.shelf_idx
+        if len(analysis.shelves) == 1 and scope_shelf_idx is not None:
+            analysis_shelf_idx = int(analysis.shelves[0].shelf_idx)
+
+            if analysis_shelf_idx != int(scope_shelf_idx):
+                excluded_cells = {
+                    (
+                        analysis_shelf_idx if int(shelf_idx) == int(scope_shelf_idx) else int(shelf_idx),
+                        int(cell_idx),
+                    )
+                    for shelf_idx, cell_idx in excluded_cells
+                }
         result = await laser_module.run_z_stall_anchor(
             tool=worker._robot._tool,
             analysis=analysis,
             scan_config=scan_config,
             side=side,
-            excluded_cells=laser_module.excluded_probe_cells(
-                grid=device_grid, side=side, scanned_cells=scanned_cells
-            ),
+            excluded_cells=excluded_cells,
             x_axis_limit_mm=_get_x_axis_limit_mm(worker),
             x_axis_lower_limit_mm=_get_x_axis_lower_limit_mm(worker),
             z_axis_limit_mm=_get_z_axis_limit_mm(worker),
