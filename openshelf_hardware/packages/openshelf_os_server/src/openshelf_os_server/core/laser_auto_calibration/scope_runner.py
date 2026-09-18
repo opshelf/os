@@ -131,29 +131,27 @@ def _validate_laser_auto_calibration_config(
     if right_bounds is None:
         right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
 
-    # A run that derives its own reference frame supplies the offset the configured-value
-    # check exists to insist on, so demanding one first would block exactly the machines that
-    # do not have a trustworthy value yet. The laser offsets and bounds still apply.
-    should_require_configured_offset = requested_scope.derive_offsets_from_manual_cells is not True
-
+    # The configured offset is required even for a run that re-derives it: `derive_reference_offsets`
+    # predicts the manual cells' detected positions from it, and refuses without one because at a
+    # ~105mm opening pitch predicting from zero matches the neighbouring opening. Checking it here
+    # turns a request that can never succeed into a refusal before any motion, instead of a failure
+    # after the angle/stage calibration and a full side scan.
     if requested_scope.mode == "all" or requested_scope.mode == "both":
         laser_module.validate_scan_bounds(left_bounds, "left scan bounds")
         laser_module.validate_scan_bounds(right_bounds, "right scan bounds")
-
-        if should_require_configured_offset is True:
-            laser_module.validate_laser_structure_parameters(
-                scan_config=scan_config,
-                side=StorageModuleSide.LEFT,
-            )
-            laser_module.validate_laser_structure_parameters(
-                scan_config=scan_config,
-                side=StorageModuleSide.RIGHT,
-            )
+        laser_module.validate_laser_structure_parameters(
+            scan_config=scan_config,
+            side=StorageModuleSide.LEFT,
+        )
+        laser_module.validate_laser_structure_parameters(
+            scan_config=scan_config,
+            side=StorageModuleSide.RIGHT,
+        )
         return
 
     if requested_scope.side == StorageModuleSide.LEFT:
         laser_module.validate_scan_bounds(left_bounds, "left scan bounds")
-        if requested_scope.mode == "side" and should_require_configured_offset is True:
+        if requested_scope.mode == "side":
             laser_module.validate_laser_structure_parameters(
                 scan_config=scan_config,
                 side=StorageModuleSide.LEFT,
@@ -162,7 +160,7 @@ def _validate_laser_auto_calibration_config(
 
     if requested_scope.side == StorageModuleSide.RIGHT:
         laser_module.validate_scan_bounds(right_bounds, "right scan bounds")
-        if requested_scope.mode == "side" and should_require_configured_offset is True:
+        if requested_scope.mode == "side":
             laser_module.validate_laser_structure_parameters(
                 scan_config=scan_config,
                 side=StorageModuleSide.RIGHT,
