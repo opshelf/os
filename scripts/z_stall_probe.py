@@ -73,8 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
 		default=[],
 		metavar="SHELF:CELL",
 		help=(
-			"Never probe this cell; repeatable. Cells holding a tray must be excluded: a tray face "
-			"stands in front of the shelf plate, so the contact would be the tray, not the wall."
+			"Never probe this cell; repeatable. Tray homes and cells holding an item are probeable "
+			"- a tray offers the same divider to the laser as an empty cell - so use this only to "
+			"keep the probe off a specific opening."
 		),
 	)
 	parser.add_argument(
