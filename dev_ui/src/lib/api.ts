@@ -441,13 +441,19 @@ export async function runCalibrationCycleTest(
 	});
 }
 
+export type RobotCommandReceipt = {
+	message: string;
+	command_id: string;
+	status: string;
+};
+
 export async function storeItem(
 	side: StorageModuleSide,
 	shelfIdx: number,
 	cellIdx: number,
 	item: Record<string, unknown>
-): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>('/robot/commands', {
+): Promise<RobotCommandReceipt> {
+	return apiFetch<RobotCommandReceipt>('/robot/commands', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -464,8 +470,8 @@ export async function retrieveItem(
 	side: StorageModuleSide,
 	shelfIdx: number,
 	cellIdx: number
-): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>('/robot/commands', {
+): Promise<RobotCommandReceipt> {
+	return apiFetch<RobotCommandReceipt>('/robot/commands', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({

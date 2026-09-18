@@ -14,6 +14,10 @@
 		updateTrayLayout,
 		assignTray,
 		unassignTray,
+		runCalibrationQuickTest,
+		runCalibrationCycleTest,
+		storeItem,
+		retrieveItem,
 		type StorageBin,
 		type StorageModuleSide,
 		type StorageGrid,
@@ -38,6 +42,16 @@
 	let anchorCell = $state<number | null>(null);
 	let overlayOpen = $state<boolean>(false);
 	let scanStream: ReconnectingEventSource | null = null;
+
+	// Multi-cell test walk (client-side equivalent of provision/scripts/cycle_test.py):
+	// walks the testable cells on the current side from the selected cell, one
+	// operation per cell, tracking the current cell and running pass count.
+	let testRunning = $state<boolean>(false);
+	let testAborting = $state<boolean>(false);
+	let testCurrent = $state<string>('');
+	let testPassed = $state<number>(0);
+	let testNote = $state<string>('');
+	let testNoteIsError = $state<boolean>(false);
 
 	const selectedSide = $derived.by(
 		(): StorageModuleSide =>
@@ -936,7 +950,9 @@
 					const data = JSON.parse(event.data);
 					if (data.kind === 'label_scanned' && typeof data.payload === 'string') {
 						didReceiveScannedLabel(data.payload);
+						return;
 				}
+					didReceiveCommandResult(data);
 			} catch {
 				return;
 			}
@@ -954,6 +970,156 @@
 	function didReceiveScannedLabel(barcode: string): void {
 		if (overlayOpen && selectedSingle !== null && trayEnabled) {
 			trayBarcode = barcode;
+		}
+	}
+
+	type TestMode = 'quick' | 'cycle' | 'store' | 'retrieve';
+	type TestCommandResult = { ok: boolean; error?: string };
+	type TestCommandWait = { commandId: string; resolve: (result: TestCommandResult) => void };
+	const UNTESTABLE_CELL_STATUSES = new Set(['disabled', 'maintenance']);
+	const TEST_COMMAND_TIMEOUT_MS = 120000;
+
+	// Resolved when the /robot/events stream delivers the result for a queued command.
+	let pendingTestCommand: TestCommandWait | null = null;
+	let mockStoreSeq = 0;
+
+	function didReceiveCommandResult(data: Record<string, unknown>): void {
+		if (pendingTestCommand === null) {
+			return;
+		}
+		if (typeof data.command_id !== 'string' || data.command_id !== pendingTestCommand.commandId) {
+			return;
+		}
+		const wait = pendingTestCommand;
+		pendingTestCommand = null;
+		const ok = data.message === 'success';
+		const error = ok
+			? undefined
+			: typeof data.error === 'string' ? data.error : String(data.message ?? 'command failed');
+		wait.resolve({ ok, error });
+	}
+
+	function waitForTestCommand(commandId: string): Promise<TestCommandResult> {
+		return new Promise((resolve) => {
+			pendingTestCommand = { commandId, resolve };
+			setTimeout(() => {
+				if (pendingTestCommand !== null && pendingTestCommand.commandId === commandId) {
+					pendingTestCommand = null;
+					resolve({ ok: false, error: 'timed out waiting for the command result' });
+			}
+			}, TEST_COMMAND_TIMEOUT_MS);
+		});
+	}
+
+	function isCellTestable(cell: Cell): boolean {
+		return UNTESTABLE_CELL_STATUSES.has(cell.status.toLowerCase()) === false;
+	}
+
+	// Testable cells on the current side in shelf/cell-ascending order, from the
+	// selected cell onward (cycle_test.py --start behaviour).
+	function buildTestQueue(): Array<{ shelf: number; cell: Cell }> {
+		if (storageGrid === null || selectedSingle === null) {
+			return [];
+		}
+		const shelves = (
+			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module
+		).slice().sort((a, b) => a.shelf_idx - b.shelf_idx);
+		const ordered: Array<{ shelf: number; cell: Cell }> = [];
+		for (const shelf of shelves) {
+			for (const entry of shelf.cells) {
+				ordered.push({ shelf: shelf.shelf_idx, cell: entry });
+			}
+		}
+		const { shelfIdx, cell } = selectedSingle;
+		let startIdx = ordered.findIndex(
+			(entry) => entry.shelf === shelfIdx && entry.cell.cell_idx === cell.cell_idx
+		);
+		if (startIdx === -1) {
+			startIdx = 0;
+		}
+		return ordered.slice(startIdx).filter((entry) => isCellTestable(entry.cell));
+	}
+
+	function buildMockStoreItem(cell: Cell): Record<string, unknown> {
+		mockStoreSeq += 1;
+		// Keep it under the mock cabinet's fixed 300 mm cell and strictly inside the
+		// real cell, so the item fits in both mock mode and on hardware.
+		const scale = (value: number): number => Math.min(290, Math.max(value * 0.8, 1.0));
+		return {
+			upca: String(Date.now()).slice(-12),
+			name: `layout test ${mockStoreSeq}`,
+			dimensions: {
+				length: scale(cell.dimensions.length),
+				width: scale(cell.dimensions.width),
+			height: scale(cell.dimensions.height)
+		}
+		};
+	}
+
+	async function runCellTest(mode: TestMode, target: { shelf: number; cell: Cell }): Promise<TestCommandResult> {
+		const { shelf, cell } = target;
+		try {
+			if (mode === 'quick') {
+				await runCalibrationQuickTest(selectedSide, shelf, cell.cell_idx);
+				return { ok: true };
+			}
+			if (mode === 'cycle') {
+				await runCalibrationCycleTest(selectedSide, shelf, cell.cell_idx);
+				return { ok: true };
+		}
+			if (mode === 'store') {
+				const receipt = await storeItem(selectedSide, shelf, cell.cell_idx, buildMockStoreItem(cell));
+				return await waitForTestCommand(receipt.command_id);
+			}
+			const receipt = await retrieveItem(selectedSide, shelf, cell.cell_idx);
+			return await waitForTestCommand(receipt.command_id);
+		} catch (err) {
+			return { ok: false, error: err instanceof Error ? err.message : String(err) };
+		}
+	}
+
+	async function didStartTest(mode: TestMode): Promise<void> {
+		if (testRunning || selectedSingle === null) {
+			return;
+		}
+		const queue = buildTestQueue();
+		if (queue.length === 0) {
+			testNote = 'no testable cells from the selected cell';
+			testNoteIsError = true;
+			return;
+		}
+		testRunning = true;
+		testAborting = false;
+		testCurrent = '';
+		testPassed = 0;
+		testNote = '';
+		testNoteIsError = false;
+		try {
+			for (const target of queue) {
+				if (testAborting) {
+					break;
+				}
+				testCurrent = `${sideInitial}:${target.shelf}:${target.cell.cell_idx}`;
+				const result = await runCellTest(mode, target);
+				if (result.ok) {
+				testPassed += 1;
+				} else {
+					testNote = `failed at ${testCurrent}${result.error ? `: ${result.error}` : ''}`;
+				testNoteIsError = true;
+					break;
+				}
+			}
+			if (testNote === '') {
+				testNote = testAborting ? `aborted — ${testPassed} passed` : `done — ${testPassed} passed`;
+			}
+		} finally {
+			testRunning = false;
+		}
+	}
+
+	function didAbortTest(): void {
+		if (testRunning) {
+			testAborting = true;
 		}
 	}
 
@@ -1187,6 +1353,24 @@
 					</label>
 				{/each}
 			</div>
+			{#if selectedSingle !== null}
+				<hr class="editor-hr" />
+				<section class="editor-tests">
+					<p class="editor-section-label">testing</p>
+					<div class="editor-group editor-group-tests">
+						<button type="button" onclick={() => void didStartTest('quick')} disabled={testRunning}>quick</button>
+						<button type="button" onclick={() => void didStartTest('cycle')} disabled={testRunning}>cycle</button>
+							<button type="button" onclick={() => void didStartTest('store')} disabled={testRunning}>store</button>
+							<button type="button" onclick={() => void didStartTest('retrieve')} disabled={testRunning}>retrieve</button>
+					</div>
+					{#if testRunning}
+						<p class="editor-test-progress">{testCurrent} • PASS: {testPassed}</p>
+						<button type="button" onclick={() => didAbortTest()} disabled={testAborting}>abort</button>
+					{:else if testNote !== ''}
+						<p class="editor-test-note" class:is-error={testNoteIsError}>{testNote}</p>
+					{/if}
+				</section>
+			{/if}
 			<label class="editor-row editor-row-lock">
 				<input
 					type="checkbox"
@@ -1520,5 +1704,43 @@
 
 	.editor-actions button {
 		margin-top: 0;
+	}
+
+	.editor-tests {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.editor-section-label {
+		text-transform: uppercase;
+		margin-bottom: 1.5em;
+	}
+
+	.editor-group-tests {
+		grid-template-columns: repeat(2, 1fr);
+	}
+
+	.editor-group-tests button {
+		width: 100%;
+		height: 2.5em;
+		margin-top: 0;
+	}
+
+	.editor-test-progress {
+		margin: 0 0 1em 0;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.editor-tests > button {
+		align-self: flex-start;
+		margin-top: 0;
+	}
+
+	.editor-test-note {
+		margin: 0;
+	}
+
+	.editor-test-note.is-error {
+		color: #b00020;
 	}
 </style>
