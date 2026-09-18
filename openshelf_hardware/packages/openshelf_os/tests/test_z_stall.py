@@ -851,6 +851,29 @@ def test_resolved_model_keeps_a_tilt_the_probe_measured() -> None:
 	assert decision.intercept_mm == pytest.approx(0.32)
 
 
+@pytest.mark.asyncio
+async def test_anchor_drops_a_point_whose_middle_repeat_wanders() -> None:
+	"""Every repeat has to agree, not just the first and the last.
+
+	With three repeats a point can start and end on the same depth while a middle reading wanders
+	by far more than the tolerance; the median would then be sampled as if the wall had held still.
+	"""
+	result = await run_anchor(
+		probe_contacts=[[170.0, 181.0, 170.0], [170.0, 170.0, 170.0]],
+		cells=[
+			build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0),
+			build_detected_cell(shelf_idx=3, cell_idx=1, tool_x=455.0, tool_y=640.0),
+		],
+		scan_config=build_scan_config(z_stall_probe_repeats=3),
+	)
+
+	assert result.sample_count == 1
+	assert [(sample.shelf_idx, sample.cell_idx) for sample in result.samples] == [(3, 1)]
+	assert len(result.dropped_repeats) == 1
+	assert "181.000" in result.dropped_repeats[0]
+	assert "11.000mm apart" in result.dropped_repeats[0]
+
+
 def test_grid_built_analysis_feeds_the_reference_derivation() -> None:
 	"""A rack that moved still needs its datum: wall depths must reach the derivation too."""
 	from openshelf_os.laser_calibration.reference_offsets import derive_reference_offsets

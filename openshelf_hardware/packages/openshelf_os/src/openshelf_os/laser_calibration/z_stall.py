@@ -684,11 +684,16 @@ async def run_z_stall_anchor(
 			)
 			continue
 
-		if len(contacts) > 1 and abs(contacts[-1] - contacts[0]) > repeat_tolerance_mm:
-			# Same point, same force, different answer: the plate moved between the two probes.
+		spread_mm = max(contacts) - min(contacts)
+
+		if len(contacts) > 1 and spread_mm > repeat_tolerance_mm:
+			# Same point, same force, different answers: the plate moved between the probes. The
+			# whole set has to agree, not just the first and last contact: with three or more
+			# repeats a wander in the middle would otherwise be sampled with a median.
 			message = (
-				f"{cell_key[0]}:{cell_key[1]} stalled at {contacts[0]:.3f}mm then {contacts[-1]:.3f}mm "
-				f"({abs(contacts[-1] - contacts[0]):.3f}mm apart, tolerance {repeat_tolerance_mm:.3f}mm)"
+				f"{cell_key[0]}:{cell_key[1]} stalled at "
+				f"{', '.join(f'{contact:.3f}' for contact in contacts)}mm "
+				f"({spread_mm:.3f}mm apart, tolerance {repeat_tolerance_mm:.3f}mm)"
 			)
 			dropped_repeats.append(message)
 			print_status(f"z_stall_anchor=unstable probe={message}")
