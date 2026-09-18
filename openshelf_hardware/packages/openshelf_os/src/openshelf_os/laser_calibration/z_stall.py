@@ -29,7 +29,6 @@ from .recording import load_candidates_from_metadata, load_json_file
 from .scan import ScanDetectedCell, ScanDetectedShelf
 from .staged_scan import (
 	Z_DELTA_MAX_ABS_MM,
-	Z_DELTA_TILT_MIN_X_SPAN_MM,
 	resolve_z_delta_model,
 	wall_depths_by_cell,
 )
@@ -386,7 +385,15 @@ async def run_z_stall_anchor(
 			"reason=limit cannot distinguish 'no wall' from 'wall beyond Z travel'"
 		)
 
+	# Probes are ordered requested shelves first, then reserves, so the run has the requested
+	# coverage once that many distinct shelves are in the sample set.
+	target_shelf_count = min(
+		int(getattr(scan_config, "z_stall_probe_shelves", 3)),
+		len({int(cell.shelf_idx) for cell, _ in probes}),
+	)
+
 	samples: list[ZStallSample] = []
+	sampled_shelves: set[int] = set()
 	skipped: list[str] = []
 	dropped_repeats: list[str] = []
 	last_reason = "none"
@@ -514,12 +521,15 @@ async def run_z_stall_anchor(
 			f"anchor_z_offset_mm={z_offset_anchor_mm:.3f} delta_mm={delta_mm:.3f}"
 		)
 
-		# A trustworthy X slope must come from one shelf (same Y) with an interior corroboration
-		# probe; break once a shelf yields >=3 wide-enough samples.
-		shelf_sample_xs = [sample.probe_x_mm for sample in samples if sample.shelf_idx == cell_key[0]]
-		if len(shelf_sample_xs) >= 3 and (
-			max(shelf_sample_xs) - min(shelf_sample_xs)
-		) >= Z_DELTA_TILT_MIN_X_SPAN_MM:
+		sampled_shelves.add(cell_key[0])
+
+		# The requested shelves come first and a reserve only replaces a shelf that did not yield a
+		# sample, so stop once the run has that many distinct shelves in the sample set.
+		if len(sampled_shelves) >= target_shelf_count:
+			print_status(
+				f"z_stall_anchor=stop shelves_sampled={len(sampled_shelves)} "
+				f"target_shelves={target_shelf_count} samples={len(samples)}"
+			)
 			break
 
 	if len(samples) == 0:

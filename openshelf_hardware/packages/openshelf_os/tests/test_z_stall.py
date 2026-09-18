@@ -594,6 +594,64 @@ async def test_anchor_skips_the_repeat_probe_when_repeats_are_disabled() -> None
 	assert result.samples[0].z_contact_repeat_mm is None
 
 
+@pytest.mark.asyncio
+async def test_anchor_stops_after_the_requested_shelves_and_leaves_the_reserves() -> None:
+	"""A run asking for 3 of 5 shelves probes three, not five: reserves only replace a dropped shelf."""
+	cells = [
+		build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0),
+		build_detected_cell(shelf_idx=1, cell_idx=0, tool_x=350.0, tool_y=290.0),
+		build_detected_cell(shelf_idx=2, cell_idx=0, tool_x=350.0, tool_y=540.0),
+		build_detected_cell(shelf_idx=3, cell_idx=0, tool_x=350.0, tool_y=790.0),
+		build_detected_cell(shelf_idx=4, cell_idx=0, tool_x=350.0, tool_y=1090.0),
+	]
+	scan_config = build_scan_config(z_stall_probe_shelves=3)
+	analysis, candidates = build_probe_analysis(cells, [9.6] * len(cells))
+	probe_results = [
+		(True, 170.0, "stall", None)
+		for _ in range(len(cells) * scan_config.z_stall_probe_repeats)
+	]
+
+	with patch(
+		"openshelf_os.laser_calibration.z_stall.load_json_file",
+		return_value={},
+	):
+		with patch(
+			"openshelf_os.laser_calibration.z_stall.load_candidates_from_metadata",
+			return_value=candidates,
+		):
+			with patch(
+				"openshelf_os.laser_calibration.angle.capture.enter_capture_mode",
+				AsyncMock(),
+			) as enter:
+				with patch(
+					"openshelf_os.laser_calibration.angle.robot_ops.probe_z_until_stall",
+					AsyncMock(side_effect=probe_results),
+				) as probe:
+					result = await run_z_stall_anchor(
+						tool=FakeTool(),
+						analysis=analysis,
+						scan_config=scan_config,
+						side=StorageModuleSide.LEFT,
+						candidates=candidates,
+						x_axis_limit_mm=950.0,
+						x_axis_lower_limit_mm=0.0,
+						z_axis_limit_mm=180.0,
+						xy_offset=(-1.25, -1.75),
+					)
+
+	# Five shelves hold one cell each; with three requested, the chosen shelves are the bottom,
+	# middle and top, so exactly three probes run and the two reserves are never touched.
+	assert probe.call_count == 3 * scan_config.z_stall_probe_repeats
+	assert [(sample.shelf_idx, sample.cell_idx) for sample in result.samples] == [
+		(0, 0),
+		(2, 0),
+		(4, 0),
+	]
+	# Two capture attempts per probe: only shelves 0, 2 and 4 were ever driven to.
+	probed_tool_ys = sorted(call.kwargs["y_mm"] + 1.75 for call in enter.call_args_list)
+	assert probed_tool_ys == pytest.approx([40.0, 40.0, 540.0, 540.0, 1090.0, 1090.0])
+
+
 def test_grid_built_analysis_feeds_the_reference_derivation() -> None:
 	"""A rack that moved still needs its datum: wall depths must reach the derivation too."""
 	from openshelf_os.laser_calibration.reference_offsets import derive_reference_offsets
