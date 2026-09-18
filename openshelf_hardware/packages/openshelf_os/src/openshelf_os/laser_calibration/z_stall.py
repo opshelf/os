@@ -293,6 +293,7 @@ async def run_z_stall_anchor(
 	print_status(
 		f"z_stall_anchor=start side={side_name} rotation_deg={rotation_center_deg:.3f} "
 		f"stage_extension_mm={stage_extension_mm:.2f} candidate_cells={len(probes)} "
+		f"excluded_cells={0 if excluded_cells is None else len(excluded_cells)} "
 		f"probe_target_mm={probe_target_mm:.1f} repeats={probe_repeats} z_axis_limit_mm="
 		f"{'unknown' if z_axis_limit_mm is None else f'{z_axis_limit_mm:.1f}'}"
 	)
