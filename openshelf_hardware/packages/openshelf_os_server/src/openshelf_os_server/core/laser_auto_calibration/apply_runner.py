@@ -355,14 +355,20 @@ class ApplyRunnerMixin:
         scan_config: Any,
         applied: bool,
         persisted: bool,
+        agreement_mm: float | None = None,
     ) -> None:
-        agreement_mm = self._z_stall_datum_agreement_mm(
-            side=result.side,
-            decision=decision,
-            manual_reference=manual_reference,
-            manual_intercept_mm=manual_intercept_mm,
-            scan_config=scan_config,
-        )
+        # The install overwrites the configured model on the run's config, so a recomputation here
+        # would judge the datum against the slope that was just written while the datum's intercept
+        # was derived with the previous one. The caller therefore hands over the number the gate
+        # used; only the refusal publish, which has not judged, leaves it unset and falls back.
+        if agreement_mm is None:
+            agreement_mm = self._z_stall_datum_agreement_mm(
+                side=result.side,
+                decision=decision,
+                manual_reference=manual_reference,
+                manual_intercept_mm=manual_intercept_mm,
+                scan_config=scan_config,
+            )
         entry = LaserAutoCalibrationZStallResult(
             side=result.side,
             intercept_mm=float(decision.intercept_mm),
@@ -460,6 +466,15 @@ class ApplyRunnerMixin:
         # configured slope stands in for one the probe could not measure), and the operator's
         # agreement number has to be the one the gate used.
         decision = self._resolve_z_stall_model(result=result, scan_config=scan_config, side=side)
+        # The agreement is computed while the config still carries the slope the datum was derived
+        # with, and reused for every publication, so the operator's number is the gate's number.
+        agreement_mm = self._z_stall_datum_agreement_mm(
+            side=side,
+            decision=decision,
+            manual_reference=manual_reference,
+            manual_intercept_mm=manual_intercept_mm,
+            scan_config=scan_config,
+        )
         # Publish before judging: a refusal is exactly when the operator needs both numbers.
         await self._publish_z_stall_result(
             result=result,
@@ -469,6 +484,7 @@ class ApplyRunnerMixin:
             scan_config=scan_config,
             applied=False,
             persisted=False,
+            agreement_mm=agreement_mm,
         )
         self._validate_z_stall_against_manual_datum(
             side=side,
@@ -493,6 +509,7 @@ class ApplyRunnerMixin:
             scan_config=scan_config,
             applied=True,
             persisted=True,
+            agreement_mm=agreement_mm,
         )
 
         return float(decision.intercept_mm), float(decision.slope_per_mm)

@@ -550,6 +550,8 @@ def _build_scan_cell(
 	status = CellStatus.AVAILABLE
 	item = None
 	z_offset = 0.0
+	is_manual = False
+	captured_at_stage_mm = None
 	dimensions = Dimensions(
 		width=detected_cell.width_mm,
 		height=detected_cell.height_mm,
@@ -559,9 +561,16 @@ def _build_scan_cell(
 	if existing_cell is not None:
 		status = existing_cell.status
 		item = existing_cell.item
+		# A hand-calibrated cell is the datum every derive/probe run is judged against, and the
+		# stage it was captured at is what makes its z comparable: rebuilding a shelf must not
+		# quietly drop either, or the next run fails its pre-motion reference check.
+		is_manual = getattr(existing_cell, "is_manual", False) is True
 		dimensions = existing_cell.dimensions
 		if existing_cell.calibration_point is not None:
 			z_offset = existing_cell.calibration_point.z_offset
+			captured_at_stage_mm = getattr(
+				existing_cell.calibration_point, "z_captured_at_stage_mm", None
+			)
 
 	return Cell(
 		cell_idx=cell_idx,
@@ -572,8 +581,10 @@ def _build_scan_cell(
 			y=detected_cell.tool_y_mm,
 			z_offset=z_offset,
 			s=side_number,
+			z_captured_at_stage_mm=captured_at_stage_mm,
 		),
 		dimensions=dimensions,
+		is_manual=is_manual,
 	)
 
 
