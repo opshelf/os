@@ -804,7 +804,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 	correlation_id = getattr(request.state, "correlation_id", None)
 
 	if sentry_enabled is True and sentry_sdk.is_initialized() is True:
-		with sentry_sdk.push_scope() as scope:
+		with sentry_sdk.new_scope() as scope:
 			if correlation_id:
 				scope.set_tag("correlation_id", correlation_id)
 			scope.set_tag("path", request.url.path)

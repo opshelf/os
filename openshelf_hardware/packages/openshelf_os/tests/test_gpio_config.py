@@ -1,6 +1,13 @@
 import logging
 
-from openshelf_os.config.models import GpioConfig, Robot, compare_gpio_pins_to_defaults
+import pytest
+
+from openshelf_os.config.models import (
+    GPIO_PIN_ALIASES,
+    GpioConfig,
+    Robot,
+    compare_gpio_pins_to_defaults,
+)
 from openshelf_os.robot.core import Robot as RobotCore
 from hardware.gpio.manager import GpioManager
 
@@ -91,8 +98,8 @@ def test_robot_gpio_empty_object_expands_to_defaults() -> None:
     assert robot.gpio.pins["estop"].pin == 10
     assert robot.gpio.pins["estop"].pull == "off"
     assert robot.gpio.pins["estop"].inverted is False
-    assert robot.gpio.pins["io_limit_max"].pin == 0
-    assert robot.gpio.pins["io_limit_min"].pin == 15
+    assert robot.gpio.pins["io_lim_max"].pin == 0
+    assert robot.gpio.pins["io_lim_min"].pin == 15
     assert robot.gpio.pins["io_1"].pin == 3
     physical_keys = [(pin.board, pin.expander, pin.pin) for pin in robot.gpio.pins.values()]
     assert len(physical_keys) == len(set(physical_keys))
@@ -117,6 +124,16 @@ def test_legacy_power_control_pin_is_renamed_to_pwr_out0() -> None:
     assert "power_control" not in gpio.pins
     assert gpio.pins["pwr_out0"].pin == 12
     assert gpio.pins["pwr_out1"].pin == 13
+
+
+@pytest.mark.parametrize("legacy,modern", sorted(GPIO_PIN_ALIASES.items()))
+def test_legacy_pin_names_map_to_defaults(legacy: str, modern: str) -> None:
+    """Every alias migrates its key and targets a real default pin."""
+    spec = GpioConfig().pins[modern].model_dump()
+    gpio = GpioConfig.model_validate({"pins": {legacy: spec}})
+
+    assert legacy not in gpio.pins
+    assert gpio.pins[modern].pin == spec["pin"]
 
 
 def test_explicit_pwr_out0_wins_over_the_legacy_alias() -> None:
