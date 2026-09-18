@@ -149,13 +149,9 @@ def test_select_z_stall_probes_returns_x_extremes_middle_shelf_first() -> None:
 			),
 		]
 	)
-	candidate_lookup = {
-		(0, 0): SimpleNamespace(wall_depth_mm=10.5),
-		(1, 0): SimpleNamespace(wall_depth_mm=10.0),
-		(1, 1): SimpleNamespace(wall_depth_mm=9.9),
-	}
+	wall_depths = {(0, 0): 10.5, (1, 0): 10.0, (1, 1): 9.9}
 
-	result = select_z_stall_probes(analysis, candidate_lookup)
+	result = select_z_stall_probes(analysis, wall_depths)
 
 	# Middle shelf (idx 1) first, then its lowest-X and highest-X cells that have a
 	# wall depth (cell_idx 2 is skipped as it has none), then shelf 0's single valid cell.
@@ -196,14 +192,10 @@ def test_select_z_stall_probes_skips_cells_whose_probe_x_exceeds_the_axis_limit(
 			)
 		]
 	)
-	candidate_lookup = {
-		(3, 0): SimpleNamespace(wall_depth_mm=9.9),
-		(3, 3): SimpleNamespace(wall_depth_mm=9.9),
-		(3, 6): SimpleNamespace(wall_depth_mm=9.9),
-	}
+	wall_depths = {(3, 0): 9.9, (3, 3): 9.9, (3, 6): 9.9}
 
 	# x axis limit 950, probe shift 20 -> a probe cell must satisfy tool_x <= 930
-	result = select_z_stall_probes(analysis, candidate_lookup, 930.0)
+	result = select_z_stall_probes(analysis, wall_depths, 930.0)
 	probed = [(cell.shelf_idx, cell.cell_idx) for cell, _ in result]
 
 	assert (3, 6) not in probed
@@ -222,12 +214,9 @@ def test_select_z_stall_probes_skips_cells_below_the_axis_lower_limit() -> None:
 			)
 		]
 	)
-	candidate_lookup = {
-		(0, 0): SimpleNamespace(wall_depth_mm=9.9),
-		(0, 1): SimpleNamespace(wall_depth_mm=9.9),
-	}
+	wall_depths = {(0, 0): 9.9, (0, 1): 9.9}
 
-	result = select_z_stall_probes(analysis, candidate_lookup, None, 400.0)
+	result = select_z_stall_probes(analysis, wall_depths, None, 400.0)
 
 	assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in result] == [(0, 1)]
 
@@ -244,12 +233,9 @@ def test_select_z_stall_probes_without_a_limit_keeps_every_cell() -> None:
 			)
 		]
 	)
-	candidate_lookup = {
-		(0, 0): SimpleNamespace(wall_depth_mm=9.9),
-		(0, 1): SimpleNamespace(wall_depth_mm=9.9),
-	}
+	wall_depths = {(0, 0): 9.9, (0, 1): 9.9}
 
-	result = select_z_stall_probes(analysis, candidate_lookup, None)
+	result = select_z_stall_probes(analysis, wall_depths, None)
 
 	assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in result] == [(0, 0), (0, 1)]
 
@@ -267,13 +253,9 @@ def test_select_z_stall_probes_skips_excluded_cells() -> None:
 			)
 		]
 	)
-	candidate_lookup = {
-		(0, 0): SimpleNamespace(wall_depth_mm=9.9),
-		(0, 1): SimpleNamespace(wall_depth_mm=9.9),
-		(0, 2): SimpleNamespace(wall_depth_mm=9.9),
-	}
+	wall_depths = {(0, 0): 9.9, (0, 1): 9.9, (0, 2): 9.9}
 
-	result = select_z_stall_probes(analysis, candidate_lookup, None, None, excluded_cells={(0, 1)})
+	result = select_z_stall_probes(analysis, wall_depths, None, None, excluded_cells={(0, 1)})
 
 	assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in result] == [(0, 0), (0, 2)]
 

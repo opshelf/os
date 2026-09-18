@@ -24,13 +24,14 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from openshelf_os.storage import CellStatus, StorageModuleSide
-from .core import get_laser_sample_settle_ms, print_status
+from .core import get_laser_sample_settle_ms, get_scan_xy_offset, print_status
 from .recording import load_candidates_from_metadata, load_json_file
 from .scan import ScanDetectedCell, ScanDetectedShelf
 from .staged_scan import (
 	Z_DELTA_MAX_ABS_MM,
 	Z_DELTA_TILT_MIN_X_SPAN_MM,
-	build_candidate_lookup_by_cell,
+	collect_detected_cells,
+	find_candidate_for_detected_cell,
 	resolve_z_delta_model,
 )
 
@@ -122,9 +123,42 @@ def is_probe_reachable(
 	return True
 
 
+def wall_depths_by_cell(
+	*,
+	analysis: Any,
+	candidates: list[Any] | None = None,
+) -> dict[tuple[int, int], float]:
+	"""Wall depth per cell: the sweep candidate that measured it, or one carried by the analysis.
+
+	A grid-built analysis (rack moved since the last scan) supplies its own depths, because its
+	positions come from stored calibration points rather than a scan frame.
+	"""
+	lookup: dict[tuple[int, int], float] = {}
+
+	if candidates:
+		for detected_cell in collect_detected_cells(analysis):
+			matched_candidate = find_candidate_for_detected_cell(
+				detected_cell=detected_cell,
+				candidates=candidates,
+			)
+
+			if matched_candidate is None or matched_candidate.wall_depth_mm is None:
+				continue
+
+			lookup[(int(detected_cell.shelf_idx), int(detected_cell.cell_idx))] = float(
+				matched_candidate.wall_depth_mm
+			)
+
+	for key, wall_depth_mm in getattr(analysis, "wall_depths_by_cell", {}).items():
+		if wall_depth_mm is not None and float(wall_depth_mm) > 0.0:
+			lookup[(int(key[0]), int(key[1]))] = float(wall_depth_mm)
+
+	return lookup
+
+
 def select_z_stall_probes(
 	analysis: Any,
-	candidate_lookup: dict[tuple[int, int], Any],
+	wall_depths: dict[tuple[int, int], float],
 	max_probe_tool_x_mm: float | None = None,
 	min_probe_tool_x_mm: float | None = None,
 	excluded_cells: set[tuple[int, int]] | None = None,
@@ -154,12 +188,10 @@ def select_z_stall_probes(
 	seen_cells: set[tuple[int, int]] = set()
 	for shelf in shelf_sequence:
 		valid_cells = [
-			(cell, float(candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm))
+			(cell, float(wall_depths[(int(cell.shelf_idx), int(cell.cell_idx))]))
 			for cell in sorted(shelf.cells, key=lambda cell: float(cell.center_x_mm))
 			if (int(cell.shelf_idx), int(cell.cell_idx)) not in excluded
-			and candidate_lookup.get((cell.shelf_idx, cell.cell_idx)) is not None
-			and candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm is not None
-			and float(candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm) > 0.0
+			and float(wall_depths.get((int(cell.shelf_idx), int(cell.cell_idx)), 0.0)) > 0.0
 			and is_probe_reachable(cell, max_probe_tool_x_mm, min_probe_tool_x_mm)
 		]
 
@@ -226,11 +258,14 @@ async def run_z_stall_anchor(
 	contact separates the intercept from the tilt: every one of those means the fit would place
 	the gripper somewhere it has never been.
 	"""
-	metadata = load_json_file(Path(str(analysis.metadata_path)))
-	if candidates is None:
-		candidates = load_candidates_from_metadata(metadata)
+	loaded_candidates: list[Any] = list(candidates or [])
 
-	candidate_lookup = build_candidate_lookup_by_cell(analysis=analysis, candidates=candidates)
+	# A grid-built analysis has no run metadata: its wall depths arrive with the analysis.
+	if len(loaded_candidates) == 0 and getattr(analysis, "metadata_path", None) is not None:
+		metadata = load_json_file(Path(str(analysis.metadata_path)))
+		loaded_candidates = load_candidates_from_metadata(metadata)
+
+	probe_wall_depths = wall_depths_by_cell(analysis=analysis, candidates=loaded_candidates)
 
 	# The probe drives to (tool_x + xy_offset) + probe_x_shift, so cap tool_x by the axis limit
 	# minus BOTH terms. Without this the axis clamps, the tool lands over the cell's tray hole
@@ -249,7 +284,7 @@ async def run_z_stall_anchor(
 
 	probes = select_z_stall_probes(
 		analysis,
-		candidate_lookup,
+		probe_wall_depths,
 		max_probe_tool_x_mm,
 		min_probe_tool_x_mm,
 		excluded_cells=excluded_cells,
@@ -594,3 +629,79 @@ def restrict_analysis(
 		)
 
 	return SimpleNamespace(shelves=shelves, metadata_path=getattr(analysis, "metadata_path", None))
+
+
+def build_probe_analysis_from_grid(
+	*,
+	grid: Any,
+	side: StorageModuleSide,
+	scan_config: Any,
+	wall_depths: dict[tuple[int, int], float],
+	shelf_idx: int | None = None,
+	cells: set[tuple[int, int]] | None = None,
+) -> Any:
+	"""Probe targets taken from the stored calibration points rather than a saved scan.
+
+	For a rack that has moved since the last scan the stored points are the best-known positions
+	of its openings, because they are what the operator dialled in by hand. They are grab points,
+	so they are converted back into the detection frame the probe aims from
+	(`tool = grab - xy_offset`), and the wall depth still comes from a sweep, since the probe
+	subtracts it: a cell without one contributes no delta and is skipped.
+	"""
+	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
+	offset_y_mm = 0.0 if xy_offset is None else float(xy_offset[1])
+	laser_offset_x_mm = float(getattr(scan_config, "laser_offset_x_mm", 0.0) or 0.0)
+	laser_offset_y_mm = float(getattr(scan_config, "laser_offset_y_mm", 0.0) or 0.0)
+	hole_width_mm = float(getattr(scan_config, "expected_hole_width_mm", 26.0))
+	hole_height_mm = float(getattr(scan_config, "expected_hole_height_mm", 30.0))
+
+	cells_by_shelf: dict[int, list[ScanDetectedCell]] = {}
+
+	for shelf in grid.get_side(side):
+		if shelf_idx is not None and int(shelf.shelf_idx) != int(shelf_idx):
+			continue
+
+		for cell in shelf.cells:
+			key = (int(shelf.shelf_idx), int(cell.cell_idx))
+			point = cell.calibration_point
+
+			if point is None or (cells is not None and key not in cells):
+				continue
+
+			tool_x_mm = float(point.x) - offset_x_mm
+			tool_y_mm = float(point.y) - offset_y_mm
+			cells_by_shelf.setdefault(key[0], []).append(
+				ScanDetectedCell(
+					shelf_idx=key[0],
+					cell_idx=key[1],
+					center_x_mm=tool_x_mm - laser_offset_x_mm,
+					center_y_mm=tool_y_mm + laser_offset_y_mm,
+					tool_x_mm=tool_x_mm,
+					tool_y_mm=tool_y_mm,
+					width_mm=hole_width_mm,
+					height_mm=hole_height_mm,
+					point_count=0,
+					bbox_x_min=tool_x_mm - laser_offset_x_mm - (hole_width_mm / 2.0),
+					bbox_x_max=tool_x_mm - laser_offset_x_mm + (hole_width_mm / 2.0),
+					bbox_y_min=tool_y_mm - (hole_height_mm / 2.0),
+					bbox_y_max=tool_y_mm + (hole_height_mm / 2.0),
+				)
+			)
+
+	shelves = [
+		ScanDetectedShelf(
+			shelf_idx=shelf_index,
+			center_y_mm=float(median([cell.tool_y_mm for cell in shelf_cells])),
+			shelf_height_mm=max(float(cell.height_mm) for cell in shelf_cells),
+			shelf_width_mm=sum(float(cell.width_mm) for cell in shelf_cells),
+			cells=sorted(shelf_cells, key=lambda cell: int(cell.cell_idx)),
+		)
+		for shelf_index, shelf_cells in sorted(cells_by_shelf.items())
+	]
+
+	return SimpleNamespace(
+		shelves=shelves,
+		metadata_path=None,
+		wall_depths_by_cell=dict(wall_depths),
+	)

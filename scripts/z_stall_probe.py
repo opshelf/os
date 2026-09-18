@@ -50,6 +50,15 @@ def build_parser() -> argparse.ArgumentParser:
 		type=Path,
 		help="Run directory to take the detected cells from; defaults to the newest saved run.",
 	)
+	parser.add_argument(
+		"--from-grid",
+		action="store_true",
+		help=(
+			"Take the probe targets from the stored calibration points instead of a scan frame. Use "
+			"this when the rack has moved since the last scan: the stored points are what the "
+			"operator dialled in. Wall depths still come from a run's sweep."
+		),
+	)
 	parser.add_argument("--shelf", type=int, help="Probe only this shelf.")
 	parser.add_argument(
 		"--cell",
@@ -126,6 +135,28 @@ def newest_run_dir(config_path: Path, side: StorageModuleSide) -> Path:
 	return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
+def resolve_motor_limits(config: Any, motor_name: str) -> tuple[float | None, float | None]:
+	motor = next(
+		(
+			entry
+			for entry in config.robot.tool.motors
+			if getattr(entry, "motor_name", None) == motor_name
+		),
+		None,
+	)
+
+	if motor is None:
+		return None, None
+
+	upper_mm = getattr(motor, "lim", None)
+	lower_mm = getattr(motor, "lower_lim", None)
+
+	return (
+		None if upper_mm is None else float(upper_mm),
+		None if lower_mm is None else float(lower_mm),
+	)
+
+
 def resolve_probe_reach(
 	config: Any,
 	*,
@@ -136,20 +167,7 @@ def resolve_probe_reach(
 	xy_offset = laser_module.get_scan_xy_offset(scan_config=scan_config, side=side)
 	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
 	shift_mm = float(scan_config.z_stall_probe_x_shift_mm)
-	motor = next(
-		(
-			entry
-			for entry in config.robot.tool.motors
-			if getattr(entry, "motor_name", None) == "x_axis"
-		),
-		None,
-	)
-
-	if motor is None:
-		return None, None
-
-	upper_mm = getattr(motor, "lim", None)
-	lower_mm = getattr(motor, "lower_lim", None)
+	upper_mm, lower_mm = resolve_motor_limits(config, "x_axis")
 
 	return (
 		None if upper_mm is None else float(upper_mm) - offset_x_mm - shift_mm,
@@ -309,14 +327,35 @@ async def main() -> int:
 
 	print(f"run: {metadata_path}")
 
-	analysis = laser_module.build_probe_analysis(metadata=metadata, metadata_path=metadata_path)
-	if args.shelf is not None or cells is not None:
-		analysis = laser_module.restrict_analysis(analysis, shelf_idx=args.shelf, cells=cells)
+	candidates = laser_module.load_candidates_from_metadata(metadata)
+
+	if args.from_grid is True:
+		wall_depths = {
+			(int(candidate.shelf_idx), int(candidate.cell_idx)): float(candidate.wall_depth_mm)
+			for candidate in candidates
+			if getattr(candidate, "shelf_idx", None) is not None
+			and getattr(candidate, "cell_idx", None) is not None
+			and candidate.wall_depth_mm is not None
+		}
+		print(f"positions: stored calibration points ({len(wall_depths)} sweep wall depths available)")
+		analysis = laser_module.build_probe_analysis_from_grid(
+			grid=grid,
+			side=side,
+			scan_config=scan_config,
+			wall_depths=wall_depths,
+			shelf_idx=args.shelf,
+			cells=cells,
+		)
+	else:
+		analysis = laser_module.build_probe_analysis(metadata=metadata, metadata_path=metadata_path)
+		if args.shelf is not None or cells is not None:
+			analysis = laser_module.restrict_analysis(analysis, shelf_idx=args.shelf, cells=cells)
 
 	if len(analysis.shelves) == 0:
 		print("nothing to probe: the run has no detected cells in that scope")
 		return 1
 
+	z_axis_limit_mm, _z_axis_lower_limit_mm = resolve_motor_limits(config, "z_axis")
 	excluded_cells = laser_module.excluded_probe_cells(
 		grid=grid,
 		side=side,
@@ -339,16 +378,13 @@ async def main() -> int:
 		# A probe without a datum is still worth running: it measures the geometry, it just
 		# cannot be called correct until a hand-calibrated cell backs it up.
 		print(f"reference datum unavailable: {exc}")
-	candidates = laser_module.load_candidates_from_metadata(metadata)
-	candidate_lookup = laser_module.build_candidate_lookup_by_cell(
-		analysis=analysis, candidates=candidates
-	)
+	probe_wall_depths = laser_module.wall_depths_by_cell(analysis=analysis, candidates=candidates)
 	max_probe_tool_x_mm, min_probe_tool_x_mm = resolve_probe_reach(
 		config, side=side, scan_config=scan_config
 	)
 	probes = laser_module.select_z_stall_probes(
 		analysis,
-		candidate_lookup,
+		probe_wall_depths,
 		max_probe_tool_x_mm,
 		min_probe_tool_x_mm,
 		excluded_cells=excluded_cells,
@@ -378,10 +414,13 @@ async def main() -> int:
 			scan_config=scan_config,
 			side=side,
 			excluded_cells=excluded_cells,
-			x_axis_limit_mm=None if max_probe_tool_x_mm is None else max_probe_tool_x_mm + float(scan_config.z_stall_probe_x_shift_mm),
+			x_axis_limit_mm=None
+			if max_probe_tool_x_mm is None
+			else max_probe_tool_x_mm + float(scan_config.z_stall_probe_x_shift_mm),
 			x_axis_lower_limit_mm=None
 			if min_probe_tool_x_mm is None
 			else min_probe_tool_x_mm + float(scan_config.z_stall_probe_x_shift_mm),
+			z_axis_limit_mm=z_axis_limit_mm,
 			xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
 			should_abort=None,
 		)
