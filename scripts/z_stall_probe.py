@@ -236,8 +236,9 @@ def report_plan(
 	probe_count = len(probes)
 	print(
 		f"probe candidates ({probe_count}): one opening on each of {shelves_to_probe} shelf(s) spread "
-		f"over the module, then one per remaining shelf as a reserve. Probing stops once the samples "
-		f"span {laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:.0f}mm."
+		f"over the module, then one per remaining shelf as a reserve. Probing stops as soon as "
+		f"{shelves_to_probe} shelf(s) have yielded a sample, so the reserves only replace a shelf "
+		"that did not."
 	)
 	for cell, wall_depth_mm in probes:
 		print(
@@ -297,20 +298,28 @@ def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side:
 	for skipped in result.skipped:
 		print(f"  skipped: {skipped}")
 
+	# What the product would install, not what the probe measured: a tilt the probe could not span
+	# is replaced by the configured one, and that substitution re-bases the intercept.
+	decision = laser_module.resolve_z_stall_model(result=result, scan_config=scan_config, side=side)
 	model = {
-		"intercept_mm": round(float(result.intercept_mm), 3),
-		"slope_per_mm": float(result.slope_per_mm),
+		"intercept_mm": round(float(decision.intercept_mm), 3),
+		"slope_per_mm": float(decision.slope_per_mm),
 		"stage_extension_mm": float(result.stage_extension_mm),
 		"z_place_mm": float(result.z_place_mm),
 	}
 	side_name = "left" if side == StorageModuleSide.LEFT else "right"
 	print(f"model for robot.grid.scan.{side_name}_z_offset_model: {model}")
+	print(
+		f"  model_source={decision.source} raw_probe_intercept_mm={float(result.intercept_mm):.3f} "
+		f"raw_probe_slope_per_mm={float(result.slope_per_mm):.5f} "
+		f"fit_centroid_x_mm={float(result.fit_centroid_x_mm):.1f}"
+	)
 
 	configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
 	configured_slope_mm = 0.0 if configured_model is None else float(configured_model.slope_per_mm)
 	agreement_mm = laser_module.z_model_datum_agreement_mm(
-		intercept_mm=float(result.intercept_mm),
-		slope_per_mm=float(result.slope_per_mm),
+		intercept_mm=float(decision.intercept_mm),
+		slope_per_mm=float(decision.slope_per_mm),
 		configured_slope_per_mm=configured_slope_mm,
 		manual_reference=manual_reference,
 	)
@@ -327,7 +336,8 @@ def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side:
 	print(
 		f"verdict: agreement with the reference datum {agreement_mm:.3f}mm (tolerance {tolerance_mm:.2f}mm) "
 		f"judged at manual cell(s) [{datum_cells}], where the two models put them "
-		f"(probe slope {float(result.slope_per_mm):.5f} vs datum slope {configured_slope_mm:.5f}) - "
+		f"(model slope {float(decision.slope_per_mm):.5f} [{decision.source}] vs datum slope "
+		f"{configured_slope_mm:.5f}) - "
 		f"{'within tolerance' if agreement_ok else 'OUT OF TOLERANCE'}"
 	)
 
