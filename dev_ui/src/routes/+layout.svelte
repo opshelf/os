@@ -21,7 +21,7 @@
 
 	const links = [
 		{ href: '/', label: 'status' },
-		{ href: '/calibration', label: 'storage' },
+		{ href: '/storage', label: 'storage' },
 		{ href: '/camera', label: 'cameras' },
 		{ href: '/scale', label: 'scale' },
 		{ href: '/sizer', label: 'sizer' },

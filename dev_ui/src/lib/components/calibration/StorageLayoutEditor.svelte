@@ -1,0 +1,1447 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { browser } from '$app/environment';
+	import { page } from '$app/state';
+	import {
+		getStorageGrid,
+		addShelf,
+		addCell,
+		deleteShelf,
+		deleteCell,
+		updateGridCells,
+		type GridCellBatchItem,
+		getBins,
+		updateTrayLayout,
+		assignTray,
+		unassignTray,
+		type StorageBin,
+		type StorageModuleSide,
+		type StorageGrid,
+		type Shelf,
+		type Cell
+	} from '$lib/api';
+	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+
+	let storageGrid = $state<StorageGrid | null>(null);
+	let loading = $state<boolean>(true);
+	let loadError = $state<string>('');
+	let error = $state<string>('');
+	let busy = $state<boolean>(false);
+
+	let selectedKeys = $state<Set<string>>(new Set());
+	let anchorSide = $state<StorageModuleSide | null>(null);
+	let anchorShelf = $state<number | null>(null);
+	let anchorCell = $state<number | null>(null);
+	let overlayOpen = $state<boolean>(false);
+
+	const selectedSide = $derived.by(
+		(): StorageModuleSide =>
+			page.url.searchParams.get('side') === 'right_module' ? 'right_module' : 'left_module'
+	);
+
+	const sideInitial = $derived(selectedSide === 'right_module' ? 'R' : 'L');
+
+	function sideHref(side: StorageModuleSide): string {
+		const url = new URL(page.url.pathname, location.origin);
+		url.searchParams.set('side', side);
+		return url.pathname + url.search;
+	}
+
+	function getShelves(): Shelf[] {
+		if (storageGrid === null) {
+			return [];
+		}
+		const shelves =
+			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+		// Highest index renders on top, so a newly added shelf (next index) appears first.
+		return [...shelves].sort((a, b) => b.shelf_idx - a.shelf_idx);
+	}
+
+	function cellKey(side: StorageModuleSide, shelfIdx: number, cellIdx: number): string {
+		return `${side}:${shelfIdx}:${cellIdx}`;
+	}
+
+	function parseCellKey(key: string): { side: StorageModuleSide; shelf: number; cell: number } | null {
+		const parts = key.split(':');
+		if (parts.length !== 3) {
+			return null;
+		}
+		const [side, shelf, cell] = parts;
+		return { side: side as StorageModuleSide, shelf: parseInt(shelf, 10), cell: parseInt(cell, 10) };
+	}
+
+	const selectedLabels = $derived.by((): string[] => {
+		const prefix = `${selectedSide}:`;
+		const entries: Array<{ shelf: number; cell: number; label: string }> = [];
+
+		for (const key of selectedKeys) {
+			if (key.startsWith(prefix) === false) {
+				continue;
+			}
+			const parsed = parseCellKey(key);
+			if (parsed === null) {
+				continue;
+			}
+			entries.push({ shelf: parsed.shelf, cell: parsed.cell, label: `${sideInitial}:${parsed.shelf}:${parsed.cell}` });
+		}
+
+		entries.sort((a, b) => a.shelf - b.shelf || a.cell - b.cell);
+		return entries.map((entry) => entry.label);
+	});
+
+	const selectionCount = $derived(selectedLabels.length);
+	const hasSelection = $derived(selectionCount > 0);
+
+	function isSelected(side: StorageModuleSide, shelfIdx: number, cellIdx: number): boolean {
+		return selectedKeys.has(cellKey(side, shelfIdx, cellIdx));
+	}
+
+	function doesCellExist(shelfIdx: number, cellIdx: number): boolean {
+		if (storageGrid === null) {
+			return false;
+		}
+		const shelves =
+			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+
+		return shelves.some(
+			(shelf) => shelf.shelf_idx === shelfIdx && shelf.cells.some((cell) => cell.cell_idx === cellIdx)
+		);
+	}
+
+	function getShelfCells(shelfIdx: number): Shelf['cells'] | null {
+		if (storageGrid === null) {
+			return null;
+		}
+		const shelves =
+			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+		const shelf = shelves.find((candidate) => candidate.shelf_idx === shelfIdx);
+		return shelf === undefined ? null : shelf.cells;
+	}
+
+	function setAnchor(shelfIdx: number, cellIdx: number | null): void {
+		anchorSide = selectedSide;
+		anchorShelf = shelfIdx;
+		anchorCell = cellIdx;
+	}
+
+	// anchorCell === null means the anchor is a whole shelf (set by a shelf-label click).
+	function getAnchor(): { shelf: number; cell: number | null } | null {
+		if (anchorSide !== selectedSide || anchorShelf === null) {
+			return null;
+		}
+		if (getShelfCells(anchorShelf) === null) {
+			return null;
+		}
+		if (anchorCell !== null && doesCellExist(anchorShelf, anchorCell) === false) {
+			return { shelf: anchorShelf, cell: null };
+		}
+		return { shelf: anchorShelf, cell: anchorCell };
+	}
+
+	function columnRange(anchorCell: number | null, anchorShelf: number, cellIdx: number): [number, number] {
+		if (anchorCell !== null) {
+			return [Math.min(anchorCell, cellIdx), Math.max(anchorCell, cellIdx)];
+		}
+		// Whole-shelf anchor: the rectangle starts at the anchor shelf's first cell.
+		const cells = getShelfCells(anchorShelf) ?? [];
+		const firstCell = cells.reduce(
+			(min, cell) => Math.min(min, cell.cell_idx),
+			Number.MAX_SAFE_INTEGER
+		);
+		if (firstCell === Number.MAX_SAFE_INTEGER) {
+			// Anchor shelf has no cells: leave the column dimension unbounded.
+			return [Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
+		}
+		return [Math.min(firstCell, cellIdx), Math.max(firstCell, cellIdx)];
+	}
+
+	function buildRectangleSelection(
+		fromShelf: number,
+		toShelf: number,
+		cellMin: number | undefined,
+		cellMax: number | undefined
+	): Set<string> {
+		const shelfMin = Math.min(fromShelf, toShelf);
+		const shelfMax = Math.max(fromShelf, toShelf);
+		const next = new Set<string>();
+
+		for (const shelf of getShelves()) {
+			if (shelf.shelf_idx < shelfMin || shelf.shelf_idx > shelfMax) {
+				continue;
+			}
+			for (const cell of shelf.cells) {
+				const inColumns =
+					cellMin === undefined ||
+					cellMax === undefined ||
+					(cell.cell_idx >= cellMin && cell.cell_idx <= cellMax);
+				if (inColumns) {
+					next.add(cellKey(selectedSide, shelf.shelf_idx, cell.cell_idx));
+			}
+		}
+	}
+
+		return next;
+	}
+
+	function didClickCell(
+		event: Pick<MouseEvent, 'shiftKey' | 'ctrlKey' | 'metaKey'>,
+		shelfIdx: number,
+		cellIdx: number
+	): void {
+		const key = cellKey(selectedSide, shelfIdx, cellIdx);
+
+		if (event.shiftKey === true) {
+			const anchor = getAnchor();
+
+			if (anchor !== null) {
+				const [cellMin, cellMax] = columnRange(anchor.cell, anchor.shelf, cellIdx);
+				selectedKeys = buildRectangleSelection(anchor.shelf, shelfIdx, cellMin, cellMax);
+				setAnchor(shelfIdx, cellIdx);
+				return;
+			}
+		}
+
+		if (event.ctrlKey === true || event.metaKey === true) {
+			const next = new Set(selectedKeys);
+			if (next.has(key)) {
+				next.delete(key);
+			} else {
+				next.add(key);
+		}
+			selectedKeys = next;
+			setAnchor(shelfIdx, cellIdx);
+			return;
+		}
+
+		if (selectedKeys.has(key) === true) {
+			const next = new Set(selectedKeys);
+			next.delete(key);
+			selectedKeys = next;
+		} else {
+			selectedKeys = new Set([key]);
+		}
+		setAnchor(shelfIdx, cellIdx);
+	}
+
+	function didClickShelf(
+		event: Pick<MouseEvent, 'shiftKey' | 'ctrlKey' | 'metaKey'>,
+		shelfIdx: number
+	): void {
+		if (event.shiftKey === true) {
+			const anchor = getAnchor();
+
+			if (anchor !== null) {
+				selectedKeys = buildRectangleSelection(anchor.shelf, shelfIdx, undefined, undefined);
+				setAnchor(shelfIdx, null);
+				return;
+			}
+		}
+
+		const keys = (getShelfCells(shelfIdx) ?? []).map((cell) =>
+			cellKey(selectedSide, shelfIdx, cell.cell_idx)
+		);
+
+		if (keys.length === 0) {
+			setAnchor(shelfIdx, null);
+			return;
+		}
+
+		const fullySelected = keys.every((candidate) => selectedKeys.has(candidate));
+
+		if (event.ctrlKey === true || event.metaKey === true) {
+			const next = new Set(selectedKeys);
+			if (fullySelected) {
+				for (const candidate of keys) {
+					next.delete(candidate);
+				}
+			} else {
+				for (const candidate of keys) {
+				next.add(candidate);
+			}
+			}
+			selectedKeys = next;
+		} else if (fullySelected) {
+			const next = new Set(selectedKeys);
+			for (const candidate of keys) {
+				next.delete(candidate);
+		}
+			selectedKeys = next;
+		} else {
+			selectedKeys = new Set(keys);
+		}
+
+		setAnchor(shelfIdx, null);
+	}
+
+	function didPressShelf(event: KeyboardEvent, shelfIdx: number): void {
+		if (event.key !== 'Enter' && event.key !== ' ') {
+			return;
+		}
+		event.preventDefault();
+		didClickShelf(event, shelfIdx);
+	}
+
+	function didPressCell(event: KeyboardEvent, shelfIdx: number, cellIdx: number): void {
+		if (event.key !== 'Enter' && event.key !== ' ') {
+			return;
+		}
+		event.preventDefault();
+		didClickCell(event, shelfIdx, cellIdx);
+	}
+
+	function clearCurrentSideSelection(): void {
+		const prefix = `${selectedSide}:`;
+		selectedKeys = new Set([...selectedKeys].filter((key) => key.startsWith(prefix) === false));
+
+		if (anchorSide === selectedSide) {
+			anchorSide = null;
+			anchorShelf = null;
+			anchorCell = null;
+		}
+	}
+
+	function didEdit(): void {
+		overlayOpen = true;
+	}
+
+	function didDeselect(): void {
+		clearCurrentSideSelection();
+		overlayOpen = false;
+	}
+
+	// A scrim click only counts when the press both started and ended in the dimmed area.
+	// The backdrop is pointer-events:none, so a drag that starts on the panel and ends in the
+	// dimmed area (or vice versa) still dispatches one click whose target is a shared
+	// ancestor; the mousedown and mouseup flags are what tell the two apart.
+	let scrimPressInBounds = false;
+	let scrimReleaseInBounds = false;
+
+	function pressStartsInScrim(event: MouseEvent): boolean {
+		if (overlayOpen === false) {
+			return false;
+		}
+		const target = event.target instanceof Element ? event.target : null;
+		if (target === null) {
+			return false;
+		}
+		return target.closest('.selection-overlay') === null;
+	}
+
+	function didScrimMouseDown(event: MouseEvent): void {
+		scrimPressInBounds = pressStartsInScrim(event);
+	}
+
+	function didScrimMouseUp(event: MouseEvent): void {
+		scrimReleaseInBounds = pressStartsInScrim(event);
+	}
+
+	function didClickOutside(event: MouseEvent): void {
+		const pressedInScrim = scrimPressInBounds;
+		const releasedInScrim = scrimReleaseInBounds;
+		scrimPressInBounds = false;
+		scrimReleaseInBounds = false;
+		if (overlayOpen === false) {
+			return;
+		}
+		if (pressedInScrim === false || releasedInScrim === false) {
+			return;
+		}
+		const target = event.target instanceof Element ? event.target : null;
+		if (target === null) {
+			return;
+		}
+		if (target.closest('.storage-cell') !== null) {
+			return;
+		}
+		if (target.closest('.selection-overlay') !== null) {
+			return;
+		}
+		if (target.closest('button, a') !== null) {
+			return;
+		}
+
+		overlayOpen = false;
+	}
+
+	type EditorField = 'status' | 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
+	type NumericEditorField = 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
+
+	const EDITOR_FIELDS: EditorField[] = ['status', 'x', 'y', 'z', 'width', 'height', 'length'];
+	const XYZ_COLUMNS: NumericEditorField[] = ['x', 'y', 'z'];
+	const DIMENSION_COLUMNS: Array<{ field: NumericEditorField; label: string }> = [
+		{ field: 'width', label: 'width' },
+		{ field: 'height', label: 'height' },
+		{ field: 'length', label: 'length' }
+	];
+	const CELL_STATUSES = ['available', 'occupied', 'maintenance', 'disabled'];
+
+	let editorValues = $state<Record<EditorField, string>>({
+		status: '',
+		x: '',
+		y: '',
+		z: '',
+		width: '',
+		height: '',
+		length: ''
+	});
+
+	const selectedCells = $derived.by(
+		(): Array<{ shelfIdx: number; cell: Cell }> => {
+			if (storageGrid === null) {
+				return [];
+			}
+			const shelves =
+				selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+			const entries: Array<{ shelfIdx: number; cell: Cell }> = [];
+
+			for (const shelf of shelves) {
+				for (const cell of shelf.cells) {
+					if (selectedKeys.has(cellKey(selectedSide, shelf.shelf_idx, cell.cell_idx))) {
+						entries.push({ shelfIdx: shelf.shelf_idx, cell });
+					}
+				}
+		}
+
+			return entries;
+		}
+	);
+
+	// One value when every selected cell agrees, 'mixed' when they differ, null when none has one.
+	function collapseValues(values: Array<number | string | null>): 'mixed' | number | string | null {
+		if (values.length === 0) {
+			return null;
+		}
+		const first = values[0];
+		for (const value of values) {
+			if (value !== first) {
+				return 'mixed';
+			}
+		}
+		return first;
+	}
+
+	const selectionValues = $derived.by(
+		(): Record<EditorField, 'mixed' | number | string | null> => {
+			const cells = selectedCells.map((entry) => entry.cell);
+			const pointValues = (key: 'x' | 'y' | 'z_offset') =>
+				cells.map((cell) => cell.calibration_point?.[key] ?? null);
+
+			return {
+				status: collapseValues(cells.map((cell) => cell.status)),
+				x: collapseValues(pointValues('x')),
+			y: collapseValues(pointValues('y')),
+			z: collapseValues(pointValues('z_offset')),
+			width: collapseValues(cells.map((cell) => cell.dimensions.width)),
+			height: collapseValues(cells.map((cell) => cell.dimensions.height)),
+			length: collapseValues(cells.map((cell) => cell.dimensions.length))
+		};
+		}
+	);
+
+	let bins = $state<StorageBin[]>([]);
+
+	const selectedSingle = $derived(selectedCells.length === 1 ? selectedCells[0] : null);
+
+	const currentTray = $derived.by((): StorageBin | null => {
+		if (selectedSingle === null || bins.length === 0) {
+			return null;
+		}
+		const { shelfIdx, cell } = selectedSingle;
+		for (const bin of bins) {
+			if (!bin.active) {
+				continue;
+			}
+			if (
+				bin.home_location.side === selectedSide &&
+				bin.home_location.shelf_idx === shelfIdx &&
+				bin.home_location.cell_idx === cell.cell_idx
+			) {
+				return bin;
+			}
+		}
+		return null;
+	});
+
+	let trayEnabled = $state<boolean>(false);
+	let trayBarcode = $state<string>('');
+	let trayRows = $state<string>('');
+	let trayCols = $state<string>('');
+
+	function trayDirty(): boolean {
+		const current = currentTray;
+		if (trayEnabled !== (current !== null)) {
+			return true;
+		}
+		if (!trayEnabled || current === null) {
+			return false;
+		}
+		if (trayBarcode.trim() !== current.barcode) {
+			return true;
+		}
+		const layout = current.compartment_layout;
+		const currentRows = layout !== null ? String(layout.rows) : '';
+		const currentCols = layout !== null ? String(layout.columns) : '';
+		return trayRows.trim() !== currentRows || trayCols.trim() !== currentCols;
+	}
+
+	function trayValid(): boolean {
+		if (!trayEnabled) {
+			return true;
+		}
+		if (!/^\d{12}$/.test(trayBarcode.trim())) {
+			return false;
+		}
+		const rows = Number(trayRows.trim());
+		const columns = Number(trayCols.trim());
+		if (!Number.isInteger(rows) || rows < 1 || rows > 32) {
+			return false;
+		}
+		if (!Number.isInteger(columns) || columns < 1 || columns > 32) {
+			return false;
+		}
+		return true;
+	}
+
+	function blankEditorValues(): Record<EditorField, string> {
+		return { status: '', x: '', y: '', z: '', width: '', height: '', length: '' };
+	}
+
+	type LockValue = 'true' | 'false' | 'mixed';
+
+	let lockValue = $state<LockValue>('false');
+	let lockInput: HTMLInputElement | undefined = $state();
+
+	const selectionIsManual = $derived.by((): 'mixed' | boolean => {
+		const flags = selectedCells.map((entry) => entry.cell.is_manual === true);
+		const first = flags[0];
+		if (first === undefined) {
+			return false;
+		}
+		return flags.every((flag) => flag === first) ? first : 'mixed';
+	});
+
+	$effect(() => {
+		if (overlayOpen === false || hasSelection === false) {
+			return;
+		}
+		const value = lockValue;
+		const element = lockInput;
+		if (element) {
+			element.indeterminate = value === 'mixed';
+		}
+	});
+
+	function normalizeLock(value: 'mixed' | boolean): LockValue {
+		if (value === 'mixed') {
+			return 'mixed';
+		}
+		return value ? 'true' : 'false';
+	}
+
+	function isLockDirty(): boolean {
+		return lockValue !== normalizeLock(selectionIsManual);
+	}
+
+	function didToggleLock(): void {
+		lockValue = lockInput ? (lockInput.checked ? 'true' : 'false') : 'false';
+	}
+
+	function populateEditorFromSelection(): void {
+		const values = blankEditorValues();
+
+		for (const field of EDITOR_FIELDS) {
+			values[field] = displayForSelection(field);
+		}
+		editorValues = values;
+		lockValue = normalizeLock(selectionIsManual);
+
+		if (currentTray === null) {
+			trayEnabled = false;
+			trayBarcode = '';
+			trayRows = '';
+			trayCols = '';
+		} else {
+			trayEnabled = true;
+			trayBarcode = currentTray.barcode;
+			const layout = currentTray.compartment_layout;
+			trayRows = layout !== null ? String(layout.rows) : '';
+			trayCols = layout !== null ? String(layout.columns) : '';
+		}
+	}
+
+	function didResetEditor(): void {
+		populateEditorFromSelection();
+	}
+
+	function didFocusField(field: EditorField): void {
+		if (field === 'status' || isMixedDisplay(field) === false) {
+			return;
+		}
+		editorValues[field] = '';
+	}
+
+	function didBlurField(field: EditorField): void {
+		if (field === 'status') {
+			return;
+		}
+		if (editorValues[field].trim() === '' && selectionValues[field] === 'mixed') {
+			editorValues[field] = 'Mixed';
+		}
+	}
+
+	const selectionFingerprint = $derived(
+		selectedCells
+			.map((entry) => {
+				const cell = entry.cell;
+				const point = cell.calibration_point;
+				return [
+					entry.shelfIdx,
+					cell.cell_idx,
+					cell.status,
+					cell.is_manual === true,
+					point?.x ?? null,
+					point?.y ?? null,
+					point?.z_offset ?? null,
+				cell.dimensions.width,
+				cell.dimensions.height,
+				cell.dimensions.length
+			].join('|');
+		})
+			.join(';') +
+			(currentTray === null
+				? ''
+				: `|tray:${currentTray.barcode}:${currentTray.compartment_layout?.rows ?? 0}:${currentTray.compartment_layout?.columns ?? 0}`)
+	);
+
+	// A new selection (or a reloaded grid under the same selection) starts the form clean.
+	$effect(() => {
+		if (selectionFingerprint === '') {
+			return;
+		}
+		populateEditorFromSelection();
+	});
+
+	function formatFieldValue(value: number): string {
+		return String(parseFloat(value.toFixed(4)));
+	}
+
+	function displayForSelection(field: EditorField): string {
+		const value = selectionValues[field];
+
+		if (field === 'status') {
+			return value === 'mixed' ? 'mixed' : String(value);
+		}
+		if (value === 'mixed') {
+			return 'Mixed';
+		}
+		if (value === null) {
+			return '';
+		}
+		return typeof value === 'number' ? formatFieldValue(value) : String(value);
+	}
+
+	function isFieldDirty(field: EditorField): boolean {
+		const raw = editorValues[field];
+		const value = selectionValues[field];
+
+		if (field === 'status') {
+			if (raw === '') {
+				return false;
+			}
+			if (value === 'mixed') {
+				return raw.toLowerCase() !== 'mixed';
+			}
+			return raw !== String(value);
+		}
+
+		const trimmed = raw.trim();
+		if (trimmed === '') {
+			return false;
+		}
+		if (trimmed.toLowerCase() === 'mixed') {
+			return false;
+		}
+		const parsed = Number(trimmed);
+		if (Number.isFinite(parsed) === false) {
+			return false;
+		}
+		if (value === 'mixed' || value === null) {
+			return true;
+		}
+		if (typeof value !== 'number') {
+			return true;
+		}
+		return formatFieldValue(parsed) !== formatFieldValue(value);
+	}
+
+	function isFieldValid(field: EditorField): boolean {
+		const raw = editorValues[field].trim();
+		if (raw === '' || raw.toLowerCase() === 'mixed' || field === 'status') {
+			return true;
+		}
+		return Number.isFinite(Number(raw));
+	}
+
+	const editorDirty = $derived(
+		EDITOR_FIELDS.some((field) => isFieldDirty(field)) || isLockDirty() || trayDirty()
+	);
+	const editorValid = $derived(
+		EDITOR_FIELDS.every((field) => isFieldValid(field)) && trayValid()
+	);
+
+	function isMixedDisplay(field: EditorField): boolean {
+		const trimmed = editorValues[field].trim();
+		return (
+			selectionValues[field] === 'mixed' &&
+			(trimmed === '' || trimmed.toLowerCase() === 'mixed')
+		);
+	}
+
+	function editorNumeric(field: NumericEditorField, current: number): number {
+		if (isFieldDirty(field) === true) {
+			return Number(editorValues[field].trim());
+		}
+		return current;
+	}
+
+	async function didSaveEditor(): Promise<void> {
+		if (busy === true || editorDirty === false || editorValid === false) {
+			return;
+		}
+
+		busy = true;
+		error = '';
+
+		try {
+			const xDirty = isFieldDirty('x');
+			const yDirty = isFieldDirty('y');
+			const zDirty = isFieldDirty('z');
+			const coordinatesDirty = xDirty || yDirty || zDirty;
+			const hasUncalibratedCell = selectedCells.some((entry) => entry.cell.calibration_point === null);
+			if (coordinatesDirty === true && hasUncalibratedCell && (xDirty && yDirty && zDirty) === false) {
+				error = 'x, y, and z are all required to set a calibration point on a cell without one';
+				return;
+			}
+			const statusDirty = isFieldDirty('status') === true;
+			const lockDirty = isLockDirty();
+			const dimensionsDirty =
+				isFieldDirty('width') || isFieldDirty('height') || isFieldDirty('length');
+
+			const cells: GridCellBatchItem[] = selectedCells.map((entry) => {
+				const cell = entry.cell;
+				const point = cell.calibration_point;
+				const item: GridCellBatchItem = {
+					shelf_idx: entry.shelfIdx,
+					cell_idx: cell.cell_idx
+				};
+
+				if (coordinatesDirty && (point !== null || (xDirty && yDirty && zDirty))) {
+					item.x = editorNumeric('x', point?.x ?? 0);
+					item.y = editorNumeric('y', point?.y ?? 0);
+					item.z_offset = editorNumeric('z', point?.z_offset ?? 0);
+				}
+				if (statusDirty) {
+					item.status = editorValues.status.trim();
+				}
+				if (lockDirty) {
+				item.is_manual = lockValue === 'true';
+				}
+				if (dimensionsDirty) {
+					item.dimensions = {
+						width: editorNumeric('width', cell.dimensions.width),
+						height: editorNumeric('height', cell.dimensions.height),
+						length: editorNumeric('length', cell.dimensions.length)
+					};
+				}
+
+				return item;
+			});
+
+			const gridDirty = coordinatesDirty || statusDirty || lockDirty || dimensionsDirty;
+
+			if (gridDirty) {
+				await updateGridCells(selectedSide, { cells });
+			}
+
+			if (selectedSingle !== null && trayDirty()) {
+				const { shelfIdx, cell } = selectedSingle;
+				const cellIdx = cell.cell_idx;
+				const current = currentTray;
+				const barcode = trayBarcode.trim();
+				const rows = Number(trayRows.trim());
+				const columns = Number(trayCols.trim());
+				const layoutChanged =
+				trayRows.trim() !== (current !== null && current.compartment_layout !== null
+						? String(current.compartment_layout.rows)
+						: '') ||
+				trayCols.trim() !== (current !== null && current.compartment_layout !== null
+					? String(current.compartment_layout.columns)
+					: '');
+
+				if (trayEnabled && current === null) {
+					await assignTray(selectedSide, shelfIdx, cellIdx, { barcode, rows, columns });
+			} else if (trayEnabled && current !== null) {
+				if (barcode !== current.barcode) {
+					await unassignTray(selectedSide, shelfIdx, cellIdx);
+					await assignTray(selectedSide, shelfIdx, cellIdx, { barcode, rows, columns });
+			} else if (layoutChanged) {
+				await updateTrayLayout(selectedSide, shelfIdx, cellIdx, { rows, columns });
+			}
+		} else if (current !== null) {
+			await unassignTray(selectedSide, shelfIdx, cellIdx);
+		}
+		}
+
+			bins = (await getBins()).bins;
+			storageGrid = await getStorageGrid();
+		} catch (err) {
+			fail(err, 'failed to save cells');
+			// The save partially mutated server state (e.g. a barcode swap whose
+			// unassign succeeded but assign was rejected); refresh so the overlay
+			// reflects reality instead of the stale bins.
+			try {
+				bins = (await getBins()).bins;
+				storageGrid = await getStorageGrid();
+			} catch {
+				/* best-effort refresh; keep the error set above */
+			}
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function didDeleteSelectedCells(): Promise<void> {
+		const label = selectionCount === 1 ? 'cell' : 'cells';
+		const confirmed = confirm(
+			`are you sure you want to delete the ${selectionCount} selected ${label}?`
+		);
+		if (confirmed !== true) {
+			return;
+		}
+
+		busy = true;
+		error = '';
+
+		try {
+			const targets = selectedCells.map((entry) => ({ shelfIdx: entry.shelfIdx, cellIdx: entry.cell.cell_idx }));
+
+			for (const target of targets) {
+				await deleteCell(selectedSide, target.shelfIdx, target.cellIdx);
+			}
+			storageGrid = await getStorageGrid();
+			clearCurrentSideSelection();
+			overlayOpen = false;
+		} catch (err) {
+			fail(err, 'failed to delete cells');
+			// A partial failure deleted some cells already; reload + prune so the
+			// deleted ones don't linger as ghosts and a retry isn't blocked by them.
+			try {
+				storageGrid = await getStorageGrid();
+				pruneSelection();
+			} catch {
+				/* best-effort refresh; keep the error set above */
+			}
+		} finally {
+			busy = false;
+		}
+	}
+
+	function pruneSelection(): void {
+		const existing = new Set<string>();
+		if (storageGrid !== null) {
+			for (const shelf of storageGrid.left_module) {
+				for (const cell of shelf.cells) {
+					existing.add(cellKey('left_module', shelf.shelf_idx, cell.cell_idx));
+				}
+			}
+			for (const shelf of storageGrid.right_module) {
+				for (const cell of shelf.cells) {
+					existing.add(cellKey('right_module', shelf.shelf_idx, cell.cell_idx));
+				}
+			}
+		}
+
+		const next = new Set([...selectedKeys].filter((key) => existing.has(key)));
+		if (next.size !== selectedKeys.size) {
+			selectedKeys = next;
+		}
+		if (next.size === 0) {
+			overlayOpen = false;
+		}
+		if (anchorSide !== null && anchorShelf !== null && storageGrid !== null) {
+			const anchorShelves =
+				anchorSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+			const surviving = anchorShelves.find((shelf) => shelf.shelf_idx === anchorShelf);
+
+			if (surviving === undefined) {
+				anchorSide = null;
+				anchorShelf = null;
+				anchorCell = null;
+			} else if (
+				anchorCell !== null &&
+			surviving.cells.some((cell) => cell.cell_idx === anchorCell) === false
+			) {
+				anchorCell = null;
+			}
+		}
+	}
+
+	// Deleting shelf k reindexes old shelf k+1 to k on the backend, so a surviving
+	// key `side:k:c` now denotes a different physical shelf and must be remapped
+	// rather than pruned by existence (pruneSelection).
+	function remapSelectionAfterShelfDelete(deletedShelfIdx: number): void {
+		const next = new Set<string>();
+		for (const key of selectedKeys) {
+			const parsed = parseCellKey(key);
+			if (parsed === null || parsed.side !== selectedSide) {
+				next.add(key);
+				continue;
+			}
+			if (parsed.shelf === deletedShelfIdx) {
+				continue;
+			}
+			const newShelf = parsed.shelf > deletedShelfIdx ? parsed.shelf - 1 : parsed.shelf;
+			next.add(cellKey(parsed.side, newShelf, parsed.cell));
+		}
+		selectedKeys = next;
+
+		if (anchorSide === selectedSide && anchorShelf !== null) {
+			if (anchorShelf === deletedShelfIdx) {
+				anchorSide = null;
+				anchorShelf = null;
+				anchorCell = null;
+			} else if (anchorShelf > deletedShelfIdx) {
+				anchorShelf = anchorShelf - 1;
+			}
+		}
+
+		if (next.size === 0) {
+			overlayOpen = false;
+		}
+	}
+
+	onMount(function () {
+		if (browser === false) {
+			return;
+		}
+		void load();
+		document.addEventListener('mousedown', didScrimMouseDown);
+		document.addEventListener('mouseup', didScrimMouseUp);
+		document.addEventListener('click', didClickOutside);
+		return () => {
+			document.removeEventListener('mousedown', didScrimMouseDown);
+			document.removeEventListener('mouseup', didScrimMouseUp);
+			document.removeEventListener('click', didClickOutside);
+		};
+	});
+
+	async function load(): Promise<void> {
+		loading = true;
+		loadError = '';
+		try {
+			const [grid, binList] = await Promise.all([getStorageGrid(), getBins()]);
+			storageGrid = grid;
+			bins = binList.bins;
+		} catch (err) {
+			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
+		} finally {
+			loading = false;
+		}
+	}
+
+	function fail(err: unknown, fallback: string): void {
+		error = err instanceof Error ? err.message : fallback;
+	}
+
+	async function didAddShelf(): Promise<void> {
+		busy = true;
+		error = '';
+		try {
+			await addShelf(selectedSide);
+			storageGrid = await getStorageGrid();
+			pruneSelection();
+		} catch (err) {
+			fail(err, 'failed to add shelf');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function didAddCell(shelfIdx: number): Promise<void> {
+		busy = true;
+		error = '';
+		try {
+			await addCell(selectedSide, shelfIdx);
+			storageGrid = await getStorageGrid();
+			pruneSelection();
+		} catch (err) {
+			fail(err, 'failed to add cell');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function didDeleteShelf(shelfIdx: number): Promise<void> {
+		const confirmed = confirm(
+			`are you sure you want to delete shelf ${sideInitial}:${shelfIdx}?`
+		);
+		if (confirmed !== true) {
+			return;
+		}
+
+		busy = true;
+		error = '';
+		try {
+			await deleteShelf(selectedSide, shelfIdx);
+			storageGrid = await getStorageGrid();
+			remapSelectionAfterShelfDelete(shelfIdx);
+		} catch (err) {
+			fail(err, 'failed to delete shelf');
+		} finally {
+			busy = false;
+		}
+	}
+</script>
+
+<div class="layout-toolbar">
+	<div class="toggle-group">
+		<a class:selected={selectedSide === 'left_module'} href={sideHref('left_module')}>
+			left
+		</a>
+		<a class:selected={selectedSide === 'right_module'} href={sideHref('right_module')}>
+			right
+		</a>
+	</div>
+	<span class="toolbar-separator">—</span>
+	<button type="button" onclick={didAddShelf} disabled={loading === true || busy === true}>
+		add shelf
+	</button>
+	<button type="button" onclick={didEdit} disabled={hasSelection === false}>
+		edit
+	</button>
+	<button type="button" onclick={didDeselect} disabled={hasSelection === false}>
+		deselect
+	</button>
+</div>
+
+{#if loading === true}
+	<p>loading storage grid...</p>
+{:else if loadError !== ''}
+	<ErrorMessage message={loadError} />
+{:else if storageGrid !== null}
+	{#if getShelves().length === 0}
+		<p class="empty">no shelves on the {sideInitial} side</p>
+	{:else}
+		<div class="shelf-list">
+			{#each getShelves() as shelf (shelf.shelf_idx)}
+				<div class="shelf-row">
+					<span
+				class="shelf-index"
+				role="button"
+				tabindex={0}
+				onclick={(event) => didClickShelf(event, shelf.shelf_idx)}
+				onkeydown={(event) => didPressShelf(event, shelf.shelf_idx)}
+			>
+				{sideInitial}:{shelf.shelf_idx}
+			</span>
+					<div class="shelf-cells">
+						{#each shelf.cells as cell (cell.cell_idx)}
+							<div
+								class="storage-cell"
+								class:selected={isSelected(selectedSide, shelf.shelf_idx, cell.cell_idx)}
+								role="button"
+								tabindex={0}
+								onclick={(event) => didClickCell(event, shelf.shelf_idx, cell.cell_idx)}
+								onkeydown={(event) => didPressCell(event, shelf.shelf_idx, cell.cell_idx)}
+							>
+								{cell.cell_idx}
+							</div>
+						{/each}
+					</div>
+					<div class="shelf-actions">
+						<button
+							type="button"
+							onclick={() => didAddCell(shelf.shelf_idx)}
+							disabled={busy === true}
+						>
+							add cell
+						</button>
+						<button
+							type="button"
+							onclick={() => didDeleteShelf(shelf.shelf_idx)}
+							disabled={busy === true}
+						>
+							delete shelf
+						</button>
+					</div>
+				</div>
+			{/each}
+		</div>
+	{/if}
+{/if}
+
+{#if error !== ''}
+	<ErrorMessage message={error} />
+{/if}
+
+{#if hasSelection && overlayOpen}
+	<div class="selection-backdrop"></div>
+	<aside class="selection-overlay">
+		<p class="selection-count">
+			{selectionCount} {selectionCount === 1 ? 'cell' : 'cells'} selected
+		</p>
+		{#if error !== ''}
+			<ErrorMessage message={error} />
+		{/if}
+		<form
+			class="cell-editor"
+			onsubmit={(event) => {
+				event.preventDefault();
+				void didSaveEditor();
+			}}
+		>
+			<label class="editor-row">
+				<span>status</span>
+				<select bind:value={editorValues.status} disabled={busy === true}>
+					{#each CELL_STATUSES as status (status)}
+						<option value={status}>{status}</option>
+					{/each}
+					{#if selectionValues.status === 'mixed'}
+					<option value="mixed">mixed</option>
+					{/if}
+				</select>
+			</label>
+			<div class="editor-group">
+				{#each XYZ_COLUMNS as field (field)}
+					<label class="editor-col">
+						<span>{field}</span>
+						<input
+							type="text"
+						inputmode="decimal"
+						class:mixed={isMixedDisplay(field)}
+						bind:value={editorValues[field]}
+						onfocus={() => didFocusField(field)}
+						onblur={() => didBlurField(field)}
+						disabled={busy === true}
+					/>
+					</label>
+				{/each}
+			</div>
+			<label class="editor-row editor-row-lock">
+				<input
+					type="checkbox"
+					checked={lockValue === 'true'}
+					bind:this={lockInput}
+					onchange={didToggleLock}
+					disabled={busy === true}
+				/>
+				<span>lock calibration</span>
+			</label>
+			<div class="editor-group">
+				{#each DIMENSION_COLUMNS as column (column.field)}
+					<label class="editor-col">
+						<span>{column.label}</span>
+						<input
+							type="text"
+						inputmode="decimal"
+						class:mixed={isMixedDisplay(column.field)}
+						bind:value={editorValues[column.field]}
+						onfocus={() => didFocusField(column.field)}
+						onblur={() => didBlurField(column.field)}
+						disabled={busy === true}
+					/>
+					</label>
+				{/each}
+			</div>
+			{#if selectedSingle !== null}
+				<label class="editor-row editor-row-tray">
+					<input
+						type="checkbox"
+						bind:checked={trayEnabled}
+						disabled={busy === true}
+				/>
+					<span>multi-item bin</span>
+				</label>
+				{#if trayEnabled}
+					<div class="editor-group editor-group-1">
+						<label class="editor-col">
+							<span>tray barcode</span>
+							<input
+								type="text"
+								inputmode="numeric"
+								maxlength="12"
+								bind:value={trayBarcode}
+								disabled={busy === true}
+						/>
+						</label>
+					</div>
+					<div class="editor-group editor-group-2">
+						<label class="editor-col">
+							<span>rows</span>
+							<input
+								type="text"
+								inputmode="numeric"
+							bind:value={trayRows}
+							disabled={busy === true}
+						/>
+						</label>
+						<label class="editor-col">
+							<span>columns</span>
+							<input
+							type="text"
+						inputmode="numeric"
+						bind:value={trayCols}
+						disabled={busy === true}
+					/>
+					</label>
+				</div>
+				{/if}
+			{/if}
+			<div class="editor-spacer"></div>
+			<div class="editor-actions">
+				<button
+					type="button"
+				onclick={() => void didDeleteSelectedCells()}
+				disabled={busy === true}
+			>
+				{selectionCount === 1 ? 'delete cell' : 'delete cells'}
+			</button>
+			<div class="editor-spacer"></div>
+			<button
+				type="button"
+			onclick={() => didResetEditor()}
+			disabled={busy === true || editorDirty === false}
+			>
+				reset
+			</button>
+			<button
+				type="submit"
+				disabled={busy === true || editorDirty === false || editorValid === false}
+			>
+				save
+			</button>
+		</div>
+		</form>
+	</aside>
+{/if}
+
+<style>
+	.layout-toolbar {
+		display: flex;
+		gap: 1em;
+		align-items: center;
+		margin-bottom: 1.5em;
+	}
+
+	.toggle-group {
+		display: inline-flex;
+		gap: 1em;
+		align-items: center;
+	}
+
+	.toggle-group a {
+		border: 2px solid black;
+		background: #fff;
+		cursor: pointer;
+		margin: 0;
+		color: black;
+		text-decoration: none;
+	}
+
+	.toggle-group a.selected {
+		background: black;
+		color: #fff;
+	}
+
+	.toolbar-separator {
+		color: black;
+	}
+
+	.layout-toolbar button {
+		margin-top: 0;
+		min-width: 36px;
+	}
+
+	.empty {
+		margin-bottom: 1.5em;
+	}
+
+	.shelf-list {
+		display: flex;
+		flex-direction: column;
+		gap: 1em;
+	}
+
+	.shelf-row {
+		display: flex;
+		gap: 1em;
+		align-items: center;
+		flex-wrap: wrap;
+		user-select: none;
+	}
+
+	.shelf-index {
+		min-width: 3ch;
+		text-align: right;
+		cursor: pointer;
+	}
+
+	.shelf-cells {
+		display: flex;
+		gap: 1em;
+	}
+
+	.storage-cell {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 40px;
+		height: 40px;
+		border: 2px solid black;
+		background: #fff;
+		cursor: pointer;
+	}
+
+	.storage-cell.selected {
+		background: black;
+		color: #fff;
+	}
+
+	.shelf-actions {
+		display: flex;
+		gap: 1em;
+		margin-left: auto;
+	}
+
+	.shelf-actions button {
+		margin-top: 0;
+		min-width: 36px;
+	}
+
+	.selection-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.4);
+		pointer-events: none;
+		z-index: 40;
+	}
+
+	.selection-overlay {
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: 50vw;
+		margin: 1.5em;
+		overflow-y: auto;
+		padding: 1.5em;
+		background: white;
+		border: 2px solid black;
+		z-index: 41;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.selection-count {
+		margin-bottom: 1em;
+		text-transform: uppercase;
+	}
+
+	.cell-editor {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		margin-top: 1.5em;
+	}
+
+	.editor-spacer {
+		flex: 1;
+	}
+
+	.editor-row {
+		display: flex;
+		gap: 1em;
+		align-items: center;
+		margin-bottom: 0.75em;
+	}
+
+	.editor-row span {
+		min-width: 7ch;
+		text-transform: uppercase;
+	}
+
+	.editor-row select {
+		flex: 1;
+		padding: 0.4em 0.6em;
+		border: 2px solid black;
+		background: #fff;
+		font: inherit;
+		text-transform: none;
+		color: black;
+	}
+
+	.editor-group {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.75em;
+		margin-bottom: 0.75em;
+	}
+
+	.editor-group-2 {
+		grid-template-columns: repeat(2, 1fr);
+	}
+
+	.editor-group-1 {
+		grid-template-columns: 1fr;
+	}
+
+	.editor-col {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3em;
+	}
+
+	.editor-col span {
+		text-transform: uppercase;
+	}
+
+	.editor-col input {
+		width: 100%;
+		padding: 0.4em 0.6em;
+		border: 2px solid black;
+		background: #fff;
+		font: inherit;
+		color: black;
+	}
+
+	.editor-col input.mixed {
+		color: #6b6b6b;
+	}
+
+	.editor-row-lock span {
+		min-width: 0;
+	}
+
+	.editor-row-lock input {
+		flex: none;
+		width: 1.2em;
+		height: 1.2em;
+		margin: 0;
+	}
+
+	.editor-row-tray input {
+		flex: none;
+		width: 1.2em;
+		height: 1.2em;
+		margin: 0;
+	}
+
+	.editor-actions {
+		display: flex;
+		gap: 1em;
+	}
+
+	.editor-actions button {
+		margin-top: 0;
+	}
+</style>
