@@ -193,6 +193,9 @@ def resolve_scan_config(config: Any, args: argparse.Namespace) -> Any:
 	scan_config = config.robot.grid.scan
 	overrides: dict[str, Any] = {}
 
+	if args.shelves is not None:
+		overrides["z_stall_probe_shelves"] = int(args.shelves)
+
 	if args.repeat_count is not None:
 		overrides["z_stall_probe_repeats"] = int(args.repeat_count)
 
@@ -433,11 +436,7 @@ async def main() -> int:
 	max_probe_tool_x_mm, min_probe_tool_x_mm = resolve_probe_reach(
 		config, side=side, scan_config=scan_config
 	)
-	shelves_to_probe = int(
-		getattr(scan_config, "z_stall_probe_shelves", 3)
-		if args.shelves is None
-		else args.shelves
-	)
+	shelves_to_probe = int(getattr(scan_config, "z_stall_probe_shelves", 3))
 	probes = laser_module.select_z_stall_probes(
 		analysis,
 		probe_wall_depths,

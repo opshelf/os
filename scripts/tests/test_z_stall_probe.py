@@ -430,6 +430,47 @@ def test_run_hands_the_anchor_the_raw_axis_limits(tmp_path: Path, monkeypatch, c
 	assert captured["x_axis_limit_mm"] != converted
 
 
+def test_run_hands_the_anchor_the_requested_shelf_count(
+	tmp_path: Path, monkeypatch, capsys
+) -> None:
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	run_dir = build_run_dir(tmp_path / "runs" / "left")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	captured: dict[str, Any] = {}
+
+	async def fake_run_z_stall_anchor(**kwargs: Any) -> Any:
+		captured.update(kwargs)
+		return build_fake_anchor_result()
+
+	async def fake_run_with_temp_robot_config(*, config, config_path, didRun, shutdown_action) -> Any:
+		return await didRun(SimpleNamespace(_tool=object()))
+
+	monkeypatch.setattr(laser_module, "run_z_stall_anchor", fake_run_z_stall_anchor)
+	monkeypatch.setattr(laser_module, "run_with_temp_robot_config", fake_run_with_temp_robot_config)
+
+	exit_code = main_with_args(
+		probe, ["--module", "left", "--from-run", str(run_dir), "--shelves", "4"]
+	)
+
+	assert exit_code == 0
+	# The anchor re-selects its probes from z_stall_probe_shelves, so the flag must reach the
+	# scan_config the run uses: otherwise --shelves 4 validates a 4-shelf plan and then probes
+	# the configured default.
+	assert captured["scan_config"].z_stall_probe_shelves == 4
+
+
 def test_probe_slope_the_datum_cannot_corroborate_fails_the_verdict(
 	tmp_path: Path, monkeypatch, capsys
 ) -> None:
