@@ -367,6 +367,7 @@ def build_fake_anchor_result(
 	intercept_mm: float = -3.12,
 	slope_per_mm: float = 0.0,
 	stage_extension_mm: float = 47.0,
+	fit_centroid_x_mm: float = 300.0,
 ) -> SimpleNamespace:
 	# Matches the datum the test grid implies (intercept -3.120mm), so the verdict is in tolerance.
 	return SimpleNamespace(
@@ -378,6 +379,7 @@ def build_fake_anchor_result(
 		stage_extension_mm=stage_extension_mm,
 		z_place_mm=10.0,
 		rotation_center_deg=3.0,
+		fit_centroid_x_mm=fit_centroid_x_mm,
 		samples=(),
 		dropped_repeats=(),
 		skipped=(),
@@ -507,6 +509,63 @@ def test_probe_slope_the_datum_cannot_corroborate_fails_the_verdict(
 	# The tilt differs from the datum by 0.005 * 476.75mm at the manual cell's grab x.
 	assert "2.384mm" in output
 	assert "OUT OF TOLERANCE" in output
+
+
+def test_short_span_probe_reports_the_model_the_product_would_install(
+	tmp_path: Path, monkeypatch, capsys
+) -> None:
+	# A tilt-free fit reports the deltas' value at the fit centre, so keeping the machine's tilt
+	# means re-basing the intercept: the script must print that pair, not the raw fit.
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	config.robot.grid.scan.left_z_offset_model = SimpleNamespace(
+		intercept_mm=-4.0735,
+		slope_per_mm=0.002,
+		stage_extension_mm=47.0,
+		z_place_mm=10.0,
+	)
+	grid = build_grid()
+	run_dir = build_run_dir(tmp_path / "runs" / "left")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	# The fixture's datum cell (1:1, x 476.75, z 6.5, wall 9.62) implies this intercept under the
+	# configured tilt; a probe that measures the same line reports it at the fit centre instead.
+	datum_intercept_mm = 6.5 - 9.62 - 0.002 * 476.75
+
+	async def fake_run_z_stall_anchor(**kwargs: Any) -> Any:
+		# Span below Z_DELTA_TILT_MIN_X_SPAN_MM, so no tilt is fitted and the datum is kept.
+		return build_fake_anchor_result(
+			slope_per_mm=0.0,
+			intercept_mm=datum_intercept_mm + 0.002 * 300.0,
+			fit_centroid_x_mm=300.0,
+		)
+
+	async def fake_run_with_temp_robot_config(*, config, config_path, didRun, shutdown_action) -> Any:
+		return await didRun(SimpleNamespace(_tool=object()))
+
+	monkeypatch.setattr(laser_module, "run_z_stall_anchor", fake_run_z_stall_anchor)
+	monkeypatch.setattr(laser_module, "run_with_temp_robot_config", fake_run_with_temp_robot_config)
+
+	exit_code = main_with_args(probe, ["--module", "left", "--from-run", str(run_dir)])
+
+	output = capsys.readouterr().out
+
+	assert exit_code == 0
+	# The installed pair is the datum's line: intercept re-based to x = 0, slope kept.
+	assert f"'intercept_mm': {round(datum_intercept_mm, 3)}" in output
+	assert "'slope_per_mm': 0.002" in output
+	assert "model_source=config_short_span" in output
+	# The raw fit is still reported, so the substitution is visible.
+	assert f"raw_probe_intercept_mm={datum_intercept_mm + 0.002 * 300.0:.3f}" in output
 
 
 def test_datum_saved_at_another_stage_extension_fails_the_verdict(

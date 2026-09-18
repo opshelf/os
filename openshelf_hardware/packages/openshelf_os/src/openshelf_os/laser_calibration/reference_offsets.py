@@ -86,16 +86,22 @@ class ReferenceOffsetResult:
 
 	@property
 	def used_configured_offset(self) -> bool:
-		return self.configured_offset_x_mm is not None
+		return self.configured_offset_x_mm is not None and self.configured_offset_y_mm is not None
 
 	def described_delta_mm(self) -> tuple[float | None, float | None]:
 		"""How far this derivation moves the configured offset, when there was one."""
 		if self.used_configured_offset is False:
 			return None, None
 
+		configured_x_mm = self.configured_offset_x_mm
+		configured_y_mm = self.configured_offset_y_mm
+
+		if configured_x_mm is None or configured_y_mm is None:
+			return None, None
+
 		return (
-			self.offset_x_mm - float(self.configured_offset_x_mm),
-			self.offset_y_mm - float(self.configured_offset_y_mm),
+			self.offset_x_mm - float(configured_x_mm),
+			self.offset_y_mm - float(configured_y_mm),
 		)
 
 
