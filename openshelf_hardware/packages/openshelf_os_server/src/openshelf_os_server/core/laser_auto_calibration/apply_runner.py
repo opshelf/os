@@ -424,29 +424,17 @@ class ApplyRunnerMixin:
         # The probe can only judge the datum against what the scope actually detected: a run
         # scoped to the manual cell holds nothing but the datum, and the probe of that datum is
         # the point of the run.
-        scanned_cells = {
-            (int(cell.shelf_idx), int(cell.cell_idx))
-            for shelf in analysis.shelves
-            for cell in shelf.cells
-        }
+        # The exclusion is decided in the analysis' own key space: a single-shelf scan re-indexes
+        # its shelf to 0 and `build_detected_shelves` renumbers the openings it saw, so matching
+        # stored keys alone would either exclude nothing (the probe presses the datum) or exclude
+        # a cell the scope does not hold. `excluded_probe_cells` matches stored shields to detected
+        # openings by key and by predicted position.
         excluded_cells = laser_module.excluded_probe_cells(
-            grid=device_grid, side=side, scanned_cells=scanned_cells
+            grid=device_grid,
+            side=side,
+            analysis=analysis,
+            scan_config=scan_config,
         )
-        # The exclusion is computed from the stored grid, but the probe selects from the analysis,
-        # and a single-shelf scan re-indexes its shelf to 0. Without translating the keys the datum
-        # (and any DISABLED cell) of a shelf scope is never excluded and the probe presses it.
-        scope_shelf_idx = self._snapshot.requested_scope.shelf_idx
-        if len(analysis.shelves) == 1 and scope_shelf_idx is not None:
-            analysis_shelf_idx = int(analysis.shelves[0].shelf_idx)
-
-            if analysis_shelf_idx != int(scope_shelf_idx):
-                excluded_cells = {
-                    (
-                        analysis_shelf_idx if int(shelf_idx) == int(scope_shelf_idx) else int(shelf_idx),
-                        int(cell_idx),
-                    )
-                    for shelf_idx, cell_idx in excluded_cells
-                }
         result = await laser_module.run_z_stall_anchor(
             tool=worker._robot._tool,
             analysis=analysis,
