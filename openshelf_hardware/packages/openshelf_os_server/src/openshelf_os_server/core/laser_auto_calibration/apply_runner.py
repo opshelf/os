@@ -307,7 +307,7 @@ class ApplyRunnerMixin:
         self,
         *,
         result: laser_module.ZStallResult,
-        manual_intercept_mm: float,
+        manual_intercept_mm: float | None,
         manual_reference: laser_module.ReferenceOffsetResult | None,
         scan_config: Any,
         slope_per_mm: float,
@@ -316,7 +316,9 @@ class ApplyRunnerMixin:
         persisted: bool,
     ) -> None:
         agreement_mm = (
-            None if manual_reference is None else abs(float(result.intercept_mm) - manual_intercept_mm)
+            None
+            if manual_reference is None or manual_intercept_mm is None
+            else abs(float(result.intercept_mm) - manual_intercept_mm)
         )
         entry = LaserAutoCalibrationZStallResult(
             side=result.side,
@@ -382,9 +384,24 @@ class ApplyRunnerMixin:
             xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
             should_abort=self._should_abort_work,
         )
-        manual_intercept_mm = self._resolve_manual_z_intercept(
-            side=side, manual_reference=manual_reference
-        )
+        try:
+            manual_intercept_mm = self._resolve_manual_z_intercept(
+                side=side, manual_reference=manual_reference
+            )
+        except ValueError:
+            # The probe has already moved, so the measurement must still reach the operator even
+            # though it cannot be judged: publish the raw fit, then let the refusal out.
+            await self._publish_z_stall_result(
+                result=result,
+                manual_intercept_mm=None,
+                manual_reference=manual_reference,
+                scan_config=scan_config,
+                slope_per_mm=float(result.slope_per_mm),
+                slope_source="probe",
+                applied=False,
+                persisted=False,
+            )
+            raise
         # Publish the raw fit before judging it: a refusal is exactly when the operator needs to
         # see both numbers side by side.
         await self._publish_z_stall_result(
