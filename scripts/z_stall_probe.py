@@ -90,16 +90,28 @@ def parse_cells(raw_cells: list[str]) -> set[tuple[int, int]] | None:
 	return cells
 
 
-def newest_run_dir(config_path: Path) -> Path:
+def run_side(run_dir: Path) -> str | None:
+	metadata_path = Path(run_dir) / "metadata.json"
+
+	try:
+		return laser_module.load_json_file(metadata_path).get("side")
+	except Exception:
+		return None
+
+
+def newest_run_dir(config_path: Path, side: StorageModuleSide) -> Path:
+	"""Newest saved run for this side, since a machine scans each side separately."""
 	scans_dir = paths_for_config_file(config_path).calibration_dir
 	candidates = [
 		path
 		for path in scans_dir.iterdir()
-		if path.is_dir() and (path / "metadata.json").exists()
+		if path.is_dir() and (path / "metadata.json").exists() and run_side(path) == side.value
 	]
 
 	if len(candidates) == 0:
-		raise ValueError(f"no saved runs with metadata under {scans_dir}; pass --from-run")
+		raise ValueError(
+			f"no saved {side.value} runs with metadata under {scans_dir}; pass --from-run"
+		)
 
 	return max(candidates, key=lambda path: path.stat().st_mtime)
 
@@ -263,9 +275,17 @@ async def main() -> int:
 	grid_path = runtime_paths.resolve_storage_path(config, config_path=args.config)
 	grid = laser_module.load_grid(grid_path)
 
-	run_dir = args.from_run if args.from_run is not None else newest_run_dir(Path(args.config))
+	run_dir = args.from_run if args.from_run is not None else newest_run_dir(Path(args.config), side)
 	metadata_path = Path(run_dir) / "metadata.json"
 	metadata = laser_module.load_json_file(metadata_path)
+	saved_side = metadata.get("side")
+
+	if args.from_run is not None and saved_side is not None and saved_side != side.value:
+		raise ValueError(
+			f"--from-run holds a {saved_side} run but --module is {args.module}; probes come from the "
+			"side being probed"
+		)
+
 	print(f"run: {metadata_path}")
 
 	analysis = laser_module.build_probe_analysis(metadata=metadata, metadata_path=metadata_path)
