@@ -42,6 +42,11 @@ logger = logging.getLogger(__name__)
 MODE_FILE = Path(os.getenv(DATA_DIR_ENV, "data")) / ".mode"
 LEGACY_SETTINGS_PATH = Path(os.getenv(DATA_DIR_ENV, "data")) / "settings.json"
 
+# The dev-mode fallback identity. It must name a user that every build creates,
+# otherwise unauthenticated requests answer 503 "Dev auto-user not found in
+# database". main._ensure_developer_user recreates this one on every startup.
+DEVELOPER_SYSTEM_USER_EMAIL = "developer@opshelf.com"
+
 
 def _config_paths() -> list[Path]:
     paths = [CONFIG_PATH]
@@ -213,7 +218,7 @@ def _apply_env_overrides(data: dict) -> dict:
     if env in ["dev", "development"]:
         data["auth"]["dev_mode"] = True
         data["auth"]["require_auth"] = False
-        data["auth"]["dev_auto_user"] = "admin@opshelf.com"
+        data["auth"]["dev_auto_user"] = DEVELOPER_SYSTEM_USER_EMAIL
     elif env == "test":
         data["auth"]["dev_mode"] = False
         data["auth"]["require_auth"] = True
