@@ -109,6 +109,7 @@ class Robot:
             lasercontroller=self._laserbus,
             params=tool_params,
             safety=self._motion_safety,
+            gpio=self._gpio,
         )
         self._io = IOBox(
             motorcontroller=self._motorbus,

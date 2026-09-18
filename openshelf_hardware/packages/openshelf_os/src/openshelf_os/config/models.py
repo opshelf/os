@@ -385,24 +385,29 @@ def _pca9535_output(
 def _default_gpio_pins() -> dict[str, GpioPinConfig]:
     return {
         # PCA9535_0 (0x20) - X/Y axis limits and tool limits
-        "x_limit_min": _pca9535_input("pca9535_0", 0),
-        "x_limit_max": _pca9535_input("pca9535_0", 1),
-        "x_1": _pca9535_input("pca9535_0", 2),
-        "x_2": _pca9535_input("pca9535_0", 3),
-        "y_limit_min": _pca9535_input("pca9535_0", 4),
-        "y_limit_max": _pca9535_input("pca9535_0", 5),
-        "y_1": _pca9535_input("pca9535_0", 6),
-        "y_2": _pca9535_input("pca9535_0", 7),
-        "tool_limit_r": _pca9535_input("pca9535_0", 8),
-        "tool_limit_s": _pca9535_input("pca9535_0", 9),
-        "tool_limit_z": _pca9535_input("pca9535_0", 10),
+        # X/Y end stops (x_lim_min/x_lim_max/y_lim_min/y_lim_max) read engaged
+        # on a high input, so they are not inverted; the tool-head limits
+        # (r_lim_min/s_lim_min/z_lim_min) and io_lim_min stay inverted. Both
+        # types are NPN switches and the difference is measured rather than
+        # explained. The post-home limit check reads these pins.
+        "x_lim_min": _pca9535_input("pca9535_0", 0, inverted=False),
+        "x_lim_max": _pca9535_input("pca9535_0", 1, inverted=False),
+        "x_lim_minunsafe": _pca9535_input("pca9535_0", 2),
+        "x_lim_maxunsafe": _pca9535_input("pca9535_0", 3),
+        "y_lim_min": _pca9535_input("pca9535_0", 4, inverted=False),
+        "y_lim_max": _pca9535_input("pca9535_0", 5, inverted=False),
+        "y_lim_minunsafe": _pca9535_input("pca9535_0", 6),
+        "y_lim_maxunsafe": _pca9535_input("pca9535_0", 7),
+        "r_lim_min": _pca9535_input("pca9535_0", 8),
+        "s_lim_min": _pca9535_input("pca9535_0", 9),
+        "z_lim_min": _pca9535_input("pca9535_0", 10),
         "tool_1": _pca9535_input("pca9535_0", 11),
         "tool_in1": _pca9535_input("pca9535_0", 12),
         "tool_out0": _pca9535_output("pca9535_0", 13),
         "tool_standby": _pca9535_output("pca9535_0", 14),
-        "io_limit_min": _pca9535_input("pca9535_0", 15),
+        "io_lim_min": _pca9535_input("pca9535_0", 15),
         # PCA9535_1 (0x21) - IO box, cabinet locks, estop, power
-        "io_limit_max": _pca9535_input("pca9535_1", 0),
+        "io_lim_max": _pca9535_input("pca9535_1", 0),
         "light_curtain": _pca9535_input("pca9535_1", 1, inverted=False, debounce_ms=50),
         "io_in0": _pca9535_input("pca9535_1", 2),
         "io_1": _pca9535_input("pca9535_1", 3),
@@ -442,7 +447,22 @@ def compare_gpio_pins_to_defaults(configured: Iterable[str]) -> Tuple[List[str],
 #: Pin names that existing config files still use. A config that declares
 #: robot.gpio.pins replaces the defaults wholesale, so renaming a default is
 #: invisible to those machines until the old key is translated here.
-GPIO_PIN_ALIASES = {"power_control": "pwr_out0"}
+GPIO_PIN_ALIASES = {
+    "power_control": "pwr_out0",
+    "x_limit_min": "x_lim_min",
+    "x_limit_max": "x_lim_max",
+    "x_1": "x_lim_minunsafe",
+    "x_2": "x_lim_maxunsafe",
+    "y_limit_min": "y_lim_min",
+    "y_limit_max": "y_lim_max",
+    "y_1": "y_lim_minunsafe",
+    "y_2": "y_lim_maxunsafe",
+    "tool_limit_r": "r_lim_min",
+    "tool_limit_s": "s_lim_min",
+    "tool_limit_z": "z_lim_min",
+    "io_limit_min": "io_lim_min",
+    "io_limit_max": "io_lim_max",
+}
 
 
 class GpioConfig(BaseModel):
