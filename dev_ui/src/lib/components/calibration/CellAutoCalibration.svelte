@@ -11,6 +11,7 @@
 		type LaserAutoCalibrationReferenceOffset,
 		type LaserAutoCalibrationRequest,
 		type LaserAutoCalibrationSnapshot,
+		type LaserAutoCalibrationZStallResult,
 		type StorageGrid,
 		type StorageModuleSide
 	} from '$lib/api';
@@ -629,6 +630,10 @@
 		return snapshot?.reference_offset_results ?? [];
 	}
 
+	function getZStallResults(): LaserAutoCalibrationZStallResult[] {
+		return snapshot?.z_stall_results ?? [];
+	}
+
 	function getRotationValue(side: 'left_module' | 'right_module'): string {
 		const angleResult = getAngleResults().find(function (result) {
 			return result.side === side;
@@ -922,6 +927,68 @@
 							{/each}
 							{#each result.skipped as skipped}
 								<div class="reference-warning">{skipped}</div>
+							{/each}
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
+
+	{#if snapshot && snapshot.session_id !== null && getZStallResults().length > 0}
+		<table style="margin-top: 1.5em">
+			<thead>
+				<tr>
+					<th colspan="2">probed z model</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each getZStallResults() as result}
+					<tr>
+						<td>{result.side === 'left_module' ? 'left' : 'right'} intercept / slope</td>
+						<td>
+							{formatNumber(result.intercept_mm, 3)} / {formatNumber(result.slope_per_mm, 5)}
+							({result.slope_source === 'probe' ? 'slope probed' : `slope ${result.slope_source}`})
+							{result.persisted === true ? '(saved to config)' : '(not saved)'}
+						</td>
+					</tr>
+					<tr>
+						<td>{result.side === 'left_module' ? 'left' : 'right'} reference check</td>
+						<td>
+							manual {formatNumber(result.manual_intercept_mm, 3)}, agreement
+							{formatNumber(result.manual_agreement_mm, 3)} (tolerance
+							{formatNumber(result.manual_agreement_tolerance_mm, 2)})
+							{#if result.manual_captured_stage_mm !== null}
+								· datum saved at stage {formatNumber(result.manual_captured_stage_mm, 2)}
+							{/if}
+							{#if result.manual_capture_unstamped > 0}
+								· {result.manual_capture_unstamped} reference cell(s) saved before the capture stage
+								was recorded
+							{/if}
+						</td>
+					</tr>
+					<tr>
+						<td>{result.side === 'left_module' ? 'left' : 'right'} probes</td>
+						<td>
+							{result.sample_count} of {result.fit_source} over
+							{formatNumber(result.x_span_mm, 1)}mm at stage
+							{formatNumber(result.stage_extension_mm, 2)}
+							{#each result.samples as sample}
+								<div>
+									{sample.shelf_idx}:{sample.cell_idx} x {formatNumber(sample.probe_x_mm, 1)} wall
+									{formatNumber(sample.wall_depth_mm, 2)} → contact
+									{formatNumber(sample.z_contact_mm, 3)} (delta
+									{formatNumber(sample.delta_mm, 3)})
+									{#if sample.z_contact_repeat_mm !== null}
+										repeat {formatNumber(sample.z_contact_repeat_mm, 3)}
+									{/if}
+								</div>
+							{/each}
+							{#each result.dropped_repeats as dropped}
+								<div class="reference-warning">repeat moved: {dropped}</div>
+							{/each}
+							{#each result.skipped as skipped}
+								<div class="reference-warning">skipped: {skipped}</div>
 							{/each}
 						</td>
 					</tr>

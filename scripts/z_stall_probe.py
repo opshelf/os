@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""Probe the shelf plate beside reference cells and fit this side's z delta model.
+
+This is the partial test for the z stall method: it runs exactly the probes the automatic
+calibration runs, on whatever cells you point it at, so a machine can be checked without a
+full scan and without writing anything. `--plan-only` prints the probes it would use and what
+the hand-calibrated cells imply, and moves nothing at all.
+
+The probe presses the shelf insert beside a cell's hole, so the load it applies is the load the
+shelf latch has to hold. Every point is stalled twice and a pair that disagrees is dropped, and
+any stage back-drive aborts the run: those are the two symptoms of the rack moving instead of
+the tool meeting a wall.
+
+Run it with the api container stopped, the way the other laser scripts run, so the robot's
+serial ports are free.
+"""
+
+# ruff: noqa: E402
+from __future__ import annotations
+
+import argparse
+import asyncio
+import sys
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PYTHON_PATHS = [
+	REPO_ROOT / "openshelf_hardware/packages/openshelf_os/src",
+	REPO_ROOT / "openshelf_hardware/packages/hardware/src",
+]
+
+for import_path in reversed(PYTHON_PATHS):
+	sys.path.insert(0, str(import_path))
+
+import openshelf_os.laser_calibration as laser_module
+from openshelf_os.common import CONFIG_PATH, load_config_file
+from openshelf_os.runtime_state import RuntimeStatePaths, paths_for_config_file
+from openshelf_os.storage import StorageModuleSide
+
+
+def build_parser() -> argparse.ArgumentParser:
+	parser = argparse.ArgumentParser(
+		description="Probe the shelf plate and fit the z delta model, without a full calibration."
+	)
+	parser.add_argument("--config", default=str(CONFIG_PATH))
+	parser.add_argument("--module", choices=["left", "right"], required=True)
+	parser.add_argument(
+		"--from-run",
+		type=Path,
+		help="Run directory to take the detected cells from; defaults to the newest saved run.",
+	)
+	parser.add_argument("--shelf", type=int, help="Probe only this shelf.")
+	parser.add_argument(
+		"--cell",
+		action="append",
+		default=[],
+		metavar="SHELF:CELL",
+		help="Probe only this cell; repeatable.",
+	)
+	parser.add_argument(
+		"--plan-only",
+		action="store_true",
+		help="Report the probes and the reference datum without moving anything.",
+	)
+	parser.add_argument("--repeat-count", type=int, help="Override z_stall_probe_repeats.")
+	parser.add_argument(
+		"--repeat-tolerance-mm",
+		type=float,
+		help="Override z_stall_probe_repeat_tolerance_mm.",
+	)
+	parser.add_argument("--shutdown-action", choices=["stop", "shutdown"], default="stop")
+	return parser
+
+
+def parse_cells(raw_cells: list[str]) -> set[tuple[int, int]] | None:
+	if len(raw_cells) == 0:
+		return None
+
+	cells: set[tuple[int, int]] = set()
+
+	for raw_cell in raw_cells:
+		parts = raw_cell.split(":")
+
+		if len(parts) != 2:
+			raise ValueError("--cell must be SHELF:CELL")
+
+		cells.add((int(parts[0]), int(parts[1])))
+
+	return cells
+
+
+def newest_run_dir(config_path: Path) -> Path:
+	scans_dir = paths_for_config_file(config_path).calibration_dir
+	candidates = [
+		path
+		for path in scans_dir.iterdir()
+		if path.is_dir() and (path / "metadata.json").exists()
+	]
+
+	if len(candidates) == 0:
+		raise ValueError(f"no saved runs with metadata under {scans_dir}; pass --from-run")
+
+	return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def resolve_probe_reach(
+	config: Any,
+	*,
+	side: StorageModuleSide,
+	scan_config: Any,
+) -> tuple[float | None, float | None]:
+	"""The X travel the carriage has for a probe, in the tool frame the probe is aimed from."""
+	xy_offset = laser_module.get_scan_xy_offset(scan_config=scan_config, side=side)
+	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
+	shift_mm = float(scan_config.z_stall_probe_x_shift_mm)
+	motor = next(
+		(
+			entry
+			for entry in config.robot.tool.motors
+			if getattr(entry, "motor_name", None) == "x_axis"
+		),
+		None,
+	)
+
+	if motor is None:
+		return None, None
+
+	upper_mm = getattr(motor, "lim", None)
+	lower_mm = getattr(motor, "lower_lim", None)
+
+	return (
+		None if upper_mm is None else float(upper_mm) - offset_x_mm - shift_mm,
+		None if lower_mm is None else float(lower_mm) - offset_x_mm - shift_mm,
+	)
+
+
+def configured_bin_locations(config: Any) -> set[tuple[str, int, int]]:
+	return {
+		(entry.home_location.side, int(entry.home_location.shelf_idx), int(entry.home_location.cell_idx))
+		for entry in config.storage.bins
+	}
+
+
+def resolve_scan_config(config: Any, args: argparse.Namespace) -> Any:
+	scan_config = config.robot.grid.scan
+	overrides: dict[str, Any] = {}
+
+	if args.repeat_count is not None:
+		overrides["z_stall_probe_repeats"] = int(args.repeat_count)
+
+	if args.repeat_tolerance_mm is not None:
+		overrides["z_stall_probe_repeat_tolerance_mm"] = float(args.repeat_tolerance_mm)
+
+	if len(overrides) == 0:
+		return scan_config
+
+	return scan_config.model_copy(update=overrides)
+
+
+def report_plan(
+	*,
+	probes: list[tuple[Any, float]],
+	manual_reference: Any,
+	side: StorageModuleSide,
+	scan_config: Any,
+) -> None:
+	print(f"planned probes ({len(probes)}):")
+	for cell, wall_depth_mm in probes:
+		print(
+			f"  {cell.shelf_idx}:{cell.cell_idx} tool_x={float(cell.tool_x_mm):.2f} "
+			f"tool_y={float(cell.tool_y_mm):.2f} wall_depth_mm={float(wall_depth_mm):.3f}"
+		)
+
+	if manual_reference is None:
+		print("reference datum: none (mark a cell manual with 'keep manual' before probing)")
+		return
+
+	print(
+		f"reference datum: {manual_reference.sample_count} cell(s) imply intercept "
+		f"{'none' if manual_reference.intercept_mm is None else f'{float(manual_reference.intercept_mm):.3f}'}mm "
+		f"(agreement tolerance {float(scan_config.z_stall_manual_agreement_mm):.2f}mm)"
+	)
+	for sample in manual_reference.samples:
+		print(
+			f"  {sample.shelf_idx}:{sample.cell_idx} manual_x={float(sample.manual_x_mm):.2f} "
+			f"manual_y={float(sample.manual_y_mm):.2f} wall_depth_mm="
+			f"{'none' if sample.wall_depth_mm is None else f'{float(sample.wall_depth_mm):.3f}'} "
+			f"intercept_mm="
+			f"{'none' if sample.derived_intercept_mm is None else f'{float(sample.derived_intercept_mm):.3f}'} "
+			f"captured_stage_mm="
+			f"{'none' if sample.z_captured_stage_mm is None else f'{float(sample.z_captured_stage_mm):.2f}'}"
+		)
+
+	if manual_reference.z_capture_conditions_missing > 0:
+		print(
+			"  warning: "
+			f"{manual_reference.z_capture_conditions_missing} reference cell(s) were saved before "
+			"the capture stage was recorded, so their stage extension could not be checked"
+		)
+
+
+def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side: StorageModuleSide) -> int:
+	print(
+		f"fit: source={result.fit_source} samples={result.sample_count} "
+		f"x_span_mm={float(result.x_span_mm):.1f} intercept_mm={float(result.intercept_mm):.3f} "
+		f"slope_per_mm={float(result.slope_per_mm):.5f}"
+	)
+	print(
+		f"geometry: stage_extension_mm={float(result.stage_extension_mm):.2f} "
+		f"z_place_mm={float(result.z_place_mm):.2f} rotation_deg={float(result.rotation_center_deg):.3f}"
+	)
+	for sample in result.samples:
+		repeat = "none" if sample.z_contact_repeat_mm is None else f"{float(sample.z_contact_repeat_mm):.3f}"
+		print(
+			f"  probe {sample.shelf_idx}:{sample.cell_idx} x={float(sample.probe_x_mm):.2f} "
+			f"wall_depth_mm={float(sample.wall_depth_mm):.3f} z_contact_mm={float(sample.z_contact_mm):.3f} "
+			f"repeat_mm={repeat} delta_mm={float(sample.delta_mm):.3f}"
+		)
+	for dropped in result.dropped_repeats:
+		print(f"  dropped (repeat moved): {dropped}")
+	for skipped in result.skipped:
+		print(f"  skipped: {skipped}")
+
+	model = {
+		"intercept_mm": round(float(result.intercept_mm), 3),
+		"slope_per_mm": float(result.slope_per_mm),
+		"stage_extension_mm": float(result.stage_extension_mm),
+		"z_place_mm": float(result.z_place_mm),
+	}
+	side_name = "left" if side == StorageModuleSide.LEFT else "right"
+	print(f"model for robot.grid.scan.{side_name}_z_offset_model: {model}")
+
+	if manual_reference is None or manual_reference.intercept_mm is None:
+		print("verdict: no reference datum, so the fit is unverified")
+		return 1
+
+	agreement_mm = abs(float(result.intercept_mm) - float(manual_reference.intercept_mm))
+	tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
+	print(
+		f"verdict: agreement with the reference datum "
+		f"{agreement_mm:.3f}mm (tolerance {tolerance_mm:.2f}mm) - "
+		f"{'within tolerance' if agreement_mm <= tolerance_mm else 'OUT OF TOLERANCE'}"
+	)
+
+	if manual_reference.z_captured_stage_mm is not None:
+		stage_delta_mm = abs(float(manual_reference.z_captured_stage_mm) - float(result.stage_extension_mm))
+		print(
+			f"           datum captured at stage {float(manual_reference.z_captured_stage_mm):.2f}mm vs probe "
+			f"{float(result.stage_extension_mm):.2f}mm (delta {stage_delta_mm:.2f}mm)"
+		)
+
+	return 0 if agreement_mm <= tolerance_mm else 1
+
+
+async def main() -> int:
+	args = build_parser().parse_args()
+	side = StorageModuleSide.LEFT if args.module == "left" else StorageModuleSide.RIGHT
+	cells = parse_cells(args.cell)
+	config = load_config_file(args.config)
+	scan_config = resolve_scan_config(config, args)
+	runtime_paths = RuntimeStatePaths.current()
+	grid_path = runtime_paths.resolve_storage_path(config, config_path=args.config)
+	grid = laser_module.load_grid(grid_path)
+
+	run_dir = args.from_run if args.from_run is not None else newest_run_dir(Path(args.config))
+	metadata_path = Path(run_dir) / "metadata.json"
+	metadata = laser_module.load_json_file(metadata_path)
+	print(f"run: {metadata_path}")
+
+	analysis = laser_module.build_probe_analysis(metadata=metadata, metadata_path=metadata_path)
+	if args.shelf is not None or cells is not None:
+		analysis = laser_module.restrict_analysis(analysis, shelf_idx=args.shelf, cells=cells)
+
+	if len(analysis.shelves) == 0:
+		print("nothing to probe: the run has no detected cells in that scope")
+		return 1
+
+	excluded_cells = laser_module.excluded_probe_cells(
+		grid=grid,
+		side=side,
+		reserved_locations=configured_bin_locations(config),
+	)
+	manual_reference = None
+	try:
+		manual_reference = laser_module.derive_reference_offsets(
+			grid=grid,
+			analysis=analysis,
+			side=side,
+			scan_config=scan_config,
+			shelf_idx=args.shelf,
+			cell_idx=None if cells is None or len(cells) != 1 else sorted(cells)[0][1],
+		)
+	except ValueError as exc:
+		# A probe without a datum is still worth running: it measures the geometry, it just
+		# cannot be called correct until a hand-calibrated cell backs it up.
+		print(f"reference datum unavailable: {exc}")
+	candidates = laser_module.load_candidates_from_metadata(metadata)
+	candidate_lookup = laser_module.build_candidate_lookup_by_cell(
+		analysis=analysis, candidates=candidates
+	)
+	max_probe_tool_x_mm, min_probe_tool_x_mm = resolve_probe_reach(
+		config, side=side, scan_config=scan_config
+	)
+	probes = laser_module.select_z_stall_probes(
+		analysis,
+		candidate_lookup,
+		max_probe_tool_x_mm,
+		min_probe_tool_x_mm,
+		excluded_cells=excluded_cells,
+	)
+
+	if args.plan_only is True:
+		report_plan(probes=probes, manual_reference=manual_reference, side=side, scan_config=scan_config)
+		return 0
+
+	async def didRunProbe(robot: Any) -> Any:
+		return await laser_module.run_z_stall_anchor(
+			tool=robot._tool,
+			analysis=analysis,
+			scan_config=scan_config,
+			side=side,
+			excluded_cells=excluded_cells,
+			x_axis_limit_mm=None if max_probe_tool_x_mm is None else max_probe_tool_x_mm + float(scan_config.z_stall_probe_x_shift_mm),
+			x_axis_lower_limit_mm=None
+			if min_probe_tool_x_mm is None
+			else min_probe_tool_x_mm + float(scan_config.z_stall_probe_x_shift_mm),
+			xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
+			should_abort=None,
+		)
+
+	result = await laser_module.run_with_temp_robot_config(
+		config=config,
+		config_path=args.config,
+		didRun=didRunProbe,
+		shutdown_action=args.shutdown_action,
+	)
+
+	return report_result(
+		result=result,
+		manual_reference=manual_reference,
+		scan_config=scan_config,
+		side=side,
+	)
+
+
+if __name__ == "__main__":
+	raise SystemExit(asyncio.run(main()))

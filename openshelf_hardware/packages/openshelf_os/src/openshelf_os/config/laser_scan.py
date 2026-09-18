@@ -62,6 +62,9 @@ class LaserScanConfig(BaseModel):
 
     z_stall_anchor_enabled: bool = False
     z_stall_tray_engagement_mm: float = 0.0
+    z_stall_manual_agreement_mm: float = Field(1.0, gt=0)
+    z_stall_probe_repeats: int = Field(2, ge=1)
+    z_stall_probe_repeat_tolerance_mm: float = Field(0.3, gt=0)
     z_stall_probe_x_shift_mm: float = 40.0
     z_stall_probe_start_mm: float = 5.0
     z_stall_probe_fast_approach_mm: float = 130.0
