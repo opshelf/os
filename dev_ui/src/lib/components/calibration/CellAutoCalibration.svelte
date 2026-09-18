@@ -1001,7 +1001,7 @@
 					<tr>
 						<td>{result.side === 'left_module' ? 'left' : 'right'} probes</td>
 						<td>
-							{result.sample_count} of {result.fit_source} over
+							{result.sample_count} probes, {result.fit_source}, over
 							{formatNumber(result.x_span_mm, 1)}mm at stage
 							{formatNumber(result.stage_extension_mm, 2)}
 							{#each result.samples as sample}

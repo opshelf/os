@@ -237,6 +237,13 @@ def derive_reference_offsets(
 
 	for shelf_id, manual_cell in reference_cells:
 		point = manual_cell.calibration_point
+
+		if point is None:
+			skipped.append(
+				f"{side.value} {shelf_id}:{int(manual_cell.cell_idx)}: no calibration point stored"
+			)
+			continue
+
 		manual_x_mm = float(point.x)
 		manual_y_mm = float(point.y)
 		predicted_x_mm = manual_x_mm - predictor_x_mm

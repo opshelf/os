@@ -82,6 +82,15 @@ def build_parser() -> argparse.ArgumentParser:
 		action="store_true",
 		help="Report the probes and the reference datum without moving anything.",
 	)
+	parser.add_argument(
+		"--shelves",
+		type=int,
+		help=(
+			"How many shelves to sample, spread over the module (default from "
+			"z_stall_probe_shelves). 3 probes bottom, middle and top shelf; a larger number "
+			"samples nearly every shelf, which is the strongest validation but the slowest run."
+		),
+	)
 	parser.add_argument("--repeat-count", type=int, help="Override z_stall_probe_repeats.")
 	parser.add_argument(
 		"--repeat-tolerance-mm",
@@ -211,6 +220,7 @@ def report_exclusions(excluded_cells: set[tuple[int, int]]) -> None:
 def report_plan(
 	*,
 	probes: list[tuple[Any, float]],
+	shelves_to_probe: int,
 	manual_reference: Any,
 	side: StorageModuleSide,
 	scan_config: Any,
@@ -222,10 +232,11 @@ def report_plan(
 	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
 	offset_y_mm = 0.0 if xy_offset is None else float(xy_offset[1])
 	shift_mm = float(scan_config.z_stall_probe_x_shift_mm)
+	probe_count = len(probes)
 	print(
-		f"probe candidates ({len(probes)}): three per shelf, and probing stops at the first shelf "
-		f"whose points span {laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:.0f}mm — so the run normally "
-		"presses only one shelf's worth"
+		f"probe candidates ({probe_count}): one opening on each of {shelves_to_probe} shelf(s) spread "
+		f"over the module, then one per remaining shelf as a reserve. Probing stops once the samples "
+		f"span {laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:.0f}mm."
 	)
 	for cell, wall_depth_mm in probes:
 		print(
@@ -397,12 +408,18 @@ async def main() -> int:
 	max_probe_tool_x_mm, min_probe_tool_x_mm = resolve_probe_reach(
 		config, side=side, scan_config=scan_config
 	)
+	shelves_to_probe = int(
+		getattr(scan_config, "z_stall_probe_shelves", 3)
+		if args.shelves is None
+		else args.shelves
+	)
 	probes = laser_module.select_z_stall_probes(
 		analysis,
 		probe_wall_depths,
 		max_probe_tool_x_mm,
 		min_probe_tool_x_mm,
 		excluded_cells=excluded_cells,
+		shelves_to_probe=shelves_to_probe,
 	)
 
 	if len(probes) == 0:
@@ -415,6 +432,7 @@ async def main() -> int:
 	if args.plan_only is True:
 		report_plan(
 			probes=probes,
+			shelves_to_probe=shelves_to_probe,
 			manual_reference=manual_reference,
 			side=side,
 			scan_config=scan_config,
