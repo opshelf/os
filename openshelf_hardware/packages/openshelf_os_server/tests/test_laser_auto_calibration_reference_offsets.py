@@ -33,6 +33,18 @@ DETECTED_TOOL_Y_MM = 44.0
 CONFIGURED_OFFSET = (-1.0, 1.0)
 DERIVED_OFFSET = (MANUAL_X_MM - DETECTED_TOOL_X_MM, MANUAL_Y_MM - DETECTED_TOOL_Y_MM)
 
+# A second shelf that shares cell_idx 0 with the first: a cell scope that drops the shelf would
+# take this shelf's manual point into the derivation alongside the scoped one.
+SECOND_SHELF_IDX = 3
+SECOND_SHELF_MANUAL_X_MM = 352.9
+SECOND_SHELF_MANUAL_Y_MM = 640.2
+SECOND_SHELF_DETECTED_TOOL_X_MM = 358.0
+SECOND_SHELF_DETECTED_TOOL_Y_MM = 643.4
+SECOND_SHELF_DERIVED_OFFSET = (
+	SECOND_SHELF_MANUAL_X_MM - SECOND_SHELF_DETECTED_TOOL_X_MM,
+	SECOND_SHELF_MANUAL_Y_MM - SECOND_SHELF_DETECTED_TOOL_Y_MM,
+)
+
 
 def _build_cell(*, cell_idx: int, x: float, y: float, is_manual: bool) -> Cell:
 	return Cell(
@@ -45,9 +57,9 @@ def _build_cell(*, cell_idx: int, x: float, y: float, is_manual: bool) -> Cell:
 	)
 
 
-def _build_source_grid(*, is_manual: bool = True) -> StorageGrid:
+def _build_source_grid(*, is_manual: bool = True, include_second_shelf: bool = False) -> StorageGrid:
 	grid = StorageGrid(filename="storage.json")
-	grid.left_module = [
+	shelves = [
 		Shelf(
 			shelf_idx=0,
 			shelf_height=30.0,
@@ -63,40 +75,84 @@ def _build_source_grid(*, is_manual: bool = True) -> StorageGrid:
 			],
 		)
 	]
+
+	if include_second_shelf:
+		shelves.append(
+			Shelf(
+				shelf_idx=SECOND_SHELF_IDX,
+				shelf_height=30.0,
+				shelf_width=200.0,
+				cells=[
+					_build_cell(
+						cell_idx=0,
+						x=SECOND_SHELF_MANUAL_X_MM,
+						y=SECOND_SHELF_MANUAL_Y_MM,
+						is_manual=is_manual,
+					)
+				],
+			)
+		)
+
+	grid.left_module = shelves
 	return grid
+def _build_analysis(*, include_second_shelf: bool = False) -> SimpleNamespace:
+	shelves = [
+		ScanDetectedShelf(
+			shelf_idx=0,
+			center_y_mm=DETECTED_TOOL_Y_MM,
+			shelf_height_mm=30.0,
+			shelf_width_mm=200.0,
+			cells=[
+				ScanDetectedCell(
+					shelf_idx=0,
+					cell_idx=0,
+					center_x_mm=DETECTED_TOOL_X_MM - 51.0,
+					center_y_mm=DETECTED_TOOL_Y_MM,
+					tool_x_mm=DETECTED_TOOL_X_MM,
+					tool_y_mm=DETECTED_TOOL_Y_MM,
+					width_mm=26.0,
+					height_mm=30.0,
+					point_count=20,
+					bbox_x_min=DETECTED_TOOL_X_MM - 13.0,
+					bbox_x_max=DETECTED_TOOL_X_MM + 13.0,
+					bbox_y_min=DETECTED_TOOL_Y_MM - 15.0,
+					bbox_y_max=DETECTED_TOOL_Y_MM + 15.0,
+				)
+			],
+		)
+	]
 
-
-def _build_analysis() -> SimpleNamespace:
-	return SimpleNamespace(
-		shelves=[
+	if include_second_shelf:
+		shelves.append(
 			ScanDetectedShelf(
-				shelf_idx=0,
-				center_y_mm=DETECTED_TOOL_Y_MM,
+				shelf_idx=SECOND_SHELF_IDX,
+				center_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
 				shelf_height_mm=30.0,
 				shelf_width_mm=200.0,
 				cells=[
 					ScanDetectedCell(
-						shelf_idx=0,
+						shelf_idx=SECOND_SHELF_IDX,
 						cell_idx=0,
-						center_x_mm=DETECTED_TOOL_X_MM - 51.0,
-						center_y_mm=DETECTED_TOOL_Y_MM,
-						tool_x_mm=DETECTED_TOOL_X_MM,
-						tool_y_mm=DETECTED_TOOL_Y_MM,
+						center_x_mm=SECOND_SHELF_DETECTED_TOOL_X_MM - 51.0,
+						center_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
+						tool_x_mm=SECOND_SHELF_DETECTED_TOOL_X_MM,
+						tool_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
 						width_mm=26.0,
 						height_mm=30.0,
 						point_count=20,
-						bbox_x_min=DETECTED_TOOL_X_MM - 13.0,
-						bbox_x_max=DETECTED_TOOL_X_MM + 13.0,
-						bbox_y_min=DETECTED_TOOL_Y_MM - 15.0,
-						bbox_y_max=DETECTED_TOOL_Y_MM + 15.0,
+						bbox_x_min=SECOND_SHELF_DETECTED_TOOL_X_MM - 13.0,
+						bbox_x_max=SECOND_SHELF_DETECTED_TOOL_X_MM + 13.0,
+						bbox_y_min=SECOND_SHELF_DETECTED_TOOL_Y_MM - 15.0,
+						bbox_y_max=SECOND_SHELF_DETECTED_TOOL_Y_MM + 15.0,
 					)
-				],
+			],
 			)
-		],
+		)
+
+	return SimpleNamespace(
+		shelves=shelves,
 		metadata_path=Path("/tmp/fake-reference-metadata.json"),
 	)
-
-
 def _build_parameters() -> Parameters:
 	return Parameters.model_validate(
 		{
@@ -270,6 +326,9 @@ async def test_reference_run_without_a_manual_cell_never_starts() -> None:
 async def test_reference_run_needs_a_manual_cell_on_every_side_in_scope() -> None:
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	# Both sides carry a configured offset: the derivation needs one as its predictor, and this
+	# test is about the manual-cell rule, not about that refusal.
+	scan_config.right_xy_offset = SimpleNamespace(x_mm=-97.0, y_mm=0.0)
 	config = _build_root_config(scan_config)
 	worker = SimpleNamespace(_robot=SimpleNamespace(_grid=_build_source_grid()))
 
@@ -351,6 +410,77 @@ async def test_single_cell_reference_run_keeps_the_datum_and_persists_the_offset
 	assert saved_configs[0].robot.grid.scan.left_xy_offset.y_mm == pytest.approx(DERIVED_OFFSET[1])
 	assert manager._snapshot.reference_offset_results[0].applied is True
 	assert manager._snapshot.reference_offset_results[0].persisted is True
+
+
+@pytest.mark.asyncio
+async def test_cell_scoped_reference_run_uses_only_the_in_scope_datum() -> None:
+	"""A cell scope derives from the (shelf, cell) it targeted, not every shelf holding the cell.
+
+	The pre-motion gate checks the scope as (shelf_idx, cell_idx); a derivation that dropped the
+	shelf would median the sibling shelf's manual point into the persisted module offset.
+	"""
+	manager = LaserAutoCalibrationManager()
+	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
+		mode="cell",
+		side=StorageModuleSide.LEFT,
+		shelf_idx=SECOND_SHELF_IDX,
+		cell_idx=0,
+		derive_offsets_from_manual_cells=True,
+	)
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	config = _build_root_config(scan_config)
+	grid = _build_source_grid(include_second_shelf=True)
+	saved_configs: list[object] = []
+	worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+	target = SimpleNamespace(shelf_idx=SECOND_SHELF_IDX, cell_idx=0)
+	analysis = _build_analysis(include_second_shelf=True)
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
+		return_value=config,
+	):
+		with patch(
+			"openshelf_os_server.core.laser_auto_calibration.resolve_grid_path",
+			return_value="storage.json",
+		):
+			with patch(
+				"openshelf_os_server.core.laser_auto_calibration.laser_module.load_grid",
+				return_value=grid,
+			):
+				with patch(
+					"openshelf_os_server.core.laser_auto_calibration.laser_module.find_detected_cell_for_candidate",
+					return_value=analysis.shelves[0].cells[0],
+				):
+					with patch(
+						"openshelf_os_server.core.laser_auto_calibration.laser_module.apply_single_cell_rescan"
+					) as apply_rescan:
+						with patch(
+							"openshelf_os_server.core.laser_auto_calibration.save_root_config",
+							side_effect=lambda next_config, version_id=None: saved_configs.append(next_config),
+						):
+							with patch(
+								"openshelf_os_server.core.laser_auto_calibration.clear_config_cache"
+						):
+								await manager._persist_single_cell_result(
+									worker,
+									StorageModuleSide.LEFT,
+									analysis,
+									target,
+									MagicMock(),
+								)
+
+	apply_rescan.assert_not_called()
+	assert len(saved_configs) == 1
+	saved_offset = saved_configs[0].robot.grid.scan.left_xy_offset
+	# The in-scope datum alone: the sibling shelf's point sits 1.1mm away, so a derivation that
+	# dropped the shelf would have persisted the median of the two datums, a value neither holds.
+	assert saved_offset.x_mm == pytest.approx(SECOND_SHELF_DERIVED_OFFSET[0])
+	assert saved_offset.y_mm == pytest.approx(SECOND_SHELF_DERIVED_OFFSET[1])
+	result = manager._snapshot.reference_offset_results[0]
+	assert result.sample_count == 1
+	assert result.samples[0].shelf_idx == SECOND_SHELF_IDX
+	assert result.applied is True
+	assert result.persisted is True
 
 
 @pytest.mark.asyncio
