@@ -4,6 +4,8 @@ import asyncio
 import importlib.util
 import json
 import sys
+
+import pytest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -205,3 +207,39 @@ def test_plan_only_still_plans_without_a_reference_datum(tmp_path: Path, monkeyp
 	output = capsys.readouterr().out
 	assert "planned probes (1):" in output
 	assert "reference datum unavailable" in output or "reference datum: none" in output
+
+
+def test_side_mismatch_is_refused_and_default_picks_the_matching_run(tmp_path: Path, monkeypatch, capsys) -> None:
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	left_run = build_run_dir(tmp_path / "runs" / "left")
+	right_run = build_run_dir(tmp_path / "runs" / "right")
+	right_metadata = json.loads((right_run / "metadata.json").read_text(encoding="utf-8"))
+	right_metadata["side"] = "right_module"
+	(right_run / "metadata.json").write_text(json.dumps(right_metadata), encoding="utf-8")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	with pytest.raises(ValueError, match="holds a right_module run"):
+		main_with_args(probe, ["--module", "left", "--from-run", str(right_run), "--plan-only"])
+
+	# Both metadata files lack a side otherwise, so mark the left one and let the default pick it.
+	left_metadata = json.loads((left_run / "metadata.json").read_text(encoding="utf-8"))
+	left_metadata["side"] = "left_module"
+	(left_run / "metadata.json").write_text(json.dumps(left_metadata), encoding="utf-8")
+	monkeypatch.setattr(probe, "paths_for_config_file", lambda path: SimpleNamespace(calibration_dir=tmp_path / "runs"))
+
+	exit_code = main_with_args(probe, ["--module", "left", "--plan-only"])
+
+	assert exit_code == 0
+	output = capsys.readouterr().out
+	assert str(left_run) in output
