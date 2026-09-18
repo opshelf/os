@@ -402,6 +402,8 @@ async def run_anchor(
 		for contact in contacts:
 			if contact_error is True:
 				probe_results.append((False, 0.0, "limit", None))
+			elif isinstance(contact, tuple):
+				probe_results.append(contact)
 			else:
 				probe_results.append((True, contact, "stall", None))
 
@@ -485,6 +487,41 @@ async def test_anchor_drops_a_probe_whose_repeat_contact_moved() -> None:
 
 
 @pytest.mark.asyncio
+async def test_anchor_drops_a_probe_that_stalls_once_then_misses() -> None:
+	"""A stall followed by a miss leaves one contact, which is not evidence of a wall.
+
+	The point is dropped (not sampled), and as the only probe it refuses the run: the raise is
+	only reachable when sample_count is 0, and its text carries the dropped repeat.
+	"""
+	cells = [build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0)]
+
+	with pytest.raises(ValueError, match="disagreed with itself") as excinfo:
+		await run_anchor(
+			probe_contacts=[[170.0, (False, 0.0, "limit", None)]],
+			cells=cells,
+		)
+
+	assert "0:0 stalled at 170.000mm then did not stall again (limit)" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_anchor_keeps_the_clean_probes_after_a_stall_then_miss() -> None:
+	"""One bad repeat does not lose the run: a neighbour that stalls twice is still sampled."""
+	result = await run_anchor(
+		probe_contacts=[[170.0, (False, 0.0, "limit", None)], [170.0, 170.0]],
+		cells=[
+			build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0),
+			build_detected_cell(shelf_idx=3, cell_idx=0, tool_x=455.0, tool_y=640.0),
+		],
+	)
+
+	assert result.sample_count == 1
+	assert [(sample.shelf_idx, sample.cell_idx) for sample in result.samples] == [(3, 0)]
+	assert len(result.dropped_repeats) == 1
+	assert "0:0 stalled at 170.000mm then did not stall again (limit)" in result.dropped_repeats[0]
+
+
+@pytest.mark.asyncio
 async def test_anchor_refuses_when_every_probe_moves_under_load() -> None:
 	with pytest.raises(ValueError, match="moving under probe force"):
 		await run_anchor(
@@ -493,7 +530,7 @@ async def test_anchor_refuses_when_every_probe_moves_under_load() -> None:
 				build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0),
 				build_detected_cell(shelf_idx=3, cell_idx=1, tool_x=455.0, tool_y=640.0),
 			],
-		)
+	)
 
 
 @pytest.mark.asyncio
