@@ -71,11 +71,15 @@ use `--hardware` on machines with connected robot, camera, scanner, or printer d
 
 mock mode runs the real authenticated fastapi service and sqlite persistence without initializing robot, camera, scanner, sizer, printer, cups, or sentry integrations. it does not automatically add the hardware compose overlay, even when `config.mock.json` was copied from a hardware-enabled production config.
 
-mock is production-like for authentication and audit integrity. provide stable, non-default secrets when the workspace is not disposable:
+mock is production-like for authentication and audit integrity. on provisioned devices `../provision` delivers `JWT_SECRET`, `AUDIT_HMAC_KEY`, and `AUDIT_HMAC_KEY_ID` in the checkout `.env`, and where provisioning has not reached, the api generates and keeps its own audit key per mode in the data directory. to pin your own secrets in a workspace that is not disposable, set them in that `.env` (or export them) and give the audit key an id of its own: every audit hmac key needs one, an id must never be reused with a different key, `v2` is what provisioning delivers and `v2-<mode>` is what the api generates for itself, so a locally pinned key must use some other id. the file is shared with other Compose values, so append rather than overwrite it; a repeated run leaves duplicate assignments where the last one wins, which discards the key that signed earlier rows, so those rows will report that no key is available for their id:
 
 ```bash
-export JWT_SECRET='replace-with-a-stable-jwt-secret'
-export AUDIT_HMAC_KEY='replace-with-a-stable-audit-hmac-key'
+umask 077
+printf 'JWT_SECRET=%s\nAUDIT_HMAC_KEY=%s\nAUDIT_HMAC_KEY_ID=%s\n' \
+  "$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" \
+  "$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" \
+  "local-$(date -u +%Y%m%d%H%M%S)" >> .env
+chmod 600 .env
 ./scripts/start --mode mock --detached
 ```
 
