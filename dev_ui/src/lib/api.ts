@@ -223,6 +223,20 @@ export async function getStorageGrid(): Promise<StorageGrid> {
 	return apiFetch<StorageGrid>(`/storage/grid?_t=${timestamp}`);
 }
 
+export async function addShelf(side: StorageModuleSide): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({ side });
+	return apiFetch<{ success: boolean }>(`/storage/grid/shelf?${params}`, {
+		method: 'POST'
+	});
+}
+
+export async function addCell(side: StorageModuleSide, shelfIdx: number): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx) });
+	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
+		method: 'POST'
+	});
+}
+
 export async function deleteShelf(side: StorageModuleSide, shelfIdx: number): Promise<{ success: boolean }> {
 	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/shelf?${params}`, {
@@ -233,6 +247,125 @@ export async function deleteShelf(side: StorageModuleSide, shelfIdx: number): Pr
 export async function deleteCell(side: StorageModuleSide, shelfIdx: number, cellIdx: number): Promise<{ success: boolean }> {
 	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
+		method: 'DELETE'
+	});
+}
+
+export interface GridCellUpdate {
+	x?: number;
+	y?: number;
+	z_offset?: number;
+	status?: string;
+	is_manual?: boolean;
+	dimensions?: Dimensions;
+}
+
+export interface GridCellBatchItem extends GridCellUpdate {
+	shelf_idx: number;
+	cell_idx: number;
+}
+
+export interface GridCellsBatch {
+	cells: GridCellBatchItem[];
+}
+
+export async function updateGridCell(
+	side: StorageModuleSide,
+	shelfIdx: number,
+	cellIdx: number,
+	payload: GridCellUpdate
+): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
+	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function updateGridCells(
+	side: StorageModuleSide,
+	payload: GridCellsBatch
+): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({ side });
+	return apiFetch<{ success: boolean }>(`/storage/grid/cells?${params}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+}
+
+export interface CompartmentLayout {
+	rows: number;
+	columns: number;
+}
+
+export interface StorageBin {
+	id: number;
+	barcode: string;
+	home_location: {
+		side: StorageModuleSide;
+		shelf_idx: number;
+		cell_idx: number;
+	};
+	max_items: number;
+	compartment_layout: CompartmentLayout | null;
+	status: string;
+	active: boolean;
+	item_count: number;
+}
+
+export async function getBins(): Promise<{ bins: StorageBin[] }> {
+	return apiFetch<{ bins: StorageBin[] }>('/storage/bins');
+}
+
+export async function updateTrayLayout(
+	side: StorageModuleSide,
+	shelfIdx: number,
+	cellIdx: number,
+	payload: CompartmentLayout
+): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({
+		side,
+		shelf_idx: String(shelfIdx),
+		cell_idx: String(cellIdx)
+	});
+	return apiFetch<{ success: boolean }>(`/storage/bins/tray-layout?${params}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function assignTray(
+	side: StorageModuleSide,
+	shelfIdx: number,
+	cellIdx: number,
+	payload: { barcode: string } & CompartmentLayout
+): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({
+		side,
+		shelf_idx: String(shelfIdx),
+		cell_idx: String(cellIdx)
+	});
+	return apiFetch<{ success: boolean }>(`/storage/bins/tray?${params}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function unassignTray(
+	side: StorageModuleSide,
+	shelfIdx: number,
+	cellIdx: number
+): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({
+		side,
+		shelf_idx: String(shelfIdx),
+		cell_idx: String(cellIdx)
+	});
+	return apiFetch<{ success: boolean }>(`/storage/bins/tray?${params}`, {
 		method: 'DELETE'
 	});
 }
@@ -308,13 +441,19 @@ export async function runCalibrationCycleTest(
 	});
 }
 
+export type RobotCommandReceipt = {
+	message: string;
+	command_id: string;
+	status: string;
+};
+
 export async function storeItem(
 	side: StorageModuleSide,
 	shelfIdx: number,
 	cellIdx: number,
 	item: Record<string, unknown>
-): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>('/robot/commands', {
+): Promise<RobotCommandReceipt> {
+	return apiFetch<RobotCommandReceipt>('/robot/commands', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -331,8 +470,8 @@ export async function retrieveItem(
 	side: StorageModuleSide,
 	shelfIdx: number,
 	cellIdx: number
-): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>('/robot/commands', {
+): Promise<RobotCommandReceipt> {
+	return apiFetch<RobotCommandReceipt>('/robot/commands', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
