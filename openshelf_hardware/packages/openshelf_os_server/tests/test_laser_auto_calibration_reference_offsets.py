@@ -449,8 +449,11 @@ async def test_unmatched_reference_cell_fails_the_run_instead_of_using_the_confi
 	analysis = _build_analysis()
 	analysis.shelves[0].cells[0].tool_x_mm = 900.0
 
+	# `apply_runner` binds `get_root_config` through a star import, so the derivation reads the
+	# real config unless that module's own name is patched. The test needs its configured offset
+	# to reach the derivation: predicting from nothing is refused before matching now.
 	with patch(
-		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
+		"openshelf_os_server.core.laser_auto_calibration.apply_runner.get_root_config",
 		return_value=config,
 	):
 		with pytest.raises(ValueError, match="matched no manual reference cell"):
