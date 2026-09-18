@@ -222,7 +222,11 @@ def report_plan(
 	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
 	offset_y_mm = 0.0 if xy_offset is None else float(xy_offset[1])
 	shift_mm = float(scan_config.z_stall_probe_x_shift_mm)
-	print(f"planned probes ({len(probes)}):")
+	print(
+		f"probe candidates ({len(probes)}): three per shelf, and probing stops at the first shelf "
+		f"whose points span {laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:.0f}mm — so the run normally "
+		"presses only one shelf's worth"
+	)
 	for cell, wall_depth_mm in probes:
 		print(
 			f"  {cell.shelf_idx}:{cell.cell_idx} probe_x={float(cell.tool_x_mm) + offset_x_mm + shift_mm:.2f} "

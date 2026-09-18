@@ -162,7 +162,7 @@ def test_plan_only_reports_probes_and_the_reference_datum(tmp_path: Path, monkey
 	assert exit_code == 0
 	output = capsys.readouterr().out
 	# Only the cell whose sweep candidate carried a wall depth is planned: the probe subtracts it.
-	assert "planned probes (1):" in output
+	assert "probe candidates (1):" in output
 	# Run-frame detection, so the probe lands at tool_x + xy_offset + shift = 341.75 - 1.25 + 20.
 	assert "1:0 probe_x=360.50" in output
 	assert "hole tool_x=341.75" in output
@@ -207,7 +207,7 @@ def test_plan_only_still_plans_without_a_reference_datum(tmp_path: Path, monkeyp
 
 	assert exit_code == 0
 	output = capsys.readouterr().out
-	assert "planned probes (1):" in output
+	assert "probe candidates (1):" in output
 	assert "reference datum unavailable" in output or "reference datum: none" in output
 
 
