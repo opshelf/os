@@ -25,11 +25,17 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from openshelf_os.storage import CellStatus, StorageModuleSide
-from .core import get_laser_sample_settle_ms, get_scan_xy_offset, print_status
+from .core import (
+	get_laser_sample_settle_ms,
+	get_scan_xy_offset,
+	get_scan_z_offset_model,
+	print_status,
+)
 from .recording import load_candidates_from_metadata, load_json_file
 from .scan import ScanDetectedCell, ScanDetectedShelf
 from .staged_scan import (
 	Z_DELTA_MAX_ABS_MM,
+	Z_DELTA_TILT_MIN_X_SPAN_MM,
 	resolve_z_delta_model,
 	wall_depths_by_cell,
 )
@@ -61,6 +67,15 @@ class ZStallSample:
 
 
 @dataclass
+class ZStallDecision:
+	"""The model a probed fit installs with: intercept in the grab frame, slope, and provenance."""
+
+	intercept_mm: float
+	slope_per_mm: float
+	source: str
+
+
+@dataclass
 class ZStallResult:
 	side: StorageModuleSide
 	intercept_mm: float
@@ -69,6 +84,10 @@ class ZStallResult:
 	stage_extension_mm: float
 	z_place_mm: float
 	rotation_center_deg: float
+	# The X the tilt-free fit's intercept is the delta *at*, in the fit frame (the grab frame the
+	# model is applied in). Recorded by the anchor: substituting a configured slope for a tilt the
+	# probe could not measure must re-base the intercept by `-slope * fit_centroid_x_mm`.
+	fit_centroid_x_mm: float = 0.0
 	samples: list[ZStallSample] = field(default_factory=list)
 	skipped: list[str] = field(default_factory=list)
 	dropped_repeats: list[str] = field(default_factory=list)
@@ -85,6 +104,7 @@ class ZStallResult:
 		xs = [sample.probe_x_mm for sample in self.samples]
 
 		return max(xs) - min(xs)
+
 
 
 def is_probe_reachable(
@@ -392,12 +412,13 @@ async def run_z_stall_anchor(
 	# When the probe target IS the axis ceiling there is no travel to spare, so a probe that runs
 	# out of travel is indistinguishable from one that found no wall: both come back reason=limit.
 	# Say so up front, otherwise a rack that has drifted out of reach reads as a rack with no walls.
-	has_no_z_headroom = z_axis_limit_mm is not None and probe_target_mm >= float(z_axis_limit_mm)
+	z_axis_limit_value_mm = None if z_axis_limit_mm is None else float(z_axis_limit_mm)
+	has_no_z_headroom = z_axis_limit_value_mm is not None and probe_target_mm >= z_axis_limit_value_mm
 
 	if has_no_z_headroom is True:
 		print_status(
 			f"z_stall_anchor=no_z_headroom probe_target_mm={probe_target_mm:.1f} "
-			f"z_axis_limit_mm={float(z_axis_limit_mm):.1f} "
+			f"z_axis_limit_mm={0.0 if z_axis_limit_value_mm is None else z_axis_limit_value_mm:.1f} "
 			"reason=limit cannot distinguish 'no wall' from 'wall beyond Z travel'"
 		)
 
@@ -580,7 +601,7 @@ async def run_z_stall_anchor(
 		if limit_miss_count == len(probes) and has_no_z_headroom is True:
 			raise ValueError(
 				f"z stall anchor: all {len(probes)} probes ran the Z axis to its travel limit "
-				f"({float(z_axis_limit_mm):.1f}mm) without contact. The probe target equals that limit, "
+				f"({0.0 if z_axis_limit_value_mm is None else z_axis_limit_value_mm:.1f}mm) without contact. The probe target equals that limit, "
 				"so the wall is not necessarily absent - it may simply be beyond the tool's reach "
 				f"(stage_extension_mm={stage_extension_mm:.2f}). Check that the rack is within reach "
 				"before trusting this as 'no wall found'."
@@ -633,9 +654,64 @@ async def run_z_stall_anchor(
 		stage_extension_mm=stage_extension_mm,
 		z_place_mm=z_place_mm,
 		rotation_center_deg=rotation_center_deg,
+		fit_centroid_x_mm=sum(
+			float(sample.probe_x_mm) - probe_x_shift_mm for sample in samples
+		) / len(samples),
 		samples=samples,
 		skipped=skipped,
 		dropped_repeats=dropped_repeats,
+	)
+
+
+def resolve_z_stall_model(
+	*,
+	result: ZStallResult,
+	scan_config: Any,
+	side: StorageModuleSide,
+) -> ZStallDecision:
+	"""The (intercept, slope) a probed fit installs with, in the grab frame the model is read in.
+
+	`ZStallResult` reports the fit as measured: when the probe could not span enough X to see a
+	tilt, that fit is tilt-free by construction and its intercept is the sampled deltas' value at
+	the samples' centroid, not at x = 0. Substituting the configured tilt for the missing one
+	therefore requires re-basing the intercept with `-slope * centroid_x`, otherwise the installed
+	line sits `slope * centroid_x` mm off at every cell - deep enough to matter on a long module.
+
+	A tilt the probe did measure always wins over the configured one, and its intercept is already
+	the x = 0 value, so it is installed untouched. The same decision is what the manual-datum gate
+	judges and what the standalone probe script reports, so all three agree.
+	"""
+	if float(result.slope_per_mm) != 0.0:
+		return ZStallDecision(
+			intercept_mm=float(result.intercept_mm),
+			slope_per_mm=float(result.slope_per_mm),
+			source="probe",
+		)
+
+	configured_model = get_scan_z_offset_model(scan_config=scan_config, side=side)
+
+	if configured_model is None or float(configured_model.slope_per_mm) == 0.0:
+		return ZStallDecision(
+			intercept_mm=float(result.intercept_mm), slope_per_mm=0.0, source="probe_constant"
+		)
+
+	if float(result.x_span_mm) >= Z_DELTA_TILT_MIN_X_SPAN_MM:
+		return ZStallDecision(
+			intercept_mm=float(result.intercept_mm), slope_per_mm=0.0, source="probe_constant"
+		)
+
+	slope_per_mm = float(configured_model.slope_per_mm)
+	centroid_x_mm = float(result.fit_centroid_x_mm)
+	print_status(
+		f"z_stall_anchor=slope_from_config side={side.value} x_span_mm={float(result.x_span_mm):.1f} "
+		f"slope_per_mm={slope_per_mm:.5f} centroid_x_mm={centroid_x_mm:.1f} "
+		f"(probe span below {Z_DELTA_TILT_MIN_X_SPAN_MM:.0f}mm, no tilt measured)"
+	)
+
+	return ZStallDecision(
+		intercept_mm=float(result.intercept_mm) - slope_per_mm * centroid_x_mm,
+		slope_per_mm=slope_per_mm,
+		source="config_short_span",
 	)
 
 

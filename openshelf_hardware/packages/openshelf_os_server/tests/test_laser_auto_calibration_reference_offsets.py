@@ -548,6 +548,7 @@ def _build_z_stall_result(
 		stage_extension_mm=47.0,
 		z_place_mm=160.5,
 		rotation_center_deg=183.0,
+		fit_centroid_x_mm=lo_x_mm + x_span_mm / 2.0,
 		samples=[
 			ZStallSample(
 				shelf_idx=0,
@@ -790,8 +791,11 @@ async def test_z_stall_keeps_the_configured_slope_when_the_probe_could_not_span(
 	)
 	config = _build_root_config(scan_config)
 	worker = _build_z_worker()
-	# One probe point on one shelf: no tilt to measure, so the configured slope must survive.
+	# A short span: the tilt-free fit reports the deltas' value at the samples' centroid, so
+	# substituting the configured slope has to re-base the intercept to x = 0 first.
 	probed = _build_z_stall_result(slope_per_mm=0.0, x_span_mm=100.0)
+	centroid_x_mm = 300.0 + 100.0 / 2.0
+	rebased_intercept_mm = MANUAL_INTERCEPT_MM + 0.00285 * centroid_x_mm
 
 	with patch(
 		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
@@ -807,9 +811,58 @@ async def test_z_stall_keeps_the_configured_slope_when_the_probe_could_not_span(
 				manual_reference=_build_manual_reference(),
 			)
 
-	assert result == (pytest.approx(MANUAL_INTERCEPT_MM), pytest.approx(-0.00285))
+	assert result == (pytest.approx(rebased_intercept_mm), pytest.approx(-0.00285))
+	assert scan_config.left_z_offset_model.intercept_mm == pytest.approx(rebased_intercept_mm)
 	assert scan_config.left_z_offset_model.slope_per_mm == pytest.approx(-0.00285)
 	assert manager._snapshot.z_stall_results[0].slope_source == "config_short_span"
+
+
+@pytest.mark.asyncio
+async def test_z_stall_short_span_substitution_reproduces_the_probe_contacts() -> None:
+	"""A substituted slope must not shift the model: the installed line has to pass through the probes.
+
+	The fit is tilt-free, so its intercept is the deltas' value at the samples' centroid. With
+	`I_true = -3.0` and `S = 0.002382` the probe measures `I_true + S*x` at x = 300 and 400; the
+	installed model has to reproduce both, which only happens once the intercept is re-based.
+	"""
+	manager = LaserAutoCalibrationManager()
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.z_stall_anchor_enabled = True
+	scan_config.left_z_offset_model = SimpleNamespace(
+		intercept_mm=-3.0,
+		slope_per_mm=0.002382,
+		stage_extension_mm=47.0,
+		z_place_mm=160.5,
+	)
+	config = _build_root_config(scan_config)
+	worker = _build_z_worker()
+	probed = _build_z_stall_result(slope_per_mm=0.0, x_span_mm=100.0, intercept_mm=-2.1663)
+	datum = _build_manual_reference(intercept_mm=-3.0)
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
+		return_value=config,
+	):
+		with patch.object(laser_module, "run_z_stall_anchor", AsyncMock(return_value=probed)):
+			intercept_mm, slope_per_mm = await manager._resolve_z_delta_model(
+				worker,
+				StorageModuleSide.LEFT,
+				_build_analysis(),
+				scan_config,
+				source_grid=_build_source_grid(),
+				manual_reference=datum,
+			)
+
+	installed = scan_config.left_z_offset_model
+
+	assert slope_per_mm == pytest.approx(0.002382)
+	assert installed.slope_per_mm == pytest.approx(0.002382)
+	# The probe's own reading at x = 350 (the centroid of 300 and 400).
+	assert installed.intercept_mm + installed.slope_per_mm * 350.0 == pytest.approx(-2.1663, abs=1e-6)
+	# And at the sample ends, where a missing re-base would show up as slope * centroid.
+	assert installed.intercept_mm + installed.slope_per_mm * 300.0 == pytest.approx(-2.2854, abs=1e-3)
+	assert installed.intercept_mm + installed.slope_per_mm * 400.0 == pytest.approx(-2.0472, abs=1e-3)
+	assert intercept_mm == pytest.approx(installed.intercept_mm)
 
 
 @pytest.mark.asyncio
@@ -1038,8 +1091,16 @@ async def test_cell_scoped_probe_verifies_the_datum_and_persists_the_model() -> 
 	grid = _build_source_grid()
 	saved_configs: list[object] = []
 	worker = _build_z_worker(grid=grid)
-	# One opening is one probe point, so there is no x span to fit a tilt from.
-	anchor = AsyncMock(return_value=_build_z_stall_result(slope_per_mm=0.0, x_span_mm=0.0))
+	# One opening is one probe point, so there is no x span to fit a tilt from: the fit reports the
+	# datum's line at the fit centre, and re-basing recovers the datum's intercept from it.
+	centroid_x_mm = 300.0
+	anchor = AsyncMock(
+		return_value=_build_z_stall_result(
+			slope_per_mm=0.0,
+			x_span_mm=0.0,
+			intercept_mm=MANUAL_INTERCEPT_MM + (-0.00285) * centroid_x_mm,
+		)
+	)
 	target = SimpleNamespace(shelf_idx=0, cell_idx=0)
 
 	with patch(
