@@ -1211,7 +1211,10 @@ def apply_single_shelf_analysis(
 			for source_key, target_key in detected_cell_key_map.items()
 			if is_manual_key(source_key) is False and is_manual_key(target_key) is False
 		}
-		if len(z_apply_map) > 0:
+		# Keyed on the unfiltered map: passing an empty map is meaningful, because it tells
+		# `apply_wall_depth_z_offsets` that every cell it can see is preserved. Omitting it would
+		# fall back to analysis-keyed cells and rewrite the manual datum it is meant to leave alone.
+		if len(detected_cell_key_map) > 0:
 			z_apply_kwargs["detected_cell_key_map"] = z_apply_map
 
 		apply_wall_depth_z_offsets(
