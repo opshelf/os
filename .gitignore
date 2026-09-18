@@ -21,15 +21,16 @@ build/
 # would let a newly created one become committable.
 data/
 
-# Signing keys provisioned by scripts/start, one key file per mode plus its
-# superseded archives. Listed explicitly so narrowing the rule above can never
-# expose a JWT secret, an audit HMAC key, or an archived rotation.
-.secrets.*
+# The device runtime environment that provisioning writes into the checkout:
+# opshelf-stage-os-env merges Sentry/CAS/mode values and the per-device signing keys
+# into it at 0600, and Compose reads it from the project directory. It carries live
+# JWT secrets on every provisioned device, so it must never become committable.
+.env
 
 # Provisioned device configuration. This repository does not own config.json:
-# provisioning generates it per device, along with the auth material, and engineers
-# copy device and backup copies into a checkout to diff or calibrate. They carry
-# auth.jwt_secret, so they must never become committable. The mode variants come
+# provisioning generates it per device and engineers copy device and backup copies
+# into a checkout to diff or calibrate. Older provisioned devices persisted
+# auth.jwt_secret in it, so it must never become committable. The mode variants come
 # from the same place; neither pattern matches the tracked dev_ui/tsconfig.json.
 config.json
 config.*.json
