@@ -12,7 +12,7 @@ from openshelf_os.common import OperatingMode
 from openshelf_os_server import settings as settings_module
 from openshelf_os_server.routers.robot import inject_mode_field
 from openshelf_os_server.routers.system import _restart_process_id
-from openshelf_os_server.settings import get_operating_mode, clear_config_cache
+from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_operating_mode, clear_config_cache
 
 
 class TestOperatingModeEnum:
@@ -160,6 +160,22 @@ class TestOperatingModeEnvironmentDefaults:
 
 		assert result["auth"]["dev_mode"] is True
 		assert result["auth"]["require_auth"] is False
+
+	# The dev fallback is forced to the identity this build seeds; a stale value in
+	# config.json (admin@opshelf.com on devices flashed before this) would otherwise
+	# leave every unauthenticated request answering 503.
+	def test_development_mode_forces_seeded_dev_auto_user(self, monkeypatch) -> None:
+		monkeypatch.setenv("ENV", "production")
+		monkeypatch.setattr(
+			settings_module,
+			"get_operating_mode",
+			lambda: OperatingMode.development,
+		)
+		data = {"auth": {"dev_mode": False, "require_auth": True, "dev_auto_user": "admin@opshelf.com"}}
+
+		result = settings_module._apply_env_overrides(data)
+
+		assert result["auth"]["dev_auto_user"] == DEVELOPER_SYSTEM_USER_EMAIL
 
 	def test_test_env_keeps_test_auth_defaults(self, monkeypatch) -> None:
 		monkeypatch.setenv("ENV", "test")
