@@ -52,7 +52,15 @@ def _build_source_grid(*, is_manual: bool = True) -> StorageGrid:
 			shelf_idx=0,
 			shelf_height=30.0,
 			shelf_width=200.0,
-			cells=[_build_cell(cell_idx=0, x=MANUAL_X_MM, y=MANUAL_Y_MM, is_manual=is_manual)],
+			cells=[
+				_build_cell(cell_idx=0, x=MANUAL_X_MM, y=MANUAL_Y_MM, is_manual=is_manual),
+				_build_cell(
+					cell_idx=1,
+					x=DETECTED_TOOL_X_MM,
+					y=DETECTED_TOOL_Y_MM,
+					is_manual=False,
+				),
+			],
 		)
 	]
 	return grid
@@ -578,7 +586,6 @@ def _build_z_worker(*, grid: StorageGrid | None = None) -> SimpleNamespace:
 	robot = SimpleNamespace(
 		_tool=tool,
 		_grid=grid if grid is not None else _build_source_grid(),
-		_reserved_cell_locations=set(),
 		reload_parameters=MagicMock(),
 	)
 
@@ -791,15 +798,16 @@ async def test_z_stall_takes_a_probed_slope_when_it_measured_one() -> None:
 
 
 @pytest.mark.asyncio
-async def test_z_stall_probes_never_include_a_reserved_tray_home() -> None:
+async def test_z_stall_probes_never_include_the_manual_datum() -> None:
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
 	config = _build_root_config(scan_config)
 	grid = _build_source_grid()
-	grid.left_module[0].cells[0].status = CellStatus.MAINTENANCE
+	# A production tray home: the probe may press it, because a tray offers the same divider to the
+	# laser and the same gripper interface as an empty cell.
+	grid.left_module[0].cells[1].status = CellStatus.MAINTENANCE
 	worker = _build_z_worker(grid=grid)
-	worker._robot._reserved_cell_locations = {("left_module", 0, 0)}
 	anchor = AsyncMock(return_value=_build_z_stall_result())
 
 	with patch(
@@ -817,6 +825,8 @@ async def test_z_stall_probes_never_include_a_reserved_tray_home() -> None:
 			)
 
 	assert anchor.await_args is not None
+	# The hand-calibrated datum stays out of the sample set so the agreement check stays honest,
+	# and the tray home is not in the exclusion set at all.
 	assert anchor.await_args.kwargs["excluded_cells"] == {(0, 0)}
 	assert anchor.await_args.kwargs["z_axis_limit_mm"] == pytest.approx(180.0)
 	assert anchor.await_args.kwargs["xy_offset"] == CONFIGURED_OFFSET

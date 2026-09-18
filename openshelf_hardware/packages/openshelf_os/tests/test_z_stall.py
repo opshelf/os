@@ -293,7 +293,7 @@ def test_select_z_stall_probes_skips_excluded_cells() -> None:
 	)
 
 
-def test_excluded_probe_cells_covers_status_item_and_reserved_homes() -> None:
+def test_excluded_probe_cells_keeps_tray_homes_but_drops_items_disabled_and_datums() -> None:
 	grid = StorageGrid(filename="storage.json")
 	grid.left_module = [
 		Shelf(
@@ -308,19 +308,19 @@ def test_excluded_probe_cells_covers_status_item_and_reserved_homes() -> None:
 			],
 		)
 	]
+	# A maintenance cell IS a production tray home, and a tray presents the same gripper interface
+	# and the same divider to the laser as an empty cell, so it stays probeable.
 	grid.left_module[0].cells[0].status = CellStatus.MAINTENANCE
+	grid.left_module[0].cells[1].status = CellStatus.DISABLED
 	grid.left_module[0].cells[2].item = CellItem(
 		dimensions=Dimensions(length=50.0, width=40.0, height=100.0)
 	)
-	reserved = {("left_module", 0, 3), ("right_module", 0, 0)}
+	grid.left_module[0].cells[3].is_manual = True
 
-	excluded = excluded_probe_cells(grid=grid, side=StorageModuleSide.LEFT, reserved_locations=reserved)
+	excluded = excluded_probe_cells(grid=grid, side=StorageModuleSide.LEFT)
 
-	assert excluded == {(0, 0), (0, 2), (0, 3)}
-	# A reserved home is excluded whether or not the stored grid still lists the cell.
-	assert excluded_probe_cells(
-		grid=grid, side=StorageModuleSide.RIGHT, reserved_locations=reserved
-	) == {(0, 0)}
+	# The item cell, the disabled cell and the hand-calibrated datum; not the tray home.
+	assert excluded == {(0, 1), (0, 2), (0, 3)}
 
 
 # --------------------------------------------------------------------------- #
@@ -561,10 +561,10 @@ async def test_anchor_refuses_an_implausible_intercept() -> None:
 
 
 @pytest.mark.asyncio
-async def test_anchor_excludes_reserved_cells_from_its_probe_set() -> None:
+async def test_anchor_refuses_when_every_cell_is_excluded() -> None:
 	cells = [build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0)]
 
-	with pytest.raises(ValueError, match="tray homes, unavailable and occupied cells are excluded"):
+	with pytest.raises(ValueError, match="disabled, occupied and hand-calibrated cells are excluded"):
 		await run_anchor(probe_contacts=[[170.0, 170.0]], cells=cells, excluded_cells={(0, 0)})
 
 
