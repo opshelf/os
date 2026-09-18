@@ -12,7 +12,7 @@ Two things make the result trustworthy and both are enforced here:
   any stage back-drive during a probe aborts the run outright (that is the shelf coming out
   of its latches, not a wall).
 * the fit is only as good as the wall depth it subtracts, so probes are taken from cells the
-  sweep measured and are skipped when the cell is disabled, occupied, or the hand-calibrated datum.
+  sweep measured and are skipped when the cell is disabled or is the hand-calibrated datum.
 """
 
 from __future__ import annotations
@@ -129,12 +129,12 @@ def excluded_probe_cells(
 ) -> set[tuple[int, int]]:
 	"""Cells a probe must leave alone.
 
-	A reserved tray home is NOT excluded: a tray presents the same gripper interface and the same
-	divider surface to the laser as an empty cell does, so pressing beside its opening measures the
-	same plate. What is excluded is a cell the rack does not actually have (DISABLED, i.e. beyond the
-	carriage travel), a cell holding an item (whose face, not the plate's, would be the wall the tip
-	finds), and a hand-calibrated cell - that datum is the yardstick the fit is judged against, so it
-	must stay out of the sample set.
+	Neither a reserved tray home nor a cell holding an item is excluded: a tray presents the same
+	gripper interface and the same divider surface to the laser as an empty cell, and an item sits
+	out of the probe's way, so pressing beside any opening measures the same plate. What is left out
+	is a cell the rack does not actually have (DISABLED, i.e. beyond the carriage travel) and a
+	hand-calibrated cell - that datum is the yardstick the fit is judged against, so it must stay out
+	of the sample set.
 	"""
 	excluded: set[tuple[int, int]] = set()
 	datum_cells: set[tuple[int, int]] = set()
@@ -144,7 +144,7 @@ def excluded_probe_cells(
 		for cell in shelf.cells:
 			key = (int(shelf.shelf_idx), int(cell.cell_idx))
 
-			if cell.status == CellStatus.DISABLED or cell.item is not None:
+			if cell.status == CellStatus.DISABLED:
 				excluded.add(key)
 			elif getattr(cell, "is_manual", False) is True:
 				datum_cells.add(key)
@@ -333,7 +333,7 @@ async def run_z_stall_anchor(
 	if len(probes) == 0:
 		raise ValueError(
 			"z stall anchor: no reachable detected cell with a wall depth to probe "
-			"(disabled, occupied and hand-calibrated cells are excluded)"
+			"(disabled and hand-calibrated cells are excluded)"
 		)
 
 	# Imported here rather than at module scope: the angle subpackage pulls in this package while

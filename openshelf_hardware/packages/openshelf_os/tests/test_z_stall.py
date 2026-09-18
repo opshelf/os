@@ -293,7 +293,7 @@ def test_select_z_stall_probes_skips_excluded_cells() -> None:
 	)
 
 
-def test_excluded_probe_cells_keeps_tray_homes_but_drops_items_disabled_and_datums() -> None:
+def test_excluded_probe_cells_drops_only_disabled_cells_and_datums() -> None:
 	grid = StorageGrid(filename="storage.json")
 	grid.left_module = [
 		Shelf(
@@ -309,7 +309,8 @@ def test_excluded_probe_cells_keeps_tray_homes_but_drops_items_disabled_and_datu
 		)
 	]
 	# A maintenance cell IS a production tray home, and a tray presents the same gripper interface
-	# and the same divider to the laser as an empty cell, so it stays probeable.
+	# and the same divider to the laser as an empty cell, so it stays probeable - and an item in a
+	# cell is out of the probe's way, so that stays probeable too.
 	grid.left_module[0].cells[0].status = CellStatus.MAINTENANCE
 	grid.left_module[0].cells[1].status = CellStatus.DISABLED
 	grid.left_module[0].cells[2].item = CellItem(
@@ -319,8 +320,8 @@ def test_excluded_probe_cells_keeps_tray_homes_but_drops_items_disabled_and_datu
 
 	excluded = excluded_probe_cells(grid=grid, side=StorageModuleSide.LEFT)
 
-	# The item cell, the disabled cell and the hand-calibrated datum; not the tray home.
-	assert excluded == {(0, 1), (0, 2), (0, 3)}
+	# Only the cell the rack does not have and the hand-calibrated datum.
+	assert excluded == {(0, 1), (0, 3)}
 
 
 # --------------------------------------------------------------------------- #
@@ -564,7 +565,7 @@ async def test_anchor_refuses_an_implausible_intercept() -> None:
 async def test_anchor_refuses_when_every_cell_is_excluded() -> None:
 	cells = [build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0)]
 
-	with pytest.raises(ValueError, match="disabled, occupied and hand-calibrated cells are excluded"):
+	with pytest.raises(ValueError, match="disabled and hand-calibrated cells are excluded"):
 		await run_anchor(probe_contacts=[[170.0, 170.0]], cells=cells, excluded_cells={(0, 0)})
 
 
