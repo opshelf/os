@@ -122,62 +122,6 @@ def is_probe_reachable(
 	return True
 
 
-def select_z_stall_probes(
-	analysis: Any,
-	wall_depths: dict[tuple[int, int], float],
-	max_probe_tool_x_mm: float | None = None,
-	min_probe_tool_x_mm: float | None = None,
-	excluded_cells: set[tuple[int, int]] | None = None,
-) -> list[tuple[ScanDetectedCell, float]]:
-	"""Pick the probe cells: each shelf's X extremes plus a middle cell.
-
-	The extremes give the tilt span and the middle corroborates it, because `resolve_z_delta_model`
-	refuses a slope that only the two ends support. Shelves are visited middle first, so the
-	first shelf that can support a tilt is the one probed before the fit is settled.
-	"""
-	shelves = [shelf for shelf in analysis.shelves if len(shelf.cells) > 0]
-
-	if len(shelves) == 0:
-		return []
-
-	excluded = set() if excluded_cells is None else set(excluded_cells)
-	ordered_shelves = sorted(shelves, key=lambda shelf: float(shelf.center_y_mm))
-	middle = len(ordered_shelves) // 2
-	shelf_sequence: list[Any] = [ordered_shelves[middle]]
-	for step in range(1, len(ordered_shelves)):
-		if middle + step < len(ordered_shelves):
-			shelf_sequence.append(ordered_shelves[middle + step])
-		if middle - step >= 0:
-			shelf_sequence.append(ordered_shelves[middle - step])
-
-	probes: list[tuple[ScanDetectedCell, float]] = []
-	seen_cells: set[tuple[int, int]] = set()
-	for shelf in shelf_sequence:
-		valid_cells = [
-			(cell, float(wall_depths[(int(cell.shelf_idx), int(cell.cell_idx))]))
-			for cell in sorted(shelf.cells, key=lambda cell: float(cell.center_x_mm))
-			if (int(cell.shelf_idx), int(cell.cell_idx)) not in excluded
-			and float(wall_depths.get((int(cell.shelf_idx), int(cell.cell_idx)), 0.0)) > 0.0
-			and is_probe_reachable(cell, max_probe_tool_x_mm, min_probe_tool_x_mm)
-		]
-
-		if len(valid_cells) == 0:
-			continue
-
-		picks = [valid_cells[0]]
-		if len(valid_cells) >= 3:
-			picks.append(valid_cells[len(valid_cells) // 2])
-		picks.append(valid_cells[-1])
-		for cell, wall_depth_mm in picks:
-			cell_key = (cell.shelf_idx, cell.cell_idx)
-			if cell_key in seen_cells:
-				continue
-			seen_cells.add(cell_key)
-			probes.append((cell, wall_depth_mm))
-
-	return probes
-
-
 def excluded_probe_cells(
 	*,
 	grid: Any,
@@ -202,6 +146,124 @@ def excluded_probe_cells(
 			excluded.add((int(shelf_idx), int(cell_idx)))
 
 	return excluded
+
+
+def _spread_shelf_indices(shelf_count: int, wanted: int) -> list[int]:
+	"""Evenly spaced shelf positions, so the sample set covers the module rather than one shelf."""
+	if shelf_count <= 0:
+		return []
+
+	if wanted >= shelf_count:
+		return list(range(shelf_count))
+
+	if wanted == 1:
+		return [shelf_count // 2]
+
+	return sorted({round(index * (shelf_count - 1) / (wanted - 1)) for index in range(wanted)})
+
+
+def _probe_cell_for_shelf(
+	cells: list[tuple[ScanDetectedCell, float]],
+	*,
+	target_x_mm: float | None,
+) -> tuple[ScanDetectedCell, float] | None:
+	"""One cell per shelf: nearest to the target x, or the shelf's own middle."""
+	if len(cells) == 0:
+		return None
+
+	if target_x_mm is None:
+		return cells[len(cells) // 2]
+
+	return min(cells, key=lambda pair: abs(float(pair[0].center_x_mm) - target_x_mm))
+
+
+def select_z_stall_probes(
+	analysis: Any,
+	wall_depths: dict[tuple[int, int], float],
+	max_probe_tool_x_mm: float | None = None,
+	min_probe_tool_x_mm: float | None = None,
+	excluded_cells: set[tuple[int, int]] | None = None,
+	shelves_to_probe: int = 3,
+) -> list[tuple[ScanDetectedCell, float]]:
+	"""Pick one opening on each of a few shelves, spread across the module.
+
+	The samples are comparable across shelves because each one subtracts its own cell's wall depth,
+	so a shelf whose plate reads deeper is normalised before it enters the fit. Sampling several
+	shelves therefore does two things a single shelf cannot: it validates the model where it will be
+	used (every selected shelf's own residual is visible), and it makes the intercept a median over
+	shelves rather than three points that share one shelf's failure mode.
+
+	Each shelf contributes one opening, chosen so the set spans X (the outer shelves take the module's
+	extremes) because the tilt still has to be refutable; the remaining shelves follow as reserves,
+	used only when a point is dropped.
+	"""
+	shelves = [shelf for shelf in analysis.shelves if len(shelf.cells) > 0]
+
+	if len(shelves) == 0:
+		return []
+
+	excluded = set() if excluded_cells is None else set(excluded_cells)
+	ordered_shelves = sorted(shelves, key=lambda shelf: float(shelf.center_y_mm))
+	valid_by_shelf: list[list[tuple[ScanDetectedCell, float]]] = []
+
+	for shelf in ordered_shelves:
+		valid_by_shelf.append(
+			[
+				(cell, float(wall_depths[(int(cell.shelf_idx), int(cell.cell_idx))]))
+				for cell in sorted(shelf.cells, key=lambda cell: float(cell.center_x_mm))
+				if (int(cell.shelf_idx), int(cell.cell_idx)) not in excluded
+				and float(wall_depths.get((int(cell.shelf_idx), int(cell.cell_idx)), 0.0)) > 0.0
+				and is_probe_reachable(cell, max_probe_tool_x_mm, min_probe_tool_x_mm)
+			]
+		)
+
+	available = [index for index, cells in enumerate(valid_by_shelf) if len(cells) > 0]
+
+	if len(available) == 0:
+		return []
+
+	# X targets spread the sampled openings over the module, which keeps a tilt refutable.
+	usable_xs = [float(cell.center_x_mm) for index in available for cell, _ in valid_by_shelf[index]]
+	min_x_mm, max_x_mm = min(usable_xs), max(usable_xs)
+	primary_positions = _spread_shelf_indices(len(ordered_shelves), max(1, shelves_to_probe))
+	x_targets = {
+		position: (
+			min_x_mm
+			if rank == 0
+			else max_x_mm
+			if rank == len(primary_positions) - 1 and len(primary_positions) >= 2
+			else (min_x_mm + max_x_mm) / 2.0
+		)
+		for rank, position in enumerate(primary_positions)
+	}
+
+	probes: list[tuple[ScanDetectedCell, float]] = []
+	seen_cells: set[tuple[int, int]] = set()
+
+	def add_probe(position: int, target_x_mm: float | None) -> None:
+		picked = _probe_cell_for_shelf(valid_by_shelf[position], target_x_mm=target_x_mm)
+
+		if picked is None:
+			return
+
+		key = (int(picked[0].shelf_idx), int(picked[0].cell_idx))
+
+		if key in seen_cells:
+			return
+
+		seen_cells.add(key)
+		probes.append(picked)
+
+	for position in primary_positions:
+		add_probe(position, x_targets.get(position))
+
+	for position in available:
+		if position in primary_positions:
+			continue
+
+		add_probe(position, None)
+
+	return probes
 
 
 async def run_z_stall_anchor(
@@ -254,6 +316,7 @@ async def run_z_stall_anchor(
 		max_probe_tool_x_mm,
 		min_probe_tool_x_mm,
 		excluded_cells=excluded_cells,
+		shelves_to_probe=int(getattr(scan_config, "z_stall_probe_shelves", 3)),
 	)
 	if len(probes) == 0:
 		raise ValueError(
@@ -289,8 +352,8 @@ async def run_z_stall_anchor(
 	tray_engagement_mm = float(scan_config.z_stall_tray_engagement_mm)
 	probe_rpm = scan_config.z_stall_probe_rpm
 	probe_target_mm = float(scan_config.z_stall_probe_target_mm)
-	probe_repeats = int(getattr(scan_config, "z_stall_probe_repeats", 1))
-	repeat_tolerance_mm = float(getattr(scan_config, "z_stall_probe_repeat_tolerance_mm", 0.3))
+	probe_repeats = int(getattr(scan_config, "z_stall_probe_repeats", 2))
+	repeat_tolerance_mm = float(getattr(scan_config, "z_stall_probe_repeat_tolerance_mm", 1.0))
 	print_status(
 		f"z_stall_anchor=start side={side_name} rotation_deg={rotation_center_deg:.3f} "
 		f"stage_extension_mm={stage_extension_mm:.2f} candidate_cells={len(probes)} "
@@ -482,9 +545,9 @@ async def run_z_stall_anchor(
 			[(sample.probe_x_mm, sample.delta_mm) for sample in samples]
 		)
 		if slope_per_mm == 0.0:
-			fit_source = "single_shelf_constant"
+			fit_source = "constant"
 		elif len(samples) >= 3:
-			fit_source = "single_shelf_tilt"
+			fit_source = "tilt"
 		else:
 			fit_source = "two_point_tilt"
 

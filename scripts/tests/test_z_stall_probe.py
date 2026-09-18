@@ -170,6 +170,34 @@ def test_plan_only_reports_probes_and_the_reference_datum(tmp_path: Path, monkey
 	assert "captured_stage_mm=47.00" in output
 
 
+def test_shelf_count_override_decides_how_many_shelves_are_sampled(
+	tmp_path: Path, monkeypatch, capsys
+) -> None:
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	run_dir = build_run_dir(tmp_path / "runs" / "3bf2cfc1")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	exit_code = main_with_args(
+		probe,
+		["--module", "left", "--from-run", str(run_dir), "--plan-only", "--shelves", "1"],
+	)
+
+	assert exit_code == 0
+	output = capsys.readouterr().out
+	assert "one opening on each of 1 shelf(s) spread over the module" in output
+
+
 def main_with_args(probe: ModuleType, argv: list[str]) -> int:
 	"""Run main() with argv, since argparse reads sys.argv directly."""
 	original_argv = sys.argv

@@ -536,7 +536,7 @@ def _build_z_stall_result(
 		side=StorageModuleSide.LEFT,
 		intercept_mm=intercept_mm,
 		slope_per_mm=slope_per_mm,
-		fit_source="single_shelf_tilt" if slope_per_mm != 0.0 else "single_shelf_constant",
+		fit_source="tilt" if slope_per_mm != 0.0 else "constant",
 		stage_extension_mm=47.0,
 		z_place_mm=160.5,
 		rotation_center_deg=183.0,

@@ -129,45 +129,100 @@ def build_result(*, intercept_mm: float, slope_per_mm: float = 0.0, x_span_mm: f
 # --------------------------------------------------------------------------- #
 
 
-def test_select_z_stall_probes_returns_x_extremes_middle_shelf_first() -> None:
+def build_shelf_cells(shelf_idx: int, *, tool_y: float, xs: list[float]) -> list[ScanDetectedCell]:
+	return [
+		build_detected_cell(shelf_idx=shelf_idx, cell_idx=cell_idx, tool_x=tool_x, tool_y=tool_y)
+		for cell_idx, tool_x in enumerate(xs)
+	]
+
+
+def build_module_analysis() -> tuple[SimpleNamespace, dict[tuple[int, int], float]]:
+	"""Three cells on each of three shelves: bottom (y=40), middle (y=640), top (y=1090)."""
+	shelf_rows = [
+		(0, 40.0, [200.0, 350.0, 500.0, 650.0, 800.0]),
+		(3, 640.0, [200.0, 350.0, 500.0, 650.0, 800.0]),
+		(6, 1090.0, [200.0, 350.0, 500.0, 650.0, 800.0]),
+	]
 	analysis = SimpleNamespace(
 		shelves=[
-			SimpleNamespace(
-				center_y_mm=100.0,
-				cells=[
-					SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=10.0),
-					SimpleNamespace(shelf_idx=0, cell_idx=1, center_x_mm=20.0),
-				],
-			),
-			SimpleNamespace(
-				center_y_mm=300.0,
-				cells=[
-					SimpleNamespace(shelf_idx=1, cell_idx=0, center_x_mm=10.0),
-					SimpleNamespace(shelf_idx=1, cell_idx=1, center_x_mm=20.0),
-					SimpleNamespace(shelf_idx=1, cell_idx=2, center_x_mm=30.0),
-				],
-			),
+			ScanDetectedShelf(
+				shelf_idx=shelf_idx,
+				center_y_mm=tool_y,
+				shelf_height_mm=30.0,
+				shelf_width_mm=400.0,
+				cells=build_shelf_cells(shelf_idx, tool_y=tool_y, xs=xs),
+			)
+			for shelf_idx, tool_y, xs in shelf_rows
 		]
 	)
-	wall_depths = {(0, 0): 10.5, (1, 0): 10.0, (1, 1): 9.9}
+	wall_depths = {
+		(cell.shelf_idx, cell.cell_idx): 9.6
+		for shelf in analysis.shelves
+		for cell in shelf.cells
+	}
 
-	result = select_z_stall_probes(analysis, wall_depths)
+	return analysis, wall_depths
 
-	# Middle shelf (idx 1) first, then its lowest-X and highest-X cells that have a
-	# wall depth (cell_idx 2 is skipped as it has none), then shelf 0's single valid cell.
-	assert [(cell.shelf_idx, cell.cell_idx, wall_depth_mm) for cell, wall_depth_mm in result] == [
-		(1, 0, 10.0),
-		(1, 1, 9.9),
-		(0, 0, 10.5),
-	]
+
+def test_spread_shelf_indices_covers_the_module() -> None:
+	from openshelf_os.laser_calibration.z_stall import _spread_shelf_indices
+
+	assert _spread_shelf_indices(7, 3) == [0, 3, 6]
+	assert _spread_shelf_indices(9, 5) == [0, 2, 4, 6, 8]
+	assert _spread_shelf_indices(7, 7) == [0, 1, 2, 3, 4, 5, 6]
+	assert _spread_shelf_indices(7, 9) == [0, 1, 2, 3, 4, 5, 6]
+	assert _spread_shelf_indices(1, 3) == [0]
+	assert _spread_shelf_indices(3, 1) == [1]
+
+
+def test_select_z_stall_probes_samples_one_cell_on_each_spread_shelf() -> None:
+	analysis, wall_depths = build_module_analysis()
+
+	probes = select_z_stall_probes(analysis, wall_depths, shelves_to_probe=3)
+
+	# Bottom, middle and top shelf, one opening each, chosen so the set spans X.
+	assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in probes][:3] == [(0, 0), (3, 2), (6, 4)]
+	assert [cell.tool_x_mm for cell, _ in probes][:3] == [200.0, 500.0, 800.0]
+
+
+def test_select_z_stall_probes_keeps_the_other_shelves_as_reserves() -> None:
+	analysis, wall_depths = build_module_analysis()
+	shelf_two = build_shelf_cells(2, tool_y=440.0, xs=[200.0, 500.0, 800.0])
+	analysis.shelves.append(
+		ScanDetectedShelf(
+			shelf_idx=2,
+			center_y_mm=440.0,
+			shelf_height_mm=30.0,
+			shelf_width_mm=300.0,
+			cells=shelf_two,
+		)
+	)
+	for cell in shelf_two:
+		wall_depths[(2, cell.cell_idx)] = 9.6
+
+	probes = select_z_stall_probes(analysis, wall_depths, shelves_to_probe=3)
+
+	# Four shelves, three of them sampled first and the fourth held back for a dropped point.
+	assert len(probes) == 4
+	assert [cell.shelf_idx for cell, _ in probes] == [0, 3, 6, 2]
+
+
+def test_select_z_stall_probes_can_sample_every_shelf() -> None:
+	analysis, wall_depths = build_module_analysis()
+
+	probes = select_z_stall_probes(analysis, wall_depths, shelves_to_probe=7)
+
+	assert len(probes) == 3
+	assert [cell.shelf_idx for cell, _ in probes] == [0, 3, 6]
 
 
 def test_select_z_stall_probes_returns_empty_without_wall_depths() -> None:
 	analysis = SimpleNamespace(
 		shelves=[
 			SimpleNamespace(
-				center_y_mm=100.0,
-				cells=[SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=10.0)],
+				shelf_idx=0,
+				center_y_mm=40.0,
+				cells=[build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=200.0, tool_y=40.0)],
 			)
 		]
 	)
@@ -176,13 +231,14 @@ def test_select_z_stall_probes_returns_empty_without_wall_depths() -> None:
 
 
 def test_select_z_stall_probes_skips_cells_whose_probe_x_exceeds_the_axis_limit() -> None:
-	"""Real lb4-3 jam: L:3:6 sits at tool_x=960; the probe adds a +20mm shift -> 980, past
-	the 950mm axis limit. The axis clamped, putting the gripper over the cell's tray hole
-	(947-973) instead of the divider; it drove down into the hole and jammed the tray."""
+	"""Real lb4-3 jam: L:3:6 sits at tool_x=960; the probe adds a +20mm shift -> 980, past the
+	950mm axis limit. The axis clamped, putting the gripper over the cell's tray hole instead of
+	the divider; it drove down into the hole and jammed the tray."""
 
 	analysis = SimpleNamespace(
 		shelves=[
 			SimpleNamespace(
+				shelf_idx=3,
 				center_y_mm=995.0,
 				cells=[
 					SimpleNamespace(shelf_idx=3, cell_idx=0, center_x_mm=279.0, tool_x_mm=330.0),
@@ -195,18 +251,20 @@ def test_select_z_stall_probes_skips_cells_whose_probe_x_exceeds_the_axis_limit(
 	wall_depths = {(3, 0): 9.9, (3, 3): 9.9, (3, 6): 9.9}
 
 	# x axis limit 950, probe shift 20 -> a probe cell must satisfy tool_x <= 930
-	result = select_z_stall_probes(analysis, wall_depths, 930.0)
-	probed = [(cell.shelf_idx, cell.cell_idx) for cell, _ in result]
+	probes = select_z_stall_probes(analysis, wall_depths, 930.0)
+	probed = [cell.cell_idx for cell, _ in probes]
 
-	assert (3, 6) not in probed
-	assert probed == [(3, 0), (3, 3)]
+	# The out-of-travel opening is dropped, leaving the shelf's remaining opening to be probed.
+	assert 6 not in probed
+	assert probed == [0]
 
 
 def test_select_z_stall_probes_skips_cells_below_the_axis_lower_limit() -> None:
 	analysis = SimpleNamespace(
 		shelves=[
 			SimpleNamespace(
-				center_y_mm=995.0,
+				shelf_idx=0,
+				center_y_mm=40.0,
 				cells=[
 					SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=279.0, tool_x_mm=330.0),
 					SimpleNamespace(shelf_idx=0, cell_idx=1, center_x_mm=909.0, tool_x_mm=960.0),
@@ -216,48 +274,23 @@ def test_select_z_stall_probes_skips_cells_below_the_axis_lower_limit() -> None:
 	)
 	wall_depths = {(0, 0): 9.9, (0, 1): 9.9}
 
-	result = select_z_stall_probes(analysis, wall_depths, None, 400.0)
+	probes = select_z_stall_probes(analysis, wall_depths, None, 400.0)
 
-	assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in result] == [(0, 1)]
-
-
-def test_select_z_stall_probes_without_a_limit_keeps_every_cell() -> None:
-	analysis = SimpleNamespace(
-		shelves=[
-			SimpleNamespace(
-				center_y_mm=995.0,
-				cells=[
-					SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=279.0, tool_x_mm=330.0),
-					SimpleNamespace(shelf_idx=0, cell_idx=1, center_x_mm=909.0, tool_x_mm=960.0),
-				],
-			)
-		]
-	)
-	wall_depths = {(0, 0): 9.9, (0, 1): 9.9}
-
-	result = select_z_stall_probes(analysis, wall_depths, None)
-
-	assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in result] == [(0, 0), (0, 1)]
+	assert [cell.cell_idx for cell, _ in probes] == [1]
 
 
 def test_select_z_stall_probes_skips_excluded_cells() -> None:
-	analysis = SimpleNamespace(
-		shelves=[
-			SimpleNamespace(
-				center_y_mm=995.0,
-				cells=[
-					SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=279.0, tool_x_mm=330.0),
-					SimpleNamespace(shelf_idx=0, cell_idx=1, center_x_mm=500.0, tool_x_mm=551.0),
-					SimpleNamespace(shelf_idx=0, cell_idx=2, center_x_mm=909.0, tool_x_mm=960.0),
-				],
-			)
-		]
+	analysis, wall_depths = build_module_analysis()
+
+	probes = select_z_stall_probes(
+		analysis, wall_depths, excluded_cells={(0, 0), (3, 2), (6, 4)}
 	)
-	wall_depths = {(0, 0): 9.9, (0, 1): 9.9, (0, 2): 9.9}
 
-	result = select_z_stall_probes(analysis, wall_depths, None, None, excluded_cells={(0, 1)})
-
-	assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in result] == [(0, 0), (0, 2)]
+	# Every primary pick on those shelves is excluded, so the shelf's next opening is used.
+	assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in probes][:3] == [(0, 1), (3, 1), (6, 3)]
+	assert all(
+		(cell.shelf_idx, cell.cell_idx) not in {(0, 0), (3, 2), (6, 4)} for cell, _ in probes
+	)
 
 
 def test_excluded_probe_cells_covers_status_item_and_reserved_homes() -> None:
@@ -295,16 +328,30 @@ def test_excluded_probe_cells_covers_status_item_and_reserved_homes() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def group_cells_by_shelf(
+	cells: list[ScanDetectedCell],
+) -> list[tuple[int, list[ScanDetectedCell]]]:
+	grouped: list[tuple[int, list[ScanDetectedCell]]] = []
+	for cell in cells:
+		if len(grouped) == 0 or grouped[-1][0] != cell.shelf_idx:
+			grouped.append((cell.shelf_idx, []))
+
+		grouped[-1][1].append(cell)
+
+	return grouped
+
+
 def build_probe_analysis(cells: list[ScanDetectedCell], wall_depths: list[float]) -> tuple:
 	analysis = SimpleNamespace(
 		shelves=[
 			ScanDetectedShelf(
-				shelf_idx=0,
-				center_y_mm=cells[0].tool_y_mm,
+				shelf_idx=shelf_idx,
+				center_y_mm=shelf_cells[0].tool_y_mm,
 				shelf_height_mm=30.0,
 				shelf_width_mm=500.0,
-				cells=list(cells),
+				cells=list(shelf_cells),
 			)
+			for shelf_idx, shelf_cells in group_cells_by_shelf(cells)
 		],
 		metadata_path=Path("/tmp/fake-z-stall-metadata.json"),
 	)
@@ -338,8 +385,8 @@ async def run_anchor(
 	if cells is None:
 		cells = [
 			build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0),
-			build_detected_cell(shelf_idx=0, cell_idx=1, tool_x=455.0, tool_y=40.0),
-			build_detected_cell(shelf_idx=0, cell_idx=2, tool_x=560.0, tool_y=40.0),
+			build_detected_cell(shelf_idx=3, cell_idx=0, tool_x=455.0, tool_y=640.0),
+			build_detected_cell(shelf_idx=6, cell_idx=0, tool_x=560.0, tool_y=1090.0),
 		]
 
 	if probe_contacts is None:
@@ -396,12 +443,17 @@ async def test_anchor_fits_intercept_and_slope_from_three_probes() -> None:
 	assert result.sample_count == 3
 	assert result.intercept_mm == pytest.approx(170.0 - 160.5 + 0.71 - 9.6)
 	assert result.slope_per_mm == pytest.approx(0.0)
-	assert result.fit_source == "single_shelf_constant"
+	assert result.fit_source == "constant"  # no tilt is fitted over this short a span
 	assert result.stage_extension_mm == pytest.approx(47.0)
 	assert result.z_place_mm == pytest.approx(160.5)
-	assert result.x_span_mm == pytest.approx(210.0)
+	assert result.x_span_mm == pytest.approx(210.0)  # 350..560 in the probe frame
 	probe_xs = sorted(sample.probe_x_mm for sample in result.samples)
 	assert probe_xs == pytest.approx([368.75, 473.75, 578.75])
+	assert [(sample.shelf_idx, sample.cell_idx) for sample in result.samples] == [
+		(0, 0),
+		(3, 0),
+		(6, 0),
+	]
 
 
 @pytest.mark.asyncio
@@ -421,13 +473,13 @@ async def test_anchor_drops_a_probe_whose_repeat_contact_moved() -> None:
 		probe_contacts=[[170.0, 170.0], [170.0, 170.4]],
 		cells=[
 			build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0),
-			build_detected_cell(shelf_idx=0, cell_idx=1, tool_x=455.0, tool_y=40.0),
+			build_detected_cell(shelf_idx=3, cell_idx=1, tool_x=455.0, tool_y=640.0),
 		],
 	)
 
 	assert result.sample_count == 1
 	assert len(result.dropped_repeats) == 1
-	assert "0:1" in result.dropped_repeats[0]
+	assert "3:1" in result.dropped_repeats[0]
 	assert "0.400mm apart" in result.dropped_repeats[0]
 
 
@@ -438,7 +490,7 @@ async def test_anchor_refuses_when_every_probe_moves_under_load() -> None:
 			probe_contacts=[[170.0, 171.0], [170.0, 172.0]],
 			cells=[
 				build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0),
-				build_detected_cell(shelf_idx=0, cell_idx=1, tool_x=455.0, tool_y=40.0),
+				build_detected_cell(shelf_idx=3, cell_idx=1, tool_x=455.0, tool_y=640.0),
 			],
 		)
 
