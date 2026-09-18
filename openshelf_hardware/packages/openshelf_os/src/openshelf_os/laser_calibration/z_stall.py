@@ -17,6 +17,7 @@ Two things make the result trustworthy and both are enforced here:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
@@ -125,6 +126,7 @@ def excluded_probe_cells(
 	*,
 	grid: Any,
 	side: StorageModuleSide,
+	scanned_cells: Iterable[tuple[int, int]] | None = None,
 ) -> set[tuple[int, int]]:
 	"""Cells a probe must leave alone.
 
@@ -134,9 +136,16 @@ def excluded_probe_cells(
 	is a cell the rack does not actually have (DISABLED, i.e. beyond the carriage travel) and a
 	hand-calibrated cell - that datum is the yardstick the fit is judged against, so it must stay out
 	of the sample set.
+
+	The datum is left out of the sample set only while the scope still contains an independent
+	opening to judge it: `scanned_cells` are the cells the in-scope scan detected, so a scope that
+	holds nothing but the manual cell - the cheapest way to verify that cell's z by contact - keeps
+	the datum probeable instead of finding nothing to press. Without `scanned_cells` the whole side
+	is the scope and the rule applies to the side's cells.
 	"""
 	excluded: set[tuple[int, int]] = set()
 	datum_cells: set[tuple[int, int]] = set()
+	disabled_cells: set[tuple[int, int]] = set()
 	has_independent_cell = False
 
 	for shelf in grid.get_side(side):
@@ -145,15 +154,22 @@ def excluded_probe_cells(
 
 			if cell.status == CellStatus.DISABLED:
 				excluded.add(key)
+				disabled_cells.add(key)
 			elif getattr(cell, "is_manual", False) is True:
 				datum_cells.add(key)
 			else:
 				has_independent_cell = True
 
-	# A side whose every reachable cell is the operator's datum has nothing independent left to
-	# sample, so the datum cells are the only openings worth pressing - keep them rather than
-	# refuse to probe, and read the agreement as partly self-referential.
-	if has_independent_cell is True:
+	# A scope whose only opening is the operator's datum has nothing independent left to sample,
+	# so the datum is the only opening worth pressing - keep it rather than refuse to probe, and
+	# read the agreement as partly self-referential. A scanned cell that is neither a datum nor
+	# DISABLED on the side still counts as the independent opening that holds the datum out.
+	exclude_datums = has_independent_cell and (
+		scanned_cells is None
+		or any(key not in datum_cells and key not in disabled_cells for key in scanned_cells)
+	)
+
+	if exclude_datums is True:
 		excluded |= datum_cells
 
 	return excluded
@@ -584,8 +600,11 @@ async def run_z_stall_anchor(
 		slope_per_mm = 0.0
 		fit_source = "constant"
 	else:
+		# Fit in the frame the model is applied in: the probe aims at probe_x (the opening plus the
+		# divider shift), while the stored model is evaluated at the cell's grab x. Fitting on the
+		# aimed point would tilt the model by the shift's worth of X.
 		intercept_mm, slope_per_mm = resolve_z_delta_model(
-			[(sample.probe_x_mm, sample.delta_mm) for sample in samples]
+			[(sample.probe_x_mm - probe_x_shift_mm, sample.delta_mm) for sample in samples]
 		)
 		if slope_per_mm == 0.0:
 			fit_source = "constant"
