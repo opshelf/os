@@ -21,6 +21,10 @@
 		type Cell
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import {
+		createReconnectingEventSource,
+		type ReconnectingEventSource
+	} from '$lib/sse';
 
 	let storageGrid = $state<StorageGrid | null>(null);
 	let loading = $state<boolean>(true);
@@ -33,6 +37,7 @@
 	let anchorShelf = $state<number | null>(null);
 	let anchorCell = $state<number | null>(null);
 	let overlayOpen = $state<boolean>(false);
+	let scanStream: ReconnectingEventSource | null = null;
 
 	const selectedSide = $derived.by(
 		(): StorageModuleSide =>
@@ -920,15 +925,67 @@
 		}
 	}
 
+	function connectScanStream(): void {
+		if (scanStream !== null) {
+			return;
+		}
+		const stream = createReconnectingEventSource({
+			path: '/robot/events',
+			onMessage: (event) => {
+				try {
+					const data = JSON.parse(event.data);
+					if (data.kind === 'label_scanned' && typeof data.payload === 'string') {
+						didReceiveScannedLabel(data.payload);
+				}
+			} catch {
+				return;
+			}
+		}
+		});
+		scanStream = stream;
+		stream.connect();
+	}
+
+	function disconnectScanStream(): void {
+		scanStream?.close();
+		scanStream = null;
+	}
+
+	function didReceiveScannedLabel(barcode: string): void {
+		if (overlayOpen && selectedSingle !== null && trayEnabled) {
+			trayBarcode = barcode;
+		}
+	}
+
+	function filterDecimalInput(field: NumericEditorField, event: Event): void {
+		const target = event.target as HTMLInputElement;
+		const cleaned = target.value.replace(/[^0-9.\-]/g, '');
+		if (cleaned !== target.value) {
+			target.value = cleaned;
+			editorValues[field] = cleaned;
+		}
+	}
+
+	function filterDigitInput(event: Event, apply: (value: string) => void): void {
+		const target = event.target as HTMLInputElement;
+		const cleaned = target.value.replace(/[^0-9]/g, '');
+		if (cleaned !== target.value) {
+			target.value = cleaned;
+			apply(cleaned);
+		}
+	}
+
 	onMount(function () {
 		if (browser === false) {
 			return;
 		}
 		void load();
+		connectScanStream();
 		document.addEventListener('mousedown', didScrimMouseDown);
 		document.addEventListener('mouseup', didScrimMouseUp);
 		document.addEventListener('click', didClickOutside);
 		return () => {
+			disconnectScanStream();
 			document.removeEventListener('mousedown', didScrimMouseDown);
 			document.removeEventListener('mouseup', didScrimMouseUp);
 			document.removeEventListener('click', didClickOutside);
@@ -1090,6 +1147,7 @@
 		<p class="selection-count">
 			{selectionCount} {selectionCount === 1 ? 'cell' : 'cells'} selected
 		</p>
+		<hr class="editor-hr" />
 		{#if error !== ''}
 			<ErrorMessage message={error} />
 		{/if}
@@ -1111,6 +1169,7 @@
 					{/if}
 				</select>
 			</label>
+			<hr class="editor-hr" />
 			<div class="editor-group">
 				{#each XYZ_COLUMNS as field (field)}
 					<label class="editor-col">
@@ -1122,6 +1181,7 @@
 						bind:value={editorValues[field]}
 						onfocus={() => didFocusField(field)}
 						onblur={() => didBlurField(field)}
+						oninput={(event) => filterDecimalInput(field, event)}
 						disabled={busy === true}
 					/>
 					</label>
@@ -1137,6 +1197,7 @@
 				/>
 				<span>lock calibration</span>
 			</label>
+			<hr class="editor-hr" />
 			<div class="editor-group">
 				{#each DIMENSION_COLUMNS as column (column.field)}
 					<label class="editor-col">
@@ -1148,12 +1209,14 @@
 						bind:value={editorValues[column.field]}
 						onfocus={() => didFocusField(column.field)}
 						onblur={() => didBlurField(column.field)}
+						oninput={(event) => filterDecimalInput(column.field, event)}
 						disabled={busy === true}
 					/>
 					</label>
 				{/each}
 			</div>
 			{#if selectedSingle !== null}
+				<hr class="editor-hr" />
 				<label class="editor-row editor-row-tray">
 					<input
 						type="checkbox"
@@ -1171,6 +1234,7 @@
 								inputmode="numeric"
 								maxlength="12"
 								bind:value={trayBarcode}
+								oninput={(event) => filterDigitInput(event, (value) => { trayBarcode = value; })}
 								disabled={busy === true}
 						/>
 						</label>
@@ -1182,6 +1246,7 @@
 								type="text"
 								inputmode="numeric"
 							bind:value={trayRows}
+							oninput={(event) => filterDigitInput(event, (value) => { trayRows = value; })}
 							disabled={busy === true}
 						/>
 						</label>
@@ -1191,6 +1256,7 @@
 							type="text"
 						inputmode="numeric"
 						bind:value={trayCols}
+						oninput={(event) => filterDigitInput(event, (value) => { trayCols = value; })}
 						disabled={busy === true}
 					/>
 					</label>
@@ -1198,6 +1264,7 @@
 				{/if}
 			{/if}
 			<div class="editor-spacer"></div>
+		<hr class="editor-hr" />
 			<div class="editor-actions">
 				<button
 					type="button"
@@ -1343,7 +1410,7 @@
 	}
 
 	.selection-count {
-		margin-bottom: 1em;
+		margin-bottom: 1.5em;
 		text-transform: uppercase;
 	}
 
@@ -1351,18 +1418,26 @@
 		flex: 1;
 		display: flex;
 		flex-direction: column;
-		margin-top: 1.5em;
 	}
 
 	.editor-spacer {
 		flex: 1;
 	}
 
+	.editor-hr {
+		flex: none;
+		width: 100%;
+		height: 0;
+		margin: 0 0 1.5em 0;
+		border: none;
+		border-top: 2px solid black;
+	}
+
 	.editor-row {
 		display: flex;
 		gap: 1em;
 		align-items: center;
-		margin-bottom: 0.75em;
+		margin-bottom: 1.5em;
 	}
 
 	.editor-row span {
@@ -1372,6 +1447,7 @@
 
 	.editor-row select {
 		flex: 1;
+		height: 2.5em;
 		padding: 0.4em 0.6em;
 		border: 2px solid black;
 		background: #fff;
@@ -1383,8 +1459,8 @@
 	.editor-group {
 		display: grid;
 		grid-template-columns: repeat(3, 1fr);
-		gap: 0.75em;
-		margin-bottom: 0.75em;
+		gap: 1.5em;
+		margin-bottom: 1.5em;
 	}
 
 	.editor-group-2 {
@@ -1407,6 +1483,7 @@
 
 	.editor-col input {
 		width: 100%;
+		height: 2.5em;
 		padding: 0.4em 0.6em;
 		border: 2px solid black;
 		background: #fff;
