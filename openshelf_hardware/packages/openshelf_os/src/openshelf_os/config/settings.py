@@ -111,7 +111,12 @@ class OverviewCameraSettings(BaseModel):
 # Literals that docker-compose.yml published as signing secret defaults. Anyone who
 # can read this repository can forge tokens and audit rows signed with them, so they
 # are never used to sign; audit integrity keeps them only to verify old rows.
-INSECURE_PUBLISHED_SECRETS = frozenset({"INSECURE_JWT_SECRET", "INSECURE_AUDIT_HMAC_KEY"})
+INSECURE_PUBLISHED_SECRETS = frozenset({
+    "INSECURE_JWT_SECRET",
+    "INSECURE_AUDIT_HMAC_KEY",
+    # Was the hard-coded non-development default; stays in PUBLISHED_HMAC_KEYS["v1"] so rows it signed remain verifiable.
+    "development-audit-hmac-key-not-for-production",
+})
 
 
 class AuthSettings(BaseModel):
