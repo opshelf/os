@@ -188,6 +188,7 @@ class ScopeRunnerMixin:
         if (
             requested_scope.derive_offsets_from_manual_cells is True
             or requested_scope.derive_z_model_from_stall is True
+            or getattr(scan_config, "z_stall_anchor_enabled", False) is True
         ):
             self._validate_manual_reference_cells(requested_scope, worker)
 
