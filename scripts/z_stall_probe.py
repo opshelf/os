@@ -389,11 +389,11 @@ async def main() -> int:
 	if args.from_grid is True:
 		# Wall depths have no cell indices of their own: they are matched to the openings the run
 		# recorded, so the run's detections are the map between the two.
+		source_analysis = laser_module.build_probe_analysis(
+			metadata=metadata, metadata_path=metadata_path
+		)
 		wall_depths = laser_module.wall_depths_by_cell(
-			analysis=laser_module.build_probe_analysis(
-				metadata=metadata, metadata_path=metadata_path
-			),
-			candidates=candidates,
+			analysis=source_analysis, candidates=candidates
 		)
 		print(
 			f"positions: stored calibration points ({len(wall_depths)} sweep wall depths available)"
@@ -405,6 +405,9 @@ async def main() -> int:
 			wall_depths=wall_depths,
 			shelf_idx=args.shelf,
 			cells=cells,
+			# The run's analysis is the frame its depths are keyed in; the grid is the frame the
+			# probe targets are in, so the two are paired by position.
+			source_analysis=source_analysis,
 		)
 	else:
 		analysis = laser_module.build_probe_analysis(metadata=metadata, metadata_path=metadata_path)
