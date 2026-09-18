@@ -1430,7 +1430,7 @@
 						bind:checked={trayEnabled}
 						disabled={busy === true}
 				/>
-					<span>multi-item bin</span>
+					<span>multi-item tray</span>
 				</label>
 				{#if trayEnabled}
 					<div class="editor-group editor-group-1">
