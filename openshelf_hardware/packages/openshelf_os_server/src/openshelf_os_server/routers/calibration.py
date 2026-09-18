@@ -278,6 +278,10 @@ class SaveRequest(BaseModel):
 	z_offset: float = Field(description="Position or extension in millimeters")
 	status: Optional[str] = None
 	is_manual: Optional[bool] = None
+	dimensions: Optional[Dimensions] = Field(
+		None,
+		description="Cell width, height, and length in millimeters; omit to keep the current dimensions."
+	)
 
 
 class CalibrationStatusResponse(BaseModel):
@@ -1252,6 +1256,25 @@ async def test_cycle(request: TestRequest):
 	return {"success": True}
 
 
+def _validate_saved_dimensions(dimensions: Dimensions, shelf_height: float) -> None:
+	for field, value in (
+		("width", dimensions.width),
+		("height", dimensions.height),
+		("length", dimensions.length),
+	):
+		if not value > 0:
+			raise HTTPException(
+				status_code=status.HTTP_400_BAD_REQUEST,
+				detail=f"Dimension {field} must be greater than zero",
+			)
+
+	if dimensions.height > shelf_height:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Cell height {dimensions.height} mm exceeds the containing shelf height {shelf_height} mm",
+		)
+
+
 @router.post(
     "/save",
     summary="Save a cell calibration point",
@@ -1260,8 +1283,9 @@ async def test_cycle(request: TestRequest):
 async def save_calibration(request: SaveRequest):
 	"""Save a cell calibration point.
 
-	Persists coordinates and optional status/manual marker for the selected cell. Tray homes
-	allow coordinate, manual-marker, and status updates. Invalid status returns `400`.
+	Persists coordinates, optional status, manual marker, and dimensions for the selected
+	cell. Tray homes allow coordinate, manual-marker, status, and dimension updates.
+	Invalid status returns `400`.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
@@ -1295,6 +1319,10 @@ async def save_calibration(request: SaveRequest):
 
 	side_enum = request.side
 	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
+
+	if request.dimensions is not None:
+		_validate_saved_dimensions(request.dimensions, shelf.shelf_height)
+
 	cell = _ensure_cell(grid, side_enum, shelf, request.cell_idx)
 
 	cell.calibration_point = CalibrationCoordinate(
@@ -1306,6 +1334,9 @@ async def save_calibration(request: SaveRequest):
 
 	if request.is_manual is not None:
 		cell.is_manual = request.is_manual
+
+	if request.dimensions is not None:
+		cell.dimensions = request.dimensions.model_copy(deep=True)
 
 	if new_status is not None:
 		cell.status = new_status

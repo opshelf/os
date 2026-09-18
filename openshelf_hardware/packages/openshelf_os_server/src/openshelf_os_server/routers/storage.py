@@ -17,17 +17,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import openshelf_os.common as common
-from openshelf_os.config.settings import CompartmentLayoutSettings, StorageBinDimensionsSettings
+from openshelf_os.config.settings import (
+    CompartmentLayoutSettings,
+    StorageBinDimensionsSettings,
+    StorageBinLocationSettings,
+    StorageBinSettings,
+)
 import openshelf_os_server.core.robot as robot_core
 
 from ..database.models import (
     Item,
     ItemLocation,
+    StorageBin,
     StorageBinItem,
     StorageBinWorkflow,
     User,
 )
-from ..core.bin_storage import BinStorageService, BinWorkflowConflict, ensure_worker_homed_for_bin_motion, ensure_worker_queue_empty_for_bin_start, is_io_box_occupied, is_reserved_bin_barcode
+from ..core.bin_storage import ACTIVE_STATES, BinStorageService, BinWorkflowConflict, ensure_worker_homed_for_bin_motion, ensure_worker_queue_empty_for_bin_start, is_io_box_occupied, is_reserved_bin_barcode
 from ..core.mock_robot import get_mock_robot_runtime
 from ..core.storage import StorageService
 from ..core.validation import CellOccupiedError, ValidationError
@@ -38,10 +44,19 @@ from .auth_deps import (
     require_permissions,
     require_relay_or_permissions,
 )
+from .calibration import ensure_laser_auto_calibration_not_running
 from ..database.session import get_db
-from openshelf_os.storage import StorageGrid
-from openshelf_os_server.core.storage_module import StorageModuleSideDto
-from openshelf_os_server.settings import get_operating_mode
+from openshelf_os.storage import (
+	CalibrationCoordinate,
+	Cell,
+	CellStatus,
+	Dimensions,
+	StorageGrid,
+	StorageModuleCellLocation,
+	StorageModuleSide,
+)
+from openshelf_os_server.core.storage_module import StorageModuleSideDto, side_to_s
+from openshelf_os_server.settings import clear_config_cache, get_operating_mode, get_root_config, save_root_config
 
 router = APIRouter(tags=["storage"])
 
@@ -126,6 +141,30 @@ class StorageCellUpdate(BaseModel):
 
     capacity: Optional[Union[str, DimensionsPayload]] = None
     status: Optional[str] = None
+
+
+class GridCellUpdate(BaseModel):
+    """Request payload for updating a robot storage-grid cell."""
+
+    x: Optional[float] = Field(default=None, description="Calibration x in millimeters; provide x, y, and z_offset together.")
+    y: Optional[float] = Field(default=None, description="Calibration y in millimeters; provide x, y, and z_offset together.")
+    z_offset: Optional[float] = Field(default=None, description="Calibration z offset in millimeters; provide x, y, and z_offset together.")
+    status: Optional[str] = Field(default=None, description="Cell status: available, occupied, maintenance, or disabled.")
+    is_manual: Optional[bool] = Field(default=None, description="Whether the calibration is locked (manual); omit to keep the current value.")
+    dimensions: Optional[DimensionsPayload] = Field(default=None, description="Cell width, height, and length in millimeters; omit to keep the current dimensions.")
+
+
+class GridCellBatchItem(GridCellUpdate):
+    """One cell to update in an atomic multi-cell update."""
+
+    shelf_idx: int
+    cell_idx: int
+
+
+class GridCellsBatchUpdate(BaseModel):
+    """Request payload for an atomic multi-cell update."""
+
+    cells: List[GridCellBatchItem]
 
 
 class ItemWithLocations(BaseModel):
@@ -427,6 +466,297 @@ async def get_bins(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     service = BinStorageService(session)
     await service.sync_config()
     return {"bins": await service.list_bins()}
+
+
+class TrayLayoutUpdate(BaseModel):
+    """Request payload for redefining a storage bin's compartment grid."""
+
+    rows: int = Field(ge=1, le=32, strict=True)
+    columns: int = Field(ge=1, le=32, strict=True)
+
+
+@router.put(
+    "/bins/tray-layout",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Update a storage bin's compartment layout",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 422, 409, 500)),
+)
+async def update_tray_layout(
+    payload: TrayLayoutUpdate,
+    side: StorageModuleSideDto = Query(...),
+    shelf_idx: int = Query(...),
+    cell_idx: int = Query(...),
+    session: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Redefine the rows/columns compartment grid of the tray homed at a cell.
+
+    Writes the tray's ``compartment_layout`` (and its derived ``max_items``) into the
+    config, which is the source of truth, then re-syncs the database. The tray must be
+    empty, at home, and have no in-flight workflow; otherwise the change is refused.
+    """
+    config = get_root_config()
+    home = (side, shelf_idx, cell_idx)
+    entry = next(
+        (
+            bin_setting
+            for bin_setting in config.storage.bins
+            if (
+                bin_setting.home_location.side,
+                bin_setting.home_location.shelf_idx,
+                bin_setting.home_location.cell_idx,
+            )
+            == home
+        ),
+        None,
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail="No storage bin is homed at this cell")
+
+    current = entry.compartment_layout
+    changed = current is None or current.rows != payload.rows or current.columns != payload.columns
+    if changed:
+        row = (
+            (
+                await session.execute(
+                    select(StorageBin).where(
+                        StorageBin.side == side,
+                        StorageBin.shelf_idx == shelf_idx,
+                        StorageBin.cell_idx == cell_idx,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if row is not None:
+            service = BinStorageService(session)
+            unfinished = await session.scalar(
+                select(StorageBinWorkflow.id)
+                .where(
+                    StorageBinWorkflow.bin_id == row.id,
+                    StorageBinWorkflow.state.in_(ACTIVE_STATES),
+                )
+                .limit(1)
+            )
+            if row.status != "at_home" or await service._member_count(row.id) or unfinished is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Empty and return the tray before changing its compartment layout",
+                )
+
+    next_config = config.model_copy(deep=True)
+    for bin_setting in next_config.storage.bins:
+        if bin_setting.barcode == entry.barcode:
+            bin_setting.compartment_layout = CompartmentLayoutSettings(rows=payload.rows, columns=payload.columns)
+            bin_setting.max_items = payload.rows * payload.columns
+
+    save_root_config(next_config)
+    clear_config_cache()
+
+    try:
+        await BinStorageService(session).sync_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {"success": True}
+
+
+class TrayAssign(BaseModel):
+    """Request payload for marking a cell as a multi-item tray home."""
+
+    barcode: str = Field(pattern=r"^\d{12}$")
+    rows: int = Field(ge=1, le=32, strict=True)
+    columns: int = Field(ge=1, le=32, strict=True)
+
+
+@router.post(
+    "/bins/tray",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Mark a cell as a multi-item tray home",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 422, 409, 500)),
+)
+async def assign_tray(
+    payload: TrayAssign,
+    side: StorageModuleSideDto = Query(...),
+    shelf_idx: int = Query(...),
+    cell_idx: int = Query(...),
+    session: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Create a storage bin homed at a cell, making it a multi-item tray.
+
+    The tray's inner dimensions default to the cell's own dimensions and its
+    ``max_items`` is derived from ``rows * columns``. The cell must not already be a tray
+    home, and the barcode must be unreserved by another tray or item.
+    """
+    try:
+        grid = _get_robot_grid()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load storage grid: {exc}",
+        ) from exc
+
+    cell = grid.get_cell_if_present(
+        StorageModuleCellLocation(side=side, shelf_idx=shelf_idx, cell_idx=cell_idx)
+    )
+    if cell is None:
+        raise HTTPException(status_code=404, detail="Cell does not exist in the grid")
+
+    config = get_root_config()
+    home = (side, shelf_idx, cell_idx)
+    if any(
+        (
+            bin_setting.home_location.side,
+            bin_setting.home_location.shelf_idx,
+            bin_setting.home_location.cell_idx,
+        )
+        == home
+        for bin_setting in config.storage.bins
+    ):
+        raise HTTPException(status_code=409, detail="This cell is already a tray home")
+
+    active_barcodes = (
+        await session.execute(select(StorageBin.barcode).where(StorageBin.active.is_(True)))
+    ).scalars()
+    reserved = {bin_setting.barcode for bin_setting in config.storage.bins} | set(active_barcodes)
+    if payload.barcode in reserved:
+        raise HTTPException(status_code=409, detail="That barcode is already in use")
+    existing_item = (
+        await session.execute(select(Item).where(Item.upca == payload.barcode))
+    ).scalar_one_or_none()
+    if existing_item is not None:
+        raise HTTPException(status_code=409, detail="That barcode belongs to an item")
+
+    stale_row = (
+        (
+            await session.execute(
+                select(StorageBin).where(
+                    StorageBin.side == side,
+                    StorageBin.shelf_idx == shelf_idx,
+                    StorageBin.cell_idx == cell_idx,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if stale_row is not None:
+        if stale_row.active:
+            raise HTTPException(status_code=409, detail="This cell is already a tray home")
+        other_holder_ids = (
+            await session.execute(
+                select(StorageBin.id).where(StorageBin.barcode == payload.barcode)
+            )
+        ).scalars().all()
+        if any(row_id != stale_row.id for row_id in other_holder_ids):
+            raise HTTPException(
+                status_code=409,
+                detail="That barcode is already in use by another tray",
+            )
+        # A prior, removed tray left a deactivated row occupying this home cell. Re-point it
+        # at the new barcode so the re-sync updates it in place instead of colliding with
+        # the unique home-cell constraint.
+        stale_row.barcode = payload.barcode
+        await session.commit()
+
+    entry = StorageBinSettings(
+        barcode=payload.barcode,
+        home_location=StorageBinLocationSettings(side=side.value, shelf_idx=shelf_idx, cell_idx=cell_idx),
+        inner_dimensions=StorageBinDimensionsSettings(
+            width=cell.dimensions.width,
+            height=cell.dimensions.height,
+            length=cell.dimensions.length,
+        ),
+        max_items=payload.rows * payload.columns,
+        compartment_layout=CompartmentLayoutSettings(rows=payload.rows, columns=payload.columns),
+    )
+
+    next_config = config.model_copy(deep=True)
+    next_config.storage.bins = [*next_config.storage.bins, entry]
+    save_root_config(next_config)
+    clear_config_cache()
+
+    try:
+        await BinStorageService(session).sync_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {"success": True}
+
+
+@router.delete(
+    "/bins/tray",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Remove a cell's multi-item tray",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 422, 409, 500)),
+)
+async def unassign_tray(
+    side: StorageModuleSideDto = Query(...),
+    shelf_idx: int = Query(...),
+    cell_idx: int = Query(...),
+    session: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Remove the storage bin homed at a cell, freeing the cell.
+
+    The tray must be empty and at home with no in-flight workflow; otherwise it is refused.
+    The bin is dropped from the config, the source of truth, and its database row is
+    deactivated on re-sync.
+    """
+    config = get_root_config()
+    home = (side, shelf_idx, cell_idx)
+    entry = next(
+        (
+            bin_setting
+            for bin_setting in config.storage.bins
+            if
+            (
+                bin_setting.home_location.side,
+                bin_setting.home_location.shelf_idx,
+                bin_setting.home_location.cell_idx,
+            )
+            == home
+        ),
+        None,
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail="No storage bin is homed at this cell")
+
+    row = (
+        (await session.execute(select(StorageBin).where(StorageBin.barcode == entry.barcode)))
+        .scalars()
+        .first()
+    )
+    if row is not None:
+        service = BinStorageService(session)
+        unfinished = await session.scalar(
+            select(StorageBinWorkflow.id)
+            .where(
+                StorageBinWorkflow.bin_id == row.id,
+                StorageBinWorkflow.state.in_(ACTIVE_STATES),
+            )
+            .limit(1)
+        )
+        if row.status != "at_home" or await service._member_count(row.id) or unfinished is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Empty and return the tray before removing it",
+            )
+
+    next_config = config.model_copy(deep=True)
+    next_config.storage.bins = [
+        bin_setting
+        for bin_setting in next_config.storage.bins
+        if bin_setting.barcode != entry.barcode
+    ]
+    save_root_config(next_config)
+    clear_config_cache()
+
+    try:
+        await BinStorageService(session).sync_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {"success": True}
 
 
 @router.get("/bin-workflows/active", responses=response_docs(model=BinWorkflowsResponse, errors=(401, 403)), dependencies=[Depends(require_relay_or_permissions("storage:read"))])
@@ -1152,14 +1482,42 @@ async def get_storage_grid() -> Dict[str, Any]:
     return grid.model_dump()
 
 
+@router.post(
+    "/grid/shelf",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Add a shelf to the robot grid",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 409, 500)),
+)
+async def add_grid_shelf(
+    side: StorageModuleSideDto = Query(...)
+) -> Dict[str, Any]:
+    """Add a shelf to the robot grid.
+
+    Adds one shelf at the next free index with a single cell, cloning geometry from the
+    side's existing shelves where available, without moving hardware.
+    """
+    await ensure_laser_auto_calibration_not_running()
+    try:
+        grid = _get_robot_grid()
+        grid.add_shelf(side)
+        return {"success": True}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to add shelf: {exc}",
+        ) from exc
+
+
 @router.delete(
     "/grid/shelf",
     dependencies=[Depends(require_permissions("storage:write"))],
     summary="Delete a shelf from the robot grid",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 500)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 409, 500)),
 )
 async def delete_shelf(
-    side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...)
+    side: StorageModuleSideDto = Query(...),
+    shelf_idx: int = Query(...),
+    session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """Delete a shelf from the robot grid.
 
@@ -1167,6 +1525,33 @@ async def delete_shelf(
     retrieving physical contents. This engineering operation changes storage geometry, not
     item inventory.
     """
+    await ensure_laser_auto_calibration_not_running()
+
+    # Removing a shelf reindexes the side, so it desyncs every shelf-index reference at or
+    # above the deleted shelf. Refuse while a tray home or a stored item still names one.
+    bin_ref = (
+        await session.execute(
+            select(StorageBin.id).where(
+                StorageBin.side == side,
+                StorageBin.active.is_(True),
+                StorageBin.shelf_idx >= shelf_idx,
+            )
+        )
+    ).first()
+    item_ref = (
+        await session.execute(
+            select(ItemLocation.id).where(
+                ItemLocation.side == side,
+                ItemLocation.shelf_idx >= shelf_idx,
+            )
+        )
+    ).first()
+    if bin_ref is not None or item_ref is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete a shelf that has a tray home or a stored item at it or above it; move or remove them first",
+        )
+
     try:
         grid = _get_robot_grid()
         grid.remove_shelf(side, shelf_idx)
@@ -1180,20 +1565,77 @@ async def delete_shelf(
         ) from exc
 
 
+@router.post(
+    "/grid/cell",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Add a cell to the robot grid",
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 409, 500)),
+)
+async def add_grid_cell(
+    side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...)
+) -> Dict[str, Any]:
+    """Add a cell to the robot grid.
+
+    Adds one cell at the next free index to the selected shelf, cloning geometry from
+    existing cells where available, without moving hardware.
+    """
+    await ensure_laser_auto_calibration_not_running()
+    try:
+        grid = _get_robot_grid()
+        grid.add_cell(side, shelf_idx)
+        return {"success": True}
+    except IndexError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to add cell: {exc}",
+        ) from exc
+
+
 @router.delete(
     "/grid/cell",
     dependencies=[Depends(require_permissions("storage:write"))],
     summary="Delete a cell from the robot grid",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 500)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 409, 500)),
 )
 async def delete_cell(
-    side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...), cell_idx: int = Query(...)
+    side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...), cell_idx: int = Query(...),
+    session: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """Delete a cell from the robot grid.
 
     Deletes one side/shelf/cell from the persisted grid, without moving hardware. Reconcile
     item occupancy separately before changing storage geometry.
     """
+    await ensure_laser_auto_calibration_not_running()
+
+    # Deleting a cell desyncs the grid from any tray home or stored item that names it.
+    bin_ref = (
+        await session.execute(
+            select(StorageBin.id).where(
+                StorageBin.side == side,
+                StorageBin.active.is_(True),
+                StorageBin.shelf_idx == shelf_idx,
+                StorageBin.cell_idx == cell_idx,
+            )
+        )
+    ).first()
+    item_ref = (
+        await session.execute(
+            select(ItemLocation.id).where(
+                ItemLocation.side == side,
+                ItemLocation.shelf_idx == shelf_idx,
+                ItemLocation.cell_idx == cell_idx,
+            )
+        )
+    ).first()
+    if bin_ref is not None or item_ref is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete a cell that is a tray home or holds a stored item; move or remove it first",
+        )
+
     try:
         grid = _get_robot_grid()
         grid.remove_cell(side, shelf_idx, cell_idx)
@@ -1205,3 +1647,155 @@ async def delete_cell(
             status_code=500,
             detail=f"Failed to delete cell: {exc}",
         ) from exc
+
+
+@router.put(
+    "/grid/cell",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Update a cell in the robot grid",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 404, 409, 500)),
+)
+async def update_grid_cell(
+    payload: GridCellUpdate,
+    side: StorageModuleSideDto = Query(...), shelf_idx: int = Query(...), cell_idx: int = Query(...)
+) -> Dict[str, Any]:
+    """Update calibration point, status, and/or dimensions for one robot-grid cell.
+
+    Omitted fields keep the cell's current values, so a partial payload updates only what
+    it carries. x, y, and z_offset are applied together and create the cell's calibration
+    point when it has none.
+    """
+    await ensure_laser_auto_calibration_not_running()
+    try:
+        grid = _get_robot_grid()
+        cell = grid.get_cell(StorageModuleCellLocation(side=side, shelf_idx=shelf_idx, cell_idx=cell_idx))
+        shelf = grid.get_shelf(side, shelf_idx)
+    except IndexError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load storage grid: {exc}",
+        ) from exc
+
+    _validate_grid_cell_update(payload, shelf.shelf_height)
+    _apply_grid_cell_update(cell, payload, side)
+
+    grid.save()
+
+    return {"success": True}
+
+
+def _validate_grid_dimensions(dims: DimensionsPayload, shelf_height: Optional[float] = None) -> None:
+    for field, value in (
+        ("width", dims.width),
+        ("height", dims.height),
+        ("length", dims.length),
+    ):
+        if not value > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Dimension {field} must be greater than zero",
+            )
+
+    if shelf_height is not None and dims.height > shelf_height:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cell height {dims.height} mm exceeds the containing shelf height {shelf_height} mm",
+        )
+
+
+def _validate_grid_cell_update(payload: GridCellUpdate, shelf_height: Optional[float] = None) -> None:
+    if (
+        payload.x is None
+    ) != (payload.y is None) or (
+        payload.x is None
+    ) != (payload.z_offset is None):
+        raise HTTPException(
+            status_code=400,
+            detail="x, y, and z_offset must be provided together",
+        )
+
+    if payload.status is not None:
+        try:
+            CellStatus(payload.status)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status: {payload.status}. Must be one of: available, occupied, maintenance, disabled",
+            )
+
+    if payload.dimensions is not None:
+        _validate_grid_dimensions(payload.dimensions, shelf_height)
+
+
+def _apply_grid_cell_update(cell: Cell, payload: GridCellUpdate, side: StorageModuleSide) -> None:
+    if payload.status is not None:
+        cell.status = CellStatus(payload.status)
+
+    if payload.x is not None and payload.y is not None and payload.z_offset is not None:
+        cell.calibration_point = CalibrationCoordinate(
+            x=payload.x,
+            y=payload.y,
+            z_offset=payload.z_offset,
+            s=side_to_s(side),
+        )
+
+    if payload.dimensions is not None:
+        cell.dimensions = Dimensions(
+            width=payload.dimensions.width,
+            height=payload.dimensions.height,
+            length=payload.dimensions.length,
+        )
+
+    if payload.is_manual is not None:
+        cell.is_manual = payload.is_manual
+
+
+@router.put(
+    "/grid/cells",
+    dependencies=[Depends(require_permissions("storage:write"))],
+    summary="Update multiple cells in the robot grid (atomic)",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 404, 409, 500)),
+)
+async def update_grid_cells(
+    payload: GridCellsBatchUpdate,
+    side: StorageModuleSideDto = Query(...),
+) -> Dict[str, Any]:
+    """Atomically apply updates to multiple robot-grid cells.
+
+    Every cell is resolved and every payload validated before anything is mutated, and the
+    grid is saved once at the end. If any cell is missing or any payload is invalid, the
+    whole request fails and nothing is changed.
+    """
+    await ensure_laser_auto_calibration_not_running()
+    try:
+        grid = _get_robot_grid()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load storage grid: {exc}",
+        ) from exc
+
+    if len(payload.cells) == 0:
+        raise HTTPException(status_code=400, detail="No cells to update")
+
+    resolved: list[tuple[Cell, GridCellBatchItem]] = []
+
+    for item in payload.cells:
+        try:
+            cell = grid.get_cell(
+                StorageModuleCellLocation(side=side, shelf_idx=item.shelf_idx, cell_idx=item.cell_idx)
+            )
+            shelf = grid.get_shelf(side, item.shelf_idx)
+        except IndexError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        _validate_grid_cell_update(item, shelf.shelf_height)
+        resolved.append((cell, item))
+
+    for cell, item in resolved:
+        _apply_grid_cell_update(cell, item, side)
+
+    grid.save()
+
+    return {"success": True}

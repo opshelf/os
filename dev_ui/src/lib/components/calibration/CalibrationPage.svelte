@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import StorageLayoutEditor from '$lib/components/calibration/StorageLayoutEditor.svelte';
 	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
 	import CellAutoCalibration from '$lib/components/calibration/CellAutoCalibration.svelte';
 	import CellCalibrationTest from '$lib/components/calibration/CellCalibrationTest.svelte';
@@ -7,9 +8,9 @@
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
 	import { devicePath } from '$lib/nav';
 
-	type CalibrationView = 'cell_auto' | 'cell_manual' | 'io' | 'rotation' | 'test';
+	type CalibrationView = 'layout' | 'cell_auto' | 'cell_manual' | 'io' | 'rotation' | 'test';
 
-	let { selectedView = 'cell_auto' }: { selectedView?: CalibrationView } = $props();
+	let { selectedView = 'layout' }: { selectedView?: CalibrationView } = $props();
 
 	const sideParam = page.url.searchParams.get('side');
 
@@ -30,16 +31,19 @@
 </script>
 
 <div class="toggle-group">
-	<a class:selected={selectedView === 'cell_auto'} href={tabHref('/calibration/auto')}>auto</a>
-	<a class:selected={selectedView === 'cell_manual'} href={tabHref('/calibration/cells')}>manual</a>
-	<a class:selected={selectedView === 'io'} href={tabHref('/calibration/io-box')}>io box</a>
-	<a class:selected={selectedView === 'rotation'} href={tabHref('/calibration/tool-rotation')}>
+	<a class:selected={selectedView === 'layout'} href={tabHref('/storage/layout')}>layout</a>
+	<a class:selected={selectedView === 'cell_auto'} href={tabHref('/storage/auto')}>auto</a>
+	<a class:selected={selectedView === 'cell_manual'} href={tabHref('/storage/cells')}>manual</a>
+	<a class:selected={selectedView === 'io'} href={tabHref('/storage/io-box')}>io box</a>
+	<a class:selected={selectedView === 'rotation'} href={tabHref('/storage/tool-rotation')}>
 		rotation
 	</a>
-	<a class:selected={selectedView === 'test'} href={tabHref('/calibration/test')}>test</a>
+	<a class:selected={selectedView === 'test'} href={tabHref('/storage/test')}>test</a>
 </div>
 
-{#if selectedView === 'cell_manual'}
+{#if selectedView === 'layout'}
+	<StorageLayoutEditor />
+{:else if selectedView === 'cell_manual'}
 	<CellCalibration {initialSide} {initialShelf} {initialCell} />
 {:else if selectedView === 'cell_auto'}
 	<CellAutoCalibration />
