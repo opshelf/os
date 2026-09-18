@@ -413,8 +413,8 @@ async def main() -> int:
 
 	if len(probes) == 0:
 		print(
-			"nothing to probe: every detected cell in scope is excluded (disabled, occupied, "
-			"hand-calibrated or --exclude), has no sweep wall depth, or sits past the carriage travel"
+			"nothing to probe: every detected cell in scope is excluded (disabled, hand-calibrated "
+			"or --exclude), has no sweep wall depth, or sits past the carriage travel"
 		)
 		return 1
 
