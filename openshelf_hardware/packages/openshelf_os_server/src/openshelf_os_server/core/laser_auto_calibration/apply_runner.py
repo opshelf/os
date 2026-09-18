@@ -241,6 +241,51 @@ class ApplyRunnerMixin:
 
         return float(manual_reference.intercept_mm)
 
+    def _z_stall_datum_agreement_mm(
+        self,
+        *,
+        side: StorageModuleSide,
+        result: laser_module.ZStallResult,
+        manual_reference: laser_module.ReferenceOffsetResult | None,
+        manual_intercept_mm: float | None,
+        slope_per_mm: float,
+        scan_config: Any,
+    ) -> float | None:
+        """How far the model about to be installed misses the hand-calibrated datum, in mm.
+
+        The datum intercept was derived with the slope that was configured, so comparing
+        intercepts alone would let a probe-fitted tilt move the model away from the datum
+        unchecked: what has to agree is where the two models PUT the datum cells, i.e.
+        `intercept + slope * grab_x` at each reference sample. The worst cell is what the gate
+        judges, and the same number is what the operator sees.
+        """
+        if manual_reference is None or manual_intercept_mm is None:
+            return None
+
+        configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
+        configured_slope_mm = 0.0 if configured_model is None else float(configured_model.slope_per_mm)
+        samples = list(manual_reference.samples)
+
+        if len(samples) == 0:
+            return abs(float(result.intercept_mm) - float(manual_intercept_mm))
+
+        residuals = [
+            abs(
+                (float(result.intercept_mm) + float(slope_per_mm) * float(sample.manual_x_mm))
+                - (
+                    float(sample.derived_intercept_mm)
+                    + configured_slope_mm * float(sample.manual_x_mm)
+                )
+            )
+            for sample in samples
+            if sample.derived_intercept_mm is not None
+        ]
+
+        if len(residuals) == 0:
+            return abs(float(result.intercept_mm) - float(manual_intercept_mm))
+
+        return max(residuals)
+
     def _validate_z_stall_against_manual_datum(
         self,
         *,
@@ -248,6 +293,7 @@ class ApplyRunnerMixin:
         result: laser_module.ZStallResult,
         manual_reference: laser_module.ReferenceOffsetResult,
         manual_intercept_mm: float,
+        slope_per_mm: float,
         scan_config: Any,
     ) -> None:
         """Refuse a probed model the hand-calibrated datum does not corroborate.
@@ -259,7 +305,15 @@ class ApplyRunnerMixin:
         """
         side_name = "left" if side == StorageModuleSide.LEFT else "right"
         tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
-        agreement_mm = abs(float(result.intercept_mm) - manual_intercept_mm)
+        agreement_mm = self._z_stall_datum_agreement_mm(
+            side=side,
+            result=result,
+            manual_reference=manual_reference,
+            manual_intercept_mm=manual_intercept_mm,
+            slope_per_mm=slope_per_mm,
+            scan_config=scan_config,
+        )
+        agreement_mm = 0.0 if agreement_mm is None else agreement_mm
         laser_module.print_status(
             f"z_stall_anchor=manual_check side={side_name} probe_intercept_mm={result.intercept_mm:.3f} "
             f"manual_intercept_mm={manual_intercept_mm:.3f} agreement_mm={agreement_mm:.3f} "
@@ -315,10 +369,13 @@ class ApplyRunnerMixin:
         applied: bool,
         persisted: bool,
     ) -> None:
-        agreement_mm = (
-            None
-            if manual_reference is None or manual_intercept_mm is None
-            else abs(float(result.intercept_mm) - manual_intercept_mm)
+        agreement_mm = self._z_stall_datum_agreement_mm(
+            side=result.side,
+            result=result,
+            manual_reference=manual_reference,
+            manual_intercept_mm=manual_intercept_mm,
+            slope_per_mm=slope_per_mm,
+            scan_config=scan_config,
         )
         entry = LaserAutoCalibrationZStallResult(
             side=result.side,
@@ -372,12 +429,22 @@ class ApplyRunnerMixin:
     ) -> tuple[float, float]:
         """Probe the plate for this side's z model, validated against the hand-calibrated datum."""
         device_grid = getattr(worker._robot, "_grid", None) or source_grid
+        # The probe can only judge the datum against what the scope actually detected: a run
+        # scoped to the manual cell holds nothing but the datum, and the probe of that datum is
+        # the point of the run.
+        scanned_cells = {
+            (int(cell.shelf_idx), int(cell.cell_idx))
+            for shelf in analysis.shelves
+            for cell in shelf.cells
+        }
         result = await laser_module.run_z_stall_anchor(
             tool=worker._robot._tool,
             analysis=analysis,
             scan_config=scan_config,
             side=side,
-            excluded_cells=laser_module.excluded_probe_cells(grid=device_grid, side=side),
+            excluded_cells=laser_module.excluded_probe_cells(
+                grid=device_grid, side=side, scanned_cells=scanned_cells
+            ),
             x_axis_limit_mm=_get_x_axis_limit_mm(worker),
             x_axis_lower_limit_mm=_get_x_axis_lower_limit_mm(worker),
             z_axis_limit_mm=_get_z_axis_limit_mm(worker),
@@ -402,6 +469,12 @@ class ApplyRunnerMixin:
                 persisted=False,
             )
             raise
+        # The slope is decided before anything is judged or published: the datum comparison has to
+        # use the slope that will be installed, and the operator's agreement number has to be the
+        # one the gate used.
+        slope_per_mm, slope_source = self._resolve_probed_slope(
+            side=side, result=result, scan_config=scan_config
+        )
         # Publish the raw fit before judging it: a refusal is exactly when the operator needs to
         # see both numbers side by side.
         await self._publish_z_stall_result(
@@ -409,8 +482,8 @@ class ApplyRunnerMixin:
             manual_intercept_mm=manual_intercept_mm,
             manual_reference=manual_reference,
             scan_config=scan_config,
-            slope_per_mm=float(result.slope_per_mm),
-            slope_source="probe",
+            slope_per_mm=slope_per_mm,
+            slope_source=slope_source,
             applied=False,
             persisted=False,
         )
@@ -419,10 +492,8 @@ class ApplyRunnerMixin:
             result=result,
             manual_reference=manual_reference,
             manual_intercept_mm=manual_intercept_mm,
+            slope_per_mm=slope_per_mm,
             scan_config=scan_config,
-        )
-        slope_per_mm, slope_source = self._resolve_probed_slope(
-            side=side, result=result, scan_config=scan_config
         )
         # Installing on the run's config is what persists it: the callers save that same object.
         self._install_z_offset_model(scan_config, result, slope_per_mm=slope_per_mm)

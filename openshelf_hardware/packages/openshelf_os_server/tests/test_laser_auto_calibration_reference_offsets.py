@@ -817,9 +817,12 @@ async def test_z_stall_takes_a_probed_slope_when_it_measured_one() -> None:
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
+	# The configured tilt is close enough that the datum corroborates the probe's own: the datum
+	# intercept was derived with the configured slope, so a large swing between the two would move
+	# the installed model away from the datum cell by more than the agreement tolerance.
 	scan_config.left_z_offset_model = SimpleNamespace(
 		intercept_mm=1.052,
-		slope_per_mm=-0.00285,
+		slope_per_mm=0.0022,
 		stage_extension_mm=47.0,
 		z_place_mm=160.5,
 	)
@@ -846,6 +849,49 @@ async def test_z_stall_takes_a_probed_slope_when_it_measured_one() -> None:
 
 
 @pytest.mark.asyncio
+async def test_z_stall_refuses_a_probed_slope_the_datum_cannot_corroborate() -> None:
+	"""Intercepts that agree are not enough: the datum speaks for the model that is installed.
+
+	The datum intercept carries the configured slope, so a probe-fitted tilt that differs from it
+	tilts the installed model away from the datum cell by `(S_probe - S_cfg) * x`. Here both
+	intercepts are identical and the model still misses the datum by 0.005 * MANUAL_X_MM.
+	"""
+	manager = LaserAutoCalibrationManager()
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.z_stall_anchor_enabled = True
+	scan_config.left_z_offset_model = SimpleNamespace(
+		intercept_mm=MANUAL_INTERCEPT_MM,
+		slope_per_mm=0.0,
+		stage_extension_mm=47.0,
+		z_place_mm=160.5,
+	)
+	config = _build_root_config(scan_config)
+	worker = _build_z_worker()
+	probed = _build_z_stall_result(intercept_mm=MANUAL_INTERCEPT_MM, slope_per_mm=0.005, x_span_mm=500.0)
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
+		return_value=config,
+	):
+		with patch.object(laser_module, "run_z_stall_anchor", AsyncMock(return_value=probed)):
+			with pytest.raises(ValueError, match="tolerance"):
+				await manager._resolve_z_delta_model(
+					worker,
+					StorageModuleSide.LEFT,
+					_build_analysis(),
+					scan_config,
+					source_grid=_build_source_grid(),
+					manual_reference=_build_manual_reference(),
+				)
+
+	published = manager._snapshot.z_stall_results[0]
+
+	assert published.manual_agreement_mm == pytest.approx(0.005 * MANUAL_X_MM)
+	assert published.applied is False
+	assert published.persisted is False
+
+
+@pytest.mark.asyncio
 async def test_z_stall_probes_never_include_the_manual_datum() -> None:
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
@@ -857,6 +903,26 @@ async def test_z_stall_probes_never_include_the_manual_datum() -> None:
 	grid.left_module[0].cells[1].status = CellStatus.MAINTENANCE
 	worker = _build_z_worker(grid=grid)
 	anchor = AsyncMock(return_value=_build_z_stall_result())
+	# The scope detected the tray-home opening too: an independent opening in scope is what
+	# holds the datum out of the sample set, so the probe must still never take it.
+	analysis = _build_analysis()
+	analysis.shelves[0].cells.append(
+		ScanDetectedCell(
+			shelf_idx=0,
+			cell_idx=1,
+			center_x_mm=DETECTED_TOOL_X_MM + 54.0,
+			center_y_mm=DETECTED_TOOL_Y_MM,
+			tool_x_mm=DETECTED_TOOL_X_MM + 105.0,
+			tool_y_mm=DETECTED_TOOL_Y_MM,
+			width_mm=26.0,
+			height_mm=30.0,
+			point_count=20,
+			bbox_x_min=DETECTED_TOOL_X_MM + 92.0,
+			bbox_x_max=DETECTED_TOOL_X_MM + 118.0,
+			bbox_y_min=DETECTED_TOOL_Y_MM - 15.0,
+			bbox_y_max=DETECTED_TOOL_Y_MM + 15.0,
+		)
+	)
 
 	with patch(
 		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
@@ -866,7 +932,7 @@ async def test_z_stall_probes_never_include_the_manual_datum() -> None:
 			await manager._resolve_z_delta_model(
 				worker,
 				StorageModuleSide.LEFT,
-				_build_analysis(),
+				analysis,
 				scan_config,
 				source_grid=_build_source_grid(),
 				manual_reference=_build_manual_reference(),
@@ -1019,6 +1085,9 @@ async def test_cell_scoped_probe_verifies_the_datum_and_persists_the_model() -> 
 										)
 
 	anchor.assert_awaited_once()
+	# The scope holds nothing but the datum, so the datum must stay out of the exclusion set: a
+	# probe that excluded it would have nothing to press and would fail after the scan already ran.
+	assert (0, 0) not in anchor.await_args.kwargs["excluded_cells"]
 	assert len(saved_configs) == 1
 	# The intercept comes from the probe; the span is one cell, so the machine keeps its slope.
 	installed = saved_configs[0].robot.grid.scan.left_z_offset_model
