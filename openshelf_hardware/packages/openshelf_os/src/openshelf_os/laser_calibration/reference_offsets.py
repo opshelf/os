@@ -2,8 +2,8 @@
 
 A manually calibrated cell carries the grab point an operator dialled in by hand; the scan
 measures the same opening in the laser frame. The difference between the two is the per-side
-offset the apply step needs, so a machine can bootstrap its own offsets instead of copying
-another machine's numbers or leaving the configured value null.
+offset the apply step needs, so a machine can replace the rough offset it was configured
+with (copied from another machine or guessed) by the value its own reference cells imply.
 
 The stored point is `detected + xy_offset`, so the derivation is `manual - detected`, taken as
 a median across the reference cells and reported with its spread: one hand-set cell is only
@@ -14,7 +14,9 @@ Matching a manual point to a detected opening predicts where the scan should hav
 (`manual - configured_offset`) and then takes the nearest detected opening inside a narrow
 window. Predicting first matters: the offset itself can be tens of millimetres (the right
 module's is near -100), which is larger than the spacing between openings, so matching by
-raw proximity would pick a neighbouring cell and shift the whole module by one pitch.
+raw proximity would pick a neighbouring cell and shift the whole module by one pitch. That is
+why a side with no configured offset is refused outright: predicting from zero is raw
+proximity in disguise, and it silently lands on a neighbouring opening a full pitch away.
 """
 
 from __future__ import annotations
@@ -247,9 +249,10 @@ def derive_reference_offsets(
 	"""Laser-to-gripper offset implied by the hand-calibrated cells in scope.
 
 	Raises ValueError when the reference frame cannot be trusted: no manual cell in scope, no
-	manual point matched a detected opening, or the reference cells disagree by more than a
-	fixed tool geometry can explain. Falling back to the configured offset would calibrate the
-	module against the very value the operator asked to replace, so the caller is told why.
+	configured offset to predict the manual cells from, no manual point matched a detected
+	opening, or the reference cells disagree by more than a fixed tool geometry can explain.
+	Falling back to the configured offset would calibrate the module against the very value the
+	operator asked to replace, so the caller is told why.
 	"""
 	if candidates is None:
 		candidates = _load_candidates(analysis)
@@ -270,8 +273,22 @@ def derive_reference_offsets(
 	configured_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
 	configured_offset_x_mm = None if configured_offset is None else float(configured_offset[0])
 	configured_offset_y_mm = None if configured_offset is None else float(configured_offset[1])
-	predictor_x_mm = 0.0 if configured_offset_x_mm is None else configured_offset_x_mm
-	predictor_y_mm = 0.0 if configured_offset_y_mm is None else configured_offset_y_mm
+
+	if configured_offset_x_mm is None or configured_offset_y_mm is None:
+		# With nothing configured there is no prediction to make, and a proximity match at a
+		# ~105mm pitch silently lands on a neighbouring opening: one wrong match re-frames and
+		# persists every cell on the module.
+		side_name = "left" if side == StorageModuleSide.LEFT else "right"
+		raise ValueError(
+			f"derive_offsets_from_manual_cells on the {side.value}: no "
+			f"robot.grid.scan.{side_name}_xy_offset is configured, so there is nothing to "
+			"predict the manual cells' detected positions from; set a rough one first (it only "
+			"needs to land within a few tens of millimetres of the truth), then re-run; the "
+			"derivation replaces it with the value the reference cells imply"
+		)
+
+	predictor_x_mm = configured_offset_x_mm
+	predictor_y_mm = configured_offset_y_mm
 
 	detected_cells = collect_detected_cells(analysis)
 	wall_depths = _wall_depths_by_cell(analysis=analysis, candidates=candidates)
@@ -336,15 +353,9 @@ def derive_reference_offsets(
 		)
 
 	if len(samples) == 0:
-		hint = (
-			""
-			if configured_offset_x_mm is not None
-			else "; no {side}_xy_offset is configured either, so set a rough one first"
-		).format(side="left" if side == StorageModuleSide.LEFT else "right")
-
 		raise ValueError(
 			"derive_offsets_from_manual_cells matched no manual reference cell to a detected "
-			f"opening on the {side.value}: {'; '.join(skipped)}{hint}"
+			f"opening on the {side.value}: {'; '.join(skipped)}"
 		)
 
 	if len(samples) == 1:
