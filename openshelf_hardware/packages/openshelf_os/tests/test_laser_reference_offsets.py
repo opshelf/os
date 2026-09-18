@@ -6,8 +6,11 @@ import pytest
 
 from openshelf_os.laser_calibration.reference_offsets import (
 	REFERENCE_MATCH_WINDOW_MM,
+	ReferenceOffsetResult,
+	ReferenceOffsetSample,
 	derive_reference_offsets,
 	select_manual_reference_cells,
+	z_model_datum_agreement_mm,
 )
 from openshelf_os.laser_calibration.scan import ScanDetectedCell, ScanDetectedShelf
 from openshelf_os.storage import (
@@ -226,3 +229,97 @@ def test_scope_filters_select_manual_cells_only() -> None:
 	)[0][1].cell_idx == 2
 	assert select_manual_reference_cells(grid=grid, side=StorageModuleSide.LEFT, shelf_idx=4) == []
 	assert select_manual_reference_cells(grid=grid, side=StorageModuleSide.RIGHT) == []
+
+
+def build_manual_reference(
+	*,
+	intercept_mm: float | None = -3.12,
+	manual_x_mm: float = 354.0,
+) -> ReferenceOffsetResult:
+	sample = ReferenceOffsetSample(
+		shelf_idx=0,
+		cell_idx=0,
+		manual_x_mm=manual_x_mm,
+		manual_y_mm=41.0,
+		detected_x_mm=manual_x_mm + 4.0,
+		detected_y_mm=44.0,
+		delta_x_mm=-4.0,
+		delta_y_mm=-3.0,
+		wall_depth_mm=None if intercept_mm is None else 9.5,
+		derived_intercept_mm=intercept_mm,
+	)
+
+	return ReferenceOffsetResult(
+		side=StorageModuleSide.LEFT,
+		offset_x_mm=sample.delta_x_mm,
+		offset_y_mm=sample.delta_y_mm,
+		spread_x_mm=0.0,
+		spread_y_mm=0.0,
+		samples=[sample],
+		intercept_mm=intercept_mm,
+	)
+
+
+def test_datum_agreement_judges_where_the_models_put_the_datum_cells() -> None:
+	reference = build_manual_reference()
+
+	# Equal intercepts, tilted fit: comparing bare intercepts would give 0, but at the datum
+	# cell the two models disagree by (S - S_cfg) * x.
+	assert z_model_datum_agreement_mm(
+		intercept_mm=-3.12,
+		slope_per_mm=0.005,
+		configured_slope_per_mm=0.0,
+		manual_reference=reference,
+	) == pytest.approx(0.005 * 354.0)
+
+	# A flat fit that puts the datum cell where the tilted datum model puts it agrees.
+	assert z_model_datum_agreement_mm(
+		intercept_mm=-3.12 + 0.002 * 354.0,
+		slope_per_mm=0.0,
+		configured_slope_per_mm=0.002,
+		manual_reference=reference,
+	) == pytest.approx(0.0)
+
+
+def test_datum_agreement_is_none_without_a_datum() -> None:
+	assert (
+		z_model_datum_agreement_mm(
+			intercept_mm=-3.12,
+			slope_per_mm=0.0,
+			configured_slope_per_mm=0.0,
+			manual_reference=None,
+		)
+		is None
+	)
+	assert (
+		z_model_datum_agreement_mm(
+			intercept_mm=-3.12,
+			slope_per_mm=0.0,
+			configured_slope_per_mm=0.0,
+			manual_reference=build_manual_reference(intercept_mm=None),
+		)
+		is None
+	)
+
+
+def test_datum_agreement_falls_back_to_bare_intercepts_without_usable_samples() -> None:
+	reference = build_manual_reference()
+	reference.samples = [
+		ReferenceOffsetSample(
+			shelf_idx=0,
+			cell_idx=0,
+			manual_x_mm=354.0,
+			manual_y_mm=41.0,
+			detected_x_mm=358.0,
+			detected_y_mm=44.0,
+			delta_x_mm=-4.0,
+			delta_y_mm=-3.0,
+		)
+	]
+
+	assert z_model_datum_agreement_mm(
+		intercept_mm=0.0,
+		slope_per_mm=0.0,
+		configured_slope_per_mm=0.0,
+		manual_reference=reference,
+	) == pytest.approx(3.12)

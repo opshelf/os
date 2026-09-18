@@ -264,27 +264,13 @@ class ApplyRunnerMixin:
 
         configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
         configured_slope_mm = 0.0 if configured_model is None else float(configured_model.slope_per_mm)
-        samples = list(manual_reference.samples)
 
-        if len(samples) == 0:
-            return abs(float(result.intercept_mm) - float(manual_intercept_mm))
-
-        residuals = [
-            abs(
-                (float(result.intercept_mm) + float(slope_per_mm) * float(sample.manual_x_mm))
-                - (
-                    float(sample.derived_intercept_mm)
-                    + configured_slope_mm * float(sample.manual_x_mm)
-                )
-            )
-            for sample in samples
-            if sample.derived_intercept_mm is not None
-        ]
-
-        if len(residuals) == 0:
-            return abs(float(result.intercept_mm) - float(manual_intercept_mm))
-
-        return max(residuals)
+        return laser_module.z_model_datum_agreement_mm(
+            intercept_mm=float(result.intercept_mm),
+            slope_per_mm=float(slope_per_mm),
+            configured_slope_per_mm=configured_slope_mm,
+            manual_reference=manual_reference,
+        )
 
     def _validate_z_stall_against_manual_datum(
         self,

@@ -151,6 +151,11 @@ def apply_single_shelf_analysis(*args: Any, **kwargs: Any) -> Any:
         return _load_module("staged_scan").apply_single_shelf_analysis(*args, **kwargs)
 
 
+def z_model_datum_agreement_mm(*args: Any, **kwargs: Any) -> Any:
+    with _synced_patch_targets():
+        return _load_module("reference_offsets").z_model_datum_agreement_mm(*args, **kwargs)
+
+
 _WRAPPER_EXPORTS["capture_shelf_candidates"] = capture_shelf_candidates
 
 

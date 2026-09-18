@@ -37,6 +37,7 @@ def build_config(config_path: Path, storage_path: Path) -> SimpleNamespace:
 	scan = SimpleNamespace(
 		z_stall_probe_x_shift_mm=20.0,
 		z_stall_manual_agreement_mm=1.0,
+		z_offset_model_param_tolerance_mm=0.2,
 		z_stall_probe_repeats=2,
 		z_stall_probe_repeat_tolerance_mm=0.3,
 		left_xy_offset=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
@@ -361,15 +362,20 @@ def test_from_grid_probes_the_stored_positions_with_the_sweep_depths(
 	assert "hole tool_x=343.00" in output
 
 
-def build_fake_anchor_result() -> SimpleNamespace:
+def build_fake_anchor_result(
+	*,
+	intercept_mm: float = -3.12,
+	slope_per_mm: float = 0.0,
+	stage_extension_mm: float = 47.0,
+) -> SimpleNamespace:
 	# Matches the datum the test grid implies (intercept -3.120mm), so the verdict is in tolerance.
 	return SimpleNamespace(
 		fit_source="test",
 		sample_count=1,
 		x_span_mm=135.0,
-		intercept_mm=-3.12,
-		slope_per_mm=0.0,
-		stage_extension_mm=47.0,
+		intercept_mm=intercept_mm,
+		slope_per_mm=slope_per_mm,
+		stage_extension_mm=stage_extension_mm,
 		z_place_mm=10.0,
 		rotation_center_deg=3.0,
 		samples=(),
@@ -422,3 +428,79 @@ def test_run_hands_the_anchor_the_raw_axis_limits(tmp_path: Path, monkeypatch, c
 		- float(config.robot.grid.scan.z_stall_probe_x_shift_mm)
 	)
 	assert captured["x_axis_limit_mm"] != converted
+
+
+def test_probe_slope_the_datum_cannot_corroborate_fails_the_verdict(
+	tmp_path: Path, monkeypatch, capsys
+) -> None:
+	# Same intercept, tilted fit: the bare intercept difference is 0, but where the two models
+	# put the datum cell they differ by (S - S_cfg) * x, which the product gate refuses.
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	run_dir = build_run_dir(tmp_path / "runs" / "left")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	async def fake_run_z_stall_anchor(**kwargs: Any) -> Any:
+		return build_fake_anchor_result(slope_per_mm=0.005)
+
+	async def fake_run_with_temp_robot_config(*, config, config_path, didRun, shutdown_action) -> Any:
+		return await didRun(SimpleNamespace(_tool=object()))
+
+	monkeypatch.setattr(laser_module, "run_z_stall_anchor", fake_run_z_stall_anchor)
+	monkeypatch.setattr(laser_module, "run_with_temp_robot_config", fake_run_with_temp_robot_config)
+
+	exit_code = main_with_args(probe, ["--module", "left", "--from-run", str(run_dir)])
+
+	assert exit_code == 1
+	output = capsys.readouterr().out
+	# The tilt differs from the datum by 0.005 * 476.75mm at the manual cell's grab x.
+	assert "2.384mm" in output
+	assert "OUT OF TOLERANCE" in output
+
+
+def test_datum_saved_at_another_stage_extension_fails_the_verdict(
+	tmp_path: Path, monkeypatch, capsys
+) -> None:
+	# The fit agrees with the datum, but its z was captured with the stage elsewhere: the
+	# datum's z is not comparable, and the product refuses the model for exactly that.
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	run_dir = build_run_dir(tmp_path / "runs" / "left")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	async def fake_run_z_stall_anchor(**kwargs: Any) -> Any:
+		return build_fake_anchor_result(stage_extension_mm=48.0)
+
+	async def fake_run_with_temp_robot_config(*, config, config_path, didRun, shutdown_action) -> Any:
+		return await didRun(SimpleNamespace(_tool=object()))
+
+	monkeypatch.setattr(laser_module, "run_z_stall_anchor", fake_run_z_stall_anchor)
+	monkeypatch.setattr(laser_module, "run_with_temp_robot_config", fake_run_with_temp_robot_config)
+
+	exit_code = main_with_args(probe, ["--module", "left", "--from-run", str(run_dir)])
+
+	assert exit_code == 1
+	output = capsys.readouterr().out
+	# The fit is within tolerance: the stage pin is what refuses it.
+	assert "within tolerance" in output
+	assert "NOT comparable" in output
