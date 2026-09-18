@@ -213,6 +213,7 @@ class LaserAutoCalibrationScope(BaseModel):
     include_extension_calibration: bool = True
     hold_y_enabled: bool = True
     derive_offsets_from_manual_cells: bool = False
+    derive_z_model_from_stall: bool = False
 
 class LaserAutoCalibrationError(BaseModel):
     error_type: str
