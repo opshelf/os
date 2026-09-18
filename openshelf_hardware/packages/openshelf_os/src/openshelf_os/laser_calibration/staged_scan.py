@@ -1154,7 +1154,30 @@ def apply_single_shelf_analysis(
 
 	scanned_shelf = scanned_shelves[0]
 	scanned_shelf.divider_width = float(target_shelf.divider_width)
-	detected_output_keys = set(detected_cell_key_map.values()) if len(detected_cell_key_map) > 0 else None
+	# Manual cells keep the operator's point (see _build_scan_cell): leave them out of the x/y and
+	# z rewrites below, so the datum a later probe is judged against stays a hand-set value.
+	manual_cell_keys = {
+		(int(shelf.shelf_idx), int(cell.cell_idx))
+		for shelf in [target_shelf, remapped_existing_shelf]
+		for cell in shelf.cells
+		if getattr(cell, "is_manual", False) is True
+	}
+	manual_cell_keys |= {
+		(0, cell_idx) for shelf_idx, cell_idx in manual_cell_keys if shelf_idx == target_shelf_idx
+	}
+
+
+	def is_manual_key(key: tuple[int, int]) -> bool:
+		return (int(key[0]), int(key[1])) in manual_cell_keys
+	detected_output_keys = (
+		{
+			output_key
+			for analysis_key, output_key in detected_cell_key_map.items()
+			if is_manual_key(analysis_key) is False and is_manual_key(output_key) is False
+		}
+		if len(detected_cell_key_map) > 0
+		else None
+	)
 
 	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
 
@@ -1183,8 +1206,13 @@ def apply_single_shelf_analysis(
 		)
 	if z_delta_override_mm is not None:
 		z_apply_kwargs: dict[str, Any] = {}
-		if len(detected_cell_key_map) > 0:
-			z_apply_kwargs["detected_cell_key_map"] = detected_cell_key_map
+		z_apply_map = {
+			source_key: target_key
+			for source_key, target_key in detected_cell_key_map.items()
+			if is_manual_key(source_key) is False and is_manual_key(target_key) is False
+		}
+		if len(z_apply_map) > 0:
+			z_apply_kwargs["detected_cell_key_map"] = z_apply_map
 
 		apply_wall_depth_z_offsets(
 			analysis=analysis,
