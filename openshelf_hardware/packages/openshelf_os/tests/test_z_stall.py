@@ -324,6 +324,38 @@ def test_excluded_probe_cells_drops_only_disabled_cells_and_datums() -> None:
 	assert excluded == {(0, 1), (0, 3)}
 
 
+def test_excluded_probe_cells_keeps_a_datum_only_scope_probeable() -> None:
+	grid = StorageGrid(filename="storage.json")
+	grid.left_module = [
+		Shelf(
+			shelf_idx=0,
+			shelf_height=30.0,
+			shelf_width=200.0,
+			cells=[
+				build_cell(cell_idx=0, tool_x=350.0, tool_y=40.0),
+				build_cell(cell_idx=1, tool_x=455.0, tool_y=40.0),
+			],
+		)
+	]
+	grid.left_module[0].cells[0].is_manual = True
+
+	# The whole side is the scope: the independent opening holds the datum out of the sample set.
+	assert excluded_probe_cells(grid=grid, side=StorageModuleSide.LEFT) == {(0, 0)}
+
+	# A scope that holds nothing but the datum keeps it probeable: verifying that datum by
+	# contact is exactly what a run scoped to the manual cell asks for.
+	assert (
+		excluded_probe_cells(grid=grid, side=StorageModuleSide.LEFT, scanned_cells={(0, 0)}) == set()
+	)
+
+	# Any independent opening in scope still holds the datum out.
+	assert (
+		excluded_probe_cells(
+			grid=grid, side=StorageModuleSide.LEFT, scanned_cells={(0, 0), (0, 1)}
+		) == {(0, 0)}
+	)
+
+
 # --------------------------------------------------------------------------- #
 #  Probe execution
 # --------------------------------------------------------------------------- #
@@ -687,6 +719,60 @@ async def test_anchor_stops_after_the_requested_shelves_and_leaves_the_reserves(
 	# Two capture attempts per probe: only shelves 0, 2 and 4 were ever driven to.
 	probed_tool_ys = sorted(call.kwargs["y_mm"] + 1.75 for call in enter.call_args_list)
 	assert probed_tool_ys == pytest.approx([40.0, 40.0, 540.0, 540.0, 1090.0, 1090.0])
+
+
+@pytest.mark.asyncio
+async def test_anchor_fits_in_the_frame_the_model_is_applied_in() -> None:
+	"""The probe aims at the opening plus the divider shift, but the stored model is evaluated at
+	the cell's grab x, so the fit must use grab x - otherwise the model is tilted by the shift."""
+
+	cells = [
+		build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=341.25, tool_y=40.0),
+		build_detected_cell(shelf_idx=3, cell_idx=0, tool_x=491.25, tool_y=640.0),
+		build_detected_cell(shelf_idx=6, cell_idx=0, tool_x=641.25, tool_y=1090.0),
+	]
+	# A tilt of at least Z_DELTA_TILT_MIN_TOTAL_MM (0.75mm) over the span is what the fit trusts.
+	delta_by_cell = {(0, 0): 1.0, (3, 0): 1.6, (6, 0): 2.2}
+	analysis, candidates = build_probe_analysis(cells, [9.6] * len(cells))
+	# contact = delta + wall + z_place - tray, with z_place 160.5 and tray 0.71.
+	probe_results = [
+		(True, delta_by_cell[(cell.shelf_idx, cell.cell_idx)] + 169.39, "stall", None)
+		for cell in cells
+		for _ in range(2)
+	]
+
+	with patch(
+		"openshelf_os.laser_calibration.z_stall.load_json_file",
+		return_value={},
+	):
+		with patch(
+			"openshelf_os.laser_calibration.z_stall.load_candidates_from_metadata",
+			return_value=candidates,
+		):
+			with patch(
+				"openshelf_os.laser_calibration.angle.capture.enter_capture_mode",
+				AsyncMock(),
+			):
+				with patch(
+					"openshelf_os.laser_calibration.angle.robot_ops.probe_z_until_stall",
+					AsyncMock(side_effect=probe_results),
+				):
+					result = await run_z_stall_anchor(
+						tool=FakeTool(),
+						analysis=analysis,
+						scan_config=build_scan_config(),
+						side=StorageModuleSide.LEFT,
+						candidates=candidates,
+						x_axis_limit_mm=950.0,
+						x_axis_lower_limit_mm=0.0,
+						z_axis_limit_mm=180.0,
+						xy_offset=(-1.25, -1.75),
+					)
+
+	# Grab x 340..640 with deltas 1.0, 1.6, 2.2: slope 0.004, intercept 1.0 - 0.004 * 340 = -0.36.
+	# Fitting on the aimed point (grab x + 20) would report -0.44 instead.
+	assert result.slope_per_mm == pytest.approx(0.004)
+	assert result.intercept_mm == pytest.approx(-0.36, abs=0.01)
 
 
 def test_grid_built_analysis_feeds_the_reference_derivation() -> None:
