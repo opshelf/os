@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 from collections import deque
 from datetime import datetime, timezone
 import json
@@ -562,10 +564,20 @@ def _build_scan_cell(
 		status = existing_cell.status
 		item = existing_cell.item
 		# A hand-calibrated cell is the datum every derive/probe run is judged against, and the
-		# stage it was captured at is what makes its z comparable: rebuilding a shelf must not
-		# quietly drop either, or the next run fails its pre-motion reference check.
+		# stage it was captured at is what makes its z comparable. Rebuilding a shelf must hand it
+		# back untouched: the operator's point, not the detected one, or the next probe would be
+		# judged against a value a model produced.
 		is_manual = getattr(existing_cell, "is_manual", False) is True
 		dimensions = existing_cell.dimensions
+		if is_manual is True and existing_cell.calibration_point is not None:
+			return Cell(
+				cell_idx=cell_idx,
+				status=status,
+				item=item,
+				calibration_point=copy.deepcopy(existing_cell.calibration_point),
+				dimensions=dimensions,
+				is_manual=True,
+			)
 		if existing_cell.calibration_point is not None:
 			z_offset = existing_cell.calibration_point.z_offset
 			captured_at_stage_mm = getattr(

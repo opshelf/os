@@ -1,5 +1,7 @@
 import asyncio
 import json
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -1081,6 +1083,27 @@ def test_build_shelves_from_scan_appends_unmatched_detection() -> None:
 	assert cells[2].calibration_point.x == pytest.approx(200.0)
 
 
+def test_staged_scan_is_importable_as_the_first_module_of_the_package() -> None:
+	"""The package resolves names lazily, so a submodule must not import a sibling at module level.
+
+	`staged_scan` starts with `from . import core`, which walks `_MODULE_NAMES`; if
+	`reference_offsets` imported `staged_scan` at module level in return, importing `staged_scan`
+	first raised `ImportError: cannot import name ... from partially initialized module`.
+	"""
+	completed = subprocess.run(
+		[
+			sys.executable,
+			'-c',
+			'import openshelf_os.laser_calibration.staged_scan as m; print(m.__name__)',
+		],
+		capture_output=True,
+		text=True,
+	)
+
+	assert completed.returncode == 0, completed.stderr
+	assert 'openshelf_os.laser_calibration.staged_scan' in completed.stdout
+
+
 def test_apply_single_shelf_analysis_keeps_the_manual_datum_and_its_stamp(tmp_path: Path) -> None:
 	"""A rebuilt shelf must not drop the hand-calibrated datum the derive/probe runs are judged on."""
 	target_shelf = _existing_calibrated_shelf(3, [100.0, 201.0, 303.0])
@@ -1128,6 +1151,13 @@ def test_apply_single_shelf_analysis_keeps_the_manual_datum_and_its_stamp(tmp_pa
 	assert rebuilt_datum.cell_idx == 0
 	assert rebuilt_datum.is_manual is True
 	assert rebuilt_datum.calibration_point.z_captured_at_stage_mm == pytest.approx(47.0)
+	# The hand-set point itself survives: neither the detected position nor the applied z model
+	# may rewrite it, or a later probe would be judged against a model-produced value.
+	hand_point = datum.calibration_point
+	assert rebuilt_datum.calibration_point.x == pytest.approx(hand_point.x)
+	assert rebuilt_datum.calibration_point.y == pytest.approx(hand_point.y)
+	assert rebuilt_datum.calibration_point.z_offset == pytest.approx(hand_point.z_offset)
+	assert rebuilt_datum.calibration_point.z_offset != pytest.approx(54.0)
 
 
 def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) -> None:
