@@ -113,12 +113,46 @@
 		return labels;
 	});
 
+	/**
+	 * The sides the selected scope covers: `all` and `both` cover both modules, a side scope
+	 * covers its one side. The backend needs a usable manual reference cell on every one.
+	 */
+	const scopedSides = $derived.by<StorageModuleSide[]>(() => {
+		if (isAllSelected === true || selectedSide === '') {
+			return ['left_module', 'right_module'];
+		}
+
+		return [selectedSide];
+	});
+
+	/**
+	 * Covered sides whose scope holds no cell marked manual with a stored calibration
+	 * point. `manualReferenceCells` is already restricted to the selected side/shelf/cell,
+	 * so a side is covered only when one of its labels is in the list.
+	 */
+	const missingManualReferenceSides = $derived.by<StorageModuleSide[]>(() => {
+		const missing: StorageModuleSide[] = [];
+
+		for (const side of scopedSides) {
+			const prefix = side === 'left_module' ? 'L:' : 'R:';
+			const hasReferenceCell = manualReferenceCells.some(
+				(label) => label.startsWith(prefix)
+			);
+
+			if (hasReferenceCell === false) {
+				missing.push(side);
+			}
+		}
+
+		return missing;
+	});
+
 	const isManualReferenceActive = $derived(
-		isManualReferenceSelected === true && manualReferenceCells.length > 0
+		isManualReferenceSelected === true && missingManualReferenceSides.length === 0
 	);
 	const isZProbeActive = $derived(isZProbeSelected === true && isManualReferenceActive === true);
 	const isManualReferenceDisabled = $derived(
-		isSelectionDisabled === true || manualReferenceCells.length === 0
+		isSelectionDisabled === true || missingManualReferenceSides.length > 0
 	);
 
 	const isStartDisabled = $derived.by(() => {
@@ -336,7 +370,8 @@
 
 	/**
 	 * The derivation rides on whatever scope is selected. It is only sent once the scope holds
-	 * a manual cell, so a stale tick cannot start a run the backend would reject.
+	 * a manual cell on every side it covers, so a stale tick cannot start a run the backend
+	 * would reject.
 	 */
 	function withManualReference(
 		request: LaserAutoCalibrationRequest
@@ -811,10 +846,16 @@
 						/>
 						<span>referenced cell is calibrated manually</span>
 					</label>
-					{#if isManualReferenceSelected === true && manualReferenceCells.length > 0}
+					{#if isManualReferenceSelected === true && missingManualReferenceSides.length === 0}
 						<p class="selection-hint">
 							deriving offsets from {manualReferenceCells.join(', ')}; the configured xy offset is
 							ignored for this run and replaced by what these cells imply
+						</p>
+					{:else if missingManualReferenceSides.length === 1}
+						<p class="selection-hint">
+							no cell in this scope is marked manual on the
+							{missingManualReferenceSides[0] === 'left_module' ? 'left' : 'right'} module, so
+						the run uses the configured xy offset
 						</p>
 					{:else if manualReferenceCells.length === 0}
 						<p class="selection-hint">
