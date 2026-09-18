@@ -1089,11 +1089,11 @@ class Tool:
 
         x_lim_minunsafe_input = getattr(self, "_x_lim_minunsafe_input", None)
         if x_lim_minunsafe_input is not None and x_lim_minunsafe_input.read() is not True:
-            unsafe.append("x_lim_minunsafe is not HIGH")
+            unsafe.append("x_lim_minunsafe is not engaged")
 
         x_lim_maxunsafe_input = getattr(self, "_x_lim_maxunsafe_input", None)
         if x_lim_maxunsafe_input is not None and x_lim_maxunsafe_input.read() is not True:
-            unsafe.append("x_lim_maxunsafe is not HIGH")
+            unsafe.append("x_lim_maxunsafe is not engaged")
 
         if unsafe:
             raise MovementError("Unsafe tool clearance for rotation: " + "; ".join(unsafe))

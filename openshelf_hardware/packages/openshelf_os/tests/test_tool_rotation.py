@@ -418,10 +418,10 @@ def _tool_for_x_lim_safe_check(
 
 
 @pytest.mark.asyncio
-async def test_rotate_to_position_refuses_when_x_lim_minunsafe_not_high() -> None:
+async def test_rotate_to_position_refuses_when_x_lim_minunsafe_not_engaged() -> None:
     tool, rotate_motor = _tool_for_x_lim_safe_check(x_lim_minunsafe=False)
 
-    with pytest.raises(MovementError, match="x_lim_minunsafe is not HIGH"):
+    with pytest.raises(MovementError, match="x_lim_minunsafe is not engaged"):
         await tool.rotate_to_position("front")
 
     rotate_motor.move_to_position.assert_not_awaited()
@@ -429,10 +429,10 @@ async def test_rotate_to_position_refuses_when_x_lim_minunsafe_not_high() -> Non
 
 
 @pytest.mark.asyncio
-async def test_rotate_to_position_refuses_when_x_lim_maxunsafe_not_high() -> None:
+async def test_rotate_to_position_refuses_when_x_lim_maxunsafe_not_engaged() -> None:
     tool, rotate_motor = _tool_for_x_lim_safe_check(x_lim_maxunsafe=False)
 
-    with pytest.raises(MovementError, match="x_lim_maxunsafe is not HIGH"):
+    with pytest.raises(MovementError, match="x_lim_maxunsafe is not engaged"):
         await tool.rotate_to_position("front")
 
     rotate_motor.move_to_position.assert_not_awaited()
