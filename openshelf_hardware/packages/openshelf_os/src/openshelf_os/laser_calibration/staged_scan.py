@@ -530,6 +530,34 @@ def build_candidate_lookup_by_cell(
 	return candidate_lookup
 
 
+def wall_depths_by_cell(
+	*,
+	analysis: Any,
+	candidates: list[Any] | None = None,
+) -> dict[tuple[int, int], float]:
+	"""Wall depth per detected cell: the sweep candidate that measured it, or one the analysis carries.
+
+	A grid-built analysis (a rack that moved since the last scan) supplies its own depths, because
+	its positions come from stored calibration points rather than from a scan frame.
+	"""
+	lookup: dict[tuple[int, int], float] = {}
+
+	if candidates:
+		candidate_lookup = build_candidate_lookup_by_cell(analysis=analysis, candidates=candidates)
+
+		for key, candidate in candidate_lookup.items():
+			if candidate.wall_depth_mm is None:
+				continue
+
+			lookup[(int(key[0]), int(key[1]))] = float(candidate.wall_depth_mm)
+
+	for key, wall_depth_mm in getattr(analysis, "wall_depths_by_cell", {}).items():
+		if wall_depth_mm is not None and float(wall_depth_mm) > 0.0:
+			lookup[(int(key[0]), int(key[1]))] = float(wall_depth_mm)
+
+	return lookup
+
+
 def apply_xy_reference_offsets(
 	*,
 	scanned_shelves: list[Any],

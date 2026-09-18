@@ -539,3 +539,67 @@ async def test_anchor_skips_the_repeat_probe_when_repeats_are_disabled() -> None
 
 	assert result.sample_count == 1
 	assert result.samples[0].z_contact_repeat_mm is None
+
+
+def test_grid_built_analysis_feeds_the_reference_derivation() -> None:
+	"""A rack that moved still needs its datum: wall depths must reach the derivation too."""
+	from openshelf_os.laser_calibration.reference_offsets import derive_reference_offsets
+
+	grid = StorageGrid(filename="storage.json")
+	grid.left_module = [
+		Shelf(
+			shelf_idx=0,
+			shelf_height=30.0,
+			shelf_width=200.0,
+			cells=[
+				Cell(
+					cell_idx=0,
+					status=CellStatus.AVAILABLE,
+					item=None,
+					calibration_point=CalibrationCoordinate(
+						x=357.25, y=38.5, s=0, z_offset=6.5, z_captured_at_stage_mm=47.0
+					),
+					dimensions=Dimensions(length=400.0, width=26.0, height=30.0),
+					is_manual=True,
+				)
+			],
+		)
+	]
+	scan_config = SimpleNamespace(
+		laser_offset_x_mm=51.0,
+		laser_offset_y_mm=0.0,
+		expected_hole_width_mm=26.0,
+		expected_hole_height_mm=30.0,
+		left_xy_offset=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
+		left_z_offset_model=None,
+	)
+	analysis = SimpleNamespace(
+		shelves=[SimpleNamespace(shelf_idx=0, cells=[], center_y_mm=0.0)],
+		metadata_path=None,
+		wall_depths_by_cell={},
+	)
+	built = run_from_grid(grid=grid, side=StorageModuleSide.LEFT, scan_config=scan_config)
+	analysis = built
+
+	result = derive_reference_offsets(
+		grid=grid,
+		analysis=analysis,
+		side=StorageModuleSide.LEFT,
+		scan_config=scan_config,
+		candidates=[],
+	)
+
+	assert result.sample_count == 1
+	assert result.intercept_mm == pytest.approx(6.5 - 9.62, abs=0.01)
+	assert result.z_captured_stage_mm == pytest.approx(47.0)
+
+
+def run_from_grid(*, grid: StorageGrid, side: StorageModuleSide, scan_config: SimpleNamespace):
+	from openshelf_os.laser_calibration.z_stall import build_probe_analysis_from_grid
+
+	return build_probe_analysis_from_grid(
+		grid=grid,
+		side=side,
+		scan_config=scan_config,
+		wall_depths={(0, 0): 9.62},
+	)

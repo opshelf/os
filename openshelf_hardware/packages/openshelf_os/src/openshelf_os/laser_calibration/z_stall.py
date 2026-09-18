@@ -30,9 +30,8 @@ from .scan import ScanDetectedCell, ScanDetectedShelf
 from .staged_scan import (
 	Z_DELTA_MAX_ABS_MM,
 	Z_DELTA_TILT_MIN_X_SPAN_MM,
-	collect_detected_cells,
-	find_candidate_for_detected_cell,
 	resolve_z_delta_model,
+	wall_depths_by_cell,
 )
 
 # The z axis can out-push the stage it is mounted on (z lead 16.1mm/rev vs stage 50mm/rev), so
@@ -121,39 +120,6 @@ def is_probe_reachable(
 		return False
 
 	return True
-
-
-def wall_depths_by_cell(
-	*,
-	analysis: Any,
-	candidates: list[Any] | None = None,
-) -> dict[tuple[int, int], float]:
-	"""Wall depth per cell: the sweep candidate that measured it, or one carried by the analysis.
-
-	A grid-built analysis (rack moved since the last scan) supplies its own depths, because its
-	positions come from stored calibration points rather than a scan frame.
-	"""
-	lookup: dict[tuple[int, int], float] = {}
-
-	if candidates:
-		for detected_cell in collect_detected_cells(analysis):
-			matched_candidate = find_candidate_for_detected_cell(
-				detected_cell=detected_cell,
-				candidates=candidates,
-			)
-
-			if matched_candidate is None or matched_candidate.wall_depth_mm is None:
-				continue
-
-			lookup[(int(detected_cell.shelf_idx), int(detected_cell.cell_idx))] = float(
-				matched_candidate.wall_depth_mm
-			)
-
-	for key, wall_depth_mm in getattr(analysis, "wall_depths_by_cell", {}).items():
-		if wall_depth_mm is not None and float(wall_depth_mm) > 0.0:
-			lookup[(int(key[0]), int(key[1]))] = float(wall_depth_mm)
-
-	return lookup
 
 
 def select_z_stall_probes(

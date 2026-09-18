@@ -29,7 +29,7 @@ from openshelf_os.storage import Cell, StorageGrid, StorageModuleSide
 from .core import get_scan_xy_offset, get_scan_z_offset_model
 from .recording import load_candidates_from_metadata, load_json_file
 from .scan import ScanDetectedCell
-from .staged_scan import collect_detected_cells, find_candidate_for_detected_cell
+from .staged_scan import collect_detected_cells, wall_depths_by_cell
 
 logger = logging.getLogger(__name__)
 
@@ -152,22 +152,7 @@ def _wall_depths_by_cell(
 	analysis: Any,
 	candidates: list[Any],
 ) -> dict[tuple[int, int], float]:
-	depths: dict[tuple[int, int], float] = {}
-
-	for detected_cell in collect_detected_cells(analysis):
-		matched_candidate = find_candidate_for_detected_cell(
-			detected_cell=detected_cell,
-			candidates=candidates,
-		)
-
-		if matched_candidate is None or matched_candidate.wall_depth_mm is None:
-			continue
-
-		depths[(int(detected_cell.shelf_idx), int(detected_cell.cell_idx))] = float(
-			matched_candidate.wall_depth_mm
-		)
-
-	return depths
+	return wall_depths_by_cell(analysis=analysis, candidates=candidates)
 
 
 def _match_detected_cell(
