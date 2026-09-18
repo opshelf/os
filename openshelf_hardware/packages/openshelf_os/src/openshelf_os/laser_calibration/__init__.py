@@ -160,4 +160,11 @@ _WRAPPER_EXPORTS["capture_shelf_candidates"] = capture_shelf_candidates
 
 
 def __getattr__(name: str) -> Any:
+    # A submodule name is loaded directly. Searching for it as an attribute walks every module in
+    # `_MODULE_NAMES`, and those modules import their siblings: `staged_scan` does `from . import
+    # core` on its first line, so a search for `core` used to load `z_stall` (and through it a
+    # half-initialised `staged_scan`) and raise ImportError when `staged_scan` was imported first.
+    if name in _MODULE_NAMES:
+        return _load_module(name)
+
     return _find_export(name)
