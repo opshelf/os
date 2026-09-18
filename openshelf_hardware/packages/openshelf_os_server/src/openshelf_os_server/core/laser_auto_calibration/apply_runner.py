@@ -952,6 +952,7 @@ class ApplyRunnerMixin:
             side=side,
             analysis=analysis,
             source_grid=grid,
+            shelf_idx=int(target.shelf_idx),
             cell_idx=int(target.cell_idx),
         )
         requested_scope = self._snapshot.requested_scope
@@ -965,6 +966,7 @@ class ApplyRunnerMixin:
                 side=side,
                 analysis=analysis,
                 source_grid=grid,
+                shelf_idx=int(target.shelf_idx),
                 cell_idx=int(target.cell_idx),
                 force=True,
             )

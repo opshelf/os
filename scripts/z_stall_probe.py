@@ -435,7 +435,9 @@ async def main() -> int:
 			analysis=analysis,
 			side=side,
 			scan_config=scan_config,
-			shelf_idx=args.shelf,
+			# A single --cell pins the datum to that cell's shelf as well: without the shelf the
+			# filter would pull manual cells from other shelves into the datum.
+			shelf_idx=args.shelf if cells is None or len(cells) != 1 else sorted(cells)[0][0],
 			cell_idx=None if cells is None or len(cells) != 1 else sorted(cells)[0][1],
 		)
 	except ValueError as exc:
