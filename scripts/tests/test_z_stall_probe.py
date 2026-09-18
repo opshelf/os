@@ -18,6 +18,7 @@ from openshelf_os.storage import (
 	Shelf,
 	StorageGrid,
 )
+from typing import Any
 
 
 PROBE_PATH = Path(__file__).parents[1] / "z_stall_probe.py"
@@ -358,3 +359,66 @@ def test_from_grid_probes_the_stored_positions_with_the_sweep_depths(
 	# away from the verified point: 341.75 + 20 = 361.75, with the xy offset cancelling.
 	assert "1:0 probe_x=361.75" in output
 	assert "hole tool_x=343.00" in output
+
+
+def build_fake_anchor_result() -> SimpleNamespace:
+	# Matches the datum the test grid implies (intercept -3.120mm), so the verdict is in tolerance.
+	return SimpleNamespace(
+		fit_source="test",
+		sample_count=1,
+		x_span_mm=135.0,
+		intercept_mm=-3.12,
+		slope_per_mm=0.0,
+		stage_extension_mm=47.0,
+		z_place_mm=10.0,
+		rotation_center_deg=3.0,
+		samples=(),
+		dropped_repeats=(),
+		skipped=(),
+	)
+
+
+def test_run_hands_the_anchor_the_raw_axis_limits(tmp_path: Path, monkeypatch, capsys) -> None:
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	run_dir = build_run_dir(tmp_path / "runs" / "left")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	captured: dict[str, Any] = {}
+
+	async def fake_run_z_stall_anchor(**kwargs: Any) -> Any:
+		captured.update(kwargs)
+		return build_fake_anchor_result()
+
+	async def fake_run_with_temp_robot_config(*, config, config_path, didRun, shutdown_action) -> Any:
+		return await didRun(SimpleNamespace(_tool=object()))
+
+	monkeypatch.setattr(laser_module, "run_z_stall_anchor", fake_run_z_stall_anchor)
+	monkeypatch.setattr(laser_module, "run_with_temp_robot_config", fake_run_with_temp_robot_config)
+
+	exit_code = main_with_args(probe, ["--module", "left", "--from-run", str(run_dir)])
+
+	assert exit_code == 0
+	# The anchor subtracts the xy offset and the probe shift itself, so the script must hand it the
+	# raw axis limits. A pre-converted limit makes the anchor subtract the offset a second time,
+	# which loosens the reachability guard by the offset.
+	x_axis_motor = config.robot.tool.motors[0]
+	offset_x_mm = float(config.robot.grid.scan.left_xy_offset.x_mm)
+	assert captured["x_axis_limit_mm"] == float(x_axis_motor.lim)
+	assert captured["x_axis_lower_limit_mm"] == float(x_axis_motor.lower_lim)
+	converted = (
+		float(x_axis_motor.lim)
+		- offset_x_mm
+		- float(config.robot.grid.scan.z_stall_probe_x_shift_mm)
+	)
+	assert captured["x_axis_limit_mm"] != converted

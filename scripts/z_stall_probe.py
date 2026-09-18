@@ -173,7 +173,11 @@ def resolve_probe_reach(
 	side: StorageModuleSide,
 	scan_config: Any,
 ) -> tuple[float | None, float | None]:
-	"""The X travel the carriage has for a probe, in the tool frame the probe is aimed from."""
+	"""The X travel the carriage has for a probe, in the tool frame the probe is aimed from.
+
+	Planning and candidate selection only: `run_z_stall_anchor` applies the xy offset and the
+	probe shift itself, so the run hands it the raw axis limits.
+	"""
 	xy_offset = laser_module.get_scan_xy_offset(scan_config=scan_config, side=side)
 	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
 	shift_mm = float(scan_config.z_stall_probe_x_shift_mm)
@@ -376,7 +380,15 @@ async def main() -> int:
 		return 1
 
 	z_axis_limit_mm, _z_axis_lower_limit_mm = resolve_motor_limits(config, "z_axis")
-	excluded_cells = laser_module.excluded_probe_cells(grid=grid, side=side)
+	x_axis_limit_mm, x_axis_lower_limit_mm = resolve_motor_limits(config, "x_axis")
+	scanned_cells = {
+		(int(cell.shelf_idx), int(cell.cell_idx))
+		for shelf in analysis.shelves
+		for cell in shelf.cells
+	}
+	excluded_cells = laser_module.excluded_probe_cells(
+		grid=grid, side=side, scanned_cells=scanned_cells
+	)
 	manually_excluded = parse_cells(args.exclude) or set()
 	excluded_cells |= manually_excluded
 	report_exclusions(excluded_cells)
@@ -438,12 +450,8 @@ async def main() -> int:
 			scan_config=scan_config,
 			side=side,
 			excluded_cells=excluded_cells,
-			x_axis_limit_mm=None
-			if max_probe_tool_x_mm is None
-			else max_probe_tool_x_mm + float(scan_config.z_stall_probe_x_shift_mm),
-			x_axis_lower_limit_mm=None
-			if min_probe_tool_x_mm is None
-			else min_probe_tool_x_mm + float(scan_config.z_stall_probe_x_shift_mm),
+			x_axis_limit_mm=x_axis_limit_mm,
+			x_axis_lower_limit_mm=x_axis_lower_limit_mm,
 			z_axis_limit_mm=z_axis_limit_mm,
 			xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
 			should_abort=None,
