@@ -243,3 +243,43 @@ def test_side_mismatch_is_refused_and_default_picks_the_matching_run(tmp_path: P
 	assert exit_code == 0
 	output = capsys.readouterr().out
 	assert str(left_run) in output
+
+
+def test_explicit_exclusions_shield_tray_cells_from_the_probe(tmp_path: Path, monkeypatch, capsys) -> None:
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+	metadata["side"] = "left_module"
+	(run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	exit_code = main_with_args(
+		probe,
+		[
+			"--module",
+			"left",
+			"--from-run",
+			str(run_dir),
+			"--plan-only",
+			"--exclude",
+			"1:0",
+		],
+	)
+
+	output = capsys.readouterr().out
+	assert "excluded 1 cell(s) from probing: 1:0" in output
+	# 1:0 was the only cell with a wall depth, so shielding it leaves nothing to probe: that is a
+	# refusal, not an empty plan, because a probe run that probes nothing proves nothing.
+	assert exit_code == 1
+	assert "nothing to probe" in output

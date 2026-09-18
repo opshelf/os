@@ -59,6 +59,16 @@ def build_parser() -> argparse.ArgumentParser:
 		help="Probe only this cell; repeatable.",
 	)
 	parser.add_argument(
+		"--exclude",
+		action="append",
+		default=[],
+		metavar="SHELF:CELL",
+		help=(
+			"Never probe this cell; repeatable. Cells holding a tray must be excluded: a tray face "
+			"stands in front of the shelf plate, so the contact would be the tray, not the wall."
+		),
+	)
+	parser.add_argument(
 		"--plan-only",
 		action="store_true",
 		help="Report the probes and the reference datum without moving anything.",
@@ -170,12 +180,23 @@ def resolve_scan_config(config: Any, args: argparse.Namespace) -> Any:
 	return scan_config.model_copy(update=overrides)
 
 
+def report_exclusions(excluded_cells: set[tuple[int, int]]) -> None:
+	if len(excluded_cells) == 0:
+		return
+
+	print(
+		f"excluded {len(excluded_cells)} cell(s) from probing: "
+		+ ", ".join(f"{shelf_idx}:{cell_idx}" for shelf_idx, cell_idx in sorted(excluded_cells))
+	)
+
+
 def report_plan(
 	*,
 	probes: list[tuple[Any, float]],
 	manual_reference: Any,
 	side: StorageModuleSide,
 	scan_config: Any,
+	excluded_cells: set[tuple[int, int]],
 ) -> None:
 	print(f"planned probes ({len(probes)}):")
 	for cell, wall_depth_mm in probes:
@@ -301,6 +322,9 @@ async def main() -> int:
 		side=side,
 		reserved_locations=configured_bin_locations(config),
 	)
+	manually_excluded = parse_cells(args.exclude) or set()
+	excluded_cells |= manually_excluded
+	report_exclusions(excluded_cells)
 	manual_reference = None
 	try:
 		manual_reference = laser_module.derive_reference_offsets(
@@ -330,8 +354,21 @@ async def main() -> int:
 		excluded_cells=excluded_cells,
 	)
 
+	if len(probes) == 0:
+		print(
+			"nothing to probe: every detected cell in scope is excluded (tray home, unavailable, "
+			"occupied or --exclude), has no sweep wall depth, or sits past the carriage travel"
+		)
+		return 1
+
 	if args.plan_only is True:
-		report_plan(probes=probes, manual_reference=manual_reference, side=side, scan_config=scan_config)
+		report_plan(
+			probes=probes,
+			manual_reference=manual_reference,
+			side=side,
+			scan_config=scan_config,
+			excluded_cells=excluded_cells,
+		)
 		return 0
 
 	async def didRunProbe(robot: Any) -> Any:
