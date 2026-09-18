@@ -775,6 +775,82 @@ async def test_anchor_fits_in_the_frame_the_model_is_applied_in() -> None:
 	assert result.intercept_mm == pytest.approx(-0.36, abs=0.01)
 
 
+def test_resolved_model_rebases_the_intercept_when_it_substitutes_a_slope() -> None:
+	"""The canonical rule: a substituted slope moves the fit's intercept, not just its tilt."""
+	from openshelf_os.laser_calibration.z_stall import ZStallResult, ZStallSample, resolve_z_stall_model
+
+	samples = [
+		ZStallSample(
+			shelf_idx=shelf_idx,
+			cell_idx=0,
+			probe_x_mm=grab_x + 20.0,
+			probe_y_mm=40.0,
+			wall_depth_mm=9.6,
+			z_contact_mm=170.0,
+			z_contact_repeat_mm=170.0,
+			delta_mm=delta_mm,
+			reason="stall",
+		)
+		for shelf_idx, grab_x, delta_mm in ((0, 300.0, -2.2854), (3, 400.0, -2.0472))
+	]
+	result = ZStallResult(
+		side=StorageModuleSide.LEFT,
+		intercept_mm=-2.1663,
+		slope_per_mm=0.0,
+		fit_source="constant",
+		stage_extension_mm=47.0,
+		z_place_mm=160.5,
+		rotation_center_deg=183.0,
+		fit_centroid_x_mm=350.0,
+		samples=samples,
+	)
+	scan_config = SimpleNamespace(
+		left_z_offset_model=SimpleNamespace(
+			intercept_mm=-1.0,
+			slope_per_mm=0.002382,
+			stage_extension_mm=47.0,
+			z_place_mm=160.5,
+		),
+		right_z_offset_model=None,
+	)
+
+	decision = resolve_z_stall_model(result=result, scan_config=scan_config, side=StorageModuleSide.LEFT)
+
+	assert decision.source == "config_short_span"
+	assert decision.slope_per_mm == pytest.approx(0.002382)
+	# -2.1663 was the delta at x = 350, so the installed intercept is that minus S * 350.
+	assert decision.intercept_mm == pytest.approx(-2.1663 - 0.002382 * 350.0)
+	# The installed line has to reproduce the two contacts the probe measured.
+	assert decision.intercept_mm + decision.slope_per_mm * 300.0 == pytest.approx(-2.2854, abs=1e-3)
+	assert decision.intercept_mm + decision.slope_per_mm * 400.0 == pytest.approx(-2.0472, abs=1e-3)
+
+
+def test_resolved_model_keeps_a_tilt_the_probe_measured() -> None:
+	from openshelf_os.laser_calibration.z_stall import ZStallResult, resolve_z_stall_model
+
+	result = ZStallResult(
+		side=StorageModuleSide.LEFT,
+		intercept_mm=0.32,
+		slope_per_mm=0.002,
+		fit_source="tilt",
+		stage_extension_mm=47.0,
+		z_place_mm=160.5,
+		rotation_center_deg=183.0,
+		fit_centroid_x_mm=490.0,
+		samples=[],
+	)
+
+	decision = resolve_z_stall_model(
+		result=result,
+		scan_config=SimpleNamespace(left_z_offset_model=None, right_z_offset_model=None),
+		side=StorageModuleSide.LEFT,
+	)
+
+	assert decision.source == "probe"
+	assert decision.slope_per_mm == pytest.approx(0.002)
+	assert decision.intercept_mm == pytest.approx(0.32)
+
+
 def test_grid_built_analysis_feeds_the_reference_derivation() -> None:
 	"""A rack that moved still needs its datum: wall depths must reach the derivation too."""
 	from openshelf_os.laser_calibration.reference_offsets import derive_reference_offsets

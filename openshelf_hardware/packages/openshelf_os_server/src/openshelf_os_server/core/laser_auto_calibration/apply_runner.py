@@ -210,11 +210,12 @@ class ApplyRunnerMixin:
         scan_config: Any,
         result: laser_module.ZStallResult,
         *,
+        intercept_mm: float | None = None,
         slope_per_mm: float | None = None,
     ) -> None:
         """Write the probed model onto the run's config, pinned to the geometry it was probed at."""
         model = LaserScanZOffsetModelConfig(
-            intercept_mm=float(result.intercept_mm),
+            intercept_mm=float(result.intercept_mm if intercept_mm is None else intercept_mm),
             slope_per_mm=float(result.slope_per_mm if slope_per_mm is None else slope_per_mm),
             stage_extension_mm=float(result.stage_extension_mm),
             z_place_mm=float(result.z_place_mm),
@@ -245,10 +246,9 @@ class ApplyRunnerMixin:
         self,
         *,
         side: StorageModuleSide,
-        result: laser_module.ZStallResult,
+        decision: laser_module.ZStallDecision,
         manual_reference: laser_module.ReferenceOffsetResult | None,
         manual_intercept_mm: float | None,
-        slope_per_mm: float,
         scan_config: Any,
     ) -> float | None:
         """How far the model about to be installed misses the hand-calibrated datum, in mm.
@@ -266,8 +266,8 @@ class ApplyRunnerMixin:
         configured_slope_mm = 0.0 if configured_model is None else float(configured_model.slope_per_mm)
 
         return laser_module.z_model_datum_agreement_mm(
-            intercept_mm=float(result.intercept_mm),
-            slope_per_mm=float(slope_per_mm),
+            intercept_mm=float(decision.intercept_mm),
+            slope_per_mm=float(decision.slope_per_mm),
             configured_slope_per_mm=configured_slope_mm,
             manual_reference=manual_reference,
         )
@@ -277,9 +277,9 @@ class ApplyRunnerMixin:
         *,
         side: StorageModuleSide,
         result: laser_module.ZStallResult,
+        decision: laser_module.ZStallDecision,
         manual_reference: laser_module.ReferenceOffsetResult,
         manual_intercept_mm: float,
-        slope_per_mm: float,
         scan_config: Any,
     ) -> None:
         """Refuse a probed model the hand-calibrated datum does not corroborate.
@@ -293,24 +293,26 @@ class ApplyRunnerMixin:
         tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
         agreement_mm = self._z_stall_datum_agreement_mm(
             side=side,
-            result=result,
+            decision=decision,
             manual_reference=manual_reference,
             manual_intercept_mm=manual_intercept_mm,
-            slope_per_mm=slope_per_mm,
             scan_config=scan_config,
         )
         agreement_mm = 0.0 if agreement_mm is None else agreement_mm
         laser_module.print_status(
-            f"z_stall_anchor=manual_check side={side_name} probe_intercept_mm={result.intercept_mm:.3f} "
+            f"z_stall_anchor=manual_check side={side_name} "
+            f"installed_intercept_mm={float(decision.intercept_mm):.3f} "
+            f"installed_slope_per_mm={float(decision.slope_per_mm):.5f} "
             f"manual_intercept_mm={manual_intercept_mm:.3f} agreement_mm={agreement_mm:.3f} "
             f"tolerance_mm={tolerance_mm:.3f} manual_cells={manual_reference.sample_count}"
         )
 
         if agreement_mm > tolerance_mm:
-            direction = "deeper" if result.intercept_mm > manual_intercept_mm else "shallower"
+            direction = "deeper" if float(decision.intercept_mm) > manual_intercept_mm else "shallower"
             raise ValueError(
                 f"z stall anchor: the probe fit is {agreement_mm:.2f}mm {direction} than the "
-                f"hand-calibrated {side.value} datum ({result.intercept_mm:.3f} vs {manual_intercept_mm:.3f}, "
+                f"hand-calibrated {side.value} datum ({float(decision.intercept_mm):.3f} vs "
+                f"{manual_intercept_mm:.3f}, "
                 f"tolerance {tolerance_mm:.2f}mm). Probe contact deeper than the datum means the shelf "
                 "moved under load; shallower means the tip met something in front of the plate. "
                 "Neither is a z model - check the reference cell and the shelf before retrying"
@@ -347,27 +349,25 @@ class ApplyRunnerMixin:
         self,
         *,
         result: laser_module.ZStallResult,
+        decision: laser_module.ZStallDecision,
         manual_intercept_mm: float | None,
         manual_reference: laser_module.ReferenceOffsetResult | None,
         scan_config: Any,
-        slope_per_mm: float,
-        slope_source: str,
         applied: bool,
         persisted: bool,
     ) -> None:
         agreement_mm = self._z_stall_datum_agreement_mm(
             side=result.side,
-            result=result,
+            decision=decision,
             manual_reference=manual_reference,
             manual_intercept_mm=manual_intercept_mm,
-            slope_per_mm=slope_per_mm,
             scan_config=scan_config,
         )
         entry = LaserAutoCalibrationZStallResult(
             side=result.side,
-            intercept_mm=float(result.intercept_mm),
-            slope_per_mm=float(slope_per_mm),
-            slope_source=slope_source,
+            intercept_mm=float(decision.intercept_mm),
+            slope_per_mm=float(decision.slope_per_mm),
+            slope_source=str(decision.source),
             fit_source=str(result.fit_source),
             sample_count=int(result.sample_count),
             x_span_mm=float(result.x_span_mm),
@@ -443,91 +443,69 @@ class ApplyRunnerMixin:
             )
         except ValueError:
             # The probe has already moved, so the measurement must still reach the operator even
-            # though it cannot be judged: publish the raw fit, then let the refusal out.
+            # though it cannot be judged: publish the model that would have been installed, then
+            # let the refusal out.
             await self._publish_z_stall_result(
                 result=result,
+                decision=self._resolve_z_stall_model(result=result, scan_config=scan_config, side=side),
                 manual_intercept_mm=None,
                 manual_reference=manual_reference,
                 scan_config=scan_config,
-                slope_per_mm=float(result.slope_per_mm),
-                slope_source="probe",
                 applied=False,
                 persisted=False,
             )
             raise
-        # The slope is decided before anything is judged or published: the datum comparison has to
-        # use the slope that will be installed, and the operator's agreement number has to be the
-        # one the gate used.
-        slope_per_mm, slope_source = self._resolve_probed_slope(
-            side=side, result=result, scan_config=scan_config
-        )
-        # Publish the raw fit before judging it: a refusal is exactly when the operator needs to
-        # see both numbers side by side.
+        # Resolve the model once, before anything is judged or published: the datum comparison has
+        # to be made against the pair that gets installed (including a re-based intercept when the
+        # configured slope stands in for one the probe could not measure), and the operator's
+        # agreement number has to be the one the gate used.
+        decision = self._resolve_z_stall_model(result=result, scan_config=scan_config, side=side)
+        # Publish before judging: a refusal is exactly when the operator needs both numbers.
         await self._publish_z_stall_result(
             result=result,
+            decision=decision,
             manual_intercept_mm=manual_intercept_mm,
             manual_reference=manual_reference,
             scan_config=scan_config,
-            slope_per_mm=slope_per_mm,
-            slope_source=slope_source,
             applied=False,
             persisted=False,
         )
         self._validate_z_stall_against_manual_datum(
             side=side,
             result=result,
+            decision=decision,
             manual_reference=manual_reference,
             manual_intercept_mm=manual_intercept_mm,
-            slope_per_mm=slope_per_mm,
             scan_config=scan_config,
         )
         # Installing on the run's config is what persists it: the callers save that same object.
-        self._install_z_offset_model(scan_config, result, slope_per_mm=slope_per_mm)
+        self._install_z_offset_model(
+            scan_config,
+            result,
+            intercept_mm=float(decision.intercept_mm),
+            slope_per_mm=float(decision.slope_per_mm),
+        )
         await self._publish_z_stall_result(
             result=result,
+            decision=decision,
             manual_intercept_mm=manual_intercept_mm,
             manual_reference=manual_reference,
             scan_config=scan_config,
-            slope_per_mm=slope_per_mm,
-            slope_source=slope_source,
             applied=True,
             persisted=True,
         )
 
-        return float(result.intercept_mm), slope_per_mm
+        return float(decision.intercept_mm), float(decision.slope_per_mm)
 
-    def _resolve_probed_slope(
+    def _resolve_z_stall_model(
         self,
         *,
         side: StorageModuleSide,
         result: laser_module.ZStallResult,
         scan_config: Any,
-    ) -> tuple[float, str]:
-        """Keep the configured tilt when the probe could not span the shelf to measure one.
-
-        A probe that only reached one or two openings yields a tilt-free fit by construction, and
-        writing that as the model would throw away a slope the machine already had for the sake
-        of a short probe. A tilt the probe *did* measure is always taken over the configured one.
-        """
-        if float(result.slope_per_mm) != 0.0:
-            return float(result.slope_per_mm), "probe"
-
-        configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
-
-        if configured_model is None or float(configured_model.slope_per_mm) == 0.0:
-            return 0.0, "probe_constant"
-
-        if float(result.x_span_mm) >= laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:
-            return 0.0, "probe_constant"
-
-        laser_module.print_status(
-            f"z_stall_anchor=slope_from_config side={_side_to_module_name(side)} "
-            f"x_span_mm={float(result.x_span_mm):.1f} "
-            f"slope_per_mm={float(configured_model.slope_per_mm):.5f} "
-            f"(probe span below {laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:.0f}mm, no tilt measured)"
-        )
-
-        return float(configured_model.slope_per_mm), "config_short_span"
+    ) -> laser_module.ZStallDecision:
+        """Which (intercept, slope) the probed fit installs with - the package owns the rule."""
+        return laser_module.resolve_z_stall_model(result=result, scan_config=scan_config, side=side)
 
     def _record_reference_offset_result(
         self,
