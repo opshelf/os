@@ -26,11 +26,13 @@ data/
 # expose a JWT secret, an audit HMAC key, or an archived rotation.
 .secrets.*
 
-# Device configuration files. They already live under data/, and this rule is
-# kept deliberately: ../backups and provisioned devices carry config.json files
-# that persist auth.jwt_secret and audit_hmac_key, and those files get copied
-# into a checkout to diff or calibrate. Nothing else here matches them.
+# Provisioned device configuration. This repository does not own config.json:
+# provisioning generates it per device, along with the auth material, and engineers
+# copy device and backup copies into a checkout to diff or calibrate. They carry
+# auth.jwt_secret, so they must never become committable. The mode variants come
+# from the same place; neither pattern matches the tracked dev_ui/tsconfig.json.
 config.json
+config.*.json
 
 # Local docs scratch folders, at any depth, per team convention. The tracked
 # docs modules are re-included explicitly, because ignoring a directory hides
