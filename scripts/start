@@ -56,167 +56,12 @@ export_container_runtime_env() {
 	fi
 }
 
-# docker-compose.yml used to default JWT_SECRET and AUDIT_HMAC_KEY to literals that
-# are in the repository, so any stack started without an explicit secret signed
-# tokens and audit rows with a published key, and that key got persisted into
-# config.<mode>.json on save. One key pair per mode is generated instead and kept
-# in the mode data directory (0600, gitignored, alongside the config that already
-# holds a jwt_secret) so tokens and audit rows survive restarts.
-INSECURE_PUBLISHED_SECRETS=("INSECURE_JWT_SECRET" "INSECURE_AUDIT_HMAC_KEY")
-RUNTIME_SECRETS_FILE=""
-
-is_published_default_secret() {
-	local candidate="$1"
-	local published=""
-
-	for published in "${INSECURE_PUBLISHED_SECRETS[@]}"; do
-		if [[ "$candidate" == "$published" ]]; then
-			return 0
-		fi
-	done
-
-	return 1
-}
-
-read_secret_value() {
-	awk -F= -v key="$2" '$1 == key { sub("^[^=]*=", ""); print; exit }' "$1"
-}
-
-generate_runtime_secret() {
-	python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
-}
-
-# The id minted for a generated audit key: production keeps the stable v2 id,
-# other modes get v2-<mode>.
-generated_audit_key_id() {
-	if [[ "$MODE" == "production" ]]; then
-		printf "v2"
-		return 0
-	fi
-
-	printf "v2-%s" "$MODE"
-}
-
-write_runtime_secrets_file() {
-	local path="$1"
-	local content="$2"
-	local temp_file=""
-
-	if ! mkdir -p "$(dirname "$path")"; then
-		return 1
-	fi
-
-	temp_file="$(mktemp "${path}.XXXXXX")" || return 1
-
-	if ! printf "%s" "$content" > "$temp_file"; then
-		rm -f "$temp_file"
-		return 1
-	fi
-
-	if ! mv -f "$temp_file" "$path"; then
-		rm -f "$temp_file"
-		return 1
-	fi
-}
-
-# Preserve a secrets file that is about to lose its AUDIT_HMAC_KEY: audit rows
-# already signed with the superseded key can only be verified while that key is
-# kept, so the file is copied to a 0600 archive beside the live one before the
-# rewrite instead of being deleted by it. A timestamp collision reuses the
-# existing archive name rather than failing.
-archive_superseded_runtime_secrets() {
-	local path="$1"
-	local key_id="$2"
-	local archive_path=""
-	local timestamp=""
-
-	timestamp="$(date -u +%Y%m%dT%H%M%SZ)" || return 1
-	archive_path="${path}.retired-${timestamp}"
-
-	if ! cp "$path" "$archive_path"; then
-		echo "Failed to archive superseded runtime secrets: $archive_path" >&2
-		return 1
-	fi
-
-	if ! chmod 600 "$archive_path"; then
-		echo "Failed to set mode 0600 on the archived runtime secrets: $archive_path" >&2
-		return 1
-	fi
-
-	echo "WARNING: the AUDIT_HMAC_KEY in ${path##*/} is being superseded; audit rows already signed with it (key id ${key_id:-none}) can no longer be verified automatically" >&2
-	echo "WARNING: the archive is the operator's only way back to the superseded key: $archive_path (mode 0600)" >&2
-}
-
-ensure_runtime_secrets() {
-	RUNTIME_SECRETS_FILE="$DATA_DIR/.secrets.$MODE"
-	local env_jwt="${JWT_SECRET:-}"
-	local env_audit_key="${AUDIT_HMAC_KEY:-}"
-	local file_jwt=""
-	local file_audit_key=""
-	local file_audit_id=""
-	local content=""
-
-	if [[ -f "$RUNTIME_SECRETS_FILE" ]]; then
-		file_jwt="$(read_secret_value "$RUNTIME_SECRETS_FILE" JWT_SECRET)"
-		file_audit_key="$(read_secret_value "$RUNTIME_SECRETS_FILE" AUDIT_HMAC_KEY)"
-		file_audit_id="$(read_secret_value "$RUNTIME_SECRETS_FILE" AUDIT_HMAC_KEY_ID)"
-	fi
-
-	if is_published_default_secret "$env_jwt"; then
-		echo "JWT_SECRET is a published default, using a generated per-mode key instead" >&2
-		env_jwt=""
-	fi
-
-	if is_published_default_secret "$env_audit_key"; then
-		echo "AUDIT_HMAC_KEY is a published default, using a generated per-mode key instead" >&2
-		env_audit_key=""
-	fi
-
-	# A replaced audit key must carry a new key id, otherwise rows signed with the
-	# previous key are checked against the new one and read as tampering. A
-	# generated key's id is mode-scoped (generated_audit_key_id) for the same
-	# reason: a mode's first database is a whole-file copy of production's
-	# audit history, so if every mode minted the same id, the copied rows --
-	# signed under the source mode's key -- would match this mode's key id and
-	# read as a plain HMAC mismatch instead of the distinct
-	# "no key available" verdict.
-	if [[ -z "$env_audit_key" && -n "$file_audit_key" ]] && ! is_published_default_secret "$file_audit_key"; then
-		env_audit_key="$file_audit_key"
-		export AUDIT_HMAC_KEY_ID="${AUDIT_HMAC_KEY_ID:-$file_audit_id}"
-	elif [[ -z "$env_audit_key" ]]; then
-		env_audit_key="$(generate_runtime_secret)" || return 1
-		export AUDIT_HMAC_KEY_ID="${AUDIT_HMAC_KEY_ID:-$(generated_audit_key_id)}"
-	else
-		export AUDIT_HMAC_KEY_ID="${AUDIT_HMAC_KEY_ID:-}"
-	fi
-
-	if [[ -z "$env_jwt" ]]; then
-		env_jwt="$file_jwt"
-		if [[ -z "$env_jwt" ]]; then
-			env_jwt="$(generate_runtime_secret)" || return 1
-		fi
-	fi
-
-	export JWT_SECRET="$env_jwt"
-	export AUDIT_HMAC_KEY="$env_audit_key"
-
-	content="JWT_SECRET=$JWT_SECRET"$'\n'"AUDIT_HMAC_KEY=$AUDIT_HMAC_KEY"$'\n'"AUDIT_HMAC_KEY_ID=${AUDIT_HMAC_KEY_ID}"$'\n'
-
-	# Command substitution strips trailing newlines, so compare against the content
-	# without its trailing newline; an unchanged file takes the no-op path below.
-	if [[ "$(cat "$RUNTIME_SECRETS_FILE" 2>/dev/null)" != "${content%$'\n'}" ]]; then
-		if [[ -n "$file_audit_key" && "$file_audit_key" != "$AUDIT_HMAC_KEY" ]]; then
-			if ! archive_superseded_runtime_secrets "$RUNTIME_SECRETS_FILE" "$file_audit_id"; then
-				return 1
-			fi
-		fi
-
-		if ! write_runtime_secrets_file "$RUNTIME_SECRETS_FILE" "$content"; then
-			echo "Failed to write runtime secrets file: $RUNTIME_SECRETS_FILE" >&2
-			return 1
-		fi
-	fi
-}
+# Signing keys are not this script's business. Provisioning delivers JWT_SECRET,
+# AUDIT_HMAC_KEY, and AUDIT_HMAC_KEY_ID in the checkout .env that Compose reads, and
+# docker-compose.yml passes them through without a default. Where provisioning has
+# not reached (a developer checkout, a throwaway container), audit_integrity keeps a
+# generated key of its own in the mode data directory. Do not mint keys here; that
+# duplicated the app's own fallback and had no way to keep a superseded key usable.
 
 write_mode_file() {
 	local path="$1"
@@ -392,11 +237,6 @@ case "$MODE" in
 		export ENV=production
 		;;
 esac
-
-if ! ensure_runtime_secrets; then
-	echo "Failed to provision signing secrets for mode: $MODE" >&2
-	exit 1
-fi
 
 LAST_MODE=""
 if [[ -f "$LAST_MODE_FILE" ]]; then

@@ -33,12 +33,15 @@ services:
       - DEVICE_ID=${DEVICE_ID:-}
       - OPENSHELF_BARCODE_PORT
       - OPENSHELF_BARCODE_BAUDRATE=115200
-      # Passed through only when set; settings.py otherwise keeps the persisted
-      # auth.jwt_secret or generates a strong one, so no weak default is injected.
+      # Passed through only when set. Provisioning writes them to the checkout .env,
+      # which Compose reads from the project directory; a shell or unit that exports
+      # these as empty strings shadows that file, so provisioning must not export
+      # them. Where provisioning has not reached, settings.py keeps the persisted
+      # auth.jwt_secret or generates a strong one, and audit_integrity keeps its own
+      # audit key, so no weak default is injected here.
+      # AUDIT_HMAC_KEY_ID must reach the container with its key or rotated audit rows
+      # verify against the wrong key.
       - JWT_SECRET
-      # Passed through only when set; scripts/start provisions a per-mode key when
-      # unset, so no weak default is injected. AUDIT_HMAC_KEY_ID must reach the
-      # container with its key or rotated audit rows verify against the wrong key.
       - AUDIT_HMAC_KEY
       - AUDIT_HMAC_KEY_ID
       - OPSHELF_RELAY_SERVICE_TOKEN_SHA256=${OPSHELF_RELAY_SERVICE_TOKEN_SHA256:-}
