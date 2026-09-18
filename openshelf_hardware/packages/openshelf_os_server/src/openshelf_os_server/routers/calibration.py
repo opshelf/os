@@ -7,7 +7,7 @@ import functools
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Literal, Optional, ParamSpec, TypeVar
+from typing import Annotated, Any, Literal, Optional, ParamSpec, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -53,6 +53,8 @@ class StageMoveResponse(BaseModel):
     position: float = Field(description="Applied target in millimeters")
     warnings: list[str] | None
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
 
@@ -278,6 +280,25 @@ class SaveRequest(BaseModel):
 	z_offset: float = Field(description="Position or extension in millimeters")
 	status: Optional[str] = None
 	is_manual: Optional[bool] = None
+
+
+async def _read_stage_extension_mm(worker: Any) -> float | None:
+	"""Live stage extension, for stamping a hand-saved z with the geometry it was found at."""
+	stage_motor = getattr(getattr(getattr(worker, "_robot", None), "_tool", None), "_ms", None)
+
+	if stage_motor is None:
+		return None
+
+	try:
+		position = await stage_motor.get_position()
+	except Exception:
+		logger.warning("calibration_save_stage_position_failed", exc_info=True)
+		return None
+
+	if position is None:
+		return None
+
+	return float(position)
 
 
 class CalibrationStatusResponse(BaseModel):
@@ -1305,12 +1326,22 @@ async def save_calibration(request: SaveRequest):
 	side_enum = request.side
 	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
 	cell = _ensure_cell(grid, side_enum, shelf, request.cell_idx)
+	previous_point = cell.calibration_point
+
+	# The z offset only means anything at the stage extension it was found at, so record that with
+	# the coordinate. Keep the existing stamp when a save does not touch z, since the live stage
+	# position says nothing about a z nobody re-measured.
+	captured_stage_mm = None if previous_point is None else previous_point.z_captured_at_stage_mm
+
+	if previous_point is None or float(previous_point.z_offset) != float(request.z_offset):
+		captured_stage_mm = await _read_stage_extension_mm(worker)
 
 	cell.calibration_point = CalibrationCoordinate(
 		x=request.x,
 		y=request.y,
 		s=_side_to_s(request.side),
 		z_offset=request.z_offset,
+		z_captured_at_stage_mm=captured_stage_mm,
 	)
 
 	if request.is_manual is not None:

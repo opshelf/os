@@ -1,0 +1,207 @@
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import json
+import sys
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
+import openshelf_os.laser_calibration as laser_module
+from openshelf_os.storage import (
+	CalibrationCoordinate,
+	Cell,
+	CellStatus,
+	Dimensions,
+	Shelf,
+	StorageGrid,
+)
+
+
+PROBE_PATH = Path(__file__).parents[1] / "z_stall_probe.py"
+
+
+def load_probe_module() -> ModuleType:
+	spec = importlib.util.spec_from_file_location("z_stall_probe_test", PROBE_PATH)
+	assert spec is not None
+	assert spec.loader is not None
+	module = importlib.util.module_from_spec(spec)
+	spec.loader.exec_module(module)
+	return module
+
+
+def build_config(config_path: Path, storage_path: Path) -> SimpleNamespace:
+	scan = SimpleNamespace(
+		z_stall_probe_x_shift_mm=20.0,
+		z_stall_manual_agreement_mm=1.0,
+		z_stall_probe_repeats=2,
+		z_stall_probe_repeat_tolerance_mm=0.3,
+		left_xy_offset=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
+		right_xy_offset=None,
+	)
+	tool = SimpleNamespace(
+		motors=[SimpleNamespace(motor_name="x_axis", lim=950.0, lower_lim=0.0)],
+	)
+	config = SimpleNamespace(
+		robot=SimpleNamespace(
+			grid=SimpleNamespace(scan=scan, path=str(storage_path)),
+			tool=tool,
+		),
+		storage=SimpleNamespace(bins=[]),
+	)
+	config.robot.grid.scan.model_copy = lambda update=None: SimpleNamespace(**{**vars(scan), **(update or {})})
+
+	return config
+
+
+def build_grid() -> StorageGrid:
+	grid = StorageGrid(filename="storage.json")
+	grid.left_module = [
+		Shelf(
+			shelf_idx=1,
+			shelf_height=30.0,
+			shelf_width=400.0,
+			cells=[
+				Cell(
+					cell_idx=0,
+					status=CellStatus.AVAILABLE,
+					item=None,
+					calibration_point=CalibrationCoordinate(
+						x=341.75,
+						y=239.5,
+						s=0,
+						z_offset=6.5,
+						z_captured_at_stage_mm=47.0,
+					),
+					dimensions=Dimensions(length=400.0, width=26.0, height=30.0),
+					is_manual=True,
+				),
+				Cell(
+					cell_idx=1,
+					status=CellStatus.AVAILABLE,
+					item=None,
+					calibration_point=CalibrationCoordinate(x=476.75, y=239.5, s=0, z_offset=6.5),
+					dimensions=Dimensions(length=400.0, width=26.0, height=30.0),
+				),
+			],
+		)
+	]
+	return grid
+
+
+def build_run_dir(run_dir: Path) -> Path:
+	run_dir.mkdir(parents=True, exist_ok=True)
+	metadata = {
+		"fine_scans": [
+			{
+				"detected_cells": [
+					{
+						"shelf_idx": 1,
+						"cell_idx": 0,
+						"center_x_mm": 290.75,
+						"center_y_mm": 239.5,
+						"tool_x_mm": 341.75,
+						"tool_y_mm": 239.5,
+						"width_mm": 26.0,
+						"height_mm": 30.0,
+						"point_count": 20,
+					},
+					{
+						"shelf_idx": 1,
+						"cell_idx": 1,
+						"center_x_mm": 425.75,
+						"center_y_mm": 239.5,
+						"tool_x_mm": 476.75,
+						"tool_y_mm": 239.5,
+						"width_mm": 26.0,
+						"height_mm": 30.0,
+						"point_count": 20,
+					},
+				]
+			}
+		],
+		"candidates": [
+			{
+				"shelf_idx": 1,
+				"x_min": 277.0,
+				"x_max": 303.0,
+				"y_min": 231.25,
+				"y_max": 231.25,
+				"row_count": 1,
+				"wall_depth_mm": 9.62,
+				"wall_sample_count": 4,
+			}
+		],
+	}
+	(run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+	return run_dir
+
+
+def test_plan_only_reports_probes_and_the_reference_datum(tmp_path: Path, monkeypatch, capsys) -> None:
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	run_dir = build_run_dir(tmp_path / "runs" / "3bf2cfc1")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	exit_code = main_with_args(
+		probe, ["--module", "left", "--from-run", str(run_dir), "--plan-only"]
+	)
+
+	assert exit_code == 0
+	output = capsys.readouterr().out
+	# Only the cell whose sweep candidate carried a wall depth is planned: the probe subtracts it.
+	assert "planned probes (1):" in output
+	assert "1:0 tool_x=341.75" in output
+	assert "reference datum: 1 cell(s) imply intercept -3.120mm" in output
+	assert "captured_stage_mm=47.00" in output
+
+
+def main_with_args(probe: ModuleType, argv: list[str]) -> int:
+	"""Run main() with argv, since argparse reads sys.argv directly."""
+	original_argv = sys.argv
+	sys.argv = ["z_stall_probe.py", *argv]
+
+	try:
+		return asyncio.run(probe.main())
+	finally:
+		sys.argv = original_argv
+
+
+def test_plan_only_still_plans_without_a_reference_datum(tmp_path: Path, monkeypatch, capsys) -> None:
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	# Nothing is marked manual: the probe is still worth running, it just has no verdict.
+	for shelf in grid.left_module:
+		for cell in shelf.cells:
+			cell.is_manual = False
+	run_dir = build_run_dir(tmp_path / "runs" / "4fab1bf8")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	exit_code = main_with_args(
+		probe, ["--module", "left", "--from-run", str(run_dir), "--plan-only"]
+	)
+
+	assert exit_code == 0
+	output = capsys.readouterr().out
+	assert "planned probes (1):" in output
+	assert "reference datum unavailable" in output or "reference datum: none" in output

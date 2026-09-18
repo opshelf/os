@@ -12,6 +12,7 @@ _MODULE_NAMES = (
     "fine_scan",
     "staged_scan",
     "reference_offsets",
+    "z_stall",
 )
 
 _PATCH_TARGET_NAMES = (

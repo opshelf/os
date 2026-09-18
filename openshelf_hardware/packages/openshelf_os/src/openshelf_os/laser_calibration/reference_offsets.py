@@ -56,6 +56,7 @@ class ReferenceOffsetSample:
 	delta_y_mm: float
 	wall_depth_mm: float | None = None
 	derived_intercept_mm: float | None = None
+	z_captured_stage_mm: float | None = None
 
 
 @dataclass
@@ -70,11 +71,18 @@ class ReferenceOffsetResult:
 	slope_per_mm: float = 0.0
 	configured_offset_x_mm: float | None = None
 	configured_offset_y_mm: float | None = None
+	z_captured_stage_mm: float | None = None
+	z_captured_stage_samples: int = 0
 	skipped: list[str] = field(default_factory=list)
 
 	@property
 	def sample_count(self) -> int:
 		return len(self.samples)
+
+	@property
+	def z_capture_conditions_missing(self) -> int:
+		"""Samples saved before the capture stage was recorded: they cannot be checked."""
+		return self.sample_count - self.z_captured_stage_samples
 
 	@property
 	def used_configured_offset(self) -> bool:
@@ -271,6 +279,7 @@ def derive_reference_offsets(
 			if wall_depth_mm is None
 			else float(point.z_offset) - float(wall_depth_mm) - slope_per_mm * manual_x_mm
 		)
+		captured_stage_mm = getattr(point, "z_captured_at_stage_mm", None)
 
 		samples.append(
 			ReferenceOffsetSample(
@@ -284,6 +293,7 @@ def derive_reference_offsets(
 				delta_y_mm=manual_y_mm - float(matched_cell.tool_y_mm),
 				wall_depth_mm=wall_depth_mm,
 				derived_intercept_mm=derived_intercept_mm,
+				z_captured_stage_mm=None if captured_stage_mm is None else float(captured_stage_mm),
 			)
 		)
 
@@ -333,6 +343,11 @@ def derive_reference_offsets(
 		for sample in samples
 		if sample.derived_intercept_mm is not None
 	]
+	captured_stages = [
+		sample.z_captured_stage_mm
+		for sample in samples
+		if sample.z_captured_stage_mm is not None
+	]
 
 	return ReferenceOffsetResult(
 		side=side,
@@ -345,5 +360,7 @@ def derive_reference_offsets(
 		slope_per_mm=slope_per_mm,
 		configured_offset_x_mm=configured_offset_x_mm,
 		configured_offset_y_mm=configured_offset_y_mm,
+		z_captured_stage_mm=None if len(captured_stages) == 0 else float(median(captured_stages)),
+		z_captured_stage_samples=len(captured_stages),
 		skipped=skipped,
 	)

@@ -1,7 +1,7 @@
 import json
 import os
 
-from dataclasses import replace as dataclass_replace
+from dataclasses import dataclass, replace as dataclass_replace
 from enum import Enum
 from typing import Dict, Iterable, List, Mapping, Optional, Self, Tuple, Union
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -20,7 +20,13 @@ class StorageModuleSide(str, Enum):
 	LEFT = "left_module"
 
 
+@dataclass
 class CalibrationCoordinate(AxisCoordinate):
+	# The z offset is only comparable when the stage was extended the way the z model is pinned,
+	# so the capture conditions travel with the datum instead of being remembered by whoever
+	# saved it. Absent on coordinates written before this was recorded.
+	z_captured_at_stage_mm: Optional[float] = None
+
 	def __add__(self, rhs: "CalibrationCoordinate") -> "CalibrationCoordinate":  # type: ignore[override]
 		self._assert_same_side(rhs, "add")
 

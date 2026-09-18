@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from openshelf_os.config.laser_scan import LaserScanXYOffsetConfig
+from openshelf_os.config.laser_scan import LaserScanXYOffsetConfig, LaserScanZOffsetModelConfig
 from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
 from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
 
@@ -14,6 +14,10 @@ from .models import *
 
 _MANUAL_SHELF_MATCH_TOLERANCE_MM = 60.0
 _MANUAL_CELL_MATCH_TOLERANCE_MM = 40.0
+
+
+def _z_stall_requested(scan_config: Any) -> bool:
+    return getattr(scan_config, "z_stall_anchor_enabled", False) is True
 
 
 def _reference_offset_scan_config(
@@ -73,16 +77,6 @@ def _build_reference_offset_entry(
 		],
 		skipped=list(result.skipped),
 	)
-
-# The z probe presses the tray face, and the z axis can out-push the stage it is mounted on
-# (z lead 16.1mm/rev vs stage 50mm/rev). If the contact does not stop the gripper, the load
-# back-drives the stage instead: z never registers a stall, the probe runs to its limit, and
-# the stage fault is swallowed by the next retract()'s recovery homing. Catch it here.
-_STAGE_BACKDRIVE_TOLERANCE_MM = 1.5
-
-# One probe cannot separate the z intercept from the x tilt: it silently yields a tilt-free model.
-_MIN_Z_STALL_SAMPLES = 2
-
 
 def _shelf_center_y(shelf: Any) -> float | None:
     ys = [float(cell.calibration_point.y) for cell in shelf.cells if cell.calibration_point is not None]
@@ -189,97 +183,277 @@ def _get_z_axis_limit_mm(worker: RobotWorker) -> float | None:
     return float(limit)
 
 
-def _is_probe_reachable(
-    cell: Any,
-    max_probe_tool_x_mm: float | None,
-    min_probe_tool_x_mm: float | None = None,
-) -> bool:
-    """The axis clamps silently, so a probe past either limit lands somewhere it was never aimed."""
-    if max_probe_tool_x_mm is None and min_probe_tool_x_mm is None:
-        return True
-
-    tool_x_mm = float(cell.tool_x_mm)
-
-    if max_probe_tool_x_mm is not None and tool_x_mm > float(max_probe_tool_x_mm):
-        laser_module.print_status(
-            f"z_stall_anchor=skip_unreachable probe={cell.shelf_idx}:{cell.cell_idx} "
-            f"tool_x_mm={tool_x_mm:.1f} max_probe_tool_x_mm={float(max_probe_tool_x_mm):.1f}"
-        )
-        return False
-
-    if min_probe_tool_x_mm is not None and tool_x_mm < float(min_probe_tool_x_mm):
-        laser_module.print_status(
-            f"z_stall_anchor=skip_unreachable probe={cell.shelf_idx}:{cell.cell_idx} "
-            f"tool_x_mm={tool_x_mm:.1f} min_probe_tool_x_mm={float(min_probe_tool_x_mm):.1f}"
-        )
-        return False
-
-    return True
-
-
-def _select_z_stall_probes(
-    analysis: Any,
-    candidate_lookup: dict[tuple[int, int], Any],
-    max_probe_tool_x_mm: float | None = None,
-    min_probe_tool_x_mm: float | None = None,
-) -> list[tuple[Any, float]]:
-    """Pick z stall probe cells, skipping any the tool cannot actually reach.
-
-    The probe drives to tool_x + z_stall_probe_x_shift_mm, so a cell needs MORE X travel
-    to probe than to grab. If that lands past the axis limit the axis silently clamps, the
-    tool ends up over the cell's tray hole instead of the divider, and the gripper drives
-    down into the hole and jams the tray onto itself. The grid-level reachability guard
-    cannot help here: it runs at the end of apply, long after this probing happens.
-    """
-    shelves = [shelf for shelf in analysis.shelves if len(shelf.cells) > 0]
-
-    if len(shelves) == 0:
-        return []
-
-    ordered_shelves = sorted(shelves, key=lambda shelf: float(shelf.center_y_mm))
-    middle = len(ordered_shelves) // 2
-    shelf_sequence: list[Any] = [ordered_shelves[middle]]
-    for step in range(1, len(ordered_shelves)):
-        if middle + step < len(ordered_shelves):
-            shelf_sequence.append(ordered_shelves[middle + step])
-        if middle - step >= 0:
-            shelf_sequence.append(ordered_shelves[middle - step])
-
-    probes: list[tuple[Any, float]] = []
-    seen_cells: set[tuple[int, int]] = set()
-    for shelf in shelf_sequence:
-        valid_cells = [
-            (cell, float(candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm))
-            for cell in sorted(shelf.cells, key=lambda cell: float(cell.center_x_mm))
-            if candidate_lookup.get((cell.shelf_idx, cell.cell_idx)) is not None
-            and candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm is not None
-            and float(candidate_lookup[(cell.shelf_idx, cell.cell_idx)].wall_depth_mm) > 0.0
-            and _is_probe_reachable(cell, max_probe_tool_x_mm, min_probe_tool_x_mm)
-        ]
-
-        if len(valid_cells) == 0:
-            continue
-
-        # Probe each shelf's two X extremes plus a middle cell: the extremes give the
-        # tilt span, the middle corroborates it (an end cell can stall shallow on a rail
-        # and fabricate a slope). Ordered lo -> mid -> hi so the mid is captured before
-        # the anchor breaks on the extremes.
-        picks = [valid_cells[0]]
-        if len(valid_cells) >= 3:
-            picks.append(valid_cells[len(valid_cells) // 2])
-        picks.append(valid_cells[-1])
-        for cell, wall_depth_mm in picks:
-            cell_key = (cell.shelf_idx, cell.cell_idx)
-            if cell_key in seen_cells:
-                continue
-            seen_cells.add(cell_key)
-            probes.append((cell, wall_depth_mm))
-
-    return probes
-
-
 class ApplyRunnerMixin:
     _reference_offset_entries: list[LaserAutoCalibrationReferenceOffset]
+    _z_stall_entries: list[LaserAutoCalibrationZStallResult]
+
+    def _record_z_stall_result(
+        self,
+        entry: LaserAutoCalibrationZStallResult,
+    ) -> list[LaserAutoCalibrationZStallResult]:
+        entries: list[LaserAutoCalibrationZStallResult] = [
+            existing
+            for existing in self._z_stall_entries
+            if existing.side != entry.side
+        ]
+        entries.append(entry)
+        self._z_stall_entries = entries
+
+        return [stored.model_copy(deep=True) for stored in entries]
+
+    def _install_z_offset_model(
+        self,
+        scan_config: Any,
+        result: laser_module.ZStallResult,
+        *,
+        slope_per_mm: float | None = None,
+    ) -> None:
+        """Write the probed model onto the run's config, pinned to the geometry it was probed at."""
+        model = LaserScanZOffsetModelConfig(
+            intercept_mm=float(result.intercept_mm),
+            slope_per_mm=float(result.slope_per_mm if slope_per_mm is None else slope_per_mm),
+            stage_extension_mm=float(result.stage_extension_mm),
+            z_place_mm=float(result.z_place_mm),
+        )
+
+        if result.side == StorageModuleSide.LEFT:
+            scan_config.left_z_offset_model = model
+        else:
+            scan_config.right_z_offset_model = model
+
+    def _resolve_manual_z_intercept(
+        self,
+        *,
+        side: StorageModuleSide,
+        manual_reference: laser_module.ReferenceOffsetResult | None,
+    ) -> float:
+        """The intercept the hand-calibrated cells imply, without which a probe proves nothing."""
+        if manual_reference is None or manual_reference.intercept_mm is None:
+            raise ValueError(
+                f"z stall anchor: the {side.value} has no hand-calibrated reference cell with a laser "
+                "wall depth, and the probe fit is not trustworthy without one; precalibrate a cell "
+                "(cell calibration, 'keep manual') before probing"
+            )
+
+        return float(manual_reference.intercept_mm)
+
+    def _validate_z_stall_against_manual_datum(
+        self,
+        *,
+        side: StorageModuleSide,
+        result: laser_module.ZStallResult,
+        manual_reference: laser_module.ReferenceOffsetResult,
+        manual_intercept_mm: float,
+        scan_config: Any,
+    ) -> None:
+        """Refuse a probed model the hand-calibrated datum does not corroborate.
+
+        The probe presses the shelf plate, so it measures the rack's stiffness as much as the
+        tool's geometry, while the manual datum is the one z value a person stood behind. When
+        the two disagree the rack moved under load or the datum was saved with the stage
+        somewhere else - both need looking at rather than modelling over.
+        """
+        side_name = "left" if side == StorageModuleSide.LEFT else "right"
+        tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
+        agreement_mm = abs(float(result.intercept_mm) - manual_intercept_mm)
+        laser_module.print_status(
+            f"z_stall_anchor=manual_check side={side_name} probe_intercept_mm={result.intercept_mm:.3f} "
+            f"manual_intercept_mm={manual_intercept_mm:.3f} agreement_mm={agreement_mm:.3f} "
+            f"tolerance_mm={tolerance_mm:.3f} manual_cells={manual_reference.sample_count}"
+        )
+
+        if agreement_mm > tolerance_mm:
+            direction = "deeper" if result.intercept_mm > manual_intercept_mm else "shallower"
+            raise ValueError(
+                f"z stall anchor: the probe fit is {agreement_mm:.2f}mm {direction} than the "
+                f"hand-calibrated {side.value} datum ({result.intercept_mm:.3f} vs {manual_intercept_mm:.3f}, "
+                f"tolerance {tolerance_mm:.2f}mm). Probe contact deeper than the datum means the shelf "
+                "moved under load; shallower means the tip met something in front of the plate. "
+                "Neither is a z model - check the reference cell and the shelf before retrying"
+            )
+
+        captured_stage_mm = manual_reference.z_captured_stage_mm
+        pin_tolerance_mm = float(scan_config.z_offset_model_param_tolerance_mm)
+
+        if captured_stage_mm is not None and abs(float(captured_stage_mm) - float(result.stage_extension_mm)) > pin_tolerance_mm:
+            raise ValueError(
+                f"z stall anchor: the hand-calibrated reference cell was saved with the stage at "
+                f"{float(captured_stage_mm):.2f}mm but the probe ran at {float(result.stage_extension_mm):.2f}mm, "
+                "so its z offset is not comparable; re-save the reference cell with the stage at the "
+                "shelf extension (or fix the tool parameter) and probe again"
+            )
+
+        if manual_reference.z_capture_conditions_missing > 0:
+            logger.warning(
+                "z_stall_reference_capture_conditions_missing",
+                extra={
+                    "side": side.value,
+                    "missing": manual_reference.z_capture_conditions_missing,
+                    "samples": manual_reference.sample_count,
+                    "stage_extension_mm": float(result.stage_extension_mm),
+                },
+            )
+            laser_module.print_status(
+                f"z_stall_anchor=warning side={side_name} "
+                f"unstamped_reference_cells={manual_reference.z_capture_conditions_missing} "
+                "(saved before the capture stage was recorded; the stage extension could not be checked)"
+            )
+
+    async def _publish_z_stall_result(
+        self,
+        *,
+        result: laser_module.ZStallResult,
+        manual_intercept_mm: float,
+        manual_reference: laser_module.ReferenceOffsetResult | None,
+        scan_config: Any,
+        slope_per_mm: float,
+        slope_source: str,
+        applied: bool,
+        persisted: bool,
+    ) -> None:
+        agreement_mm = (
+            None if manual_reference is None else abs(float(result.intercept_mm) - manual_intercept_mm)
+        )
+        entry = LaserAutoCalibrationZStallResult(
+            side=result.side,
+            intercept_mm=float(result.intercept_mm),
+            slope_per_mm=float(slope_per_mm),
+            slope_source=slope_source,
+            fit_source=str(result.fit_source),
+            sample_count=int(result.sample_count),
+            x_span_mm=float(result.x_span_mm),
+            stage_extension_mm=float(result.stage_extension_mm),
+            z_place_mm=float(result.z_place_mm),
+            manual_intercept_mm=manual_intercept_mm,
+            manual_agreement_mm=agreement_mm,
+            manual_agreement_tolerance_mm=float(scan_config.z_stall_manual_agreement_mm),
+            manual_captured_stage_mm=(
+                None if manual_reference is None else manual_reference.z_captured_stage_mm
+            ),
+            manual_capture_unstamped=(
+                0 if manual_reference is None else manual_reference.z_capture_conditions_missing
+            ),
+            applied=applied,
+            persisted=persisted,
+            samples=[
+                LaserAutoCalibrationZStallSample(
+                    shelf_idx=int(sample.shelf_idx),
+                    cell_idx=int(sample.cell_idx),
+                    probe_x_mm=float(sample.probe_x_mm),
+                    probe_y_mm=float(sample.probe_y_mm),
+                    wall_depth_mm=float(sample.wall_depth_mm),
+                    z_contact_mm=float(sample.z_contact_mm),
+                    z_contact_repeat_mm=sample.z_contact_repeat_mm,
+                    delta_mm=float(sample.delta_mm),
+                )
+                for sample in result.samples
+            ],
+            skipped=list(result.skipped),
+            dropped_repeats=list(result.dropped_repeats),
+        )
+        entries = self._record_z_stall_result(entry)
+        await self._update_snapshot(z_stall_results=entries)
+
+    async def _derive_z_model_from_stall(
+        self,
+        worker: RobotWorker,
+        side: StorageModuleSide,
+        analysis: Any,
+        scan_config: Any,
+        *,
+        source_grid: Any,
+        manual_reference: laser_module.ReferenceOffsetResult | None,
+    ) -> tuple[float, float]:
+        """Probe the plate for this side's z model, validated against the hand-calibrated datum."""
+        device_grid = getattr(worker._robot, "_grid", None) or source_grid
+        result = await laser_module.run_z_stall_anchor(
+            tool=worker._robot._tool,
+            analysis=analysis,
+            scan_config=scan_config,
+            side=side,
+            excluded_cells=laser_module.excluded_probe_cells(
+                grid=device_grid,
+                side=side,
+                reserved_locations=getattr(worker._robot, "_reserved_cell_locations", None),
+            ),
+            x_axis_limit_mm=_get_x_axis_limit_mm(worker),
+            x_axis_lower_limit_mm=_get_x_axis_lower_limit_mm(worker),
+            z_axis_limit_mm=_get_z_axis_limit_mm(worker),
+            xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
+            should_abort=self._should_abort_work,
+        )
+        manual_intercept_mm = self._resolve_manual_z_intercept(
+            side=side, manual_reference=manual_reference
+        )
+        # Publish the raw fit before judging it: a refusal is exactly when the operator needs to
+        # see both numbers side by side.
+        await self._publish_z_stall_result(
+            result=result,
+            manual_intercept_mm=manual_intercept_mm,
+            manual_reference=manual_reference,
+            scan_config=scan_config,
+            slope_per_mm=float(result.slope_per_mm),
+            slope_source="probe",
+            applied=False,
+            persisted=False,
+        )
+        self._validate_z_stall_against_manual_datum(
+            side=side,
+            result=result,
+            manual_reference=manual_reference,
+            manual_intercept_mm=manual_intercept_mm,
+            scan_config=scan_config,
+        )
+        slope_per_mm, slope_source = self._resolve_probed_slope(
+            side=side, result=result, scan_config=scan_config
+        )
+        # Installing on the run's config is what persists it: the callers save that same object.
+        self._install_z_offset_model(scan_config, result, slope_per_mm=slope_per_mm)
+        await self._publish_z_stall_result(
+            result=result,
+            manual_intercept_mm=manual_intercept_mm,
+            manual_reference=manual_reference,
+            scan_config=scan_config,
+            slope_per_mm=slope_per_mm,
+            slope_source=slope_source,
+            applied=True,
+            persisted=True,
+        )
+
+        return float(result.intercept_mm), slope_per_mm
+
+    def _resolve_probed_slope(
+        self,
+        *,
+        side: StorageModuleSide,
+        result: laser_module.ZStallResult,
+        scan_config: Any,
+    ) -> tuple[float, str]:
+        """Keep the configured tilt when the probe could not span the shelf to measure one.
+
+        A probe that only reached one or two openings yields a tilt-free fit by construction, and
+        writing that as the model would throw away a slope the machine already had for the sake
+        of a short probe. A tilt the probe *did* measure is always taken over the configured one.
+        """
+        if float(result.slope_per_mm) != 0.0:
+            return float(result.slope_per_mm), "probe"
+
+        configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
+
+        if configured_model is None or float(configured_model.slope_per_mm) == 0.0:
+            return 0.0, "probe_constant"
+
+        if float(result.x_span_mm) >= laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:
+            return 0.0, "probe_constant"
+
+        laser_module.print_status(
+            f"z_stall_anchor=slope_from_config side={_side_to_module_name(side)} "
+            f"x_span_mm={float(result.x_span_mm):.1f} "
+            f"slope_per_mm={float(configured_model.slope_per_mm):.5f} "
+            f"(probe span below {laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:.0f}mm, no tilt measured)"
+        )
+
+        return float(configured_model.slope_per_mm), "config_short_span"
 
     def _record_reference_offset_result(
         self,
@@ -305,16 +479,20 @@ class ApplyRunnerMixin:
         source_grid: Any,
         shelf_idx: int | None = None,
         cell_idx: int | None = None,
+        force: bool = False,
     ) -> laser_module.ReferenceOffsetResult | None:
         """Derive this side's xy offset from the manually calibrated cells it references.
 
         Returns None when the run was not asked to derive one. The result is published before
         the apply touches anything, so a failure later still shows what the reference frame
         implied. The derived value is used and persisted by the caller, not here.
+
+        `force` covers the z probe, which needs the same hand-calibrated datum to validate its
+        fit even when the run is not re-framing xy.
         """
         requested_scope = self._snapshot.requested_scope
 
-        if requested_scope.derive_offsets_from_manual_cells is not True:
+        if force is not True and requested_scope.derive_offsets_from_manual_cells is not True:
             return None
 
         result = laser_module.derive_reference_offsets(
@@ -360,271 +538,6 @@ class ApplyRunnerMixin:
         )
         await self._update_snapshot(reference_offset_results=entries)
 
-    async def _run_z_stall_anchor(
-        self,
-        worker: RobotWorker,
-        side: StorageModuleSide,
-        analysis: Any,
-    ) -> tuple[float, float]:
-        config = get_root_config()
-        scan_config = config.robot.grid.scan
-        tool = worker._robot._tool
-
-        xy_offset = laser_module.get_scan_xy_offset(scan_config=scan_config, side=side)
-        offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
-        offset_y_mm = 0.0 if xy_offset is None else float(xy_offset[1])
-
-        metadata = laser_module.load_json_file(Path(str(analysis.metadata_path)))
-        candidates = laser_module.load_candidates_from_metadata(metadata)
-        candidate_lookup = laser_module.build_candidate_lookup_by_cell(analysis=analysis, candidates=candidates)
-
-        # The probe drives to (tool_x + offset_x) + z_stall_probe_x_shift_mm, so cap tool_x by
-        # the axis limit minus BOTH terms. Without this the axis clamps, the tool lands over
-        # the cell's tray hole instead of the divider, and the gripper jams the tray onto itself.
-        x_axis_limit_mm = _get_x_axis_limit_mm(worker)
-        x_axis_lower_limit_mm = _get_x_axis_lower_limit_mm(worker)
-        max_probe_tool_x_mm: float | None = None
-        min_probe_tool_x_mm: float | None = None
-
-        if x_axis_limit_mm is not None:
-            max_probe_tool_x_mm = (
-                x_axis_limit_mm - offset_x_mm - float(scan_config.z_stall_probe_x_shift_mm)
-            )
-
-        if x_axis_lower_limit_mm is not None:
-            min_probe_tool_x_mm = (
-                x_axis_lower_limit_mm - offset_x_mm - float(scan_config.z_stall_probe_x_shift_mm)
-            )
-
-        probes = _select_z_stall_probes(
-            analysis,
-            candidate_lookup,
-            max_probe_tool_x_mm,
-            min_probe_tool_x_mm,
-        )
-        if len(probes) == 0:
-            raise ValueError("z stall anchor: no detected cell with a wall depth to probe")
-
-        side_name = "left" if side == StorageModuleSide.LEFT else "right"
-        side_number = 0 if side == StorageModuleSide.LEFT else 1
-        rotation_param = "ROTATION_FRONT" if side_name == "left" else "ROTATION_BACK"
-        stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side_name == "left" else "STAGE_EXTENSION_SHELF_BACK"
-
-        rotation_center_value = await tool.get_param(rotation_param)
-        stage_extension_value = await tool.get_param(stage_param)
-        z_place = await tool.get_param("Z_EXTENSION_PLACE")
-        z_move_rpm = await tool.get_param("Z_MOVE_RPM")
-        z_move_accel = await tool.get_param("Z_MOVE_ACCEL")
-
-        if rotation_center_value is None or stage_extension_value is None:
-            raise ValueError(f"{rotation_param} and {stage_param} are required for z stall anchor")
-
-        if z_place is None or z_move_rpm is None or z_move_accel is None:
-            raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required for z stall anchor")
-
-        rotation_center_deg = float(rotation_center_value)
-        stage_extension_mm = float(stage_extension_value)
-        probe_rpm = scan_config.z_stall_probe_rpm
-        probe_target_mm = float(scan_config.z_stall_probe_target_mm)
-        z_axis_limit_mm = _get_z_axis_limit_mm(worker)
-        laser_module.print_status(
-            f"z_stall_anchor=start side={side_name} rotation_deg={rotation_center_deg:.3f} "
-            f"stage_extension_mm={stage_extension_mm:.2f} candidate_cells={len(probes)} "
-            f"probe_target_mm={probe_target_mm:.1f} z_axis_limit_mm="
-            f"{'unknown' if z_axis_limit_mm is None else f'{z_axis_limit_mm:.1f}'}"
-        )
-
-        # When the probe target IS the axis ceiling there is no travel to spare, so a probe that
-        # runs out of travel is indistinguishable from one that found no wall: both come back
-        # reason=limit. Say so up front, otherwise a rack that has drifted out of reach reads as
-        # a rack with no walls.
-        has_no_z_headroom = z_axis_limit_mm is not None and probe_target_mm >= z_axis_limit_mm
-
-        if has_no_z_headroom is True:
-            laser_module.print_status(
-                f"z_stall_anchor=no_z_headroom probe_target_mm={probe_target_mm:.1f} "
-                f"z_axis_limit_mm={z_axis_limit_mm:.1f} "
-                "reason=limit cannot distinguish 'no wall' from 'wall beyond Z travel'"
-            )
-
-        samples: list[tuple[int, float, float]] = []
-        last_reason = "none"
-        limit_miss_count = 0
-        for detected_cell, probe_wall_depth_mm in probes:
-            # Aim from the CORRECTED tool position (tool_x + xy_offset), not the raw detection
-            # frame: xy_offset is what actually puts the tool on the cell. Ignoring it offsets
-            # every probe by -xy_offset (-4mm left, but -97mm right), which can drop the probe
-            # into a neighbouring tray hole instead of onto the divider.
-            probe_x_mm = (
-                float(detected_cell.tool_x_mm) + offset_x_mm + float(scan_config.z_stall_probe_x_shift_mm)
-            )
-            probe_y_mm = float(detected_cell.tool_y_mm) + offset_y_mm
-
-            await enter_capture_mode(
-                tool,
-                side_name=side_name,
-                side_number=side_number,
-                x_mm=probe_x_mm,
-                y_mm=probe_y_mm,
-                absolute_rotation_deg=rotation_center_deg,
-                stage_extension_mm=stage_extension_mm,
-                z_mm=float(scan_config.z_stall_probe_start_mm),
-                z_move_rpm=float(z_move_rpm),
-                z_move_accel=float(z_move_accel),
-                should_abort=self._should_abort_work,
-            )
-
-            did_stall, z_contact_mm, reason, alarm_code = await probe_z_until_stall(
-                tool,
-                target_z_mm=float(scan_config.z_stall_probe_target_mm),
-                retract_z_mm=float(scan_config.z_stall_probe_start_mm),
-                settle_ms=laser_module.get_laser_sample_settle_ms(scan_config),
-                timeout_s=float(scan_config.z_stall_probe_timeout_s),
-                probe_rpm=None if probe_rpm is None else int(probe_rpm),
-                no_progress_s=float(scan_config.z_stall_probe_no_progress_s),
-                probe_step_mm=float(scan_config.z_stall_probe_step_mm),
-                fast_approach_mm=float(scan_config.z_stall_probe_fast_approach_mm),
-                fast_approach_rpm=None if probe_rpm is None else int(probe_rpm),
-                auto_retract=True,
-                should_abort=self._should_abort_work,
-            )
-            last_reason = reason
-
-            stage_motor = tool._ms
-            achieved_stage_mm = (
-                stage_extension_mm
-                if stage_motor is None
-                else float(await stage_motor.get_position())
-            )
-
-            if abs(achieved_stage_mm - stage_extension_mm) > _STAGE_BACKDRIVE_TOLERANCE_MM:
-                raise ValueError(
-                    f"z stall anchor: the stage was pushed back from {stage_extension_mm:.1f}mm to "
-                    f"{achieved_stage_mm:.1f}mm during probe "
-                    f"{detected_cell.shelf_idx}:{detected_cell.cell_idx} (z reached {z_contact_mm:.1f}mm, "
-                    f"reason={reason}). The gripper is loading the rack harder than the stage can hold, "
-                    "so this contact is not a wall and the rack is being displaced. Refusing to continue."
-                )
-
-            if reason == "fast_approach_fault":
-                raise ValueError(
-                    f"z stall anchor: the tool faulted during the rapid approach at "
-                    f"z={z_contact_mm:.1f}mm on probe {detected_cell.shelf_idx}:{detected_cell.cell_idx}. "
-                    "Nothing should obstruct the tool before the wall; refusing to continue."
-                )
-
-            if did_stall is False:
-                if reason == "limit":
-                    limit_miss_count += 1
-
-                laser_module.print_status(
-                    f"z_stall_anchor=miss side={side_name} probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
-                    f"reason={reason} z_mm={z_contact_mm:.3f}"
-                )
-                continue
-
-            # The rapid approach already traversed to fast_approach_mm unobstructed, so a wall
-            # cannot sit closer than that. Anything shallower is the tool hitting something else.
-            if z_contact_mm < float(scan_config.z_stall_probe_fast_approach_mm):
-                laser_module.print_status(
-                    f"z_stall_anchor=reject_shallow side={side_name} "
-                    f"probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
-                    f"reason={reason} z_mm={z_contact_mm:.3f} "
-                    f"fast_approach_mm={float(scan_config.z_stall_probe_fast_approach_mm):.3f}"
-                )
-                continue
-
-            z_offset_anchor_mm = z_contact_mm - float(z_place) + float(scan_config.z_stall_tray_engagement_mm)
-            z_delta_mm = z_offset_anchor_mm - probe_wall_depth_mm
-            sample_x_mm = float(detected_cell.tool_x_mm) + offset_x_mm
-            samples.append((detected_cell.shelf_idx, sample_x_mm, z_delta_mm))
-            laser_module.print_status(
-                f"z_stall_anchor=sample side={side_name} probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
-                f"grab_x_mm={sample_x_mm:.3f} z_contact_mm={z_contact_mm:.3f} z_place_mm={float(z_place):.3f} "
-                f"tray_mm={float(scan_config.z_stall_tray_engagement_mm):.3f} "
-                f"probe_wall_depth_mm={probe_wall_depth_mm:.3f} anchor_z_offset_mm={z_offset_anchor_mm:.3f} "
-                f"delta_mm={z_delta_mm:.3f}"
-            )
-
-            # A trustworthy X slope must come from one shelf (same Y) with an interior
-            # corroboration probe; break once a shelf yields >=3 wide-enough samples.
-            shelf_sample_xs = [x for shelf_idx, x, _ in samples if shelf_idx == detected_cell.shelf_idx]
-            if len(shelf_sample_xs) >= 3 and (max(shelf_sample_xs) - min(shelf_sample_xs)) >= laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM:
-                break
-
-        if len(samples) == 0:
-            if limit_miss_count == len(probes) and has_no_z_headroom is True:
-                raise ValueError(
-                    f"z stall anchor: all {len(probes)} probes ran the Z axis to its travel limit "
-                    f"({z_axis_limit_mm:.1f}mm) without contact. The probe target equals that limit, "
-                    "so the wall is not necessarily absent - it may simply be beyond the tool's "
-                    f"reach (stage_extension_mm={stage_extension_mm:.2f}). Check that the rack is "
-                    "within reach before trusting this as 'no wall found'."
-                )
-
-            raise ValueError(
-                f"z stall anchor: no probe cell contacted a wall across {len(probes)} shelves "
-                f"(last reason={last_reason}, stage_extension_mm={stage_extension_mm:.2f})"
-            )
-
-        # A lone sample cannot separate the intercept from the tilt, so it collapses to a
-        # tilt-free constant applied to every cell. The tilt is worth ~2mm across a shelf and a
-        # wrong one drives the gripper into the trays, so refuse rather than guess.
-        if len(samples) < _MIN_Z_STALL_SAMPLES:
-            raise ValueError(
-                f"z stall anchor: only {len(samples)} of {len(probes)} probes contacted a wall "
-                f"(need at least {_MIN_Z_STALL_SAMPLES}). Too few to separate the z intercept from "
-                "the x tilt, and a tilt-free model would mis-place every cell."
-            )
-
-        # Resolve the tilt from the single shelf that best supports it (>=3 samples over a
-        # wide-enough X span, so an interior probe can corroborate the extremes). If no
-        # shelf qualifies, fall back to a constant. resolve_z_delta_model itself collapses
-        # to a median constant whenever the interior probe does not corroborate the tilt.
-        samples_by_shelf: dict[int, list[tuple[float, float]]] = {}
-        for shelf_idx, sample_x_mm, sample_delta_mm in samples:
-            samples_by_shelf.setdefault(shelf_idx, []).append((sample_x_mm, sample_delta_mm))
-
-        def _sample_x_span(shelf_samples: list[tuple[float, float]]) -> float:
-            shelf_xs = [x for x, _ in shelf_samples]
-            return max(shelf_xs) - min(shelf_xs)
-
-        tilt_capable = [
-            shelf_samples
-            for shelf_samples in samples_by_shelf.values()
-            if len(shelf_samples) >= 3 and _sample_x_span(shelf_samples) >= laser_module.Z_DELTA_TILT_MIN_X_SPAN_MM
-        ]
-
-        if len(tilt_capable) > 0:
-            best_shelf_samples = max(tilt_capable, key=_sample_x_span)
-            fit_x_span_mm = _sample_x_span(best_shelf_samples)
-            intercept_mm, slope_per_mm = laser_module.resolve_z_delta_model(best_shelf_samples)
-            fit_source = "single_shelf_tilt" if slope_per_mm != 0.0 else "single_shelf_constant"
-        else:
-            fit_x_span_mm = _sample_x_span(max(samples_by_shelf.values(), key=_sample_x_span))
-            sorted_deltas = sorted(sample_delta_mm for _, _, sample_delta_mm in samples)
-            median_idx = len(sorted_deltas) // 2
-            if len(sorted_deltas) % 2 == 1:
-                intercept_mm = sorted_deltas[median_idx]
-            else:
-                intercept_mm = (sorted_deltas[median_idx - 1] + sorted_deltas[median_idx]) / 2.0
-            slope_per_mm = 0.0
-            fit_source = "constant"
-
-        laser_module.print_status(
-            f"z_stall_anchor=fit side={side_name} source={fit_source} samples={len(samples)} "
-            f"shelves={len(samples_by_shelf)} x_span_mm={fit_x_span_mm:.1f} "
-            f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.5f}"
-        )
-
-        if abs(intercept_mm) > laser_module.Z_DELTA_MAX_ABS_MM:
-            raise ValueError(
-                f"z stall anchor: implausible z delta {intercept_mm:.1f}mm "
-                f"(limit +/-{laser_module.Z_DELTA_MAX_ABS_MM:.0f}mm); refusing to apply it to every cell"
-            )
-
-        return intercept_mm, slope_per_mm
-
     async def _resolve_z_delta_model(
         self,
         worker: RobotWorker,
@@ -633,13 +546,26 @@ class ApplyRunnerMixin:
         scan_config: Any,
         *,
         allow_missing: bool = False,
+        source_grid: Any = None,
+        manual_reference: laser_module.ReferenceOffsetResult | None = None,
     ) -> tuple[float, float] | None:
         """Resolve (intercept, slope) for z_offset = wall_depth + intercept + slope * grab_x.
 
-        Prefer the configured model: the laser reads each cell's own wall depth without touching
-        the rack, whereas the stall probe presses it and measures the compliance of everything in
-        between. Fall back to the probe only when no model is configured.
+        `z_stall_anchor_enabled` re-derives the model by probing the plate and replaces the
+        configured one: a probed model is only valid for the machine it was probed on, which is
+        the point of asking for it. Otherwise the configured model is used as-is once its pin
+        still matches the live tool geometry.
         """
+        if _z_stall_requested(scan_config) is True:
+            return await self._derive_z_model_from_stall(
+                worker,
+                side,
+                analysis,
+                scan_config,
+                source_grid=source_grid,
+                manual_reference=manual_reference,
+            )
+
         configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
 
         if configured_model is not None:
@@ -669,9 +595,6 @@ class ApplyRunnerMixin:
                 f"stage_extension_mm={float(stage_extension_value):.2f} z_place_mm={float(z_place_value):.2f}"
             )
             return intercept_mm, slope_per_mm
-
-        if getattr(scan_config, "z_stall_anchor_enabled", False) is True:
-            return await self._run_z_stall_anchor(worker, side, analysis)
 
         if allow_missing is True:
             return None
@@ -733,6 +656,16 @@ class ApplyRunnerMixin:
                 analysis=completed_result.analysis,
                 source_grid=source_grid,
             )
+            z_manual_reference = reference_result
+
+            if z_manual_reference is None and _z_stall_requested(scan_config) is True:
+                z_manual_reference = await self._derive_reference_offset(
+                    worker=worker,
+                    side=completed_result.side,
+                    analysis=completed_result.analysis,
+                    source_grid=source_grid,
+                    force=True,
+                )
 
             if reference_result is not None:
                 _reference_offset_scan_config(scan_config, completed_result.side, reference_result)
@@ -754,6 +687,8 @@ class ApplyRunnerMixin:
                 completed_result.side,
                 completed_result.analysis,
                 scan_config,
+                source_grid=source_grid,
+                manual_reference=z_manual_reference,
             )
 
             if z_delta_model is None:
@@ -844,18 +779,8 @@ class ApplyRunnerMixin:
         )
 
         config = get_root_config()
-        scan_config = config.robot.grid.scan
         grid_path = Path(resolve_grid_path(config))
         grid = laser_module.load_grid(grid_path)
-        # A single-shelf rescan may legitimately run with no z source at all: apply_single_shelf_analysis
-        # then leaves the shelf's existing z offsets alone rather than rebuilding them.
-        z_delta_model = await self._resolve_z_delta_model(
-            worker,
-            side,
-            analysis,
-            scan_config,
-            allow_missing=True,
-        )
         reference_result = await self._derive_reference_offset(
             worker=worker,
             side=side,
@@ -863,11 +788,40 @@ class ApplyRunnerMixin:
             source_grid=grid,
             shelf_idx=shelf_idx,
         )
+        z_stall_requested = _z_stall_requested(config.robot.grid.scan)
+        z_manual_reference = reference_result
+
+        if z_manual_reference is None and z_stall_requested is True:
+            z_manual_reference = await self._derive_reference_offset(
+                worker=worker,
+                side=side,
+                analysis=analysis,
+                source_grid=grid,
+                shelf_idx=shelf_idx,
+                force=True,
+            )
+
+        # Both derivations write to the config copy, and that copy is what gets saved: editing the
+        # live config in place would leave the probe's model unpersisted if the apply then failed.
         apply_config = config
 
-        if reference_result is not None:
+        if reference_result is not None or z_stall_requested is True:
             apply_config = config.model_copy(deep=True)
-            _reference_offset_scan_config(apply_config.robot.grid.scan, side, reference_result)
+
+            if reference_result is not None:
+                _reference_offset_scan_config(apply_config.robot.grid.scan, side, reference_result)
+
+        # A single-shelf rescan may legitimately run with no z source at all: apply_single_shelf_analysis
+        # then leaves the shelf's existing z offsets alone rather than rebuilding them.
+        z_delta_model = await self._resolve_z_delta_model(
+            worker,
+            side,
+            analysis,
+            apply_config.robot.grid.scan,
+            allow_missing=True,
+            source_grid=grid,
+            manual_reference=z_manual_reference,
+        )
 
         laser_module.apply_single_shelf_analysis(
             analysis=analysis,
@@ -880,9 +834,11 @@ class ApplyRunnerMixin:
             z_delta_slope_per_mm=0.0 if z_delta_model is None else z_delta_model[1],
         )
 
-        if reference_result is not None:
+        if apply_config is not config:
             save_root_config(apply_config)
             clear_config_cache()
+
+        if reference_result is not None:
             await self._publish_reference_offset_applied(reference_result, persisted=True)
 
         worker._robot._grid = laser_module.load_grid(grid_path)
@@ -949,40 +905,6 @@ class ApplyRunnerMixin:
             )
 
         worker._robot._grid = laser_module.load_grid(grid_path)
-
-    async def _persist_single_cell_shelf_result(
-        self,
-        worker: RobotWorker,
-        side: StorageModuleSide,
-        analysis: Any,
-        target: laser_module.SingleCellRescanTarget,
-    ) -> None:
-        await self._update_snapshot(
-            state="applying",
-            current_stage="apply",
-            stage_detail={
-                "phase": "apply",
-                "scope": "cell",
-                "side": _side_to_module_name(side),
-                "shelf_idx": int(target.shelf_idx),
-                "cell_idx": int(target.cell_idx),
-            },
-        )
-
-        config = get_root_config()
-        scan_config = config.robot.grid.scan
-        grid_path = Path(resolve_grid_path(config))
-        grid = laser_module.load_grid(grid_path)
-        laser_module.apply_single_cell_shelf_analysis(
-            analysis=analysis,
-            grid=grid,
-            grid_path=grid_path,
-            scan_config=scan_config,
-            side=side,
-            target=target,
-        )
-        worker._robot._grid = laser_module.load_grid(grid_path)
-
 
     async def _get_current_calibration_params(self, worker: RobotWorker) -> dict[str, float]:
         front = await worker._robot._tool.get_param("ROTATION_FRONT")
