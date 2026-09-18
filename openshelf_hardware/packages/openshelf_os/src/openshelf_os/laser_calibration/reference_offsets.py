@@ -138,11 +138,10 @@ def _load_candidates(analysis: Any) -> list[Any]:
 
 	try:
 		return load_candidates_from_metadata(load_json_file(metadata_path))
-	except Exception:
+	except Exception as error:
 		logger.warning(
 			"reference_offset_candidates_unavailable",
-			extra={"metadata_path": str(metadata_path)},
-			exc_info=True,
+			extra={"metadata_path": str(metadata_path), "error": str(error)},
 		)
 		return []
 

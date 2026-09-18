@@ -820,3 +820,152 @@ async def test_z_stall_probes_never_include_a_reserved_tray_home() -> None:
 	assert anchor.await_args.kwargs["excluded_cells"] == {(0, 0)}
 	assert anchor.await_args.kwargs["z_axis_limit_mm"] == pytest.approx(180.0)
 	assert anchor.await_args.kwargs["xy_offset"] == CONFIGURED_OFFSET
+
+
+@pytest.mark.asyncio
+async def test_scope_flag_requests_the_probe_without_touching_the_config() -> None:
+	"""The api caller can ask for a probed model; the machine setting stays untouched."""
+	manager = LaserAutoCalibrationManager()
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	config = _build_root_config(scan_config)
+	worker = _build_z_worker()
+	anchor = AsyncMock(return_value=_build_z_stall_result())
+	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
+		mode="shelf",
+		side=StorageModuleSide.LEFT,
+		shelf_idx=0,
+		derive_z_model_from_stall=True,
+	)
+
+	assert scan_config.z_stall_anchor_enabled is False
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
+		return_value=config,
+	):
+		with patch.object(laser_module, "run_z_stall_anchor", anchor):
+			await manager._resolve_z_delta_model(
+				worker,
+				StorageModuleSide.LEFT,
+				_build_analysis(),
+				scan_config,
+				allow_missing=True,
+				source_grid=_build_source_grid(),
+				manual_reference=_build_manual_reference(),
+			)
+
+	anchor.assert_awaited_once()
+	assert scan_config.left_z_offset_model.intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
+	assert manager._snapshot.z_stall_results[0].persisted is True
+
+
+@pytest.mark.asyncio
+async def test_reference_run_without_the_probe_flag_never_probes() -> None:
+	manager = LaserAutoCalibrationManager()
+	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
+		mode="shelf",
+		side=StorageModuleSide.LEFT,
+		shelf_idx=0,
+		derive_offsets_from_manual_cells=True,
+	)
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	config = _build_root_config(scan_config)
+	worker = _build_z_worker()
+	anchor = AsyncMock(return_value=_build_z_stall_result())
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
+		return_value=config,
+	):
+		with patch.object(laser_module, "run_z_stall_anchor", anchor):
+			result = await manager._resolve_z_delta_model(
+				worker,
+				StorageModuleSide.LEFT,
+				_build_analysis(),
+				scan_config,
+				allow_missing=True,
+				source_grid=_build_source_grid(),
+				manual_reference=_build_manual_reference(),
+			)
+
+	anchor.assert_not_awaited()
+	assert result is None
+
+
+@pytest.mark.asyncio
+async def test_cell_scoped_probe_verifies_the_datum_and_persists_the_model() -> None:
+	"""A run scoped to the reference cell is the cheapest way to check its z by contact."""
+	manager = LaserAutoCalibrationManager()
+	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
+		mode="cell",
+		side=StorageModuleSide.LEFT,
+		shelf_idx=0,
+		cell_idx=0,
+		derive_z_model_from_stall=True,
+	)
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.left_z_offset_model = SimpleNamespace(
+		intercept_mm=1.052,
+		slope_per_mm=-0.00285,
+		stage_extension_mm=47.0,
+		z_place_mm=160.5,
+	)
+	config = _build_root_config(scan_config)
+	grid = _build_source_grid()
+	saved_configs: list[object] = []
+	worker = _build_z_worker(grid=grid)
+	# One opening is one probe point, so there is no x span to fit a tilt from.
+	anchor = AsyncMock(return_value=_build_z_stall_result(slope_per_mm=0.0, x_span_mm=0.0))
+	target = SimpleNamespace(shelf_idx=0, cell_idx=0)
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
+		return_value=config,
+	):
+		with patch(
+			"openshelf_os_server.core.laser_auto_calibration.resolve_grid_path",
+			return_value="storage.json",
+		):
+			with patch(
+				"openshelf_os_server.core.laser_auto_calibration.laser_module.load_grid",
+				return_value=grid,
+			):
+				with patch(
+					"openshelf_os_server.core.laser_auto_calibration.laser_module.find_detected_cell_for_candidate",
+					return_value=_build_analysis().shelves[0].cells[0],
+				):
+					with patch(
+						"openshelf_os_server.core.laser_auto_calibration.laser_module.apply_single_cell_rescan"
+					):
+						with patch.object(
+							laser_module,
+							"derive_reference_offsets",
+							MagicMock(return_value=_build_manual_reference()),
+						):
+							with patch.object(laser_module, "run_z_stall_anchor", anchor):
+								with patch(
+									"openshelf_os_server.core.laser_auto_calibration.save_root_config",
+									side_effect=lambda next_config, version_id=None: saved_configs.append(
+										next_config
+									),
+								):
+									with patch(
+										"openshelf_os_server.core.laser_auto_calibration.clear_config_cache"
+									):
+										await manager._persist_single_cell_result(
+											worker,
+											StorageModuleSide.LEFT,
+											_build_analysis(),
+											target,
+											MagicMock(),
+										)
+
+	anchor.assert_awaited_once()
+	assert len(saved_configs) == 1
+	# The intercept comes from the probe; the span is one cell, so the machine keeps its slope.
+	installed = saved_configs[0].robot.grid.scan.left_z_offset_model
+	assert installed.intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
+	assert installed.slope_per_mm == pytest.approx(-0.00285)
+	assert manager._snapshot.z_stall_results[0].slope_source == "config_short_span"
+	# The probed cell is the datum: it must not be rewritten from its own detection.
+	assert grid.left_module[0].cells[0].calibration_point.z_offset == pytest.approx(MANUAL_Z_OFFSET_MM)

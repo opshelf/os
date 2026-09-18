@@ -497,6 +497,7 @@ export interface LaserAutoCalibrationRequest {
 	include_angle_calibration?: boolean;
 	include_extension_calibration?: boolean;
 	derive_offsets_from_manual_cells?: boolean;
+	derive_z_model_from_stall?: boolean;
 }
 
 export interface LaserAutoCalibrationSnapshot {
@@ -553,6 +554,10 @@ export function buildLaserAutoCalibrationStreamUrl(
 
 	if (request.derive_offsets_from_manual_cells === true) {
 		url.searchParams.set('derive_offsets_from_manual_cells', 'true');
+	}
+
+	if (request.derive_z_model_from_stall === true) {
+		url.searchParams.set('derive_z_model_from_stall', 'true');
 	}
 
 	if (request.mode === 'both') {

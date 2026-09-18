@@ -860,6 +860,7 @@ async def stream_laser_auto_calibration(
 	include_extension_calibration: bool | None = None,
 	hold_y_enabled: bool | None = None,
 	derive_offsets_from_manual_cells: bool | None = None,
+	derive_z_model_from_stall: bool | None = None,
 	subscribe_only: bool = False,
 ) -> EventSourceResponse:
 	"""Start or observe automatic laser calibration.
@@ -877,6 +878,10 @@ async def stream_laser_auto_calibration(
 	`derive_offsets_from_manual_cells=true` frames the run by the cells marked manual in
 	scope, deriving each side's xy offset from them instead of using the configured one; it
 	needs at least one manual cell per side in scope and returns `400` without one.
+	`derive_z_model_from_stall=true` probes the shelf plate beside those same cells (physical
+	contact) to derive the side's z model, which is accepted only when it agrees with the
+	manual datum; the machine-level `robot.grid.scan.z_stall_anchor_enabled` asks for the same
+	thing without the parameter.
 	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,
@@ -889,6 +894,7 @@ async def stream_laser_auto_calibration(
 		update={
 			"hold_y_enabled": hold_y_enabled is not False,
 			"derive_offsets_from_manual_cells": derive_offsets_from_manual_cells is True,
+			"derive_z_model_from_stall": derive_z_model_from_stall is True,
 		}
 	)
 	manager = get_laser_auto_calibration_manager()

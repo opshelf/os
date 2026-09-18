@@ -31,6 +31,7 @@
 	let isAngleCalibrationSelected = $state<boolean>(true);
 	let isExtensionCalibrationSelected = $state<boolean>(true);
 	let isManualReferenceSelected = $state<boolean>(false);
+	let isZProbeSelected = $state<boolean>(false);
 	let selectedSide = $state<'' | 'left_module' | 'right_module'>('');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
@@ -115,6 +116,7 @@
 	const isManualReferenceActive = $derived(
 		isManualReferenceSelected === true && manualReferenceCells.length > 0
 	);
+	const isZProbeActive = $derived(isZProbeSelected === true && isManualReferenceActive === true);
 	const isManualReferenceDisabled = $derived(
 		isSelectionDisabled === true || manualReferenceCells.length === 0
 	);
@@ -295,6 +297,7 @@
 		isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
 		isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
 		isManualReferenceSelected = requestedScope.derive_offsets_from_manual_cells === true;
+		isZProbeSelected = requestedScope.derive_z_model_from_stall === true;
 
 		if (requestedScope.mode === 'all') {
 			isAllSelected = true;
@@ -342,7 +345,13 @@
 			return request;
 		}
 
-		return { ...request, derive_offsets_from_manual_cells: true };
+		const withReference = { ...request, derive_offsets_from_manual_cells: true };
+
+		if (isZProbeActive === false) {
+			return withReference;
+		}
+
+		return { ...withReference, derive_z_model_from_stall: true };
 	}
 
 	function getRequestedScope(): LaserAutoCalibrationRequest {
@@ -548,6 +557,14 @@
 		const target = event.target as HTMLInputElement;
 
 		isManualReferenceSelected = target.checked;
+		error = '';
+		message = '';
+	}
+
+	function didChangeZProbe(event: Event): void {
+		const target = event.target as HTMLInputElement;
+
+		isZProbeSelected = target.checked;
 		error = '';
 		message = '';
 	}
@@ -802,6 +819,20 @@
 					{:else if manualReferenceCells.length === 0}
 						<p class="selection-hint">
 							no cell in this scope is marked manual, so the run uses the configured xy offset
+						</p>
+					{/if}
+					<label class="all-toggle">
+						<input
+							type="checkbox"
+							checked={isZProbeSelected}
+							onchange={didChangeZProbe}
+							disabled={isManualReferenceActive === false || isSelectionDisabled === true}
+						/>
+						<span>also probe those cells for the z model (touches the shelf)</span>
+					</label>
+					{#if isZProbeSelected === true && isManualReferenceActive === false}
+						<p class="selection-hint">
+							the z probe needs a manual reference cell above; it will not run without one
 						</p>
 					{/if}
 				</td>

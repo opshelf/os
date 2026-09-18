@@ -185,7 +185,10 @@ class ScopeRunnerMixin:
             right_bounds=right_bounds,
         )
 
-        if requested_scope.derive_offsets_from_manual_cells is True:
+        if (
+            requested_scope.derive_offsets_from_manual_cells is True
+            or requested_scope.derive_z_model_from_stall is True
+        ):
             self._validate_manual_reference_cells(requested_scope, worker)
 
     def _validate_manual_reference_cells(
@@ -198,7 +201,7 @@ class ScopeRunnerMixin:
 
         if grid is None:
             raise ValueError(
-                "derive_offsets_from_manual_cells needs the storage grid to find the manually "
+                "a reference-frame or z-probe run needs the storage grid to find the manually "
                 "calibrated reference cells, and the robot has none loaded"
             )
 
@@ -222,7 +225,7 @@ class ScopeRunnerMixin:
 
         if len(missing) > 0:
             raise ValueError(
-                "derive_offsets_from_manual_cells needs at least one cell marked manual in scope "
+                "a reference-frame or z-probe run needs at least one cell marked manual in scope "
                 f"on {', '.join(missing)}; tick 'keep manual' when saving the reference cell"
             )
 

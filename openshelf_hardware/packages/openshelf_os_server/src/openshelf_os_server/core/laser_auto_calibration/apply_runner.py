@@ -16,8 +16,12 @@ _MANUAL_SHELF_MATCH_TOLERANCE_MM = 60.0
 _MANUAL_CELL_MATCH_TOLERANCE_MM = 40.0
 
 
-def _z_stall_requested(scan_config: Any) -> bool:
-    return getattr(scan_config, "z_stall_anchor_enabled", False) is True
+def _z_stall_requested(scan_config: Any, requested_scope: Any = None) -> bool:
+    """`z_stall_anchor_enabled` is the machine's setting; the scope flag is this run's request."""
+    if getattr(scan_config, "z_stall_anchor_enabled", False) is True:
+        return True
+
+    return getattr(requested_scope, "derive_z_model_from_stall", False) is True
 
 
 def _reference_offset_scan_config(
@@ -556,7 +560,7 @@ class ApplyRunnerMixin:
         the point of asking for it. Otherwise the configured model is used as-is once its pin
         still matches the live tool geometry.
         """
-        if _z_stall_requested(scan_config) is True:
+        if _z_stall_requested(scan_config, self._snapshot.requested_scope) is True:
             return await self._derive_z_model_from_stall(
                 worker,
                 side,
@@ -624,6 +628,7 @@ class ApplyRunnerMixin:
         config = get_root_config()
         next_config = config.model_copy(deep=True)
         params_dict = next_config.robot.tool.parameters.model_dump()
+        requested_scope = self._snapshot.requested_scope
         reference_results: dict[StorageModuleSide, laser_module.ReferenceOffsetResult] = {}
         reference_persisted: dict[StorageModuleSide, bool] = {}
 
@@ -658,7 +663,7 @@ class ApplyRunnerMixin:
             )
             z_manual_reference = reference_result
 
-            if z_manual_reference is None and _z_stall_requested(scan_config) is True:
+            if z_manual_reference is None and _z_stall_requested(scan_config, requested_scope) is True:
                 z_manual_reference = await self._derive_reference_offset(
                     worker=worker,
                     side=completed_result.side,
@@ -788,7 +793,9 @@ class ApplyRunnerMixin:
             source_grid=grid,
             shelf_idx=shelf_idx,
         )
-        z_stall_requested = _z_stall_requested(config.robot.grid.scan)
+        z_stall_requested = _z_stall_requested(
+            config.robot.grid.scan, self._snapshot.requested_scope
+        )
         z_manual_reference = reference_result
 
         if z_manual_reference is None and z_stall_requested is True:
@@ -882,6 +889,23 @@ class ApplyRunnerMixin:
             source_grid=grid,
             cell_idx=int(target.cell_idx),
         )
+        requested_scope = self._snapshot.requested_scope
+        z_stall_requested = _z_stall_requested(scan_config, requested_scope)
+        next_config = config
+        z_manual_reference = reference_result
+
+        if z_manual_reference is None and z_stall_requested is True:
+            z_manual_reference = await self._derive_reference_offset(
+                worker=worker,
+                side=side,
+                analysis=analysis,
+                source_grid=grid,
+                cell_idx=int(target.cell_idx),
+                force=True,
+            )
+
+        if reference_result is not None or z_stall_requested is True:
+            next_config = config.model_copy(deep=True)
 
         if reference_result is not None:
             # The scanned cell *is* the reference: rewriting it from its own detection would
@@ -890,19 +914,34 @@ class ApplyRunnerMixin:
                 f"single_cell_apply=skipped reason=manual_reference_cell "
                 f"cell={int(target.shelf_idx)}:{int(target.cell_idx)}"
             )
-            next_config = config.model_copy(deep=True)
             _reference_offset_scan_config(next_config.robot.grid.scan, side, reference_result)
-            save_root_config(next_config)
-            clear_config_cache()
-            await self._publish_reference_offset_applied(reference_result, persisted=True)
         else:
             laser_module.apply_single_cell_rescan(
                 grid=grid,
                 target=target,
                 side=side,
                 detected_cell=detected_cell,
-                scan_config=scan_config,
+                scan_config=next_config.robot.grid.scan,
             )
+
+        if z_stall_requested is True:
+            # One opening is one intercept: this verifies the cell's own datum by contact, and
+            # keeps whatever slope the machine already has (resolve_probed_slope decides that).
+            await self._resolve_z_delta_model(
+                worker,
+                side,
+                analysis,
+                next_config.robot.grid.scan,
+                source_grid=grid,
+                manual_reference=z_manual_reference,
+            )
+
+        if next_config is not config:
+            save_root_config(next_config)
+            clear_config_cache()
+
+            if reference_result is not None:
+                await self._publish_reference_offset_applied(reference_result, persisted=True)
 
         worker._robot._grid = laser_module.load_grid(grid_path)
 
