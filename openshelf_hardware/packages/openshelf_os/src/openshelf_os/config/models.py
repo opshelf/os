@@ -385,12 +385,17 @@ def _pca9535_output(
 def _default_gpio_pins() -> dict[str, GpioPinConfig]:
     return {
         # PCA9535_0 (0x20) - X/Y axis limits and tool limits
-        "x_lim_min": _pca9535_input("pca9535_0", 0),
-        "x_lim_max": _pca9535_input("pca9535_0", 1),
-        "x_lim_minunsafe": _pca9535_input("pca9535_0", 2, inverted=False),
-        "x_lim_maxunsafe": _pca9535_input("pca9535_0", 3, inverted=False),
-        "y_lim_min": _pca9535_input("pca9535_0", 4),
-        "y_lim_max": _pca9535_input("pca9535_0", 5),
+        # X/Y end stops (x_lim_min/x_lim_max/y_lim_min/y_lim_max) read engaged
+        # on a high input, so they are not inverted; the tool-head limits
+        # (r_lim_min/s_lim_min/z_lim_min) and io_lim_min stay inverted. Both
+        # types are NPN switches and the difference is measured rather than
+        # explained. The post-home limit check reads these pins.
+        "x_lim_min": _pca9535_input("pca9535_0", 0, inverted=False),
+        "x_lim_max": _pca9535_input("pca9535_0", 1, inverted=False),
+        "x_lim_minunsafe": _pca9535_input("pca9535_0", 2),
+        "x_lim_maxunsafe": _pca9535_input("pca9535_0", 3),
+        "y_lim_min": _pca9535_input("pca9535_0", 4, inverted=False),
+        "y_lim_max": _pca9535_input("pca9535_0", 5, inverted=False),
         "y_lim_minunsafe": _pca9535_input("pca9535_0", 6),
         "y_lim_maxunsafe": _pca9535_input("pca9535_0", 7),
         "r_lim_min": _pca9535_input("pca9535_0", 8),
