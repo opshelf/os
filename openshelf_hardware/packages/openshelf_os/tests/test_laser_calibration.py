@@ -8,7 +8,9 @@ import pytest
 
 from openshelf_os.common import LaserScanConfig
 from openshelf_os.laser_calibration import (
-	get_scan_z_offset_model,
+	get_laser_sample_settle_ms,
+	get_laser_samples_per_point,
+	get_wall_depth_to_gripper_z_model,
 	require_z_offset_model_matches_tool,
 	apply_wall_depth_z_offsets,
 	apply_xy_reference_offsets,
@@ -53,24 +55,24 @@ def test_laser_scan_config_uses_clear_field_names() -> None:
 	scan_config = LaserScanConfig.model_validate(
 		{
 			"fine_scan_step_mm": 0.5,
-			"laser_sample_settle_ms": 40,
-			"laser_samples_per_point": 2,
-			"laser_scan_stage_extension_mm": 13.0,
-			"laser_scan_z_offset_from_place_mm": 10.0,
+			"laser_scan_pose_stage_mm": 13.0,
+			"laser_scan_pose_z_delta_from_place_mm": 10.0,
 			"shelf_hole_probe_y_offsets_mm": [32.25],
-			"fine_cell_scan_y_margin_mm": 12.0,
 		}
 	)
 
 	assert scan_config.fine_scan_step_mm == pytest.approx(0.5)
-	assert scan_config.laser_sample_settle_ms == 40
-	assert scan_config.laser_samples_per_point == 2
-	assert scan_config.laser_scan_stage_extension_mm == pytest.approx(13.0)
-	assert scan_config.laser_scan_z_offset_from_place_mm == pytest.approx(10.0)
+	assert scan_config.laser_scan_pose_stage_mm == pytest.approx(13.0)
+	assert scan_config.laser_scan_pose_z_delta_from_place_mm == pytest.approx(10.0)
 	assert scan_config.shelf_hole_probe_y_offsets_mm == [pytest.approx(32.25)]
-	assert scan_config.fine_cell_scan_y_margin_mm == pytest.approx(12.0)
 	assert LaserScanConfig().fine_scan_step_mm == pytest.approx(1.0)
 	assert LaserScanConfig().shelf_scout_post_edge_skip_mm == pytest.approx(40.0)
+
+	# Scanning and hole detection are code constants; only calibration stays in config.
+	from openshelf_os.laser_calibration import defaults
+
+	assert get_laser_sample_settle_ms() == defaults.LASER_SAMPLE_SETTLE_MS
+	assert get_laser_samples_per_point() == defaults.LASER_SAMPLES_PER_POINT
 
 	assert get_shelf_hole_probe_y_offsets_mm(scan_config) == [pytest.approx(32.25)]
 
@@ -104,17 +106,11 @@ def test_laser_scan_config_rejects_legacy_field_names() -> None:
 		)
 
 
-def build_replay_scan_config(*, expected_hole_width_mm: float) -> SimpleNamespace:
+def build_replay_scan_config() -> SimpleNamespace:
+	"""Only the per-machine calibration still reaches a replay from the scan config."""
 	return SimpleNamespace(
 		laser_offset_x_mm=1.0,
 		laser_offset_y_mm=2.0,
-		expected_hole_width_mm=expected_hole_width_mm,
-		expected_hole_height_mm=25.0,
-		hole_width_tolerance_mm=1.0,
-		hole_height_tolerance_mm=1.0,
-		wall_depth_tolerance_mm=1.0,
-		min_vertical_wall_coverage_mm=0.0,
-		min_horizontal_wall_coverage_mm=0.0,
 	)
 
 
@@ -181,16 +177,33 @@ def write_replay_run(tmp_path: Path) -> Path:
 	return run_dir
 
 
-def test_load_staged_scan_analysis_replays_raw_fine_scan_with_current_config(tmp_path: Path) -> None:
+def test_load_staged_scan_analysis_replays_raw_fine_scan_with_current_config(
+	tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
+	import openshelf_os.laser_calibration.staged_scan as staged_scan_module
+
 	run_dir = write_replay_run(tmp_path)
 
+	# Hole detection is a code constant now, so pin the values this fixture was tuned for.
+	for module in (fine_scan_module, staged_scan_module):
+		monkeypatch.setattr(module, "WALL_DEPTH_TOLERANCE_MM", 1.0)
+		monkeypatch.setattr(module, "HOLE_WIDTH_TOLERANCE_MM", 1.0)
+		monkeypatch.setattr(module, "HOLE_HEIGHT_TOLERANCE_MM", 1.0)
+		monkeypatch.setattr(module, "MIN_VERTICAL_WALL_COVERAGE_MM", 0.0)
+		monkeypatch.setattr(module, "MIN_HORIZONTAL_WALL_COVERAGE_MM", 0.0)
+		monkeypatch.setattr(module, "EXPECTED_HOLE_HEIGHT_MM", 25.0)
+
+	monkeypatch.setattr(staged_scan_module, "EXPECTED_HOLE_WIDTH_MM", 25.0)
 	matching_analysis = load_staged_scan_analysis(
 		run_dir,
-		scan_config=build_replay_scan_config(expected_hole_width_mm=25.0),
+		scan_config=build_replay_scan_config(),
 	)
+
+	monkeypatch.setattr(staged_scan_module, "EXPECTED_HOLE_WIDTH_MM", 40.0)
 	changed_analysis = load_staged_scan_analysis(
 		run_dir,
-		scan_config=build_replay_scan_config(expected_hole_width_mm=40.0),
+		scan_config=build_replay_scan_config(),
 	)
 
 	assert len(matching_analysis.shelves) == 1
@@ -207,7 +220,7 @@ def test_load_staged_scan_analysis_replays_copied_raw_fine_scan(tmp_path: Path) 
 
 	analysis = load_staged_scan_analysis(
 		run_dir,
-		scan_config=build_replay_scan_config(expected_hole_width_mm=25.0),
+		scan_config=build_replay_scan_config(),
 	)
 
 	assert len(analysis.shelves) == 1
@@ -219,9 +232,6 @@ def test_find_gap_segments_in_line_matches_expected_hole_width() -> None:
 	positions = [float(idx * 4) for idx in range(12)]
 	values = [10.0, 10.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0]
 	scan_config = SimpleNamespace(
-		expected_hole_width_mm=26.0,
-		hole_width_tolerance_mm=2.0,
-		wall_depth_tolerance_mm=1.0,
 	)
 
 	wall_depth_mm, segments = find_gap_segments_in_line(
@@ -272,7 +282,7 @@ async def test_run_staged_scan_skips_retract_when_cancelled(tmp_path: Path) -> N
 							scan_config=SimpleNamespace(
 								laser_offset_x_mm=1.0,
 								laser_offset_y_mm=0.0,
-								left_xy_offset=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+								left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 							),
 							scans_dir=str(tmp_path),
 							run_parameters={},
@@ -328,7 +338,7 @@ async def test_run_staged_scan_raises_when_abort_requested_after_coarse_scan(tmp
 							scan_config=SimpleNamespace(
 								laser_offset_x_mm=1.0,
 								laser_offset_y_mm=0.0,
-								left_xy_offset=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+								left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 							),
 							scans_dir=str(tmp_path),
 							run_parameters={},
@@ -354,11 +364,9 @@ async def test_run_staged_scan_uses_candidate_wall_depth_for_fine_scan(tmp_path:
 		wall_depth_mm=4.61,
 	)
 	scan_config = SimpleNamespace(
-		expected_hole_height_mm=30.0,
-		fine_cell_scan_y_margin_mm=None,
 		laser_offset_x_mm=1.0,
 		laser_offset_y_mm=0.0,
-		left_xy_offset=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 	)
 
 	async def didCaptureCrossScan(*args, **kwargs):
@@ -484,10 +492,10 @@ async def test_capture_shelf_candidates_does_not_append_floor_edge_for_empty_det
 
 
 def test_apply_xy_reference_offsets_requires_fixed_offset() -> None:
-	with pytest.raises(ValueError, match='robot.grid.scan.left_xy_offset must be configured'):
+	with pytest.raises(ValueError, match='robot.grid.scan.left_gripper_xy_correction_mm must be configured'):
 		apply_xy_reference_offsets(
 			scanned_shelves=[],
-			scan_config=SimpleNamespace(left_xy_offset=None),
+			scan_config=SimpleNamespace(left_gripper_xy_correction_mm=None),
 			side=StorageModuleSide.LEFT,
 		)
 
@@ -503,7 +511,7 @@ def test_apply_xy_reference_offsets_uses_fixed_offset_when_reference_absent() ->
 		)
 	]
 	scan_config = SimpleNamespace(
-		left_xy_offset=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
 	)
 
 	apply_xy_reference_offsets(
@@ -527,8 +535,6 @@ def test_build_single_cell_rescan_candidate_requires_laser_offsets() -> None:
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=None,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
 	)
 
 	with pytest.raises(ValueError, match='robot.grid.scan.laser_offset_y_mm must be configured'):
@@ -549,8 +555,6 @@ def test_build_single_cell_rescan_candidate_rejects_invalid_offset_value() -> No
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=float('nan'),
 		laser_offset_y_mm=0.0,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
 	)
 
 	with pytest.raises(ValueError, match='robot.grid.scan.laser_offset_x_mm must be a finite number'):
@@ -571,8 +575,6 @@ def test_build_single_cell_rescan_candidate_allows_scan_estimated_wall_depth() -
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=0.0,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -604,7 +606,7 @@ def test_build_run_parameters_allows_rescan_bounds_away_from_xy_reference() -> N
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=50.0,
 		laser_offset_y_mm=0.0,
-		left_xy_offset=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
 	)
 
 	run_parameters = build_run_parameters(
@@ -693,10 +695,8 @@ def test_build_single_cell_rescan_candidate_without_xy_offset_falls_back_to_side
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=0.0,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
-		left_xy_offset=None,
-		right_xy_offset=None,
+		left_gripper_xy_correction_mm=None,
+		right_gripper_xy_correction_mm=None,
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -722,10 +722,8 @@ def test_build_single_cell_rescan_candidate_without_xy_offset_adds_x_offset_for_
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=0.0,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
-		left_xy_offset=None,
-		right_xy_offset=None,
+		left_gripper_xy_correction_mm=None,
+		right_gripper_xy_correction_mm=None,
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -771,10 +769,8 @@ def test_build_single_cell_rescan_candidate_round_trips_forward_mapping(
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=laser_offset_x_mm,
 		laser_offset_y_mm=laser_offset_y_mm,
-		expected_hole_width_mm=26.0,
-		expected_hole_height_mm=30.0,
-		left_xy_offset=SimpleNamespace(x_mm=-4.0, y_mm=3.0),
-		right_xy_offset=SimpleNamespace(x_mm=-97.0, y_mm=0.0),
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-4.0, y_mm=3.0),
+		right_gripper_xy_correction_mm=SimpleNamespace(x_mm=-97.0, y_mm=0.0),
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -802,9 +798,6 @@ async def test_estimate_seeded_candidate_wall_depth_initializes_empty_coarse_sca
 	)
 	coarse_scan = GridScanResult(x_positions=[], y_positions=[], depth_rows=[])
 	scan_config = SimpleNamespace(
-		expected_hole_width_mm=26.0,
-		hole_width_tolerance_mm=4.0,
-		wall_depth_tolerance_mm=1.0,
 	)
 
 	async def didScanLinePositions(*args, **kwargs):
@@ -861,7 +854,7 @@ def test_build_single_shelf_known_edge_y_converts_fixed_offset_back_to_laser_fra
 	scan_config = SimpleNamespace(
 		laser_offset_y_mm=0.0,
 		shelf_hole_probe_y_offsets_mm=[12.25],
-		left_xy_offset=SimpleNamespace(x_mm=-0.8, y_mm=-4.25),
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-0.8, y_mm=-4.25),
 	)
 
 	known_shelf_edge_y = build_single_shelf_known_edge_y(
@@ -887,7 +880,7 @@ def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_xy_offset=None,
+		left_gripper_xy_correction_mm=None,
 	)
 	detected_cell = SimpleNamespace(tool_x_mm=123.0, tool_y_mm=456.0)
 
@@ -920,7 +913,7 @@ def test_apply_single_cell_rescan_uses_fixed_offset_without_reference_rescan() -
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=10.0,
 		laser_offset_y_mm=-5.0,
-		left_xy_offset=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
 	)
 	detected_cell = SimpleNamespace(tool_x_mm=123.0, tool_y_mm=456.0)
 
@@ -1034,7 +1027,7 @@ def test_apply_single_shelf_analysis_maps_depths_around_preserved_dropped_cell(t
 			grid=grid,
 			grid_path=grid_path,
 			scan_config=SimpleNamespace(
-				left_xy_offset=SimpleNamespace(x_mm=11.0, y_mm=-80.0),
+				left_gripper_xy_correction_mm=SimpleNamespace(x_mm=11.0, y_mm=-80.0),
 			),
 			side=StorageModuleSide.LEFT,
 			target_shelf_idx=3,
@@ -1211,7 +1204,7 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 					scan_config=SimpleNamespace(
 						laser_offset_x_mm=0.0,
 						laser_offset_y_mm=0.0,
-						left_xy_offset=None,
+						left_gripper_xy_correction_mm=None,
 					),
 					side=StorageModuleSide.LEFT,
 					target_shelf_idx=1,
@@ -1260,7 +1253,7 @@ def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_xy_offset=None,
+		left_gripper_xy_correction_mm=None,
 	)
 
 	with patch('openshelf_os.laser_calibration.build_shelves_from_scan', return_value=[scanned_shelf]):
@@ -1312,7 +1305,7 @@ def test_apply_single_shelf_analysis_reference_less_uses_offset_and_stall_delta(
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_xy_offset=SimpleNamespace(x_mm=1.0, y_mm=2.0),
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=1.0, y_mm=2.0),
 	)
 	wall_depth_z_offsets = Mock()
 
@@ -1372,7 +1365,7 @@ def test_apply_single_shelf_analysis_keeps_analysis_frame_during_z_apply(tmp_pat
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_xy_offset=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 	)
 	recorded: dict[str, int] = {}
 
@@ -1674,16 +1667,16 @@ def test_probe_z_until_stall_does_not_report_fast_approach_fault_as_wall_contact
 	assert z_contact_mm == pytest.approx(56.2)
 
 
-def test_get_scan_z_offset_model_returns_configured_model() -> None:
-	model = SimpleNamespace(intercept_mm=4.85, slope_per_mm=-0.00285, stage_extension_mm=46.0, z_place_mm=160.5)
-	scan_config = SimpleNamespace(left_z_offset_model=model, right_z_offset_model=None)
+def test_get_wall_depth_to_gripper_z_model_returns_configured_model() -> None:
+	model = SimpleNamespace(intercept_mm=4.85, x_slope_mm_per_mm=-0.00285, reference_stage_mm=46.0, reference_z_place_mm=160.5)
+	scan_config = SimpleNamespace(left_wall_depth_to_gripper_z_model=model, right_wall_depth_to_gripper_z_model=None)
 
-	assert get_scan_z_offset_model(scan_config=scan_config, side=StorageModuleSide.LEFT) is model
-	assert get_scan_z_offset_model(scan_config=scan_config, side=StorageModuleSide.RIGHT) is None
+	assert get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=StorageModuleSide.LEFT) is model
+	assert get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=StorageModuleSide.RIGHT) is None
 
 
 def test_require_z_offset_model_matches_tool_rejects_drifted_stage_extension() -> None:
-	model = SimpleNamespace(intercept_mm=4.85, slope_per_mm=-0.00285, stage_extension_mm=46.0, z_place_mm=160.5)
+	model = SimpleNamespace(intercept_mm=4.85, x_slope_mm_per_mm=-0.00285, reference_stage_mm=46.0, reference_z_place_mm=160.5)
 
 	with pytest.raises(ValueError, match='derived at a different tool geometry'):
 		require_z_offset_model_matches_tool(
@@ -1696,7 +1689,7 @@ def test_require_z_offset_model_matches_tool_rejects_drifted_stage_extension() -
 
 
 def test_require_z_offset_model_matches_tool_accepts_unchanged_params() -> None:
-	model = SimpleNamespace(intercept_mm=4.85, slope_per_mm=-0.00285, stage_extension_mm=46.0, z_place_mm=160.5)
+	model = SimpleNamespace(intercept_mm=4.85, x_slope_mm_per_mm=-0.00285, reference_stage_mm=46.0, reference_z_place_mm=160.5)
 
 	require_z_offset_model_matches_tool(
 		model=model,

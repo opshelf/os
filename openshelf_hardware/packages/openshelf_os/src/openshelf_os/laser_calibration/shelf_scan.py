@@ -1,6 +1,15 @@
 # ruff: noqa: F401, F403, F405
 from __future__ import annotations
 
+from openshelf_os.laser_calibration.defaults import (
+	EXPECTED_HOLE_HEIGHT_MM,
+	EXPECTED_HOLE_WIDTH_MM,
+	HOLE_HEIGHT_TOLERANCE_MM,
+	HOLE_WIDTH_TOLERANCE_MM,
+	MIN_HORIZONTAL_WALL_COVERAGE_MM,
+	MIN_VERTICAL_WALL_COVERAGE_MM,
+	WALL_DEPTH_TOLERANCE_MM,
+)
 from .core import *
 from .recording import *
 from .motion import *
@@ -237,7 +246,7 @@ async def capture_shelf_candidates(
 					values=sweep_depth_values,
 					segment=segment,
 					wall_depth_mm=wall_depth_mm,
-					tolerance_mm=scan_config.wall_depth_tolerance_mm,
+					tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
 				)
 
 				candidates.append(
@@ -395,8 +404,8 @@ def find_gap_segments_in_line(
 
 		if dimensions_match(
 			width_mm,
-			expected_mm=scan_config.expected_hole_width_mm,
-			tolerance_mm=scan_config.hole_width_tolerance_mm + step_mm,
+			expected_mm=EXPECTED_HOLE_WIDTH_MM,
+			tolerance_mm=HOLE_WIDTH_TOLERANCE_MM + step_mm,
 		) is False:
 			start_idx = None
 			continue
@@ -404,7 +413,7 @@ def find_gap_segments_in_line(
 		if has_wall_nearby(
 			values,
 			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=scan_config.wall_depth_tolerance_mm,
+			tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
 			start_idx=left_idx,
 			direction=-1,
 		) is False:
@@ -414,7 +423,7 @@ def find_gap_segments_in_line(
 		if has_wall_nearby(
 			values,
 			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=scan_config.wall_depth_tolerance_mm,
+			tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
 			start_idx=right_idx,
 			direction=1,
 		) is False:
@@ -443,8 +452,8 @@ def dedupe_candidate_regions(
 	scan_config: Any,
 ) -> list[GapCandidateRegion]:
 	deduped_candidates: list[GapCandidateRegion] = []
-	x_threshold_mm = max(scan_config.expected_hole_width_mm / 2.0, SHELF_SWEEP_X_STEP_MM * 2.0)
-	y_threshold_mm = max(scan_config.expected_hole_height_mm / 2.0, 10.0)
+	x_threshold_mm = max(EXPECTED_HOLE_WIDTH_MM / 2.0, SHELF_SWEEP_X_STEP_MM * 2.0)
+	y_threshold_mm = max(EXPECTED_HOLE_HEIGHT_MM / 2.0, 10.0)
 
 	for candidate in sorted(candidates, key=lambda current: (current.y_min, current.x_min)):
 		matched_candidate: Optional[GapCandidateRegion] = None
@@ -501,7 +510,7 @@ def build_fine_scan_bounds(
 	fine_cell_scan_y_margin_mm = get_fine_cell_scan_y_margin_mm(scan_config)
 	y_margin_mm = max(
 		fine_cell_scan_y_margin_mm + 10.0,
-		(scan_config.expected_hole_height_mm / 2.0) + 12.0,
+		(EXPECTED_HOLE_HEIGHT_MM / 2.0) + 12.0,
 	)
 
 	return build_fine_scan_bounds_with_y_margin(
@@ -535,8 +544,8 @@ def build_fine_scan_retry_bounds(
 ) -> ScanBounds:
 	current_y_margin_mm = max(0.0, (current_bounds.y_max - current_bounds.y_min) / 2.0)
 	retry_y_margin_mm = max(
-		current_y_margin_mm + (scan_config.expected_hole_height_mm / 2.0),
-		scan_config.expected_hole_height_mm + 6.0,
+		current_y_margin_mm + (EXPECTED_HOLE_HEIGHT_MM / 2.0),
+		EXPECTED_HOLE_HEIGHT_MM + 6.0,
 		FINE_SCAN_RETRY_MIN_Y_MARGIN_MM,
 	)
 
@@ -623,7 +632,7 @@ def build_single_cell_rescan_candidate(
 	)
 
 	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	grab_x_mm = float(target_cell.calibration_point.x)
 	grab_y_mm = float(target_cell.calibration_point.y)
 
@@ -637,8 +646,8 @@ def build_single_cell_rescan_candidate(
 		candidate_center_x_mm = grab_x_mm - laser_offset_x_mm - xy_offset[0]
 		candidate_center_y_mm = grab_y_mm + laser_offset_y_mm - xy_offset[1]
 
-	half_width_mm = float(scan_config.expected_hole_width_mm) / 2.0
-	half_height_mm = float(scan_config.expected_hole_height_mm) / 2.0
+	half_width_mm = float(EXPECTED_HOLE_WIDTH_MM) / 2.0
+	half_height_mm = float(EXPECTED_HOLE_HEIGHT_MM) / 2.0
 
 	return GapCandidateRegion(
 		x_min=candidate_center_x_mm - half_width_mm,
@@ -656,11 +665,11 @@ def build_single_cell_rescan_bounds(
 	scan_config: Any,
 ) -> ScanBounds:
 	x_margin_mm = max(
-		float(scan_config.expected_hole_width_mm) + (FINE_SCAN_MARGIN_X_MM * 2.0),
+		float(EXPECTED_HOLE_WIDTH_MM) + (FINE_SCAN_MARGIN_X_MM * 2.0),
 		40.0,
 	)
 	y_margin_mm = max(
-		float(scan_config.expected_hole_height_mm) + (FINE_SCAN_RETRY_MIN_Y_MARGIN_MM * 2.0),
+		float(EXPECTED_HOLE_HEIGHT_MM) + (FINE_SCAN_RETRY_MIN_Y_MARGIN_MM * 2.0),
 		80.0,
 	)
 

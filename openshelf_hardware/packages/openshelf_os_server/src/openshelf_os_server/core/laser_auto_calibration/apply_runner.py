@@ -7,6 +7,16 @@ from pathlib import Path
 
 from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
 from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
+from openshelf_os.laser_calibration.defaults import (
+    Z_OFFSET_MODEL_PARAM_TOLERANCE_MM,
+    Z_STALL_PROBE_FAST_APPROACH_MM,
+    Z_STALL_PROBE_NO_PROGRESS_S,
+    Z_STALL_PROBE_RPM,
+    Z_STALL_PROBE_START_MM,
+    Z_STALL_PROBE_STEP_MM,
+    Z_STALL_PROBE_TARGET_MM,
+    Z_STALL_PROBE_TIMEOUT_S,
+)
 
 from .models import *
 
@@ -229,7 +239,7 @@ class ApplyRunnerMixin:
         scan_config = config.robot.grid.scan
         tool = worker._robot._tool
 
-        xy_offset = laser_module.get_scan_xy_offset(scan_config=scan_config, side=side)
+        xy_offset = laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side)
         offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
         offset_y_mm = 0.0 if xy_offset is None else float(xy_offset[1])
 
@@ -283,8 +293,8 @@ class ApplyRunnerMixin:
 
         rotation_center_deg = float(rotation_center_value)
         stage_extension_mm = float(stage_extension_value)
-        probe_rpm = scan_config.z_stall_probe_rpm
-        probe_target_mm = float(scan_config.z_stall_probe_target_mm)
+        probe_rpm = Z_STALL_PROBE_RPM
+        probe_target_mm = float(Z_STALL_PROBE_TARGET_MM)
         z_axis_limit_mm = _get_z_axis_limit_mm(worker)
         laser_module.print_status(
             f"z_stall_anchor=start side={side_name} rotation_deg={rotation_center_deg:.3f} "
@@ -327,7 +337,7 @@ class ApplyRunnerMixin:
                 y_mm=probe_y_mm,
                 absolute_rotation_deg=rotation_center_deg,
                 stage_extension_mm=stage_extension_mm,
-                z_mm=float(scan_config.z_stall_probe_start_mm),
+                z_mm=float(Z_STALL_PROBE_START_MM),
                 z_move_rpm=float(z_move_rpm),
                 z_move_accel=float(z_move_accel),
                 should_abort=self._should_abort_work,
@@ -335,14 +345,14 @@ class ApplyRunnerMixin:
 
             did_stall, z_contact_mm, reason, alarm_code = await probe_z_until_stall(
                 tool,
-                target_z_mm=float(scan_config.z_stall_probe_target_mm),
-                retract_z_mm=float(scan_config.z_stall_probe_start_mm),
-                settle_ms=laser_module.get_laser_sample_settle_ms(scan_config),
-                timeout_s=float(scan_config.z_stall_probe_timeout_s),
+                target_z_mm=float(Z_STALL_PROBE_TARGET_MM),
+                retract_z_mm=float(Z_STALL_PROBE_START_MM),
+                settle_ms=laser_module.get_laser_sample_settle_ms(),
+                timeout_s=float(Z_STALL_PROBE_TIMEOUT_S),
                 probe_rpm=None if probe_rpm is None else int(probe_rpm),
-                no_progress_s=float(scan_config.z_stall_probe_no_progress_s),
-                probe_step_mm=float(scan_config.z_stall_probe_step_mm),
-                fast_approach_mm=float(scan_config.z_stall_probe_fast_approach_mm),
+                no_progress_s=float(Z_STALL_PROBE_NO_PROGRESS_S),
+                probe_step_mm=float(Z_STALL_PROBE_STEP_MM),
+                fast_approach_mm=float(Z_STALL_PROBE_FAST_APPROACH_MM),
                 fast_approach_rpm=None if probe_rpm is None else int(probe_rpm),
                 auto_retract=True,
                 should_abort=self._should_abort_work,
@@ -384,12 +394,12 @@ class ApplyRunnerMixin:
 
             # The rapid approach already traversed to fast_approach_mm unobstructed, so a wall
             # cannot sit closer than that. Anything shallower is the tool hitting something else.
-            if z_contact_mm < float(scan_config.z_stall_probe_fast_approach_mm):
+            if z_contact_mm < float(Z_STALL_PROBE_FAST_APPROACH_MM):
                 laser_module.print_status(
                     f"z_stall_anchor=reject_shallow side={side_name} "
                     f"probe={detected_cell.shelf_idx}:{detected_cell.cell_idx} "
                     f"reason={reason} z_mm={z_contact_mm:.3f} "
-                    f"fast_approach_mm={float(scan_config.z_stall_probe_fast_approach_mm):.3f}"
+                    f"fast_approach_mm={float(Z_STALL_PROBE_FAST_APPROACH_MM):.3f}"
                 )
                 continue
 
@@ -499,7 +509,7 @@ class ApplyRunnerMixin:
         the rack, whereas the stall probe presses it and measures the compliance of everything in
         between. Fall back to the probe only when no model is configured.
         """
-        configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
+        configured_model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
 
         if configured_model is not None:
             tool = worker._robot._tool
@@ -517,11 +527,11 @@ class ApplyRunnerMixin:
                 side=side,
                 stage_extension_mm=float(stage_extension_value),
                 z_place_mm=float(z_place_value),
-                tolerance_mm=float(scan_config.z_offset_model_param_tolerance_mm),
+                tolerance_mm=float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM),
             )
 
             intercept_mm = float(configured_model.intercept_mm)
-            slope_per_mm = float(configured_model.slope_per_mm)
+            slope_per_mm = float(configured_model.x_slope_mm_per_mm)
             laser_module.print_status(
                 f"z_offset_model=config side={'left' if side == StorageModuleSide.LEFT else 'right'} "
                 f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.6f} "
@@ -538,7 +548,7 @@ class ApplyRunnerMixin:
         side_name = "left" if side == StorageModuleSide.LEFT else "right"
         raise ValueError(
             f"no z offset source for the {side_name} module: configure "
-            f"robot.grid.scan.{side_name}_z_offset_model, or enable robot.grid.scan.z_stall_anchor_enabled. "
+            f"robot.grid.scan.{side_name}_wall_depth_to_gripper_z_model, or enable robot.grid.scan.z_stall_anchor_enabled. "
             "Persisting without one would write z_offset=0 to every cell."
         )
 

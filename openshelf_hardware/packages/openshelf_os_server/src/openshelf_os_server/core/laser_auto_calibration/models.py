@@ -16,6 +16,18 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from openshelf_os.laser_calibration.defaults import (
+    ANGLE_SWEEP_X_COUNT,
+    ANGLE_SWEEP_X_MIN_MM,
+    ANGLE_SWEEP_X_STEP_MM,
+    STAGE_STALL_COARSE_MAX_DEG,
+    STAGE_STALL_COARSE_MIN_DEG,
+    STAGE_STALL_COARSE_START_DEG,
+    STAGE_STALL_COARSE_STEP_DEG,
+    STAGE_STALL_FINE_STEP_DEG,
+    STAGE_STALL_FINE_WINDOW_DEG,
+    STAGE_STALL_PROBE_X_MM,
+)
 from openshelf_os.laser_calibration import angle as angle_module
 from openshelf_os import laser_calibration as laser_module
 from openshelf_os.common import Parameters, resolve_grid_path
@@ -75,7 +87,6 @@ STAGE_EXTENSION_PROBE_STEP_MM = 0.5
 STAGE_EXTENSION_PROBE_TIMEOUT_S = 60.0
 STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
 STAGE_EXTENSION_STALL_BACKOFF_MM = 5.0
-ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM = 475.0
 
 
 def _should_skip_motion_cleanup_on_cancel() -> bool:
@@ -279,18 +290,12 @@ def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBou
 def _build_angle_x_positions(scan_config: Any) -> list[float]:
     x_positions = angle_module.build_axis_positions(
         float(scan_config.angle_calibration_x_max_mm),
-        float(scan_config.angle_calibration_x_min_mm),
-        float(scan_config.angle_calibration_x_step_mm),
+        ANGLE_SWEEP_X_MIN_MM,
+        ANGLE_SWEEP_X_STEP_MM,
     )
 
-    x_count = int(getattr(scan_config, "angle_calibration_x_count", 5))
+    return x_positions[:ANGLE_SWEEP_X_COUNT]
 
-    return x_positions[:x_count]
-
-
-
-def _get_scan_config_value(scan_config: Any, name: str, default: Any) -> Any:
-    return getattr(scan_config, name, default)
 
 
 def _build_stage_stall_rotation_center_deg(parameters: Any, side: StorageModuleSide) -> float:
@@ -303,33 +308,11 @@ def _build_stage_stall_rotation_positions(
     rotation_center_deg: float,
     rotation_limit_deg: float,
 ) -> list[float]:
-    coarse_start_deg = _get_scan_config_value(
-        scan_config,
-        "angle_calibration_stage_stall_coarse_start_deg",
-        4.5,
-    )
+    coarse_start_deg = STAGE_STALL_COARSE_START_DEG
     requested_positions = angle_module.build_axis_positions(
-        float(
-            _get_scan_config_value(
-                scan_config,
-                "angle_calibration_stage_stall_coarse_min_deg",
-                _get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_min_deg", 0.0),
-            )
-        ),
-        float(
-            _get_scan_config_value(
-                scan_config,
-                "angle_calibration_stage_stall_coarse_max_deg",
-                _get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_max_deg", 5.5),
-            )
-        ),
-        float(
-            _get_scan_config_value(
-                scan_config,
-                "angle_calibration_stage_stall_coarse_step_deg",
-                _get_scan_config_value(scan_config, "angle_calibration_rotation_step_deg", 1.0),
-            )
-        ),
+        float(STAGE_STALL_COARSE_MIN_DEG),
+        float(STAGE_STALL_COARSE_MAX_DEG),
+        float(STAGE_STALL_COARSE_STEP_DEG),
     )
     valid_positions = _build_valid_stage_stall_rotation_positions(
         requested_positions,
@@ -358,9 +341,7 @@ def _build_stage_stall_fine_rotation_positions(
     rotation_center_deg: float,
     rotation_limit_deg: float,
 ) -> list[float]:
-    fine_window_deg = float(
-        _get_scan_config_value(scan_config, "angle_calibration_stage_stall_fine_window_deg", 1.5)
-    )
+    fine_window_deg = float(STAGE_STALL_FINE_WINDOW_DEG)
 
     if fine_window_deg <= 0.0:
         return []
@@ -368,7 +349,7 @@ def _build_stage_stall_fine_rotation_positions(
     requested_positions = angle_module.build_axis_positions(
         float(coarse_best_rotation_deg) - fine_window_deg,
         float(coarse_best_rotation_deg) + fine_window_deg,
-        float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_fine_step_deg", 0.25)),
+        float(STAGE_STALL_FINE_STEP_DEG),
     )
     valid_positions = _build_valid_stage_stall_rotation_positions(
         requested_positions,
@@ -408,7 +389,8 @@ def _build_valid_stage_stall_rotation_positions(
 
 
 def _resolve_stage_stall_probe_x_mm(scan_config: Any) -> float:
-    return float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_probe_x_mm", ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM))
+    del scan_config
+    return float(STAGE_STALL_PROBE_X_MM)
 
 
 
@@ -530,7 +512,6 @@ __all__ = [
     "STAGE_EXTENSION_PROBE_TIMEOUT_S",
     "STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S",
     "STAGE_EXTENSION_STALL_BACKOFF_MM",
-    "ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM",
     "_should_skip_motion_cleanup_on_cancel",
     "LaserAutoCalibrationShelfEdge",
     "LaserAutoCalibrationCandidate",

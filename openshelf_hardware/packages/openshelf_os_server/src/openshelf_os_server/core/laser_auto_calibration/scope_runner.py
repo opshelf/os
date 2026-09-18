@@ -6,6 +6,8 @@ import copy
 from pathlib import Path
 from statistics import median
 
+from openshelf_os.laser_calibration.defaults import EXPECTED_HOLE_HEIGHT_MM
+
 from .models import *
 
 
@@ -87,7 +89,7 @@ def _build_single_shelf_scan_bounds(
 def _build_single_shelf_scan_config(scan_config: Any) -> Any:
     probe_offsets = laser_module.get_shelf_hole_probe_y_offsets_mm(scan_config)
     primary_probe_offset_mm = float(probe_offsets[0])
-    expected_hole_height_mm = float(scan_config.expected_hole_height_mm)
+    expected_hole_height_mm = float(EXPECTED_HOLE_HEIGHT_MM)
     opening_center_offset_mm = max(
         0.0,
         primary_probe_offset_mm - (expected_hole_height_mm * 2.0 / 3.0),
@@ -395,7 +397,7 @@ class ScopeRunnerMixin:
 
         local_y_margin_mm = max(
             80.0,
-            float(scan_config.expected_hole_height_mm)
+            float(EXPECTED_HOLE_HEIGHT_MM)
             + max(float(offset_mm) for offset_mm in laser_module.get_shelf_hole_probe_y_offsets_mm(scan_config))
             + 30.0,
         )
