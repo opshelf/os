@@ -1083,6 +1083,53 @@ def test_build_shelves_from_scan_appends_unmatched_detection() -> None:
 	assert cells[2].calibration_point.x == pytest.approx(200.0)
 
 
+def test_apply_single_shelf_analysis_preserves_a_shelf_of_only_manual_cells(tmp_path: Path) -> None:
+	"""When every matched cell is manual the filtered key map is empty - and an empty map is not
+	the same as no map: `apply_wall_depth_z_offsets` must still treat those cells as preserved."""
+	target_shelf = _existing_calibrated_shelf(3, [100.0, 201.0, 303.0])
+	for cell in target_shelf.cells:
+		cell.is_manual = True
+		cell.calibration_point.z_offset = 0.0
+		cell.calibration_point.z_captured_at_stage_mm = 47.0
+
+	grid_path = tmp_path / 'grid.json'
+	grid = StorageGrid(left_module=[target_shelf], right_module=[], filename=str(grid_path))
+	grid.save()
+	metadata_path = tmp_path / 'metadata.json'
+	metadata_path.write_text('{}', encoding='utf-8')
+	analysis = SimpleNamespace(
+		shelves=[_detected_scan_shelf(0, [105.0, 205.0, 305.0])],
+		metadata_path=str(metadata_path),
+	)
+	candidate_lookup = {
+		(0, cell_idx): SimpleNamespace(wall_depth_mm=50.0)
+		for cell_idx in range(3)
+	}
+
+	with patch(
+		'openshelf_os.laser_calibration.staged_scan.build_candidate_lookup_by_cell',
+		return_value=candidate_lookup,
+	):
+		apply_single_shelf_analysis(
+			analysis=analysis,
+			grid=grid,
+			grid_path=grid_path,
+			scan_config=SimpleNamespace(left_xy_offset=SimpleNamespace(x_mm=0.0, y_mm=0.0)),
+			side=StorageModuleSide.LEFT,
+			target_shelf_idx=3,
+			z_delta_override_mm=4.0,
+		)
+
+	updated_cells = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells
+
+	assert len(updated_cells) == 3
+	for cell in updated_cells:
+		# Hand-set 0.0, not wall_depth 50 + override 4.
+		assert cell.is_manual is True
+		assert cell.calibration_point.z_offset == pytest.approx(0.0)
+		assert cell.calibration_point.z_captured_at_stage_mm == pytest.approx(47.0)
+
+
 def test_staged_scan_is_importable_as_the_first_module_of_the_package() -> None:
 	"""The package resolves names lazily, so a submodule must not import a sibling at module level.
 
