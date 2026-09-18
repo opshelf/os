@@ -199,12 +199,51 @@ def test_refuses_when_reference_cells_disagree() -> None:
 		derive(grid, analysis, build_scan_config(xy_offset=(-1.0, 1.0)))
 
 
-def test_hints_when_no_offset_is_configured_to_predict_from() -> None:
-	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0)])
-	analysis = build_analysis([build_detected_cell(cell_idx=0, tool_x=600.0, tool_y=300.0)])
+def test_refuses_to_predict_from_zero_when_no_offset_is_configured() -> None:
+	"""With no configured offset the old code predicted from zero and matched by proximity.
 
-	with pytest.raises(ValueError, match="set a rough one first"):
+	The manual point's own opening sits a full ~105mm pitch away (the true offset is near
+	-98), but the neighbouring opening is only ~7mm from the manual point itself: a zero
+	prediction would match the neighbour and persist +7 instead of -98, so the derivation
+	refuses instead.
+	"""
+	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0)])
+	analysis = build_analysis(
+		[
+			build_detected_cell(cell_idx=0, tool_x=452.0, tool_y=44.0),
+			build_detected_cell(cell_idx=1, tool_x=347.0, tool_y=44.0),
+		]
+	)
+
+	with pytest.raises(
+		ValueError,
+		match=r"no robot\.grid\.scan\.left_xy_offset is configured.*set a rough one first",
+	):
 		derive(grid, analysis, build_scan_config(xy_offset=None))
+
+
+def test_stale_offset_one_pitch_off_matches_the_opening_its_prediction_implies() -> None:
+	"""The configured offset is the contract for which opening a manual cell matched to.
+
+	An offset a full pitch stale predicts the neighbouring opening exactly, so the match is
+	unambiguous: the derivation reports what the prediction implied (the configured value,
+	+7 here) rather than the true -98. Only the spread guard catches that when several
+	reference cells are involved; a single datum cannot argue with its own contract.
+	"""
+	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0)])
+	analysis = build_analysis(
+		[
+			build_detected_cell(cell_idx=0, tool_x=452.0, tool_y=44.0),
+			build_detected_cell(cell_idx=1, tool_x=347.0, tool_y=44.0),
+		]
+	)
+
+	result = derive(grid, analysis, build_scan_config(xy_offset=(7.0, -3.0)))
+
+	assert result.samples[0].detected_x_mm == pytest.approx(347.0)
+	assert result.offset_x_mm == pytest.approx(7.0)
+	assert result.offset_y_mm == pytest.approx(-3.0)
+	assert result.configured_offset_x_mm == pytest.approx(7.0)
 
 
 def test_match_window_stays_under_half_the_smallest_opening_pitch() -> None:
