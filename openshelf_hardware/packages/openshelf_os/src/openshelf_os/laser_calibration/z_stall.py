@@ -470,6 +470,17 @@ async def run_z_stall_anchor(
 					f"z_stall_anchor=miss probe={cell_key[0]}:{cell_key[1]} reason={reason} "
 					f"z_mm={z_contact_mm:.3f}"
 				)
+
+				if len(contacts) > 0 and len(contacts) < max(1, probe_repeats):
+					# A lone contact is not evidence of a wall: the first attempt stalled and the
+					# second found nothing, so either the plate moved or the contact was not the plate.
+					missed_repeat = (
+						f"{cell_key[0]}:{cell_key[1]} stalled at {contacts[0]:.3f}mm then did not "
+						f"stall again ({reason})"
+					)
+					dropped_repeats.append(missed_repeat)
+					print_status(f"z_stall_anchor=unstable probe={missed_repeat}")
+
 				break
 
 			# The rapid approach already traversed to fast_approach_mm unobstructed, so a wall cannot
@@ -486,6 +497,16 @@ async def run_z_stall_anchor(
 
 		if len(contacts) == 0:
 			skipped.append(f"{cell_key[0]}:{cell_key[1]} ({probe_reason})")
+			continue
+
+		if len(contacts) < max(1, probe_repeats):
+			# Only the full repeat set tells a wall from a rack that moved between contacts, so a
+			# point that lost a contact (a miss, or a second attempt rejected as too shallow)
+			# is dropped rather than sampled on its single reading.
+			skipped.append(
+				f"{cell_key[0]}:{cell_key[1]} ({probe_reason}, {len(contacts)} of "
+				f"{max(1, probe_repeats)} contacts)"
+			)
 			continue
 
 		if len(contacts) > 1 and abs(contacts[-1] - contacts[0]) > repeat_tolerance_mm:
@@ -514,14 +535,13 @@ async def run_z_stall_anchor(
 				reason=probe_reason,
 			)
 		)
+		sampled_shelves.add(cell_key[0])
 		print_status(
 			f"z_stall_anchor=sample probe={cell_key[0]}:{cell_key[1]} "
 			f"x_mm={probe_x_mm:.3f} z_contact_mm={z_contact_mm:.3f} z_place_mm={z_place_mm:.3f} "
 			f"tray_mm={tray_engagement_mm:.3f} wall_depth_mm={float(probe_wall_depth_mm):.3f} "
 			f"anchor_z_offset_mm={z_offset_anchor_mm:.3f} delta_mm={delta_mm:.3f}"
 		)
-
-		sampled_shelves.add(cell_key[0])
 
 		# The requested shelves come first and a reserve only replaces a shelf that did not yield a
 		# sample, so stop once the run has that many distinct shelves in the sample set.
@@ -535,8 +555,9 @@ async def run_z_stall_anchor(
 	if len(samples) == 0:
 		if len(dropped_repeats) > 0:
 			raise ValueError(
-				"z stall anchor: every probe stalled at a different depth on the second attempt, so the "
-				"rack is moving under probe force rather than holding still: "
+				"z stall anchor: every probe disagreed with itself on the second attempt (a different "
+				"depth or no contact at all), so the rack is moving under probe force rather than "
+				"holding still: "
 				f"{'; '.join(dropped_repeats)}"
 			)
 
