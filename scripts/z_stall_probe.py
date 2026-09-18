@@ -215,12 +215,20 @@ def report_plan(
 	side: StorageModuleSide,
 	scan_config: Any,
 	excluded_cells: set[tuple[int, int]],
+	xy_offset: tuple[float, float] | None,
 ) -> None:
+	# Where the tip goes, not just where the opening is: the probe aims at the divider beside the
+	# hole, shifted by the tool's xy offset and by z_stall_probe_x_shift_mm.
+	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
+	offset_y_mm = 0.0 if xy_offset is None else float(xy_offset[1])
+	shift_mm = float(scan_config.z_stall_probe_x_shift_mm)
 	print(f"planned probes ({len(probes)}):")
 	for cell, wall_depth_mm in probes:
 		print(
-			f"  {cell.shelf_idx}:{cell.cell_idx} tool_x={float(cell.tool_x_mm):.2f} "
-			f"tool_y={float(cell.tool_y_mm):.2f} wall_depth_mm={float(wall_depth_mm):.3f}"
+			f"  {cell.shelf_idx}:{cell.cell_idx} probe_x={float(cell.tool_x_mm) + offset_x_mm + shift_mm:.2f} "
+			f"probe_y={float(cell.tool_y_mm) + offset_y_mm:.2f} "
+			f"(hole tool_x={float(cell.tool_x_mm):.2f} tool_y={float(cell.tool_y_mm):.2f}) "
+			f"wall_depth_mm={float(wall_depth_mm):.3f}"
 		)
 
 	if manual_reference is None:
@@ -330,14 +338,17 @@ async def main() -> int:
 	candidates = laser_module.load_candidates_from_metadata(metadata)
 
 	if args.from_grid is True:
-		wall_depths = {
-			(int(candidate.shelf_idx), int(candidate.cell_idx)): float(candidate.wall_depth_mm)
-			for candidate in candidates
-			if getattr(candidate, "shelf_idx", None) is not None
-			and getattr(candidate, "cell_idx", None) is not None
-			and candidate.wall_depth_mm is not None
-		}
-		print(f"positions: stored calibration points ({len(wall_depths)} sweep wall depths available)")
+		# Wall depths have no cell indices of their own: they are matched to the openings the run
+		# recorded, so the run's detections are the map between the two.
+		wall_depths = laser_module.wall_depths_by_cell(
+			analysis=laser_module.build_probe_analysis(
+				metadata=metadata, metadata_path=metadata_path
+			),
+			candidates=candidates,
+		)
+		print(
+			f"positions: stored calibration points ({len(wall_depths)} sweep wall depths available)"
+		)
 		analysis = laser_module.build_probe_analysis_from_grid(
 			grid=grid,
 			side=side,
@@ -404,6 +415,7 @@ async def main() -> int:
 			side=side,
 			scan_config=scan_config,
 			excluded_cells=excluded_cells,
+			xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
 		)
 		return 0
 

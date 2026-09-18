@@ -163,7 +163,9 @@ def test_plan_only_reports_probes_and_the_reference_datum(tmp_path: Path, monkey
 	output = capsys.readouterr().out
 	# Only the cell whose sweep candidate carried a wall depth is planned: the probe subtracts it.
 	assert "planned probes (1):" in output
-	assert "1:0 tool_x=341.75" in output
+	# Run-frame detection, so the probe lands at tool_x + xy_offset + shift = 341.75 - 1.25 + 20.
+	assert "1:0 probe_x=360.50" in output
+	assert "hole tool_x=341.75" in output
 	assert "reference datum: 1 cell(s) imply intercept -3.120mm" in output
 	assert "captured_stage_mm=47.00" in output
 
@@ -283,3 +285,38 @@ def test_explicit_exclusions_shield_tray_cells_from_the_probe(tmp_path: Path, mo
 	# refusal, not an empty plan, because a probe run that probes nothing proves nothing.
 	assert exit_code == 1
 	assert "nothing to probe" in output
+
+
+def test_from_grid_probes_the_stored_positions_with_the_sweep_depths(
+	tmp_path: Path, monkeypatch, capsys
+) -> None:
+	probe = load_probe_module()
+	config_path = tmp_path / "config.development.json"
+	config_path.write_text("{}", encoding="utf-8")
+	config = build_config(config_path, tmp_path / "storage.development.json")
+	grid = build_grid()
+	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+	metadata["side"] = "left_module"
+	(run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
+	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
+	monkeypatch.setattr(
+		probe.RuntimeStatePaths,
+		"current",
+		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
+	)
+
+	exit_code = main_with_args(
+		probe,
+		["--module", "left", "--from-run", str(run_dir), "--from-grid", "--shelf", "1", "--plan-only"],
+	)
+
+	assert exit_code == 0
+	output = capsys.readouterr().out
+	assert "positions: stored calibration points (1 sweep wall depths available)" in output
+	# Grid positions are converted back out of the grab frame, so the probe lands the divider shift
+	# away from the verified point: 341.75 + 20 = 361.75, with the xy offset cancelling.
+	assert "1:0 probe_x=361.75" in output
+	assert "hole tool_x=343.00" in output
