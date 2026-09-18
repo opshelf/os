@@ -1168,12 +1168,15 @@ def apply_single_shelf_analysis(
 
 
 	def is_manual_key(key: tuple[int, int]) -> bool:
+		# Only ever called with an OUTPUT key: `detected_cell_key_map` is keyed by the detected
+		# indices while the rebuilt cells carry the stored ones, so testing the analysis key here
+		# would drop an unrelated opening's rewrite - silently, as a "preserved" manual cell.
 		return (int(key[0]), int(key[1])) in manual_cell_keys
 	detected_output_keys = (
 		{
 			output_key
-			for analysis_key, output_key in detected_cell_key_map.items()
-			if is_manual_key(analysis_key) is False and is_manual_key(output_key) is False
+			for output_key in detected_cell_key_map.values()
+			if is_manual_key(output_key) is False
 		}
 		if len(detected_cell_key_map) > 0
 		else None
@@ -1209,7 +1212,7 @@ def apply_single_shelf_analysis(
 		z_apply_map = {
 			source_key: target_key
 			for source_key, target_key in detected_cell_key_map.items()
-			if is_manual_key(source_key) is False and is_manual_key(target_key) is False
+			if is_manual_key(target_key) is False
 		}
 		# Keyed on the unfiltered map: passing an empty map is meaningful, because it tells
 		# `apply_wall_depth_z_offsets` that every cell it can see is preserved. Omitting it would

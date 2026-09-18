@@ -1083,6 +1083,61 @@ def test_build_shelves_from_scan_appends_unmatched_detection() -> None:
 	assert cells[2].calibration_point.x == pytest.approx(200.0)
 
 
+def test_apply_single_shelf_analysis_shifts_cells_around_a_missing_manual_datum(tmp_path: Path) -> None:
+	"""The stored datum's index must not be mistaken for a *detected* index.
+
+	When the datum opening is not re-detected the detected indices shift relative to the stored
+	ones; filtering the x/y and z rewrites by the datum's stored index used to drop an unrelated
+	opening, leaving it at its raw detection-frame position and its old z.
+	"""
+	target_shelf = _existing_calibrated_shelf(3, [329.0, 494.0, 660.0])
+	target_shelf.cells[0].is_manual = True
+	target_shelf.cells[0].calibration_point.z_offset = 0.0
+	target_shelf.cells[0].calibration_point.z_captured_at_stage_mm = 47.0
+	for cell in target_shelf.cells[1:]:
+		cell.calibration_point.z_offset = 0.0
+
+	grid_path = tmp_path / 'grid.json'
+	grid = StorageGrid(left_module=[target_shelf], right_module=[], filename=str(grid_path))
+	grid.save()
+	metadata_path = tmp_path / 'metadata.json'
+	metadata_path.write_text('{}', encoding='utf-8')
+	# Only the second and third openings are seen this time.
+	analysis = SimpleNamespace(
+		shelves=[_detected_scan_shelf(0, [493.0, 659.0])],
+		metadata_path=str(metadata_path),
+	)
+	candidate_lookup = {(0, cell_idx): SimpleNamespace(wall_depth_mm=50.0) for cell_idx in range(2)}
+
+	with patch(
+		'openshelf_os.laser_calibration.staged_scan.build_candidate_lookup_by_cell',
+		return_value=candidate_lookup,
+	):
+		apply_single_shelf_analysis(
+			analysis=analysis,
+			grid=grid,
+			grid_path=grid_path,
+			scan_config=SimpleNamespace(left_xy_offset=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
+			side=StorageModuleSide.LEFT,
+			target_shelf_idx=3,
+			z_delta_override_mm=1.0,
+		)
+
+	updated_cells = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells
+	by_idx = {cell.cell_idx: cell for cell in updated_cells}
+
+	# The datum keeps its hand point.
+	assert by_idx[0].is_manual is True
+	assert by_idx[0].calibration_point.x == pytest.approx(329.0)
+	assert by_idx[0].calibration_point.z_offset == pytest.approx(0.0)
+	# The two cells that were detected are shifted by the configured offset and take the applied z.
+	assert by_idx[1].is_manual is False
+	assert by_idx[1].calibration_point.x == pytest.approx(483.0)
+	assert by_idx[1].calibration_point.z_offset == pytest.approx(51.0)
+	assert by_idx[2].calibration_point.x == pytest.approx(649.0)
+	assert by_idx[2].calibration_point.z_offset == pytest.approx(51.0)
+
+
 def test_apply_single_shelf_analysis_preserves_a_shelf_of_only_manual_cells(tmp_path: Path) -> None:
 	"""When every matched cell is manual the filtered key map is empty - and an empty map is not
 	the same as no map: `apply_wall_depth_z_offsets` must still treat those cells as preserved."""
