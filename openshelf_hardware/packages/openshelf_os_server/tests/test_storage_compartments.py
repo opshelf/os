@@ -96,9 +96,9 @@ async def test_serialization_keeps_contents_coherent_during_retrieval(
         await service.transition(retrieve, "awaiting_operator")
         bin_id, workflow_id = retrieve.bin_id, retrieve.id
         expected = [
-            {"id": first.id, "upca": first.upca, "name": first.name,
+            {"id": first.id, "barcode": first.barcode, "name": first.name,
              "compartment": 2 if compartmentalized else None},
-            {"id": second.id, "upca": second.upca, "name": second.name,
+            {"id": second.id, "barcode": second.barcode, "name": second.name,
              "compartment": 1 if compartmentalized else None},
         ]
 

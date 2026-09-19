@@ -48,7 +48,7 @@ async def test_print_label_skips_work_when_printer_is_disabled() -> None:
 
     assert result == {
         "message": "success",
-        "upca": "036000291452",
+        "barcode": "036000291452",
         "printed": False,
     }
     print_label.assert_not_called()
@@ -73,7 +73,7 @@ async def test_print_label_writes_barcode_when_printer_is_enabled() -> None:
 
     assert result == {
         "message": "success",
-        "upca": "036000291452",
+        "barcode": "036000291452",
         "printed": True,
     }
     print_label.assert_called_once_with("036000291452", feed_dots=18)
@@ -88,30 +88,44 @@ async def test_print_label_simulates_hardware_in_mock_mode() -> None:
     ):
         result = await printer_router.print_label("036000291452")
 
-    assert result == {"message": "success", "upca": "036000291452", "printed": True}
+    assert result == {"message": "success", "barcode": "036000291452", "printed": True}
     print_label.assert_not_called()
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("code", ["  BIN-A/42  ", " "])
-async def test_print_custom_label_preserves_printable_ascii(code: str) -> None:
+@pytest.mark.parametrize("barcode", ["CR00006174", "CR-0000.6174/ A", "x" * 255])
+async def test_print_label_simulates_bespoke_barcodes_in_mock_mode(barcode: str) -> None:
+    """Mock printing accepts the arbitrary customer barcodes item CRUD accepts."""
+    with (
+        patch.object(printer_router, "get_operating_mode", return_value=OperatingMode.mock),
+        patch.object(printer_router.printer, "print_label") as print_label,
+    ):
+        result = await printer_router.print_label(barcode)
+
+    assert result == {"message": "success", "barcode": barcode, "printed": True}
+    print_label.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("barcode", ["  BIN-A/42  ", " "])
+async def test_print_custom_label_preserves_printable_ascii(barcode: str) -> None:
     with patch.object(printer_router, "_print_payload", return_value=True) as print_payload:
         result = await printer_router.print_custom_label(
-            printer_router.PrintLabelRequest(code=code)
+            printer_router.PrintLabelRequest(barcode=barcode)
         )
 
     assert result == printer_router.PrintLabelResponse(
         message="success",
-        code=code,
+        barcode=barcode,
         printed=True,
     )
-    print_payload.assert_called_once_with(code)
+    print_payload.assert_called_once_with(barcode)
 
 
-@pytest.mark.parametrize("code", ["\tlabel", "label\n", "café"])
-def test_print_custom_label_rejects_control_and_non_ascii_characters(code: str) -> None:
+@pytest.mark.parametrize("barcode", ["\tlabel", "label\n", "café"])
+def test_print_custom_label_rejects_control_and_non_ascii_characters(barcode: str) -> None:
     with pytest.raises(ValidationError):
-        printer_router.PrintLabelRequest(code=code)
+        printer_router.PrintLabelRequest(barcode=barcode)
 
 
 @pytest.mark.anyio

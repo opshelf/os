@@ -83,10 +83,10 @@ def build_demo_store_robot(
     return build_store_robot(grid, demo_cell_map, reserved_locations), grid
 
 
-def item_payload(upca: str, location: StorageModuleCellLocation | None = None) -> dict[str, object]:
+def item_payload(barcode: str, location: StorageModuleCellLocation | None = None) -> dict[str, object]:
     payload: dict[str, object] = {
-        "upca": upca,
-        "name": f"Storage bin {upca}",
+        "barcode": barcode,
+        "name": f"Storage bin {barcode}",
         "dimensions": {"width": 1, "height": 2, "length": 3},
     }
     if location is not None:

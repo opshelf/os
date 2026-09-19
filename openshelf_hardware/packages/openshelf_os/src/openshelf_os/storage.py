@@ -74,7 +74,7 @@ class CellItem(BaseModel):
 	weight: Optional[float] = None
 	dimensions: Dimensions
 	data: Optional[Json] = None
-	upca: Optional[str] = None
+	barcode: Optional[str] = None
 
 
 class Cell(BaseModel):

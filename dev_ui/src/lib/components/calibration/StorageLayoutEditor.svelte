@@ -514,7 +514,7 @@
 		if (!trayEnabled) {
 			return true;
 		}
-		if (!/^\d{12}$/.test(trayBarcode.trim())) {
+		if (trayBarcode.trim().length === 0 || trayBarcode.trim().length > 255) {
 			return false;
 		}
 		const rows = Number(trayRows.trim());
@@ -1040,7 +1040,7 @@
 		// real cell, so the item fits in both mock mode and on hardware.
 		const scale = (value: number): number => Math.min(290, Math.max(value * 0.8, 1.0));
 		return {
-			upca: String(Date.now()).slice(-12),
+			barcode: String(Date.now()).slice(-12),
 			name: `layout test ${mockStoreSeq}`,
 			dimensions: {
 				length: scale(cell.dimensions.length),
@@ -1438,10 +1438,8 @@
 							<span>tray barcode</span>
 							<input
 								type="text"
-								inputmode="numeric"
-								maxlength="12"
+								maxlength="255"
 								bind:value={trayBarcode}
-								oninput={(event) => filterDigitInput(event, (value) => { trayBarcode = value; })}
 								disabled={busy === true}
 						/>
 						</label>

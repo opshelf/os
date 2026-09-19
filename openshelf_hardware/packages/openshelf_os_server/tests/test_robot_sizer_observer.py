@@ -15,13 +15,13 @@ from openshelf_os_server.database.models import Item, ItemSizerMeasurement
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import robot as robot_router
 
-_TEST_UPCA = "123456789012"
+_TEST_BARCODE = "123456789012"
 
 
 async def _clear_sizer_rows() -> None:
     async with AsyncSessionLocal() as session:
         await session.execute(delete(ItemSizerMeasurement))
-        await session.execute(delete(Item).where(Item.upca == _TEST_UPCA))
+        await session.execute(delete(Item).where(Item.barcode == _TEST_BARCODE))
         await session.commit()
 
 
@@ -61,7 +61,7 @@ async def test_store_item_observer_capture_does_not_mutate_command_payload() -> 
     payload = {
         "command": "store_item",
         "item": {
-            "upca": "123456789012",
+            "barcode": "123456789012",
             "name": "Test item",
             "dimensions": expected_dimensions,
         },
@@ -97,7 +97,7 @@ async def test_store_item_continues_when_observer_capture_raises(client: AsyncCl
     payload = {
         "command": "store_item",
         "item": {
-            "upca": "123456789012",
+            "barcode": "123456789012",
             "name": "Test item",
             "dimensions": {"width": 1, "height": 2, "length": 3},
         },
@@ -124,7 +124,7 @@ async def test_store_item_continues_when_observer_capture_raises(client: AsyncCl
 async def test_record_store_sizer_measurement_persists_manual_and_auto_dimensions() -> None:
     async with AsyncSessionLocal() as session:
         item = Item(
-            upca=_TEST_UPCA,
+            barcode=_TEST_BARCODE,
             name="Test item",
             dimensions={"width": 10, "height": 20, "length": 30},
         )
@@ -145,7 +145,7 @@ async def test_record_store_sizer_measurement_persists_manual_and_auto_dimension
     )
 
     await record_store_sizer_measurement(
-        upca="123456789012",
+        barcode="123456789012",
         item_name="Test item",
         user_id=1,
         request_correlation_id="correlation-id",
@@ -162,7 +162,7 @@ async def test_record_store_sizer_measurement_persists_manual_and_auto_dimension
         row = result.scalar_one()
 
     assert row.item_id is not None
-    assert row.upca == "123456789012"
+    assert row.barcode == "123456789012"
     assert row.item_name == "Test item"
     assert row.user_id == 1
     assert row.request_correlation_id == "correlation-id"

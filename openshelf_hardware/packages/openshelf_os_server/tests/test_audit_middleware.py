@@ -314,10 +314,10 @@ async def test_successful_excluded_get_is_not_audited(client: AsyncClient) -> No
 
 @pytest.mark.anyio
 async def test_failed_excluded_get_is_audited(client: AsyncClient) -> None:
-	response = await client.get("/api/storage/items/missing-upca")
+	response = await client.get("/api/storage/items/missing-barcode")
 	assert response.status_code == 404
 
-	log = await latest_audit_log("/api/storage/items/missing-upca", "GET")
+	log = await latest_audit_log("/api/storage/items/missing-barcode", "GET")
 	assert log is not None
 	assert log.response_status == 404
 
@@ -325,7 +325,7 @@ async def test_failed_excluded_get_is_audited(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_successful_storage_mutation_is_audited(client: AsyncClient) -> None:
 	payload = {
-		"upca": f"{uuid.uuid4().int % 10**12:012d}",
+		"barcode": f"{uuid.uuid4().int % 10**12:012d}",
 		"name": "Audit Test Item",
 		"dimensions": {"width": 1.0, "height": 2.0, "length": 3.0},
 		"weight": 4.0,

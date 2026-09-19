@@ -1005,11 +1005,11 @@ export async function getScannerStatus(): Promise<ScannerStatus> {
 	return apiFetch<ScannerStatus>('/robot/debug/scanner/status');
 }
 
-export async function sendScannerScan(code: string): Promise<{ message: string }> {
+export async function sendScannerScan(barcode: string): Promise<{ message: string }> {
 	return apiFetch<{ message: string }>('/robot/debug/scanner/scan', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ code })
+		body: JSON.stringify({ barcode })
 	});
 }
 
@@ -1034,7 +1034,7 @@ export interface PrinterStatus {
 
 export interface PrintLabelResult {
 	message: string;
-	code: string;
+	barcode: string;
 	printed: boolean;
 }
 
@@ -1054,11 +1054,11 @@ export async function getPrinterStatus(): Promise<PrinterStatus> {
 	return apiFetch<PrinterStatus>('/print/status');
 }
 
-export async function printPrinterLabel(code: string): Promise<PrintLabelResult> {
+export async function printPrinterLabel(barcode: string): Promise<PrintLabelResult> {
 	return apiFetch<PrintLabelResult>('/print', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ code })
+		body: JSON.stringify({ barcode })
 	});
 }
 
