@@ -479,6 +479,18 @@ def _get_overview_camera_urls(settings: Settings) -> dict[str, str]:
 	}
 
 
+def _get_overview_camera_recording_urls(settings: Settings) -> dict[str, str]:
+	cameras = {
+		"overview_one": settings.overview_one_camera,
+		"overview_two": settings.overview_two_camera,
+	}
+	return {
+		camera_id: camera.recording_url
+		for camera_id, camera in cameras.items()
+		if camera.enabled is True and camera.rtsp_url != ""
+	}
+
+
 DEFAULT_ACCESS_LEVELS = ["Level 1", "Level 2", "Level 3"]
 
 DEFAULT_ROLES: dict[str, list[str]] = {
@@ -709,8 +721,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	tool_camera_url = None if is_mock else _get_tool_camera_url(settings)
 	if tool_camera_url is not None and tool_camera_url != "":
+		tool_recording_url = settings.tool_camera.recording_url
 		try:
-			await init_tool_camera_manager(tool_camera_url)
+			await init_tool_camera_manager(tool_camera_url, tool_recording_url)
 			camera_ids.append("tool")
 			logger.info("tool_camera_initialized", rtsp_url=tool_camera_url)
 		except Exception as e:
@@ -718,8 +731,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	overhead_camera_url = None if is_mock else _get_overhead_camera_url(settings)
 	if overhead_camera_url is not None and overhead_camera_url != "":
+		overhead_recording_url = settings.overhead_camera.recording_url
 		try:
-			await init_overhead_camera_manager(overhead_camera_url)
+			await init_overhead_camera_manager(overhead_camera_url, overhead_recording_url)
 			camera_ids.append("overhead")
 			logger.info("overhead_camera_initialized", rtsp_url=overhead_camera_url)
 		except Exception as e:
@@ -727,8 +741,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	overview_camera_urls = {} if is_mock else _get_overview_camera_urls(settings)
 	for camera_id, rtsp_url in overview_camera_urls.items():
+		overview_recording_url = _get_overview_camera_recording_urls(settings)[camera_id]
 		try:
-			await init_overview_camera_manager(camera_id, rtsp_url)
+			await init_overview_camera_manager(camera_id, rtsp_url, overview_recording_url)
 			camera_ids.append(camera_id)
 			logger.info("overview_camera_initialized", camera_id=camera_id, rtsp_url=rtsp_url)
 		except Exception as e:

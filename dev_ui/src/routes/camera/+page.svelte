@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
-	import { apiFetch, buildAuthenticatedUrl } from '$lib';
+	import { apiFetch, buildAuthenticatedUrl, buildAuthenticatedWsUrl } from '$lib';
+	import { H264StreamPlayer, isWebCodecsAvailable } from '$lib/h264-stream';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	type CameraInfo = {
@@ -30,10 +31,16 @@
 	let deviceId = '';
 	let statusError = '';
 	let streamError = false;
+	let mjpegErrorDuringTry = false;
 	let loading = true;
 	let isImageFlipped = false;
 	let isDrawingMode = false;
 	let canvasEl: HTMLCanvasElement | null = null;
+	let feedCanvasEl: HTMLCanvasElement | null = null;
+	let h264Player: H264StreamPlayer | null = null;
+	let h264Ready = false;
+	const h264FailedFor = new Set<string>();
+	const webCodecsSupported = browser && isWebCodecsAvailable();
 	let resizeObserver: ResizeObserver | null = null;
 	let observedCanvas: HTMLCanvasElement | null = null;
 	let cameraLines: CameraLine[] = [];
@@ -53,6 +60,12 @@
 	$: if (browser === true && canvasEl !== null) {
 		observeCanvas(canvasEl);
 	}
+	$: if (browser === true && feedCanvasEl === null && h264Player !== null) {
+		stopH264Player();
+	}
+	$: if (browser === true && feedCanvasEl !== null && selectedCamera !== null) {
+		syncH264Player();
+	}
 	onMount(() => {
 		if (browser === false) {
 			return;
@@ -63,6 +76,7 @@
 	});
 
 	onDestroy(() => {
+		stopH264Player();
 		resizeObserver?.disconnect();
 
 		if (statusTimer !== null) {
@@ -91,6 +105,7 @@
 			cameras = response.cameras;
 			statusError = '';
 			streamError = false;
+			mjpegErrorDuringTry = false;
 
 			selectAvailableCamera();
 		} catch (error) {
@@ -146,6 +161,15 @@
 	}
 
 	function didStreamError(): void {
+		if (h264Ready === false && h264Player !== null) {
+			// The WebCodecs primary is still being attempted for this
+			// camera; let it run to completion. The key below remounts
+			// the img once the attempt fails so a fresh error can still
+			// set streamError.
+			mjpegErrorDuringTry = true;
+			return;
+		}
+
 		streamError = true;
 	}
 
@@ -155,6 +179,70 @@
 			resizeCanvas();
 			drawLines();
 		});
+	}
+
+	function syncH264Player(): void {
+		if (webCodecsSupported === false) {
+			return;
+		}
+
+		if (selectedCamera === null || isCameraOnline === false) {
+			return;
+		}
+
+		if (h264Ready === true) {
+			return;
+		}
+
+		if (h264FailedFor.has(selectedCamera.id)) {
+			return;
+		}
+
+		if (h264Player !== null && h264Player.isRunning === false) {
+			h264Player.stop();
+			h264Player = null;
+		}
+
+		if (h264Player !== null) {
+			return;
+		}
+
+		const player = new H264StreamPlayer(feedCanvasEl as HTMLCanvasElement, {
+		onFirstFrame: didH264FirstFrame,
+		onError: didH264Error
+		});
+		h264Player = player;
+		player.start(
+			buildAuthenticatedWsUrl(`/camera/ws/${selectedCamera.id}`)
+		);
+	}
+
+	function stopH264Player(): void {
+		if (h264Player !== null) {
+			h264Player.stop();
+			h264Player = null;
+		}
+
+		h264Ready = false;
+	}
+
+	function didH264FirstFrame(): void {
+		h264Ready = true;
+		requestAnimationFrame(() => {
+			resizeCanvas();
+			drawLines();
+		});
+	}
+
+	function didH264Error(): void {
+		if (selectedCamera !== null) {
+			// This camera did not deliver a WebCodecs stream; keep using the
+			// MJPEG fallback for it for the rest of this session.
+			h264FailedFor.add(selectedCamera.id);
+		}
+
+		h264Ready = false;
+		h264Player = null;
 	}
 
 	function didCanvasClick(event: MouseEvent): void {
@@ -298,8 +386,10 @@
 	function selectCamera(cameraId: string, shouldPersist: boolean): void {
 		selectedCameraId = cameraId;
 		streamError = false;
+		mjpegErrorDuringTry = false;
 		lineStart = null;
 		previewEnd = null;
+		stopH264Player();
 
 		if (shouldPersist === true) {
 			saveSelectedCameraId(cameraId);
@@ -493,14 +583,24 @@
 			message={`camera '${selectedCamera.id}' is offline. verify it is powered and reachable, then refresh.`}
 		/>
 	{:else if streamUrl !== '' && streamError === false}
-		<div class="stream-container">
-			<img
+		<div class="stream-container" class:webcodecs={h264Ready}>
+			<canvas
+				bind:this={feedCanvasEl}
+				class="webcodecs-feed"
 				class:flipped={isImageFlipped}
-				src={streamUrl}
-				alt="camera feed"
-				on:error={didStreamError}
-				on:load={didStreamLoad}
-			/>
+				aria-label="camera feed"
+			></canvas>
+			{#if h264Ready === false}
+				{#key mjpegErrorDuringTry && h264Player === null && h264FailedFor.has(selectedCameraId)}
+					<img
+						class:flipped={isImageFlipped}
+						src={streamUrl}
+						alt="camera feed"
+						on:error={didStreamError}
+						on:load={didStreamLoad}
+					/>
+				{/key}
+			{/if}
 			<canvas
 				bind:this={canvasEl}
 				class:drawing={isDrawingMode}
@@ -542,6 +642,18 @@
 		width: 100%;
 		height: auto;
 		aspect-ratio: 16 / 9;
+	}
+
+	.stream-container .webcodecs-feed {
+		display: none;
+	}
+
+	.stream-container.webcodecs .webcodecs-feed {
+		display: block;
+		width: 100%;
+		height: 100%;
+		position: relative;
+		z-index: 0;
 	}
 
 	.stream-container img {
