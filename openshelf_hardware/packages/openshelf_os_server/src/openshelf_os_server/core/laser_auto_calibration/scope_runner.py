@@ -32,6 +32,20 @@ def _get_side_shelves(grid: Any, side: StorageModuleSide) -> list[Any]:
     return list(getattr(grid, side.value, []))
 
 
+def _get_worker_grid(worker: Any) -> Any:
+    robot = getattr(worker, "_robot", None)
+    grid = getattr(robot, "_grid", None)
+
+    if grid is not None:
+        return grid
+
+    try:
+        config = get_root_config()
+        return laser_module.load_grid(Path(resolve_grid_path(config)))
+    except Exception:
+        return None
+
+
 def _build_single_shelf_scan_bounds(
     *,
     grid: Any,
@@ -119,6 +133,11 @@ def _validate_laser_auto_calibration_config(
     if right_bounds is None:
         right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
 
+    # The configured offset is required even for a run that re-derives it: `derive_reference_offsets`
+    # predicts the manual cells' detected positions from it, and refuses without one because at a
+    # ~105mm opening pitch predicting from zero matches the neighbouring opening. Checking it here
+    # turns a request that can never succeed into a refusal before any motion, instead of a failure
+    # after the angle/stage calibration and a full side scan.
     if requested_scope.mode == "all" or requested_scope.mode == "both":
         laser_module.validate_scan_bounds(left_bounds, "left scan bounds")
         laser_module.validate_scan_bounds(right_bounds, "right scan bounds")
@@ -151,7 +170,11 @@ def _validate_laser_auto_calibration_config(
 
 
 class ScopeRunnerMixin:
-    def _validate_requested_scope_config(self, requested_scope: LaserAutoCalibrationScope) -> None:
+    def _validate_requested_scope_config(
+        self,
+        requested_scope: LaserAutoCalibrationScope,
+        worker: RobotWorker | None = None,
+    ) -> None:
         scan_config = get_root_config().robot.grid.scan
         left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
         right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
@@ -161,6 +184,51 @@ class ScopeRunnerMixin:
             left_bounds=left_bounds,
             right_bounds=right_bounds,
         )
+
+        if (
+            requested_scope.derive_offsets_from_manual_cells is True
+            or requested_scope.derive_z_model_from_stall is True
+            or getattr(scan_config, "z_stall_anchor_enabled", False) is True
+        ):
+            self._validate_manual_reference_cells(requested_scope, worker)
+
+    def _validate_manual_reference_cells(
+        self,
+        requested_scope: LaserAutoCalibrationScope,
+        worker: RobotWorker | None,
+    ) -> None:
+        """Fail before any motion when a requested reference frame has no reference cells."""
+        grid = _get_worker_grid(worker)
+
+        if grid is None:
+            raise ValueError(
+                "a reference-frame or z-probe run needs the storage grid to find the manually "
+                "calibrated reference cells, and the robot has none loaded"
+            )
+
+        sides: list[StorageModuleSide] = (
+            [StorageModuleSide.LEFT, StorageModuleSide.RIGHT]
+            if requested_scope.mode in ("all", "both")
+            else ([requested_scope.side] if requested_scope.side is not None else [])
+        )
+        missing: list[str] = []
+
+        for side in sides:
+            cells = laser_module.select_manual_reference_cells(
+                grid=grid,
+                side=side,
+                shelf_idx=requested_scope.shelf_idx,
+                cell_idx=requested_scope.cell_idx if requested_scope.mode == "cell" else None,
+            )
+
+            if len(cells) == 0:
+                missing.append(side.value)
+
+        if len(missing) > 0:
+            raise ValueError(
+                "a reference-frame or z-probe run needs at least one cell marked manual in scope "
+                f"on {', '.join(missing)}; tick 'keep manual' when saving the reference cell"
+            )
 
     async def _run_requested_scope(
         self,

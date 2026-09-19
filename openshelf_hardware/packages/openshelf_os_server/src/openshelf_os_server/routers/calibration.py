@@ -7,7 +7,7 @@ import functools
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from typing import Annotated, Literal, Optional, ParamSpec, TypeVar
+from typing import Annotated, Any, Literal, Optional, ParamSpec, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -53,6 +53,8 @@ class StageMoveResponse(BaseModel):
     position: float = Field(description="Applied target in millimeters")
     warnings: list[str] | None
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
 
@@ -282,6 +284,25 @@ class SaveRequest(BaseModel):
 		None,
 		description="Cell width, height, and length in millimeters; omit to keep the current dimensions."
 	)
+
+
+async def _read_stage_extension_mm(worker: Any) -> float | None:
+	"""Live stage extension, for stamping a hand-saved z with the geometry it was found at."""
+	stage_motor = getattr(getattr(getattr(worker, "_robot", None), "_tool", None), "_ms", None)
+
+	if stage_motor is None:
+		return None
+
+	try:
+		position = await stage_motor.get_position()
+	except Exception:
+		logger.warning("calibration_save_stage_position_failed", exc_info=True)
+		return None
+
+	if position is None:
+		return None
+
+	return float(position)
 
 
 class CalibrationStatusResponse(BaseModel):
@@ -842,6 +863,8 @@ async def stream_laser_auto_calibration(
 	include_angle_calibration: bool | None = None,
 	include_extension_calibration: bool | None = None,
 	hold_y_enabled: bool | None = None,
+	derive_offsets_from_manual_cells: bool | None = None,
+	derive_z_model_from_stall: bool | None = None,
 	subscribe_only: bool = False,
 ) -> EventSourceResponse:
 	"""Start or observe automatic laser calibration.
@@ -856,6 +879,13 @@ async def stream_laser_auto_calibration(
 	cancellation from a closed connection. Optional scope parameters select cells,
 	both sides, or the angle/extension calibration phases. `hold_y_enabled=false` parks
 	Y on its brake between moves instead of holding it energised for the session.
+	`derive_offsets_from_manual_cells=true` frames the run by the cells marked manual in
+	scope, deriving each side's xy offset from them instead of using the configured one; it
+	needs at least one manual cell per side in scope and returns `400` without one.
+	`derive_z_model_from_stall=true` probes the shelf plate beside those same cells (physical
+	contact) to derive the side's z model, which is accepted only when it agrees with the
+	manual datum; the machine-level `robot.grid.scan.z_stall_anchor_enabled` asks for the same
+	thing without the parameter.
 	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,
@@ -864,7 +894,13 @@ async def stream_laser_auto_calibration(
 		mode,
 		include_angle_calibration,
 		include_extension_calibration,
-	).model_copy(update={"hold_y_enabled": hold_y_enabled is not False})
+	).model_copy(
+		update={
+			"hold_y_enabled": hold_y_enabled is not False,
+			"derive_offsets_from_manual_cells": derive_offsets_from_manual_cells is True,
+			"derive_z_model_from_stall": derive_z_model_from_stall is True,
+		}
+	)
 	manager = get_laser_auto_calibration_manager()
 	is_active = await manager.is_active()
 
@@ -1324,12 +1360,22 @@ async def save_calibration(request: SaveRequest):
 		_validate_saved_dimensions(request.dimensions, shelf.shelf_height)
 
 	cell = _ensure_cell(grid, side_enum, shelf, request.cell_idx)
+	previous_point = cell.calibration_point
+
+	# The z offset only means anything at the stage extension it was found at, so record that with
+	# the coordinate. Keep the existing stamp when a save does not touch z, since the live stage
+	# position says nothing about a z nobody re-measured.
+	captured_stage_mm = None if previous_point is None else previous_point.z_captured_at_stage_mm
+
+	if previous_point is None or float(previous_point.z_offset) != float(request.z_offset):
+		captured_stage_mm = await _read_stage_extension_mm(worker)
 
 	cell.calibration_point = CalibrationCoordinate(
 		x=request.x,
 		y=request.y,
 		s=_side_to_s(request.side),
 		z_offset=request.z_offset,
+		z_captured_at_stage_mm=captured_stage_mm,
 	)
 
 	if request.is_manual is not None:

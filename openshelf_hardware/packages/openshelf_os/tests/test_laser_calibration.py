@@ -1,5 +1,7 @@
 import asyncio
 import json
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -16,7 +18,6 @@ from openshelf_os.laser_calibration import (
 	apply_xy_reference_offsets,
 	apply_single_shelf_analysis,
 	apply_single_cell_rescan,
-	apply_single_cell_shelf_analysis,
 	build_shelves_from_scan,
 	build_single_shelf_known_edge_y,
 	build_single_cell_rescan_candidate,
@@ -1075,36 +1076,175 @@ def test_build_shelves_from_scan_appends_unmatched_detection() -> None:
 	assert cells[2].calibration_point.x == pytest.approx(200.0)
 
 
-def test_apply_single_cell_shelf_analysis_updates_only_target_xy(tmp_path: Path) -> None:
-	target_shelf = Shelf(
-		shelf_idx=0,
-		shelf_height=100.0,
-		shelf_width=200.0,
-		divider_width=13.0,
-		cells=[
-			Cell(
-				cell_idx=0,
-				status=CellStatus.AVAILABLE,
-				item=None,
-				calibration_point=CalibrationCoordinate(x=10.0, y=20.0, z_offset=30.0, s=0),
-				dimensions=Dimensions(width=40.0, height=50.0, length=60.0),
-			),
-			Cell(
-				cell_idx=1,
-				status=CellStatus.AVAILABLE,
-				item=None,
-				calibration_point=CalibrationCoordinate(x=20.0, y=20.0, z_offset=31.0, s=0),
-				dimensions=Dimensions(width=40.0, height=50.0, length=60.0),
-			),
-			Cell(
-				cell_idx=2,
-				status=CellStatus.AVAILABLE,
-				item=None,
-				calibration_point=CalibrationCoordinate(x=30.0, y=20.0, z_offset=32.0, s=0),
-				dimensions=Dimensions(width=40.0, height=50.0, length=60.0),
-			),
-		],
+def test_apply_single_shelf_analysis_shifts_cells_around_a_missing_manual_datum(tmp_path: Path) -> None:
+	"""The stored datum's index must not be mistaken for a *detected* index.
+
+	When the datum opening is not re-detected the detected indices shift relative to the stored
+	ones; filtering the x/y and z rewrites by the datum's stored index used to drop an unrelated
+	opening, leaving it at its raw detection-frame position and its old z.
+	"""
+	target_shelf = _existing_calibrated_shelf(3, [329.0, 494.0, 660.0])
+	target_shelf.cells[0].is_manual = True
+	target_shelf.cells[0].calibration_point.z_offset = 0.0
+	target_shelf.cells[0].calibration_point.z_captured_at_stage_mm = 47.0
+	for cell in target_shelf.cells[1:]:
+		cell.calibration_point.z_offset = 0.0
+
+	grid_path = tmp_path / 'grid.json'
+	grid = StorageGrid(left_module=[target_shelf], right_module=[], filename=str(grid_path))
+	grid.save()
+	metadata_path = tmp_path / 'metadata.json'
+	metadata_path.write_text('{}', encoding='utf-8')
+	# Only the second and third openings are seen this time.
+	analysis = SimpleNamespace(
+		shelves=[_detected_scan_shelf(0, [493.0, 659.0])],
+		metadata_path=str(metadata_path),
 	)
+	candidate_lookup = {(0, cell_idx): SimpleNamespace(wall_depth_mm=50.0) for cell_idx in range(2)}
+
+	with patch(
+		'openshelf_os.laser_calibration.staged_scan.build_candidate_lookup_by_cell',
+		return_value=candidate_lookup,
+	):
+		apply_single_shelf_analysis(
+			analysis=analysis,
+			grid=grid,
+			grid_path=grid_path,
+			scan_config=SimpleNamespace(left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
+			side=StorageModuleSide.LEFT,
+			target_shelf_idx=3,
+			z_delta_override_mm=1.0,
+		)
+
+	updated_cells = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells
+	by_idx = {cell.cell_idx: cell for cell in updated_cells}
+
+	# The datum keeps its hand point.
+	assert by_idx[0].is_manual is True
+	assert by_idx[0].calibration_point.x == pytest.approx(329.0)
+	assert by_idx[0].calibration_point.z_offset == pytest.approx(0.0)
+	# The two cells that were detected are shifted by the configured offset and take the applied z.
+	assert by_idx[1].is_manual is False
+	assert by_idx[1].calibration_point.x == pytest.approx(483.0)
+	assert by_idx[1].calibration_point.z_offset == pytest.approx(51.0)
+	assert by_idx[2].calibration_point.x == pytest.approx(649.0)
+	assert by_idx[2].calibration_point.z_offset == pytest.approx(51.0)
+
+
+def test_apply_single_cell_rescan_leaves_a_manual_datum_alone(tmp_path: Path) -> None:
+	"""The rescan saves the grid before the probe runs, so it must not rewrite the datum's point."""
+	from openshelf_os.laser_calibration.staged_scan import SingleCellRescanTarget, apply_single_cell_rescan
+
+	target_shelf = _existing_calibrated_shelf(3, [100.0, 201.0])
+	datum = target_shelf.cells[0]
+	datum.is_manual = True
+	hand_x_mm = float(datum.calibration_point.x)
+	hand_y_mm = float(datum.calibration_point.y)
+	grid_path = tmp_path / 'grid.json'
+	grid = StorageGrid(left_module=[target_shelf], right_module=[], filename=str(grid_path))
+	grid.save()
+
+	apply_single_cell_rescan(
+		grid=grid,
+		target=SingleCellRescanTarget(shelf_idx=3, cell_idx=0),
+		side=StorageModuleSide.LEFT,
+		detected_cell=SimpleNamespace(tool_x_mm=500.0, tool_y_mm=700.0),
+		scan_config=SimpleNamespace(left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
+	)
+
+	stored = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells[0]
+	assert stored.calibration_point.x == pytest.approx(hand_x_mm)
+	assert stored.calibration_point.y == pytest.approx(hand_y_mm)
+
+	# A non-manual cell in the same shelf is still reframed from the detection.
+	apply_single_cell_rescan(
+		grid=grid,
+		target=SingleCellRescanTarget(shelf_idx=3, cell_idx=1),
+		side=StorageModuleSide.LEFT,
+		detected_cell=SimpleNamespace(tool_x_mm=500.0, tool_y_mm=700.0),
+		scan_config=SimpleNamespace(left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
+	)
+
+	framed = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells[1]
+	assert framed.calibration_point.x == pytest.approx(490.0)
+	assert framed.calibration_point.y == pytest.approx(705.0)
+
+
+def test_apply_single_shelf_analysis_preserves_a_shelf_of_only_manual_cells(tmp_path: Path) -> None:
+	"""When every matched cell is manual the filtered key map is empty - and an empty map is not
+	the same as no map: `apply_wall_depth_z_offsets` must still treat those cells as preserved."""
+	target_shelf = _existing_calibrated_shelf(3, [100.0, 201.0, 303.0])
+	for cell in target_shelf.cells:
+		cell.is_manual = True
+		cell.calibration_point.z_offset = 0.0
+		cell.calibration_point.z_captured_at_stage_mm = 47.0
+
+	grid_path = tmp_path / 'grid.json'
+	grid = StorageGrid(left_module=[target_shelf], right_module=[], filename=str(grid_path))
+	grid.save()
+	metadata_path = tmp_path / 'metadata.json'
+	metadata_path.write_text('{}', encoding='utf-8')
+	analysis = SimpleNamespace(
+		shelves=[_detected_scan_shelf(0, [105.0, 205.0, 305.0])],
+		metadata_path=str(metadata_path),
+	)
+	candidate_lookup = {
+		(0, cell_idx): SimpleNamespace(wall_depth_mm=50.0)
+		for cell_idx in range(3)
+	}
+
+	with patch(
+		'openshelf_os.laser_calibration.staged_scan.build_candidate_lookup_by_cell',
+		return_value=candidate_lookup,
+	):
+		apply_single_shelf_analysis(
+			analysis=analysis,
+			grid=grid,
+			grid_path=grid_path,
+			scan_config=SimpleNamespace(left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0)),
+			side=StorageModuleSide.LEFT,
+			target_shelf_idx=3,
+			z_delta_override_mm=4.0,
+		)
+
+	updated_cells = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells
+
+	assert len(updated_cells) == 3
+	for cell in updated_cells:
+		# Hand-set 0.0, not wall_depth 50 + override 4.
+		assert cell.is_manual is True
+		assert cell.calibration_point.z_offset == pytest.approx(0.0)
+		assert cell.calibration_point.z_captured_at_stage_mm == pytest.approx(47.0)
+
+
+def test_staged_scan_is_importable_as_the_first_module_of_the_package() -> None:
+	"""The package resolves names lazily, so a submodule must not import a sibling at module level.
+
+	`staged_scan` starts with `from . import core`, which walks `_MODULE_NAMES`; if
+	`reference_offsets` imported `staged_scan` at module level in return, importing `staged_scan`
+	first raised `ImportError: cannot import name ... from partially initialized module`.
+	"""
+	completed = subprocess.run(
+		[
+			sys.executable,
+			'-c',
+			'import openshelf_os.laser_calibration.staged_scan as m; print(m.__name__)',
+		],
+		capture_output=True,
+		text=True,
+	)
+
+	assert completed.returncode == 0, completed.stderr
+	assert 'openshelf_os.laser_calibration.staged_scan' in completed.stdout
+
+
+def test_apply_single_shelf_analysis_keeps_the_manual_datum_and_its_stamp(tmp_path: Path) -> None:
+	"""A rebuilt shelf must not drop the hand-calibrated datum the derive/probe runs are judged on."""
+	target_shelf = _existing_calibrated_shelf(3, [100.0, 201.0, 303.0])
+	datum = target_shelf.cells[0]
+	datum.is_manual = True
+	datum.calibration_point.z_captured_at_stage_mm = 47.0
+
 	grid_path = tmp_path / 'grid.json'
 	grid = StorageGrid(
 		left_module=[target_shelf],
@@ -1112,41 +1252,46 @@ def test_apply_single_cell_shelf_analysis_updates_only_target_xy(tmp_path: Path)
 		filename=str(grid_path),
 	)
 	grid.save()
+	metadata_path = tmp_path / 'metadata.json'
+	metadata_path.write_text('{}', encoding='utf-8')
 	analysis = SimpleNamespace(
-		shelves=[
-			SimpleNamespace(
-				shelf_idx=0,
-				shelf_height_mm=100.0,
-				shelf_width_mm=200.0,
-				cells=[
-					SimpleNamespace(shelf_idx=0, cell_idx=0, tool_x_mm=100.0, tool_y_mm=120.0, width_mm=40.0, height_mm=50.0),
-					SimpleNamespace(shelf_idx=0, cell_idx=1, tool_x_mm=112.0, tool_y_mm=120.0, width_mm=40.0, height_mm=50.0),
-					SimpleNamespace(shelf_idx=0, cell_idx=2, tool_x_mm=120.0, tool_y_mm=120.0, width_mm=40.0, height_mm=50.0),
-				],
-			)
-		],
+		shelves=[_detected_scan_shelf(0, [105.0, 205.0, 305.0])],
+		metadata_path=str(metadata_path),
 	)
-	scan_config = SimpleNamespace()
+	candidate_lookup = {
+		(0, cell_idx): SimpleNamespace(wall_depth_mm=50.0)
+		for cell_idx in range(3)
+	}
 
-	apply_single_cell_shelf_analysis(
-		analysis=analysis,
-		grid=grid,
-		grid_path=grid_path,
-		scan_config=scan_config,
-		side=StorageModuleSide.LEFT,
-		target=SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
-	)
+	with patch(
+		'openshelf_os.laser_calibration.staged_scan.build_candidate_lookup_by_cell',
+		return_value=candidate_lookup,
+	):
+		apply_single_shelf_analysis(
+			analysis=analysis,
+			grid=grid,
+			grid_path=grid_path,
+			scan_config=SimpleNamespace(
+				left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+			),
+			side=StorageModuleSide.LEFT,
+			target_shelf_idx=3,
+			z_delta_override_mm=4.0,
+		)
 
-	updated_grid = StorageGrid.load_from_file(str(grid_path))
-	updated_cells = updated_grid.left_module[0].cells
-	assert updated_cells[0].calibration_point.x == pytest.approx(10.0)
-	assert updated_cells[0].calibration_point.y == pytest.approx(20.0)
-	assert updated_cells[0].calibration_point.z_offset == pytest.approx(30.0)
-	assert updated_cells[1].calibration_point.x == pytest.approx(22.0)
-	assert updated_cells[1].calibration_point.y == pytest.approx(20.0)
-	assert updated_cells[1].calibration_point.z_offset == pytest.approx(31.0)
-	assert updated_cells[2].calibration_point.x == pytest.approx(30.0)
-	assert updated_cells[2].calibration_point.y == pytest.approx(20.0)
+	updated_cells = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells
+	rebuilt_datum = updated_cells[0]
+
+	assert rebuilt_datum.cell_idx == 0
+	assert rebuilt_datum.is_manual is True
+	assert rebuilt_datum.calibration_point.z_captured_at_stage_mm == pytest.approx(47.0)
+	# The hand-set point itself survives: neither the detected position nor the applied z model
+	# may rewrite it, or a later probe would be judged against a model-produced value.
+	hand_point = datum.calibration_point
+	assert rebuilt_datum.calibration_point.x == pytest.approx(hand_point.x)
+	assert rebuilt_datum.calibration_point.y == pytest.approx(hand_point.y)
+	assert rebuilt_datum.calibration_point.z_offset == pytest.approx(hand_point.z_offset)
+	assert rebuilt_datum.calibration_point.z_offset != pytest.approx(54.0)
 
 
 def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) -> None:

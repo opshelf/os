@@ -341,7 +341,15 @@ async def test_lifespan_syncs_bins_before_starting_mock_runtime(monkeypatch) -> 
         calibration_dir="calibration.mock",
     )
     monkeypatch.setattr(main_module.RuntimeStatePaths, "current", lambda: runtime_paths)
-    monkeypatch.setattr(main_module, "get_settings", lambda: SimpleNamespace(robot=SimpleNamespace(enabled=False)))
+    monkeypatch.setattr(
+        main_module,
+        "get_settings",
+        # `main` reads settings.auth for the dev auto-user, so the fake has to carry it.
+        lambda: SimpleNamespace(
+            robot=SimpleNamespace(enabled=False),
+            auth=SimpleNamespace(dev_mode=False, dev_auto_user=None),
+        ),
+    )
     monkeypatch.setattr(main_module, "_run_migrations", lambda: events.append("migrations"))
     monkeypatch.setattr(main_module, "engine", SimpleNamespace(begin=schema_connection))
     monkeypatch.setattr(main_module, "AsyncSessionLocal", Session)
@@ -386,7 +394,15 @@ async def test_lifespan_recovers_workflows_when_robot_is_disabled(monkeypatch) -
         calibration_dir="calibration",
     )
     monkeypatch.setattr(main_module.RuntimeStatePaths, "current", lambda: runtime_paths)
-    monkeypatch.setattr(main_module, "get_settings", lambda: SimpleNamespace(robot=SimpleNamespace(enabled=False)))
+    monkeypatch.setattr(
+        main_module,
+        "get_settings",
+        # `main` reads settings.auth for the dev auto-user, so the fake has to carry it.
+        lambda: SimpleNamespace(
+            robot=SimpleNamespace(enabled=False),
+            auth=SimpleNamespace(dev_mode=False, dev_auto_user=None),
+        ),
+    )
     monkeypatch.setattr(main_module, "_run_migrations", lambda: None)
     monkeypatch.setattr(main_module, "engine", SimpleNamespace(begin=schema_connection))
     monkeypatch.setattr(main_module, "AsyncSessionLocal", Session)
@@ -441,7 +457,14 @@ async def test_lifespan_recovers_workflows_before_hardware_init_failure(monkeypa
         calibration_dir="calibration",
     )
     monkeypatch.setattr(main_module.RuntimeStatePaths, "current", lambda: runtime_paths)
-    monkeypatch.setattr(main_module, "get_settings", lambda: SimpleNamespace(robot=SimpleNamespace(enabled=True)))
+    monkeypatch.setattr(
+        main_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            robot=SimpleNamespace(enabled=True),
+            auth=SimpleNamespace(dev_mode=False, dev_auto_user=None),
+        ),
+    )
     monkeypatch.setattr(main_module, "_run_migrations", lambda: None)
     monkeypatch.setattr(main_module, "engine", SimpleNamespace(begin=schema_connection))
     monkeypatch.setattr(main_module, "AsyncSessionLocal", Session)

@@ -37,9 +37,15 @@ from openshelf_os_server.core.laser_auto_calibration.angle_runner import (
 from openshelf_os_server.core.laser_auto_calibration import angle_runner as angle_runner_module
 from openshelf_os_server.core.laser_auto_calibration.apply_runner import (
     _preserve_manual_cells,
-    _select_z_stall_probes,
 )
-from openshelf_os.storage import Cell, CalibrationCoordinate, CellStatus, Dimensions, Shelf
+from openshelf_os.storage import (
+    CalibrationCoordinate,
+    Cell,
+    CellStatus,
+    Dimensions,
+    Shelf,
+    StorageGrid,
+)
 from openshelf_os_server.core.laser_auto_calibration.scope_runner import (
     _validate_laser_auto_calibration_config,
 )
@@ -385,6 +391,55 @@ async def test_ensure_session_started_rejects_invalid_config_before_starting_bac
             )
 
     assert manager._task is None
+
+
+@pytest.mark.asyncio
+async def test_z_stall_anchor_flag_without_manual_cell_rejects_before_motion() -> None:
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config(
+        left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+        z_stall_anchor_enabled=True,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    grid = StorageGrid()
+    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0)])]
+    worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+
+    with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+        with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
+            with pytest.raises(ValueError, match="marked manual"):
+                await manager.ensure_session_started(
+                    worker,
+                    LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+                )
+
+    run_session_mock.assert_not_awaited()
+    assert manager._task is None
+
+
+@pytest.mark.asyncio
+async def test_z_stall_anchor_flag_starts_when_a_manual_cell_is_in_scope() -> None:
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config(
+        left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+        z_stall_anchor_enabled=True,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    grid = StorageGrid()
+    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
+    worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+
+    with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+        with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
+            snapshot = await manager.ensure_session_started(
+                worker,
+                LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+            )
+
+    assert snapshot.state == "starting"
+    assert manager._task is not None
+    await manager._task
+    run_session_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1313,58 +1368,6 @@ async def test_run_single_cell_uses_seeded_cell_rescan() -> None:
     )
 
 
-def test_select_z_stall_probes_returns_x_extremes_middle_shelf_first() -> None:
-
-    analysis = SimpleNamespace(
-        shelves=[
-            SimpleNamespace(
-                center_y_mm=100.0,
-                cells=[
-                    SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=10.0),
-                    SimpleNamespace(shelf_idx=0, cell_idx=1, center_x_mm=20.0),
-                ],
-            ),
-            SimpleNamespace(
-                center_y_mm=300.0,
-                cells=[
-                    SimpleNamespace(shelf_idx=1, cell_idx=0, center_x_mm=10.0),
-                    SimpleNamespace(shelf_idx=1, cell_idx=1, center_x_mm=20.0),
-                    SimpleNamespace(shelf_idx=1, cell_idx=2, center_x_mm=30.0),
-                ],
-            ),
-        ]
-    )
-    candidate_lookup = {
-        (0, 0): SimpleNamespace(wall_depth_mm=10.5),
-        (1, 0): SimpleNamespace(wall_depth_mm=10.0),
-        (1, 1): SimpleNamespace(wall_depth_mm=9.9),
-    }
-
-    result = _select_z_stall_probes(analysis, candidate_lookup)
-
-    # Middle shelf (idx 1) first, then its lowest-X and highest-X cells that have a
-    # wall depth (cell_idx 2 is skipped as it has none), then shelf 0's single valid cell.
-    assert [(cell.shelf_idx, cell.cell_idx, wall_depth_mm) for cell, wall_depth_mm in result] == [
-        (1, 0, 10.0),
-        (1, 1, 9.9),
-        (0, 0, 10.5),
-    ]
-
-
-def test_select_z_stall_probes_returns_empty_without_wall_depths() -> None:
-
-    analysis = SimpleNamespace(
-        shelves=[
-            SimpleNamespace(
-                center_y_mm=100.0,
-                cells=[SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=10.0)],
-            )
-        ]
-    )
-
-    assert _select_z_stall_probes(analysis, {}) == []
-
-
 def _manual_cell(cell_idx: int, x: float, y: float, is_manual: bool = False) -> Cell:
     return Cell(
         cell_idx=cell_idx,
@@ -2083,59 +2086,6 @@ async def test_robot_commands_are_blocked_while_laser_auto_calibration_is_runnin
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == "laser auto calibration is running"
-
-
-def test_select_z_stall_probes_skips_cells_whose_probe_x_exceeds_the_axis_limit() -> None:
-    """Real lb4-3 jam: L:3:6 sits at tool_x=960; the probe adds a +20mm shift -> 980, past
-    the 950mm axis limit. The axis clamped, putting the gripper over the cell's tray hole
-    (947-973) instead of the divider; it drove down into the hole and jammed the tray."""
-
-    analysis = SimpleNamespace(
-        shelves=[
-            SimpleNamespace(
-                center_y_mm=995.0,
-                cells=[
-                    SimpleNamespace(shelf_idx=3, cell_idx=0, center_x_mm=279.0, tool_x_mm=330.0),
-                    SimpleNamespace(shelf_idx=3, cell_idx=3, center_x_mm=593.0, tool_x_mm=644.0),
-                    SimpleNamespace(shelf_idx=3, cell_idx=6, center_x_mm=909.0, tool_x_mm=960.0),
-                ],
-            )
-        ]
-    )
-    candidate_lookup = {
-        (3, 0): SimpleNamespace(wall_depth_mm=9.9),
-        (3, 3): SimpleNamespace(wall_depth_mm=9.9),
-        (3, 6): SimpleNamespace(wall_depth_mm=9.9),
-    }
-
-    # x axis limit 950, probe shift 20 -> a probe cell must satisfy tool_x <= 930
-    result = _select_z_stall_probes(analysis, candidate_lookup, 930.0)
-    probed = [(cell.shelf_idx, cell.cell_idx) for cell, _ in result]
-
-    assert (3, 6) not in probed
-    assert probed == [(3, 0), (3, 3)]
-
-
-def test_select_z_stall_probes_without_a_limit_keeps_every_cell() -> None:
-    analysis = SimpleNamespace(
-        shelves=[
-            SimpleNamespace(
-                center_y_mm=995.0,
-                cells=[
-                    SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=279.0, tool_x_mm=330.0),
-                    SimpleNamespace(shelf_idx=0, cell_idx=1, center_x_mm=909.0, tool_x_mm=960.0),
-                ],
-            )
-        ]
-    )
-    candidate_lookup = {
-        (0, 0): SimpleNamespace(wall_depth_mm=9.9),
-        (0, 1): SimpleNamespace(wall_depth_mm=9.9),
-    }
-
-    result = _select_z_stall_probes(analysis, candidate_lookup, None)
-
-    assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in result] == [(0, 0), (0, 1)]
 
 
 @pytest.mark.asyncio
