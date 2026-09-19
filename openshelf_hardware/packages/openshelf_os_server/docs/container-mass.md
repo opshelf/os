@@ -17,8 +17,8 @@ on the device for complete schemas.
 | Endpoint | Mass input or output |
 | --- | --- |
 | `POST /api/storage/items` | Create/upsert an item with mass fields; returns the item. |
-| `PUT /api/storage/items/{barcode}` | Update selected fields; returns the item. |
-| `GET /api/storage/items/{barcode}` | Read current item mass fields. |
+| `POST /api/storage/items/update` | Update selected fields, taking the barcode in the body; returns the item. |
+| `POST /api/storage/items/lookup` | Read current item mass fields, taking the barcode in the body. |
 | `GET /api/storage/items` | Read the same fields in `items[]`. |
 | `POST /api/robot/commands` | Enroll a new item through the `store_item` command's `item` object. Returns `command_id` and acceptance status, not a measurement. |
 | `GET /api/robot/events` | Live SSE command results, with optional top-level `weight` in each decoded JSON event. |
@@ -78,8 +78,9 @@ edit that record and submit a new command when retrying; replaying the same
 Omitting any of the three new fields (`tare_weight`, `net_weight`,
 `full_net_weight`) preserves its stored state on updates. Omitted `weight` also
 preserves gross. Never supply both `weight` and `net_weight` in one request,
-even if either is `null`; this returns `422`. To clear current mass on PUT,
-use `{"net_weight":null}`; legacy `{"weight":null}` on PUT does not clear it.
+even if either is `null`; this returns `422`. To clear current mass on an item
+update, use `{"net_weight":null}`; legacy `{"weight":null}` on
+`POST /api/storage/items/update` does not clear it.
 For example, `{"tare_weight":null,"full_net_weight":null}` clears both
 references while retaining gross, and `{"net_weight":0}` records empty contents
 when tare is known. Changing tare alone retains gross and recalculates net.

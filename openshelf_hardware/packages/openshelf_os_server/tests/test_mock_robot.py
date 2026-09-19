@@ -498,7 +498,8 @@ async def test_mock_enrollment_survives_failure_and_editable_retry(
 		assert item.name == "Bottle" and item.item_metadata == {"label": "Original"}
 		assert (await session.execute(select(ItemLocation).where(ItemLocation.item_id == item.id))).first() is None
 
-	edited = await client.put("/api/storage/items/durable-mass", json={
+	edited = await client.post("/api/storage/items/update", json={
+		"barcode": "durable-mass",
 		"dimensions": {"width": 10, "height": 10, "length": 10},
 		"net_weight": 260.5,
 	})
@@ -537,11 +538,11 @@ async def test_mock_manual_mass_cycle_and_scale(client: AsyncClient, mock_runtim
 	assert response.status_code == 200, response.text
 	result = await _wait_for_status(client, response.json()['command_id'], 'succeeded')
 	assert result['result']['weight'] == 350
-	item = (await client.get('/api/storage/items/mass-mock')).json()
+	item = (await client.post("/api/storage/items/lookup", json={"barcode": "mass-mock"})).json()
 	assert item['weight'] == 350.5 and item['net_weight'] == 250.5
 	response = await client.post('/api/robot/commands', json={
 		'command': 'retrieve_item', 'location': item['locations'][0], 'request_id': 'mass-mock-second'})
 	assert response.status_code == 200, response.text
 	await _wait_for_status(client, response.json()['command_id'], 'succeeded')
-	item = (await client.get('/api/storage/items/mass-mock')).json()
+	item = (await client.post("/api/storage/items/lookup", json={"barcode": "mass-mock"})).json()
 	assert item['weight'] == 350 and item['net_weight'] == 250

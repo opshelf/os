@@ -1,9 +1,15 @@
 """widen storage_bins.barcode from VARCHAR(12) to the barcode bound
 
-Tray codes are arbitrary customer strings, so the bin column is widened to
-match items.barcode, the API/config surfaces, and the ORM model. SQLite
-stores text without enforcing the declared width, so this is a schema
-contract fix: no values change.
+Tray codes are arbitrary customer strings, so the bin column is widened
+to match items.barcode, the API/config surfaces, and the ORM model. No
+values change; the widening is a schema contract fix.
+
+The widening is dialect-aware and rebuild-free. On engines that can
+change a column type in place, the declared width is altered natively.
+SQLite is left alone: it stores text without enforcing the declared
+width, and it cannot change a column type without dropping and recreating
+the table, so the widening is unnecessary there and the rebuild would
+only risk the rows on every upgrading device.
 
 Revision ID: d8e9f0a1b2c3
 Revises: c7d8e9f0a1b2
@@ -36,6 +42,10 @@ def downgrade() -> None:
 
 def _widen(*, forward: bool) -> None:
 	bind = op.get_bind()
+	if bind.dialect.name == "sqlite":
+		# See the module docstring: the declared width is unenforced
+		# metadata on SQLite, so leave it alone without touching rows.
+		return
 	inspector = sa.inspect(bind)
 	if not inspector.has_table("storage_bins"):
 		return
@@ -44,32 +54,24 @@ def _widen(*, forward: bool) -> None:
 	if length is None:
 		# Column absent, or declared without a length (unbounded text): an
 		# upgrade has nothing to do; a downgrade still restores the width.
-		should_rebuild = not forward
+		should_widen = not forward
 	else:
-		# Rebuild only when the declared width is on the wrong side of the
+		# Alter only when the declared width is on the wrong side of the
 		# target: narrower than the bound on upgrade, wider on downgrade.
 		# Moving the other way would only risk the rows for no gain.
-		should_rebuild = length < target if forward else length > target
-	if not should_rebuild:
+		should_widen = length < target if forward else length > target
+	if not should_widen:
 		return
 
-	if _foreign_keys_enabled(bind):
-		# The batch rebuild drops and re-inserts storage_bins; with foreign
-		# keys armed that fires ON DELETE CASCADE on storage_bin_items (and
-		# nulls ON DELETE SET NULL children) while the migration reports
-		# success. Setting PRAGMA foreign_keys=OFF inside the migration is
-		# a no-op because the transaction is already open, so the connection
-		# must be configured with it disabled before the migration runs.
-		raise RuntimeError(
-			"refusing to rebuild storage_bins while the migration connection "
-			"has PRAGMA foreign_keys enabled: the batch rebuild drops and "
-			"re-inserts the rows, which deletes the storage_bin_items "
-			"children via ON DELETE CASCADE. Run the migration with foreign "
-			"keys disabled on its connection (PRAGMA foreign_keys=OFF, set "
-			"before the migration transaction opens)."
-		)
-
-	_rebuild_barcode_column(target)
+	# A native type change runs in place on these engines, so no rows,
+	# children, indexes, or constraints are touched.
+	op.alter_column(
+		"storage_bins",
+		"barcode",
+		type_=sa.String(target),
+		existing_type=sa.String(length) if length is not None else sa.String(),
+		existing_nullable=False,
+	)
 
 
 def _barcode_length(inspector: sa.Inspector) -> int | None:
@@ -79,48 +81,3 @@ def _barcode_length(inspector: sa.Inspector) -> int | None:
 			length = getattr(column["type"], "length", None)
 			return length if isinstance(length, int) else None
 	return None
-
-
-def _foreign_keys_enabled(bind: sa.Connection) -> bool:
-	return bind.execute(sa.text("PRAGMA foreign_keys")).scalar_one() == 1
-
-
-def _rebuild_barcode_column(target: int) -> None:
-	bind = op.get_bind()
-	with op.batch_alter_table(
-		"storage_bins",
-		recreate="always",
-		copy_from=_rebuild_source_table(bind),
-	) as batch_op:
-		batch_op.alter_column("barcode", type_=sa.String(target))
-
-
-def _rebuild_source_table(bind: sa.Connection) -> sa.Table:
-	"""Reflect the columns and re-declare the named constraint and indexes.
-
-	The batch recreation copies these onto the rebuilt table, so the table
-	comes back with its uniqueness and indexes intact. Anything anonymous
-	(the inline UNIQUE autoindex on barcode) is dropped on purpose: the
-	unique ix_storage_bins_barcode index enforces the same rule.
-	"""
-	reflected = sa.Table("storage_bins", sa.MetaData(), autoload_with=bind)
-	table = sa.Table(
-		"storage_bins",
-		sa.MetaData(),
-		*(
-			sa.Column(
-				column.name,
-				column.type,
-				primary_key=column.primary_key,
-				nullable=column.nullable,
-				server_default=column.server_default,
-			)
-			for column in reflected.columns
-		),
-	)
-	table.append_constraint(
-		sa.UniqueConstraint("side", "shelf_idx", "cell_idx", name="uq_storage_bins_home_cell")
-	)
-	sa.Index("ix_storage_bins_barcode", table.c.barcode, unique=True)
-	sa.Index("ix_storage_bins_status", table.c.status)
-	return table

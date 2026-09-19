@@ -89,7 +89,7 @@ class ItemCreate(MassInput):
     barcode: str
     name: str = Field(max_length=255)
     dimensions: Optional[Dict[str, float]] = Field(default=None, description="Positive width, height, and length in millimeters; required when enrolling a new item.", examples=[{"width":10,"height":10,"length":10}])
-    weight: Optional[float] = Field(default=None, description="Gross mass in grams. Do not combine with net_weight; null does not clear gross on PUT.", examples=[350.5])
+    weight: Optional[float] = Field(default=None, description="Gross mass in grams. Do not combine with net_weight; null does not clear stored gross.", examples=[350.5])
     item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata", description="Arbitrary item metadata; metadata is also accepted as an input alias. Replaces the object when supplied.")
     access_level_id: Optional[int] = None
 
@@ -117,7 +117,7 @@ class ItemUpdate(MassInput):
 
     name: Optional[str] = Field(default=None, max_length=255)
     dimensions: Optional[Dict[str, float]] = Field(default=None, description="Positive width, height, and length in millimeters; required when enrolling a new item.", examples=[{"width":10,"height":10,"length":10}])
-    weight: Optional[float] = Field(default=None, description="Gross mass in grams. Do not combine with net_weight; null does not clear gross on PUT.", examples=[350.5])
+    weight: Optional[float] = Field(default=None, description="Gross mass in grams. Do not combine with net_weight; null does not clear stored gross.", examples=[350.5])
     item_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="item_metadata", description="Arbitrary item metadata; metadata is also accepted as an input alias. Replaces the object when supplied.")
     access_level_id: Optional[int] = None
 
@@ -135,6 +135,24 @@ class ItemLocationCreate(BaseModel):
     side: StorageModuleSideDto
     shelf_idx: int
     cell_idx: int
+
+
+class BarcodeRequest(BaseModel):
+    """Request payload identifying one item by barcode."""
+
+    barcode: str = Field(min_length=1, max_length=BARCODE_MAX_LENGTH)
+
+
+class ItemUpdateRequest(ItemUpdate):
+    """Request payload for updating one item."""
+
+    barcode: str = Field(min_length=1, max_length=BARCODE_MAX_LENGTH)
+
+
+class ItemLocationRequest(ItemLocationCreate):
+    """Request payload for assigning or removing one item location."""
+
+    barcode: str = Field(min_length=1, max_length=BARCODE_MAX_LENGTH)
 
 
 class StorageCellUpdate(BaseModel):
@@ -1025,25 +1043,27 @@ async def get_items(
     }
 
 
-@router.get(
-    "/items/{barcode}",
+@router.post(
+    "/items/lookup",
     dependencies=[Depends(require_relay_or_permissions("storage:read"))],
     summary="Read an item and its storage state",
     responses=response_docs(errors=(401, 403, 404)),
 )
-async def get_item(
-    barcode: str,
+async def lookup_item(
+    request: BarcodeRequest,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_relay_or_current_user),
 ) -> ItemWithLocations:
     """Read an item and its storage state.
 
+    The barcode travels in the request body, so every customer barcode is addressable.
     Returns the inventory record, computed retrieval access, locations, and optional bin
     membership. Read this before moving an item. `net_weight` is derived from known gross
     and tare; it is null when gross is below tare or either value is missing. A missing
     record returns `404`.
     """
     storage_service = StorageService(session)
+    barcode = request.barcode
 
     item = await storage_service.get_item(barcode)
     if not item:
@@ -1074,7 +1094,8 @@ async def create_item(
     To enroll an opened container, supply `tare_weight`, `net_weight`, and optionally
     `full_net_weight`; gross becomes tare plus net. Do not supply both `weight` and
     `net_weight`, even if one is null. See the storage group for mass persistence rules.
-    Prefer PUT for partial edits to existing records. Reserved bin barcodes and forbidden
+    Prefer `POST /api/storage/items/update` for partial edits to existing records. Reserved bin
+    barcodes and forbidden
     changes to bin-managed items return `409`. A tray interaction holding the item does not
     block the edit; conflicting state is rejected when that interaction completes.
     """
@@ -1131,23 +1152,23 @@ async def create_item(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.put(
-    "/items/{barcode}",
+@router.post(
+    "/items/update",
     dependencies=[Depends(require_relay_or_permissions("storage:write"))],
     summary="Update selected inventory fields",
     responses=response_docs(errors=(401, 403, 404, 409, 422)),
 )
 async def update_item(
-    barcode: str,
-    item: ItemUpdate,
+    item: ItemUpdateRequest,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_relay_or_current_user),
 ) -> ItemWithLocations:
     """Update selected inventory fields.
 
-    Omitted mass fields retain their values. `net_weight=null` clears gross and derived net;
-    `tare_weight=null` or `full_net_weight=null` clears that reference. Legacy `weight=null`
-    does not clear gross on PUT. Supplying both `weight` and `net_weight` returns `422`.
+    Takes the barcode and the fields to change in the request body. Omitted mass fields
+    retain their values. `net_weight=null` clears gross and derived net; `tare_weight=null`
+    or `full_net_weight=null` clears that reference. Legacy `weight=null` does not clear
+    gross. Supplying both `weight` and `net_weight` returns `422`.
     Setting net requires a known tare, either stored or supplied.
 
     Changing tare alone preserves gross and recomputes net. Metadata replaces the object
@@ -1156,6 +1177,7 @@ async def update_item(
     hardware.
     """
     storage_service = StorageService(session)
+    barcode = item.barcode
 
     existing = await storage_service.get_item(barcode)
     bin_service = BinStorageService(session)
@@ -1198,24 +1220,26 @@ async def update_item(
     return await _build_item_payload_with_bin(fresh_item, locations, current_user, session)
 
 
-@router.delete(
-    "/items/{barcode}",
+@router.post(
+    "/items/delete",
     dependencies=[Depends(require_relay_or_permissions("storage:delete"))],
     summary="Delete an inventory record",
     responses=response_docs(model=MessageResponse, errors=(401, 403, 404, 409)),
 )
 @monitor_performance
 async def delete_item(
-    barcode: str,
+    request: BarcodeRequest,
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, str]:
     """Delete an inventory record.
 
-    Deletes the item and its database location records; it does not physically retrieve it.
-    Bin membership and retained workflow history block deletion. Use this low-level endpoint
-    only after reconciling physical occupancy. A missing record returns `404`.
+    Takes the barcode in the request body. Deletes the item and its database location
+    records; it does not physically retrieve it. Bin membership and retained workflow
+    history block deletion. Use this low-level endpoint only after reconciling physical
+    occupancy. A missing record returns `404`.
     """
     storage_service = StorageService(session)
+    barcode = request.barcode
 
     existing = await storage_service.get_item(barcode)
     bin_service = BinStorageService(session)
@@ -1241,26 +1265,27 @@ async def delete_item(
 
 
 @router.post(
-    "/items/{barcode}/locations",
+    "/items/locations/add",
     dependencies=[Depends(require_permissions("storage:write"))],
     summary="Assign an inventory location",
     responses=response_docs(errors=(400, 401, 403, 404, 409, 422)),
 )
 async def add_item_location(
-    barcode: str,
-    location: ItemLocationCreate,
+    location: ItemLocationRequest,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Assign an inventory location.
 
-    Adds database occupancy for an item without moving hardware. Side and zero-based
-    shelf/cell indices identify the location. Occupied cells and incompatible bin state are
+    Takes the barcode and the zero-based side/shelf/cell of the location in the request body.
+    Adds database occupancy for an item without moving hardware. Occupied cells and
+    incompatible bin state are
     rejected. Tray homes are usable while their tray is away; the tray's return then reports
     the occupied home instead. The status stream overlays these database locations on the
     grid.
     """
     storage_service = StorageService(session)
+    barcode = location.barcode
 
     db_item = await storage_service.get_item(barcode)
     if db_item is None:
@@ -1311,55 +1336,29 @@ async def _remove_item_location_impl(
         raise HTTPException(status_code=404, detail="Location not found")
 
 
-@router.delete(
-    "/items/{barcode}/locations",
+@router.post(
+    "/items/locations/remove",
     dependencies=[Depends(require_permissions("storage:write"))],
     summary="Remove an inventory location",
     responses=response_docs(errors=(401, 403, 404, 409)),
 )
 async def remove_item_location(
-    barcode: str,
-    side: StorageModuleSideDto,
-    shelf_idx: int,
-    cell_idx: int,
+    request: ItemLocationRequest,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ItemWithLocations:
     """Remove an inventory location.
 
-    Removes the specified database location using query parameters. This does not move
-    hardware or remove the storage-grid cell. Use only when physical occupancy has already
-    been reconciled.
+    Takes the barcode and the zero-based side/shelf/cell of the location in the request body.
+    This does not move hardware or remove the storage-grid cell. Use only when physical
+    occupancy has already been reconciled.
     """
     storage_service = StorageService(session)
 
-    await _remove_item_location_impl(barcode, side, shelf_idx, cell_idx, storage_service)
-    return await _load_item_with_locations(barcode, storage_service, current_user)
-
-
-@router.delete(
-    "/items/{barcode}/locations/{side}/{shelf_idx}/{cell_idx}",
-    dependencies=[Depends(require_permissions("storage:write"))],
-    summary="Remove an inventory location by path",
-    responses=response_docs(errors=(401, 403, 404, 409)),
-)
-async def remove_item_location_by_path(
-    barcode: str,
-    side: StorageModuleSideDto,
-    shelf_idx: int,
-    cell_idx: int,
-    session: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> ItemWithLocations:
-    """Remove an inventory location by path.
-
-    Equivalent to the query-parameter removal endpoint, with side and zero-based shelf/cell
-    indices in the URL. Updates database occupancy only; no robot command is issued.
-    """
-    storage_service = StorageService(session)
-
-    await _remove_item_location_impl(barcode, side, shelf_idx, cell_idx, storage_service)
-    return await _load_item_with_locations(barcode, storage_service, current_user)
+    await _remove_item_location_impl(
+        request.barcode, request.side, request.shelf_idx, request.cell_idx, storage_service
+    )
+    return await _load_item_with_locations(request.barcode, storage_service, current_user)
 
 
 # ---------------------------------------------------------------------------

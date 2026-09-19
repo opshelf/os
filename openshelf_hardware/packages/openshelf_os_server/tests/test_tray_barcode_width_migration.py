@@ -1,10 +1,11 @@
 import importlib.util
 from pathlib import Path
 
-import pytest
 import sqlalchemy as sa
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
+
+from openshelf_os.config.settings import BARCODE_MAX_LENGTH
 
 
 def _migration():
@@ -18,19 +19,7 @@ def _migration():
     return module
 
 
-def _make_engine(*, foreign_keys: int) -> sa.engine.Engine:
-    engine = sa.create_engine("sqlite://")
-
-    @sa.event.listens_for(engine, "connect")
-    def _set_pragma_on_connect(dbapi_connection, _connection_record) -> None:
-        # The raw DBAPI connection is outside any transaction here, so the
-        # pragma actually takes effect before the migration runs.
-        dbapi_connection.execute(f"PRAGMA foreign_keys={foreign_keys}")
-
-    return engine
-
-
-def _bin_schema(connection) -> None:
+def _bin_schema(connection, *, barcode_length: int = 12) -> None:
     """storage_bins as left by c0d1e2f3a4b5 + d1e2f3a4b5c6, with children."""
     metadata = sa.MetaData()
     items = sa.Table(
@@ -43,7 +32,7 @@ def _bin_schema(connection) -> None:
         "storage_bins",
         metadata,
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("barcode", sa.String(12), nullable=False, unique=True),
+        sa.Column("barcode", sa.String(barcode_length), nullable=False, unique=True),
         sa.Column("side", sa.String(20), nullable=False),
         sa.Column("shelf_idx", sa.Integer(), nullable=False),
         sa.Column("cell_idx", sa.Integer(), nullable=False),
@@ -88,6 +77,45 @@ def _bin_schema(connection) -> None:
     connection.execute(bin_items.insert().values(id=1, bin_id=1, item_id=1))
 
 
+def _as_dialect(connection, dialect_name: str) -> None:
+    """Pretend the (real, in-memory) SQLite connection is another dialect.
+
+    The migration only reads the dialect name to pick its branch; the
+    reflection and row data stay real SQLite. The mutation is on this
+    test's own engine, so it cannot leak into other tests.
+    """
+    connection.dialect.name = dialect_name
+
+
+def _record_alter_columns(migration, connection) -> list:
+    """Point the migration at the connection and record its DDL requests.
+
+    alter_column is stubbed so the DDL the migration would request can be
+    asserted on instead of executed: an empty record is proof that no DDL
+    ran at all (no rebuild, no row risk).
+    """
+    migration.op = Operations(MigrationContext.configure(connection))
+    calls: list = []
+
+    def fake_alter_column(table, column, **kwargs):
+        calls.append((table, column, kwargs))
+
+    migration.op.alter_column = fake_alter_column
+    return calls
+
+
+def _assert_calls(calls: list, target: int, existing: int) -> None:
+    assert len(calls) == 1, f"expected exactly one native alter, got {calls}"
+    call_table, call_column, kwargs = calls[0]
+    assert call_table == "storage_bins"
+    assert call_column == "barcode"
+    assert isinstance(kwargs["type_"], sa.String)
+    assert kwargs["type_"].length == target
+    assert isinstance(kwargs["existing_type"], sa.String)
+    assert kwargs["existing_type"].length == existing
+    assert kwargs["existing_nullable"] is False
+
+
 def _barcode_length(connection) -> int:
     inspector = sa.inspect(connection)
     for column in inspector.get_columns("storage_bins"):
@@ -96,9 +124,6 @@ def _barcode_length(connection) -> int:
 
 
 def _assert_rows_intact(connection) -> None:
-    # The rebuild drops and re-inserts storage_bins; with foreign keys off
-    # the ON DELETE CASCADE on the children is not armed, so both parent
-    # and child rows must survive.
     assert connection.execute(sa.text("SELECT id, barcode FROM storage_bins")).fetchall() == [
         (1, "TRAY-0001")
     ]
@@ -107,18 +132,20 @@ def _assert_rows_intact(connection) -> None:
     ]
 
 
-def test_upgrade_widens_barcode_preserving_rows_and_downgrade_restores():
+def test_upgrade_on_sqlite_leaves_width_and_preserves_rows_indexes_and_constraint():
     migration = _migration()
 
-    with _make_engine(foreign_keys=0).begin() as connection:
+    with sa.create_engine("sqlite://").begin() as connection:
         _bin_schema(connection)
-        migration.op = Operations(MigrationContext.configure(connection))
+        _as_dialect(connection, "sqlite")
+        calls = _record_alter_columns(migration, connection)
         migration.upgrade()
 
-        assert _barcode_length(connection) == 255
-
-        # The rebuild must come back with its indexes and named constraint.
-        inspector = sa.inspect(connection)
+        # SQLite: the declared width is left alone (it is unenforced
+        # metadata), no rebuild runs, so rows, children, indexes, and the
+        # named constraint all come through untouched.
+        assert calls == []
+        assert _barcode_length(connection) == 12
         inspector = sa.inspect(connection)
         index_names = {index["name"] for index in inspector.get_indexes("storage_bins")}
         assert index_names == {"ix_storage_bins_barcode", "ix_storage_bins_status"}
@@ -133,35 +160,63 @@ def test_upgrade_widens_barcode_preserving_rows_and_downgrade_restores():
         )
         _assert_rows_intact(connection)
 
+
+def test_downgrade_on_sqlite_is_a_noop_and_leaves_rows_untouched():
+    migration = _migration()
+
+    with sa.create_engine("sqlite://").begin() as connection:
+        _bin_schema(connection)
+        _as_dialect(connection, "sqlite")
+        calls = _record_alter_columns(migration, connection)
         migration.downgrade()
 
         assert _barcode_length(connection) == 12
         _assert_rows_intact(connection)
+        assert calls == []
 
 
-def test_upgrade_with_foreign_keys_on_raises_and_leaves_rows_untouched():
+def test_upgrade_on_other_dialects_requests_the_native_widen():
     migration = _migration()
 
-    with _make_engine(foreign_keys=1).begin() as connection:
+    with sa.create_engine("sqlite://").begin() as connection:
         _bin_schema(connection)
-        migration.op = Operations(MigrationContext.configure(connection))
-        with pytest.raises(RuntimeError, match="PRAGMA foreign_keys"):
-            migration.upgrade()
+        _as_dialect(connection, "postgresql")
+        calls = _record_alter_columns(migration, connection)
+        migration.upgrade()
 
-        # The declared width is still the narrow one and nothing was
-        # dropped on the way down.
+        _assert_calls(
+            calls, target=BARCODE_MAX_LENGTH, existing=migration.ORIGINAL_BARCODE_LENGTH
+        )
+        # The stubbed alter never touched the table: width and rows intact.
         assert _barcode_length(connection) == 12
         _assert_rows_intact(connection)
 
 
-def test_upgrade_is_idempotent_when_the_column_is_already_wide():
+def test_upgrade_on_other_dialects_is_idempotent_when_already_wide():
     migration = _migration()
 
-    with _make_engine(foreign_keys=0).begin() as connection:
-        _bin_schema(connection)
-        migration.op = Operations(MigrationContext.configure(connection))
-        migration.upgrade()
+    with sa.create_engine("sqlite://").begin() as connection:
+        _bin_schema(connection, barcode_length=BARCODE_MAX_LENGTH)
+        _as_dialect(connection, "postgresql")
+        calls = _record_alter_columns(migration, connection)
         migration.upgrade()
 
-        assert _barcode_length(connection) == 255
+        # Already at the bound in the safe direction: no alter, no risk.
+        assert calls == []
+        assert _barcode_length(connection) == BARCODE_MAX_LENGTH
+        _assert_rows_intact(connection)
+
+
+def test_downgrade_on_other_dialects_requests_the_native_narrow():
+    migration = _migration()
+
+    with sa.create_engine("sqlite://").begin() as connection:
+        _bin_schema(connection, barcode_length=BARCODE_MAX_LENGTH)
+        _as_dialect(connection, "postgresql")
+        calls = _record_alter_columns(migration, connection)
+        migration.downgrade()
+
+        _assert_calls(
+            calls, target=migration.ORIGINAL_BARCODE_LENGTH, existing=BARCODE_MAX_LENGTH
+        )
         _assert_rows_intact(connection)
