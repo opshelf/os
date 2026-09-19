@@ -9,7 +9,7 @@ import threading
 from types import TracebackType
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from openshelf_os.operating_mode import OperatingMode
@@ -53,12 +53,12 @@ class PrinterStatusResponse(BaseModel):
 
 
 class PrintLabelRequest(BaseModel):
-    code: str = Field(min_length=1, max_length=128, pattern=r"^[\x20-\x7E]+$")
+    barcode: str = Field(min_length=1, max_length=128, pattern=r"^[\x20-\x7E]+$")
 
 
 class PrintLabelResponse(BaseModel):
     message: str
-    code: str
+    barcode: str
     printed: bool
 
 
@@ -121,9 +121,9 @@ class USBPrinter:
         self._write_all(build_label_job(payload, feed_dots=feed_dots))
 
 
-class PrintUpcaResponse(BaseModel):
+class PrintBarcodeResponse(BaseModel):
     message: Literal["success"]
-    upca: str
+    barcode: str
     printed: bool
 
 
@@ -247,41 +247,34 @@ def _print_payload(payload: str) -> bool:
 async def print_custom_label(request: PrintLabelRequest) -> PrintLabelResponse:
     """Print a barcode label.
 
-    Requires `printer:print` or the relay service credential. Prints the requested code and
+    Requires `printer:print` or the relay service credential. Prints the requested barcode and
     returns whether printing was accepted. Mock mode validates input and simulates printing
     without a physical artifact. This operation has no idempotency key; a retry may print
     another label.
     """
     return PrintLabelResponse(
         message="success",
-        code=request.code,
-        printed=await asyncio.to_thread(_print_payload, request.code),
+        barcode=request.barcode,
+        printed=await asyncio.to_thread(_print_payload, request.barcode),
     )
 
 
 @router.post(
-    "/{upca}",
+    "/{barcode}",
     dependencies=[Depends(require_relay_or_permissions("printer:print"))],
-    summary="Print a UPCA label",
-    responses=response_docs(model=PrintUpcaResponse, errors=(401, 403, 422)),
+    summary="Print a barcode label",
+    responses=response_docs(model=PrintBarcodeResponse, errors=(401, 403, 422)),
 )
-async def print_label(upca: str) -> dict[str, str | bool]:
-    """Print a UPCA label.
+async def print_label(barcode: str) -> dict[str, str | bool]:
+    """Print a barcode label.
 
-    Requires `printer:print` or the relay service credential. Mock mode requires 11 or 12
-    ASCII decimal digits, returning `422` for invalid input; valid input returns
-    `printed=true` without a physical label. Hardware mode skips this digit validation
-    and prints the supplied value as Code 128, or returns `printed=false` when printing
-    is disabled. Returns the supplied UPCA and `printed` flag. Does not create inventory.
+    Requires `printer:print` or the relay service credential. The supplied value is printed
+    as a Code 128 label, so any non-empty ASCII barcode is accepted; mock mode returns
+    `printed=true` without a physical label. Returns the supplied barcode and `printed` flag
+    (`false` when printing is disabled). Does not create inventory.
     """
-    if get_operating_mode() == OperatingMode.mock:
-        if len(upca) not in {11, 12} or upca.isascii() is False or upca.isdecimal() is False:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="UPCA must contain 11 or 12 decimal digits",
-            )
     return {
         "message": "success",
-        "upca": upca,
-        "printed": await asyncio.to_thread(_print_payload, upca),
+        "barcode": barcode,
+        "printed": await asyncio.to_thread(_print_payload, barcode),
     }

@@ -202,15 +202,15 @@ async def validate_direct_store_reservation(
     conflicting state when it completes instead of locking the item meanwhile. A tray home is
     an ordinary target cell; the tray's return takes it out of service until the cell is free.
     """
-    upca = item_data.get("upca")
-    if isinstance(upca, str) and await is_reserved_bin_barcode(upca, session):
+    barcode = item_data.get("barcode")
+    if isinstance(barcode, str) and await is_reserved_bin_barcode(barcode, session):
         raise DirectStoreReservationError(
             "Storage bin barcodes cannot be stored with a direct robot command",
             "reserved_bin_barcode",
         )
 
-    if isinstance(upca, str):
-        item_id = await session.scalar(select(Item.id).where(Item.upca == upca))
+    if isinstance(barcode, str):
+        item_id = await session.scalar(select(Item.id).where(Item.barcode == barcode))
         if item_id is not None:
             service = BinStorageService(session)
             if await service.item_bin(item_id) is not None:
@@ -234,7 +234,7 @@ class BinStorageService:
         }
         for entry in configured:
             barcode_item = (
-                await self.session.execute(select(Item).where(Item.upca == entry.barcode))
+                await self.session.execute(select(Item).where(Item.barcode == entry.barcode))
             ).scalar_one_or_none()
             if barcode_item is not None:
                 raise ValueError(
@@ -352,7 +352,7 @@ class BinStorageService:
                 select(Item, StorageBinItem.compartment)
                 .join(StorageBinItem, StorageBinItem.item_id == Item.id)
                 .where(StorageBinItem.bin_id == row.id)
-                .order_by(Item.name, Item.upca)
+                .order_by(Item.name, Item.barcode)
             )
         ).all()
         capacity_volume = self._volume(row.inner_dimensions) or 0.0
@@ -380,7 +380,7 @@ class BinStorageService:
             "gross_weight": row.gross_weight if row.status == "at_home" else None,
             "active": row.active,
             "items": [
-                {"id": item.id, "upca": item.upca, "name": item.name, "compartment": compartment}
+                {"id": item.id, "barcode": item.barcode, "name": item.name, "compartment": compartment}
                 for item, compartment in members
             ],
         }
@@ -400,8 +400,8 @@ class BinStorageService:
 
     async def targets_reserved_bin_identity(self, payload: dict[str, Any]) -> bool:
         """Whether legacy direct mutation would claim a reserved bin barcode or home."""
-        upca = payload.get("upca")
-        if isinstance(upca, str) and await is_reserved_bin_barcode(upca, self.session):
+        barcode = payload.get("barcode")
+        if isinstance(barcode, str) and await is_reserved_bin_barcode(barcode, self.session):
             return True
 
         location = _location_from_payload(payload.get("location"))
@@ -819,7 +819,7 @@ class BinStorageService:
             "state": row.state,
             "compartment": row.compartment,
             "bin": await self.serialize_bin(tray),
-            "item": {"id": item.id, "upca": item.upca, "name": item.name} if item else None,
+            "item": {"id": item.id, "barcode": item.barcode, "name": item.name} if item else None,
             "error": row.error,
             "history": row.history or [],
             "resolution": row.resolution,
@@ -838,7 +838,7 @@ class BinStorageService:
             result["contents"] = [
                 dict(
                     id=i.id,
-                    upca=i.upca,
+                    barcode=i.barcode,
                     name=i.name,
                     confirmed=i.id in confirmed_ids,
                     compartment=positions.get(str(i.id)),
@@ -1123,7 +1123,7 @@ class BinStorageService:
         assert tray is not None
         await enqueue_internal(
             worker,
-            DeliverTrayCommand(request_id=workflow.id, upca=tray.barcode, location=_location(tray)),
+            DeliverTrayCommand(request_id=workflow.id, barcode=tray.barcode, location=_location(tray)),
         )
 
     async def enqueue_return(self, workflow: StorageBinWorkflow, worker: RobotWorker) -> None:
@@ -1134,7 +1134,7 @@ class BinStorageService:
             ReturnTrayCommand(
                 request_id=workflow.id,
                 item={
-                    "upca": tray.barcode,
+                    "barcode": tray.barcode,
                     "name": f"Tray {tray.barcode}",
                     "dimensions": tray.inner_dimensions,
                     "location": _location(tray),

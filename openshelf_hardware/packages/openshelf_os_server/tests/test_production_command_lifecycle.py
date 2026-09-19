@@ -56,7 +56,7 @@ def _store(request_id: str, *, name: str = "Lifecycle item") -> StoreItemCommand
 	return StoreItemCommand(
 		request_id=request_id,
 		item={
-			"upca": "880000000001",
+			"barcode": "880000000001",
 			"name": name,
 			"dimensions": {"width": 10, "height": 20, "length": 30},
 		},
@@ -87,10 +87,10 @@ def _store_grid(occupied: set[int] | None = None) -> StorageGrid:
 	)
 
 
-def _store_with_location(request_id: str, upca: str, location: dict[str, int | str]) -> StoreItemCommand:
+def _store_with_location(request_id: str, barcode: str, location: dict[str, int | str]) -> StoreItemCommand:
 	request = _store(request_id)
 	item = dict(request.item or {})
-	item["upca"] = upca
+	item["barcode"] = barcode
 	return StoreItemCommand(request_id=request_id, location=location, item=item)
 
 
@@ -119,7 +119,7 @@ async def test_demo_store_admits_occupied_requested_cell_for_mapped_barcode(
 			"request_id": "demo-mapped-occupied-request",
 			"location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
 			"item": {
-				"upca": "880000000200",
+				"barcode": "880000000200",
 				"name": "Mapped item",
 				"dimensions": {"width": 10, "height": 20, "length": 30},
 			},
@@ -148,13 +148,13 @@ async def test_new_store_requires_valid_dimensions_before_enrollment(
 	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
 	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
 	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", observer)
-	item_data = {"upca": "geometry-retry", "name": "Bottle", "tare_weight": 100, "net_weight": 250}
+	item_data = {"barcode": "geometry-retry", "name": "Bottle", "tare_weight": 100, "net_weight": 250}
 	if dimensions is not None:
 		item_data["dimensions"] = dimensions
 	request_id = "geometry-corrected-retry"
 
 	async with AsyncSessionLocal() as db:
-		await db.execute(delete(Item).where(Item.upca == item_data["upca"]))
+		await db.execute(delete(Item).where(Item.barcode == item_data["barcode"]))
 		await db.commit()
 		with pytest.raises(HTTPException) as invalid:
 			await robot_router.robot_commands(
@@ -162,7 +162,7 @@ async def test_new_store_requires_valid_dimensions_before_enrollment(
 				worker=worker, current_user=SimpleNamespace(id=1), db=db,
 			)
 		assert invalid.value.status_code == 422
-		assert (await db.execute(select(Item).where(Item.upca == item_data["upca"]))).scalar_one_or_none() is None
+		assert (await db.execute(select(Item).where(Item.barcode == item_data["barcode"]))).scalar_one_or_none() is None
 		assert (await db.execute(select(RobotCommand).where(RobotCommand.runtime == "production"))).scalars().all() == []
 		assert worker.enqueued == []
 		observer.assert_not_awaited()
@@ -174,7 +174,7 @@ async def test_new_store_requires_valid_dimensions_before_enrollment(
 			worker=worker, current_user=SimpleNamespace(id=1), db=db,
 		)
 		assert accepted.status == "queued"
-		item = (await db.execute(select(Item).where(Item.upca == item_data["upca"]))).scalar_one()
+		item = (await db.execute(select(Item).where(Item.barcode == item_data["barcode"]))).scalar_one()
 		assert item.dimensions == geometry
 		assert item.weight == 350 and item.enrollment_weight_pending
 		assert worker.enqueued[0][0].item["dimensions"] == geometry
@@ -183,7 +183,7 @@ async def test_new_store_requires_valid_dimensions_before_enrollment(
 
 		# A registered item's geometry stays authoritative on later attempts.
 		await robot_router.robot_commands(
-			StoreItemCommand(item={"upca": item_data["upca"], "dimensions": {}}, request_id="geometry-existing"),
+			StoreItemCommand(item={"barcode": item_data["barcode"], "dimensions": {}}, request_id="geometry-existing"),
 			worker=worker, current_user=SimpleNamespace(id=1), db=db,
 		)
 		assert worker.enqueued[1][0].item["dimensions"] == geometry
@@ -206,7 +206,7 @@ async def test_new_store_rejects_nonpositive_gross_before_admission(
 	observer = AsyncMock()
 	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", observer)
 	item_data = {
-		"upca": "gross-invalid", "name": "Bottle",
+		"barcode": "gross-invalid", "name": "Bottle",
 		"dimensions": {"width": 100, "height": 100, "length": 100},
 		"weight": weight, "tare_weight": 100, "full_net_weight": 500,
 	}
@@ -238,7 +238,7 @@ async def test_new_store_preserves_valid_and_unspecified_gross(
 	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
 	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", AsyncMock())
 	item_data = {
-		"upca": "gross-valid", "name": "Bottle",
+		"barcode": "gross-valid", "name": "Bottle",
 		"dimensions": {"width": 100, "height": 100, "length": 100},
 		"tare_weight": 100, "full_net_weight": 500, **gross,
 	}
@@ -251,14 +251,14 @@ async def test_new_store_preserves_valid_and_unspecified_gross(
 		assert worker.enqueued[0][0].item == item_data
 		row = (await db.execute(select(RobotCommand).where(RobotCommand.command_id == accepted.command_id))).scalar_one()
 		assert row.payload["item"] == item_data
-		item = (await db.execute(select(Item).where(Item.upca == item_data["upca"]))).scalar_one()
+		item = (await db.execute(select(Item).where(Item.barcode == item_data["barcode"]))).scalar_one()
 		assert item.weight == gross.get("weight")
 		assert item.tare_weight == 100 and item.full_net_weight == 500
 		# Existing measured zero remains authoritative over submitted gross.
 		item.weight = 0
 		await db.commit()
 		await robot_router.robot_commands(
-			StoreItemCommand(item={"upca": item.upca, "weight": -1}, request_id="gross-registered"),
+			StoreItemCommand(item={"barcode": item.barcode, "weight": -1}, request_id="gross-registered"),
 			worker=worker, current_user=SimpleNamespace(id=1), db=db,
 		)
 		assert worker.enqueued[1][0].item["weight"] == 0
@@ -269,8 +269,8 @@ async def test_new_store_preserves_valid_and_unspecified_gross(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("identity", [
-	{}, {"upca": None}, {"upca": ""}, {"upca": "  "}, {"upca": 123},
-	{"upca": True}, {"upca": {}}, {"upca": []}, {"upca": "x" * 51},
+	{}, {"barcode": None}, {"barcode": ""}, {"barcode": "  "}, {"barcode": 123},
+	{"barcode": True}, {"barcode": {}}, {"barcode": []}, {"barcode": "x" * 256},
 ])
 @pytest.mark.parametrize("mass", [
 	{key: value}
@@ -299,7 +299,7 @@ async def test_mass_store_requires_explicit_identity_before_mutation(
 				worker=worker, current_user=SimpleNamespace(id=1), db=db,
 			)
 		assert invalid.value.status_code == 422
-		assert invalid.value.detail == "item.upca is required for container mass enrollment"
+		assert invalid.value.detail == "item.barcode is required for container mass enrollment"
 		assert (await db.execute(select(Item.__table__))).all() == items_before
 		assert (await db.execute(select(RobotCommand).where(RobotCommand.runtime == "production"))).scalars().all() == []
 		assert worker.enqueued == []
@@ -316,7 +316,7 @@ async def test_mass_store_with_identity_persists_baseline_and_replays_before_val
 	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
 	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", AsyncMock())
 	command = StoreItemCommand(request_id="mass-explicit-identity", item={
-		"upca": "mass-explicit-identity", "name": "Bottle",
+		"barcode": "mass-explicit-identity", "name": "Bottle",
 		"dimensions": {"width": 100, "height": 100, "length": 100},
 		"tare_weight": 100, "net_weight": 250, "full_net_weight": 500,
 	})
@@ -325,7 +325,7 @@ async def test_mass_store_with_identity_persists_baseline_and_replays_before_val
 			command, worker=worker, current_user=SimpleNamespace(id=1), db=db,
 		)
 		assert accepted.status == "queued"
-		item = (await db.execute(select(Item).where(Item.upca == command.item["upca"]))).scalar_one()
+		item = (await db.execute(select(Item).where(Item.barcode == command.item["barcode"]))).scalar_one()
 		assert item.tare_weight == 100 and item.full_net_weight == 500
 		assert item.weight == 350 and item.enrollment_weight_pending
 		monkeypatch.setattr(robot_router, "_validate_direct_store_reservation", AsyncMock(side_effect=AssertionError))
@@ -336,7 +336,7 @@ async def test_mass_store_with_identity_persists_baseline_and_replays_before_val
 		assert len(worker.enqueued) == 1
 		with pytest.raises(HTTPException) as conflict:
 			await robot_router.robot_commands(
-				StoreItemCommand(request_id=command.request_id, item={**command.item, "upca": None}),
+				StoreItemCommand(request_id=command.request_id, item={**command.item, "barcode": None}),
 				worker=worker, current_user=SimpleNamespace(id=1), db=db,
 			)
 		assert conflict.value.status_code == 409
@@ -357,7 +357,7 @@ async def test_rejected_mass_enrollment_allows_corrected_retry(
 	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", AsyncMock())
 	monkeypatch.setattr(command_lifecycle, "COMMAND_LIMIT", 0)
 	command = StoreItemCommand(request_id=f"mass-rejected-{rejection}", item={
-		"upca": f"mass-rejected-{rejection}", "name": "Bottle",
+		"barcode": f"mass-rejected-{rejection}", "name": "Bottle",
 		"dimensions": {"width": 100, "height": 100, "length": 100},
 		"tare_weight": 100, "net_weight": 250, "full_net_weight": 500,
 	})
@@ -370,7 +370,7 @@ async def test_rejected_mass_enrollment_allows_corrected_retry(
 		# Even committing the request session must not persist rejected enrollment.
 		await db.commit()
 	async with AsyncSessionLocal() as db:
-		assert (await db.execute(select(Item).where(Item.upca == command.item["upca"]))).scalar_one_or_none() is None
+		assert (await db.execute(select(Item).where(Item.barcode == command.item["barcode"]))).scalar_one_or_none() is None
 		assert (await db.execute(select(RobotCommand).where(RobotCommand.runtime == "production"))).scalars().all() == []
 	assert worker.enqueued == []
 
@@ -381,7 +381,7 @@ async def test_rejected_mass_enrollment_allows_corrected_retry(
 			corrected, worker=worker, current_user=SimpleNamespace(id=1), db=db,
 		)
 	async with AsyncSessionLocal() as db:
-		item = (await db.execute(select(Item).where(Item.upca == command.item["upca"]))).scalar_one()
+		item = (await db.execute(select(Item).where(Item.barcode == command.item["barcode"]))).scalar_one()
 		assert item.weight == 400 and item.net_weight == 300
 		assert item.tare_weight == 100 and item.full_net_weight == 500
 		assert item.enrollment_weight_pending
@@ -404,14 +404,14 @@ async def test_accepted_mass_enrollment_is_durable_before_enqueue_and_survives_f
 	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
 	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", AsyncMock())
 	command = StoreItemCommand(request_id=f"mass-durable-{failure}", item={
-		"upca": f"mass-durable-{failure}", "name": "Bottle",
+		"barcode": f"mass-durable-{failure}", "name": "Bottle",
 		"dimensions": {"width": 100, "height": 100, "length": 100},
 		"tare_weight": 100, "net_weight": 250, "full_net_weight": 500,
 	})
 
 	async def inspect_before_enqueue(command, *, command_id=None, visibility=None):
 		async with AsyncSessionLocal() as db:
-			item = (await db.execute(select(Item).where(Item.upca == command.item["upca"]))).scalar_one()
+			item = (await db.execute(select(Item).where(Item.barcode == command.item["barcode"]))).scalar_one()
 			assert item.weight == 350 and item.enrollment_weight_pending
 			assert (await db.get(RobotCommand, command_id)).status == "queued"
 		if failure == "enqueue":
@@ -434,7 +434,7 @@ async def test_accepted_mass_enrollment_is_durable_before_enqueue_and_survives_f
 			command, worker=None, current_user=SimpleNamespace(id=1), db=db,
 		)
 		assert replayed.status == "failed"
-		item = (await db.execute(select(Item).where(Item.upca == command.item["upca"]))).scalar_one()
+		item = (await db.execute(select(Item).where(Item.barcode == command.item["barcode"]))).scalar_one()
 		assert item.weight == 350 and item.net_weight == 250
 		assert item.tare_weight == 100 and item.full_net_weight == 500
 		assert item.enrollment_weight_pending
@@ -448,22 +448,22 @@ async def test_command_admission_rolls_back_enrollment_and_skips_it_on_replay() 
 	await _clear_production_commands()
 	request_id = "mass-atomic-admission"
 	payload = _store(request_id).model_dump(mode="json", exclude_none=True)
-	invalid_item = Item(upca="mass-atomic-invalid", name=None, dimensions={})
+	invalid_item = Item(barcode="mass-atomic-invalid", name=None, dimensions={})
 	with pytest.raises(IntegrityError):
 		await admit(payload, request_id=request_id, correlation_id=None, enrollment_item=invalid_item)
 	async with AsyncSessionLocal() as db:
-		assert (await db.execute(select(Item).where(Item.upca == invalid_item.upca))).scalar_one_or_none() is None
+		assert (await db.execute(select(Item).where(Item.barcode == invalid_item.barcode))).scalar_one_or_none() is None
 		assert (await db.execute(select(RobotCommand).where(RobotCommand.runtime == "production"))).scalars().all() == []
 
 	row, was_replay = await admit(payload, request_id=request_id, correlation_id=None)
 	assert not was_replay
-	unused_item = Item(upca="mass-atomic-replay", name="Bottle", dimensions={})
+	unused_item = Item(barcode="mass-atomic-replay", name="Bottle", dimensions={})
 	replayed, was_replay = await admit(
 		payload, request_id=request_id, correlation_id=None, enrollment_item=unused_item,
 	)
 	assert was_replay and replayed.command_id == row.command_id
 	async with AsyncSessionLocal() as db:
-		assert (await db.execute(select(Item).where(Item.upca == unused_item.upca))).scalar_one_or_none() is None
+		assert (await db.execute(select(Item).where(Item.barcode == unused_item.barcode))).scalar_one_or_none() is None
 	await _clear_production_commands()
 
 
@@ -668,7 +668,7 @@ async def test_production_queue_limit_and_restart_recovery(
 				RobotCommand(
 					command_id=f"10000000-0000-0000-0000-{index:012d}",
 					runtime="production",
-					payload={"command": "store_item", "item": {"upca": str(index)}},
+					payload={"command": "store_item", "item": {"barcode": str(index)}},
 					status="queued",
 					visibility="public",
 				)
@@ -816,7 +816,7 @@ async def test_internal_bin_motion_is_durable_and_marked_internal() -> None:
 	worker = RecordingWorker()
 	command = RetrieveItemCommand(
 		request_id="bin-workflow-correlation",
-		upca="990000000001",
+		barcode="990000000001",
 		location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
 	)
 	row = await enqueue_internal(worker, command)

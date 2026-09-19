@@ -319,7 +319,7 @@ async def test_capture_store_observer_measurement_times_out_without_cancelling_m
 
     started = time.monotonic()
     await iobox_sizer.capture_store_observer_measurement(
-        upca="123",
+        barcode="123",
         item_name="item",
         user_id=1,
         request_correlation_id="req-1",

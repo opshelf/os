@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import openshelf_os.common as common
 from openshelf_os.config.settings import (
+    BARCODE_MAX_LENGTH,
     CompartmentLayoutSettings,
     StorageBinDimensionsSettings,
     StorageBinLocationSettings,
@@ -85,7 +86,7 @@ class ItemCreate(MassInput):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    upca: str
+    barcode: str
     name: str = Field(max_length=255)
     dimensions: Optional[Dict[str, float]] = Field(default=None, description="Positive width, height, and length in millimeters; required when enrolling a new item.", examples=[{"width":10,"height":10,"length":10}])
     weight: Optional[float] = Field(default=None, description="Gross mass in grams. Do not combine with net_weight; null does not clear gross on PUT.", examples=[350.5])
@@ -173,7 +174,7 @@ class ItemWithLocations(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
 
     id: int
-    upca: str
+    barcode: str
     name: str
     dimensions: Dict[str, float]
     weight: Optional[float]
@@ -191,7 +192,7 @@ class ItemWithLocations(BaseModel):
 
 class BinWorkflowCreate(BaseModel):
     operation: str = Field(pattern=r"^(store|retrieve)$")
-    upca: str
+    barcode: str
     storage_mode: Optional[Literal["bin", "direct"]] = None
 
 
@@ -200,7 +201,7 @@ class BinWorkflowReturn(BaseModel):
 
 
 class TrayBarcode(BaseModel):
-    barcode: str = Field(min_length=1, max_length=50)
+    barcode: str = Field(min_length=1, max_length=BARCODE_MAX_LENGTH)
 
 
 class StorageCellResponse(BaseModel):
@@ -224,7 +225,7 @@ class InventoryPage(BaseModel):
 
 class BinItemSummary(BaseModel):
     id: int
-    upca: str
+    barcode: str
     name: str
     compartment: int | None = Field(
         default=None, ge=1, le=1024,
@@ -338,7 +339,7 @@ def _build_item_payload(
         )
     return ItemWithLocations(
         id=int(item.id),
-        upca=str(item.upca),
+        barcode=str(item.barcode),
         name=str(item.name),
         dimensions=cast(Dict[str, float], item.dimensions),
         weight=float(item.weight) if item.weight is not None else None,
@@ -404,15 +405,15 @@ def _deserialize_capacity(capacity: str) -> DimensionsPayload:
 
 
 async def _load_item_with_locations(
-    upca: str,
+    barcode: str,
     storage_service: StorageService,
     current_user: User,
 ) -> ItemWithLocations:
-    item = await storage_service.get_item(upca)
+    item = await storage_service.get_item(barcode)
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    locations = await storage_service.get_item_locations(upca)
+    locations = await storage_service.get_item_locations(barcode)
     return await _build_item_payload_with_bin(
         item, locations, current_user, storage_service.session
     )
@@ -564,7 +565,7 @@ async def update_tray_layout(
 class TrayAssign(BaseModel):
     """Request payload for marking a cell as a multi-item tray home."""
 
-    barcode: str = Field(pattern=r"^\d{12}$")
+    barcode: str = Field(min_length=1, max_length=BARCODE_MAX_LENGTH)
     rows: int = Field(ge=1, le=32, strict=True)
     columns: int = Field(ge=1, le=32, strict=True)
 
@@ -622,7 +623,7 @@ async def assign_tray(
     if payload.barcode in reserved:
         raise HTTPException(status_code=409, detail="That barcode is already in use")
     existing_item = (
-        await session.execute(select(Item).where(Item.upca == payload.barcode))
+        await session.execute(select(Item).where(Item.barcode == payload.barcode))
     ).scalar_one_or_none()
     if existing_item is not None:
         raise HTTPException(status_code=409, detail="That barcode belongs to an item")
@@ -788,11 +789,11 @@ async def create_bin_workflow(
     storage = StorageService(session)
     service = BinStorageService(session)
     await service.sync_config()
-    item = await storage.get_item(request.upca)
+    item = await storage.get_item(request.barcode)
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    direct_locations = await storage.get_item_locations(item.upca)
+    direct_locations = await storage.get_item_locations(item.barcode)
     if request.operation == "store" and direct_locations:
         raise HTTPException(status_code=409, detail="Item is already stored")
     if request.operation == "store" and request.storage_mode == "direct":
@@ -1025,13 +1026,13 @@ async def get_items(
 
 
 @router.get(
-    "/items/{upca}",
+    "/items/{barcode}",
     dependencies=[Depends(require_relay_or_permissions("storage:read"))],
     summary="Read an item and its storage state",
     responses=response_docs(errors=(401, 403, 404)),
 )
 async def get_item(
-    upca: str,
+    barcode: str,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_relay_or_current_user),
 ) -> ItemWithLocations:
@@ -1044,11 +1045,11 @@ async def get_item(
     """
     storage_service = StorageService(session)
 
-    item = await storage_service.get_item(upca)
+    item = await storage_service.get_item(barcode)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    locations = await storage_service.get_item_locations(upca)
+    locations = await storage_service.get_item_locations(barcode)
     return await _build_item_payload_with_bin(item, locations, current_user, session)
 
 
@@ -1065,7 +1066,7 @@ async def create_item(
 ) -> ItemWithLocations:
     """Create or update an inventory record.
 
-    Creates a record or updates the existing UPCA. This does not move the item or assign
+    Creates a record or updates the existing barcode. This does not move the item or assign
     physical occupancy. New records require valid dimensions; values are millimeters and
     masses are grams. Both `metadata` and `item_metadata` inputs are accepted; responses use
     `metadata`.
@@ -1080,9 +1081,9 @@ async def create_item(
     storage_service = StorageService(session)
 
     try:
-        if await is_reserved_bin_barcode(item.upca, session):
+        if await is_reserved_bin_barcode(item.barcode, session):
             raise HTTPException(status_code=409, detail="Barcode is reserved for a storage bin")
-        existing = await storage_service.get_item(item.upca)
+        existing = await storage_service.get_item(item.barcode)
         bin_service = BinStorageService(session)
         dimensions = item.dimensions
         metadata = item.item_metadata or {}
@@ -1108,7 +1109,7 @@ async def create_item(
             if "access_level_id" not in provided_fields:
                 access_level_id = existing.access_level_id
         db_item = await storage_service.create_item(
-            upca=item.upca,
+            barcode=item.barcode,
             name=item.name,
             dimensions=dimensions,
             weight=item.weight,
@@ -1118,7 +1119,7 @@ async def create_item(
             mass_values={k: v for k, v in item.model_dump(exclude_unset=True).items() if k in (*MASS_FIELDS, "weight")},
         )
 
-        locations = await storage_service.get_item_locations(item.upca)
+        locations = await storage_service.get_item_locations(item.barcode)
 
         return await _build_item_payload_with_bin(db_item, locations, current_user, session)
 
@@ -1131,13 +1132,13 @@ async def create_item(
 
 
 @router.put(
-    "/items/{upca}",
+    "/items/{barcode}",
     dependencies=[Depends(require_relay_or_permissions("storage:write"))],
     summary="Update selected inventory fields",
     responses=response_docs(errors=(401, 403, 404, 409, 422)),
 )
 async def update_item(
-    upca: str,
+    barcode: str,
     item: ItemUpdate,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_relay_or_current_user),
@@ -1151,12 +1152,12 @@ async def update_item(
 
     Changing tare alone preserves gross and recomputes net. Metadata replaces the object
     when provided. Bin-managed dimensions/access changes require retrieval first. Returns
-    `404` for an absent UPCA. These edits do not move
+    `404` for an absent barcode. These edits do not move
     hardware.
     """
     storage_service = StorageService(session)
 
-    existing = await storage_service.get_item(upca)
+    existing = await storage_service.get_item(barcode)
     bin_service = BinStorageService(session)
     if existing is not None and await bin_service.item_bin(existing.id) is not None:
         dimensions_changed = item.dimensions is not None and item.dimensions != existing.dimensions
@@ -1176,7 +1177,7 @@ async def update_item(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     updated_item = await storage_service.update_item(
-        upca=upca,
+        barcode=barcode,
         name=item.name,
         dimensions=item.dimensions,
         weight=item.weight,
@@ -1188,24 +1189,24 @@ async def update_item(
     if not updated_item:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    fresh_item = await storage_service.get_item(upca)
+    fresh_item = await storage_service.get_item(barcode)
     if fresh_item is None:
         fresh_item = updated_item
 
-    locations = await storage_service.get_item_locations(upca)
+    locations = await storage_service.get_item_locations(barcode)
 
     return await _build_item_payload_with_bin(fresh_item, locations, current_user, session)
 
 
 @router.delete(
-    "/items/{upca}",
+    "/items/{barcode}",
     dependencies=[Depends(require_relay_or_permissions("storage:delete"))],
     summary="Delete an inventory record",
     responses=response_docs(model=MessageResponse, errors=(401, 403, 404, 409)),
 )
 @monitor_performance
 async def delete_item(
-    upca: str,
+    barcode: str,
     session: AsyncSession = Depends(get_db),
 ) -> Dict[str, str]:
     """Delete an inventory record.
@@ -1216,7 +1217,7 @@ async def delete_item(
     """
     storage_service = StorageService(session)
 
-    existing = await storage_service.get_item(upca)
+    existing = await storage_service.get_item(barcode)
     bin_service = BinStorageService(session)
     if existing is not None and await bin_service.item_bin(existing.id) is not None:
         raise HTTPException(status_code=409, detail="Retrieve the item before deleting it")
@@ -1226,7 +1227,7 @@ async def delete_item(
             detail="Item cannot be deleted because storage bin workflow history is retained",
         )
 
-    deleted = await storage_service.delete_item(upca)
+    deleted = await storage_service.delete_item(barcode)
 
     if deleted is False:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -1240,13 +1241,13 @@ async def delete_item(
 
 
 @router.post(
-    "/items/{upca}/locations",
+    "/items/{barcode}/locations",
     dependencies=[Depends(require_permissions("storage:write"))],
     summary="Assign an inventory location",
     responses=response_docs(errors=(400, 401, 403, 404, 409, 422)),
 )
 async def add_item_location(
-    upca: str,
+    barcode: str,
     location: ItemLocationCreate,
     session: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -1261,7 +1262,7 @@ async def add_item_location(
     """
     storage_service = StorageService(session)
 
-    db_item = await storage_service.get_item(upca)
+    db_item = await storage_service.get_item(barcode)
     if db_item is None:
         raise HTTPException(status_code=404, detail="Item not found")
     bin_service = BinStorageService(session)
@@ -1270,7 +1271,7 @@ async def add_item_location(
 
     try:
         storage_location = await storage_service.add_item_location(
-            upca=upca,
+            barcode=barcode,
             side=location.side,
             shelf_idx=location.shelf_idx,
             cell_idx=location.cell_idx,
@@ -1283,24 +1284,24 @@ async def add_item_location(
     if not storage_location:
         raise HTTPException(status_code=400, detail="Failed to add location")
 
-    return await _load_item_with_locations(upca, storage_service, current_user)
+    return await _load_item_with_locations(barcode, storage_service, current_user)
 
 
 async def _remove_item_location_impl(
-    upca: str,
+    barcode: str,
     side: StorageModuleSideDto,
     shelf_idx: int,
     cell_idx: int,
     storage_service: StorageService,
 ) -> None:
-    item = await storage_service.get_item(upca)
+    item = await storage_service.get_item(barcode)
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
     bin_service = BinStorageService(storage_service.session)
     if await bin_service.item_bin(item.id) is not None:
         raise HTTPException(status_code=409, detail="Item is stored in a bin")
     success = await storage_service.remove_item_location(
-        upca=upca,
+        barcode=barcode,
         side=side,
         shelf_idx=shelf_idx,
         cell_idx=cell_idx,
@@ -1311,13 +1312,13 @@ async def _remove_item_location_impl(
 
 
 @router.delete(
-    "/items/{upca}/locations",
+    "/items/{barcode}/locations",
     dependencies=[Depends(require_permissions("storage:write"))],
     summary="Remove an inventory location",
     responses=response_docs(errors=(401, 403, 404, 409)),
 )
 async def remove_item_location(
-    upca: str,
+    barcode: str,
     side: StorageModuleSideDto,
     shelf_idx: int,
     cell_idx: int,
@@ -1332,18 +1333,18 @@ async def remove_item_location(
     """
     storage_service = StorageService(session)
 
-    await _remove_item_location_impl(upca, side, shelf_idx, cell_idx, storage_service)
-    return await _load_item_with_locations(upca, storage_service, current_user)
+    await _remove_item_location_impl(barcode, side, shelf_idx, cell_idx, storage_service)
+    return await _load_item_with_locations(barcode, storage_service, current_user)
 
 
 @router.delete(
-    "/items/{upca}/locations/{side}/{shelf_idx}/{cell_idx}",
+    "/items/{barcode}/locations/{side}/{shelf_idx}/{cell_idx}",
     dependencies=[Depends(require_permissions("storage:write"))],
     summary="Remove an inventory location by path",
     responses=response_docs(errors=(401, 403, 404, 409)),
 )
 async def remove_item_location_by_path(
-    upca: str,
+    barcode: str,
     side: StorageModuleSideDto,
     shelf_idx: int,
     cell_idx: int,
@@ -1357,8 +1358,8 @@ async def remove_item_location_by_path(
     """
     storage_service = StorageService(session)
 
-    await _remove_item_location_impl(upca, side, shelf_idx, cell_idx, storage_service)
-    return await _load_item_with_locations(upca, storage_service, current_user)
+    await _remove_item_location_impl(barcode, side, shelf_idx, cell_idx, storage_service)
+    return await _load_item_with_locations(barcode, storage_service, current_user)
 
 
 # ---------------------------------------------------------------------------

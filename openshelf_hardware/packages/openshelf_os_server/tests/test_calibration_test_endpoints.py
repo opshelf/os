@@ -20,7 +20,7 @@ def build_grid(*, is_occupied: bool, cell_status: CellStatus | None = None) -> S
 		item = CellItem(
 			dimensions=Dimensions(width=80.0, height=120.0, length=80.0),
 			data={'name': 'existing item'},
-			upca='123456',
+			barcode='123456',
 		)
 
 	return StorageGrid(

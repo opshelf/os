@@ -62,7 +62,7 @@ async def test_mock_status_keeps_command_id_through_queued_to_running(
 		json={
 			"command": "store_item",
 			"item": {
-				"upca": "036000291452",
+				"barcode": "036000291452",
 				"name": "Mock item",
 				"dimensions": {"width": 10, "height": 20, "length": 30},
 			},
@@ -78,7 +78,7 @@ async def test_mock_status_keeps_command_id_through_queued_to_running(
 	assert queued_operation["command"] == {
 		"command": "store_item",
 		"item": {
-			"upca": "036000291452",
+			"barcode": "036000291452",
 			"name": "Mock item",
 			"dimensions": {"width": 10, "height": 20, "length": 30},
 		},
@@ -89,7 +89,7 @@ async def test_mock_status_keeps_command_id_through_queued_to_running(
 	assert running_status["current_command"] == {
 		"command": "store_item",
 		"item": {
-			"upca": "036000291452",
+			"barcode": "036000291452",
 			"name": "Mock item",
 			"dimensions": {"width": 10, "height": 20, "length": 30},
 		},
@@ -107,7 +107,7 @@ async def test_mock_store_retrieve_persists_inventory_and_replays_request(
 		"command": "store_item",
 		"request_id": "store-once",
 		"item": {
-			"upca": "036000291452",
+			"barcode": "036000291452",
 			"name": "Mock item",
 			"dimensions": {"width": 10, "height": 20, "length": 30},
 		},
@@ -155,7 +155,7 @@ async def test_mock_store_retrieve_persists_inventory_and_replays_request(
 
 	async with AsyncSessionLocal() as session:
 		assert (await session.execute(select(ItemLocation))).scalars().all() == []
-		item = (await session.execute(select(Item).where(Item.upca == "036000291452"))).scalar_one()
+		item = (await session.execute(select(Item).where(Item.barcode == "036000291452"))).scalar_one()
 		assert item.weight == completed["result"]["weight"]
 
 
@@ -167,7 +167,7 @@ async def test_mock_duplicate_storage_and_invalid_location_are_realistic_4xx(
 	payload = {
 		"command": "store_item",
 		"item": {
-			"upca": "12345678901",
+			"barcode": "12345678901",
 			"name": "Item",
 			"dimensions": {"width": 1, "height": 1, "length": 1},
 		},
@@ -200,7 +200,7 @@ async def test_mock_store_honors_requested_location(
 			"request_id": "requested-cell",
 			"location": requested,
 			"item": {
-				"upca": "036000291453",
+				"barcode": "036000291453",
 				"name": "Placed item",
 				"dimensions": {"width": 10, "height": 20, "length": 30},
 			},
@@ -223,14 +223,14 @@ async def test_mock_store_rejects_unusable_requested_location(
 	mock_runtime: MockRobotRuntime,
 ) -> None:
 	async def store(
-		upca: str,
+		barcode: str,
 		*,
 		location: dict | None = None,
 		dimensions: dict | None = None,
 		nested: bool = False,
 	):
 		item = {
-			"upca": upca,
+			"barcode": barcode,
 			"name": "Item",
 			"dimensions": dimensions or {"width": 1, "height": 1, "length": 1},
 		}
@@ -282,13 +282,13 @@ async def test_mock_store_rejects_unusable_requested_location(
 	assert malformed_top_level.status_code == 422
 	assert malformed_top_level.json()["detail"]["code"] == "invalid_location"
 
-	for upca, shelf_idx, nested in (
+	for barcode, shelf_idx, nested in (
 		("036000291460", "0", False),
 		("036000291461", False, False),
 		("036000291462", "0", True),
 	):
 		wrong_type = await store(
-			upca,
+			barcode,
 			location={"side": "left_module", "shelf_idx": shelf_idx, "cell_idx": 0},
 			nested=nested,
 		)
@@ -297,6 +297,42 @@ async def test_mock_store_rejects_unusable_requested_location(
 			"message": "location requires side, shelf_idx and cell_idx",
 			"code": "invalid_location",
 		}
+
+
+@pytest.mark.anyio
+async def test_mock_store_accepts_long_barcode_but_rejects_blank_or_non_string(
+	client: AsyncClient,
+	mock_runtime: MockRobotRuntime,
+) -> None:
+	long_barcode = "b" * 100
+	accepted = await client.post(
+		"/api/robot/commands",
+		json={
+			"command": "store_item",
+			"item": {
+				"barcode": long_barcode,
+				"name": "Long barcode item",
+				"dimensions": {"width": 10, "height": 20, "length": 30},
+			},
+		},
+	)
+	assert accepted.status_code == 200, accepted.text
+	await _wait_for_status(client, accepted.json()["command_id"], "succeeded")
+
+	for barcode in ("", "   ", 1234567890123456789):
+		rejected = await client.post(
+			"/api/robot/commands",
+			json={
+				"command": "store_item",
+				"item": {
+				"barcode": barcode,
+				"name": "Item",
+				"dimensions": {"width": 1, "height": 1, "length": 1},
+			},
+			},
+		)
+		assert rejected.status_code == 422
+		assert rejected.json()["detail"] == "item.barcode is required"
 
 
 @pytest.mark.anyio
@@ -324,7 +360,7 @@ async def test_mock_start_marks_interrupted_commands_failed() -> None:
 		row = MockRobotCommand(
 			command_id="00000000-0000-0000-0000-000000000001",
 			request_id="interrupted",
-			payload={"command": "store_item", "item": {"upca": "1"}},
+			payload={"command": "store_item", "item": {"barcode": "1"}},
 			status="running",
 		)
 		session.add(row)
@@ -353,7 +389,7 @@ async def test_mock_queue_limit_returns_retry_after(
 			session.add(
 				MockRobotCommand(
 					command_id=f"00000000-0000-0000-0000-{index:012d}",
-					payload={"command": "store_item", "item": {"upca": str(index)}},
+					payload={"command": "store_item", "item": {"barcode": str(index)}},
 					status="queued",
 				)
 			)
@@ -364,7 +400,7 @@ async def test_mock_queue_limit_returns_retry_after(
 		json={
 			"command": "store_item",
 			"item": {
-				"upca": "queue-overflow",
+				"barcode": "queue-overflow",
 				"name": "Overflow",
 				"dimensions": {"width": 1, "height": 1, "length": 1},
 			},
@@ -373,7 +409,7 @@ async def test_mock_queue_limit_returns_retry_after(
 	assert response.status_code == 429
 	assert response.headers["Retry-After"] == "1"
 	async with AsyncSessionLocal() as session:
-		assert (await session.execute(select(Item).where(Item.upca == "queue-overflow"))).scalar_one_or_none() is None
+		assert (await session.execute(select(Item).where(Item.barcode == "queue-overflow"))).scalar_one_or_none() is None
 
 
 @pytest.mark.anyio
@@ -389,7 +425,7 @@ async def test_mock_invalid_enrollment_dimensions_allow_corrected_retry(
 		"command": "store_item",
 		"request_id": "corrected-enrollment",
 		"item": {
-			"upca": "invalid-dimensions",
+			"barcode": "invalid-dimensions",
 			"name": "Bottle",
 			"dimensions": {"width": 10, "height": 10, "length": 10, dimension: invalid},
 			"tare_weight": 100,
@@ -412,7 +448,7 @@ async def test_mock_invalid_enrollment_dimensions_allow_corrected_retry(
 	assert response.status_code == 200, response.text
 	await _wait_for_status(client, response.json()["command_id"], "succeeded")
 	async with AsyncSessionLocal() as session:
-		item = (await session.execute(select(Item).where(Item.upca == "invalid-dimensions"))).scalar_one()
+		item = (await session.execute(select(Item).where(Item.barcode == "invalid-dimensions"))).scalar_one()
 		assert item.dimensions == {"width": 10, "height": 10, "length": 10}
 		assert item.weight == 350.5 and item.tare_weight == 100 and item.full_net_weight == 500
 
@@ -430,7 +466,7 @@ async def test_mock_enrollment_survives_failure_and_editable_retry(
 		"command": "store_item",
 		"request_id": "durable-enrollment",
 		"item": {
-			"upca": "durable-mass",
+			"barcode": "durable-mass",
 			"name": "Bottle",
 			"dimensions": {"width": 301, "height": 10, "length": 10},
 			"metadata": {"label": "Original"},
@@ -455,7 +491,7 @@ async def test_mock_enrollment_survives_failure_and_editable_retry(
 	else:
 		assert failed["result"]["error"] == "No suitable storage location found"
 	async with AsyncSessionLocal() as session:
-		item = (await session.execute(select(Item).where(Item.upca == "durable-mass"))).scalar_one()
+		item = (await session.execute(select(Item).where(Item.barcode == "durable-mass"))).scalar_one()
 		assert item.weight == 350.5
 		assert item.tare_weight == 100 and item.full_net_weight == 500
 		assert item.enrollment_weight_pending and not item.enrollment_storage_completed
@@ -475,13 +511,13 @@ async def test_mock_enrollment_survives_failure_and_editable_retry(
 	)
 	assert is_replay and replayed.command_id == command_id
 	response = await client.post("/api/robot/commands", json={
-		"command": "store_item", "item": {"upca": "durable-mass"},
+		"command": "store_item", "item": {"barcode": "durable-mass"},
 	})
 	assert response.status_code == 200, response.text
 	succeeded = await _wait_for_status(client, response.json()["command_id"], "succeeded")
 	assert succeeded["result"]["weight"] == 350
 	async with AsyncSessionLocal() as session:
-		item = (await session.execute(select(Item).where(Item.upca == "durable-mass"))).scalar_one()
+		item = (await session.execute(select(Item).where(Item.barcode == "durable-mass"))).scalar_one()
 		assert item.weight == 360.5 and item.net_weight == 260.5
 		assert item.tare_weight == 100 and item.full_net_weight == 500
 		assert not item.enrollment_weight_pending and item.enrollment_storage_completed
@@ -495,7 +531,7 @@ async def test_mock_manual_mass_cycle_and_scale(client: AsyncClient, mock_runtim
 	assert reading.json()['status']['stable'] and reading.json()['status']['valid']
 	response = await client.post('/api/robot/commands', json={
 		'command': 'store_item', 'request_id': 'mass-mock-first', 'item': {
-			'upca': 'mass-mock', 'name': 'Bottle', 'dimensions': {'width': 10, 'height': 10, 'length': 10},
+			'barcode': 'mass-mock', 'name': 'Bottle', 'dimensions': {'width': 10, 'height': 10, 'length': 10},
 			'tare_weight': 100, 'net_weight': 250.5, 'full_net_weight': 500,
 		}})
 	assert response.status_code == 200, response.text

@@ -61,8 +61,8 @@ def _command_response(row: MockRobotCommand) -> dict[str, Any]:
 	}
 
 
-def _deterministic_weight(upca: str) -> float:
-	digest = hashlib.sha256(upca.encode("utf-8")).digest()
+def _deterministic_weight(barcode: str) -> float:
+	digest = hashlib.sha256(barcode.encode("utf-8")).digest()
 	return float(100 + int.from_bytes(digest[:2], "big") % 4901)
 
 
@@ -207,14 +207,14 @@ class MockRobotRuntime:
 				# the editable baseline without changing it on replay or rejection.
 				if payload.get("command") == "store_item":
 					item_payload = payload["item"]
-					upca = str(item_payload["upca"])
+					barcode = str(item_payload["barcode"])
 					item = (
-						await session.execute(select(Item).where(Item.upca == upca))
+						await session.execute(select(Item).where(Item.barcode == barcode))
 					).scalar_one_or_none()
 					if item is None:
 						item = Item(
-							upca=upca,
-							name=str(item_payload.get("name") or upca),
+							barcode=barcode,
+							name=str(item_payload.get("name") or barcode),
 							dimensions=item_payload.get("dimensions"),
 							weight=item_payload.get("weight"),
 							item_metadata=item_payload.get("metadata") or {},
@@ -351,13 +351,13 @@ class MockRobotRuntime:
 		item_payload = payload.get("item")
 		if not isinstance(item_payload, dict):
 			raise MockCommandExecutionError("item is required")
-		upca = str(item_payload.get("upca") or "")
-		if upca == "":
-			raise MockCommandExecutionError("item.upca is required")
+		barcode = str(item_payload.get("barcode") or "")
+		if barcode == "":
+			raise MockCommandExecutionError("item.barcode is required")
 
 		async with AsyncSessionLocal() as session:
 			item = (
-				await session.execute(select(Item).where(Item.upca == upca))
+				await session.execute(select(Item).where(Item.barcode == barcode))
 			).scalar_one_or_none()
 			dimensions: Any
 			if item is not None:
@@ -407,11 +407,11 @@ class MockRobotRuntime:
 			if (item is not None and item.tare_weight is not None) or (item is None and item_payload.get("tare_weight") is not None):
 				weight = 350.0
 			if weight is None:
-				weight = _deterministic_weight(upca)
+				weight = _deterministic_weight(barcode)
 			if item is None:
 				item = Item(
-					upca=upca,
-					name=str(item_payload.get("name") or upca),
+					barcode=barcode,
+					name=str(item_payload.get("name") or barcode),
 					dimensions=dimensions,
 					weight=float(weight),
 					item_metadata=item_payload.get("metadata") or {},
@@ -437,7 +437,7 @@ class MockRobotRuntime:
 			"message": "success",
 			"command": "store_item",
 			"command_id": command_id,
-			"upca": upca,
+			"barcode": barcode,
 			"location": {"side": side, "shelf_idx": shelf_idx, "cell_idx": cell_idx},
 			"weight": float(weight),
 		}
@@ -467,7 +467,7 @@ class MockRobotRuntime:
 			weight = (
 				float(item.weight)
 				if item.weight is not None
-				else _deterministic_weight(str(item.upca))
+				else _deterministic_weight(str(item.barcode))
 			)
 			if item.tare_weight is not None:
 				weight = 350.0
@@ -479,7 +479,7 @@ class MockRobotRuntime:
 			"message": "success",
 			"command": "retrieve_item",
 			"command_id": command_id,
-			"upca": item.upca,
+			"barcode": item.barcode,
 			"location": {"side": side, "shelf_idx": shelf_idx, "cell_idx": cell_idx},
 			"weight": weight,
 		}

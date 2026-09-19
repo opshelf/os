@@ -258,7 +258,7 @@
 		const suffix = `${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
 
 		return {
-			upca: `CAL-${suffix}`,
+			barcode: `CAL-${suffix}`,
 			name: `calibration test ${selectedSide}:${selectedShelf}:${selectedCell}`,
 			dimensions: {
 				length: Math.max(cell.dimensions.length * 0.8, 1.0),
