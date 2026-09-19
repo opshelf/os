@@ -26,6 +26,7 @@ from openshelf_os_server.core.camera import (
     CameraManager,
     ToolCameraStreamManager,
     _all_consumer_counts,
+    _au_contains_hevc_keyframe,
     _au_contains_idr,
     camera_registry,
     start_camera_stream_by_id,
@@ -43,6 +44,11 @@ DEFAULT_MAX_ATTACHMENT_BYTES = 4 * MIB
 DEFAULT_MAX_TOTAL_ATTACHMENT_BYTES = 14 * MIB
 MAX_PENDING_CAPTURES = 2
 CAMERA_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_.-]+")
+
+# Raw elementary-stream demuxer format per codec name, spelled as PyAV
+# spells it (this av build registers the raw HEVC demuxer as "hevc").
+# A codec name missing here is an unsupported window.
+NALE_DEMUX_FORMAT_BY_CODEC = {"h264": "h264", "hevc": "hevc", "h265": "hevc"}
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -145,16 +151,19 @@ class RecordedCameraFrame:
 
 @dataclass(frozen=True)
 class NaluWindow:
-    """A frozen slice of a camera's live H.264 access-unit ring.
+    """A frozen slice of a camera's live elementary access-unit ring.
 
     frames are (pts_seconds, access unit) tuples in stream order.
     au_is_avcc records the AUs' wire form: False (the default) means
     Annex-B start-code framing, True means AVCC (u32 length-prefixed
-    NALs).
+    NALs). codec_name is the demuxer's codec for the ring's source
+    ("h264" or "hevc"); it selects the elementary-stream demuxer
+    and the keyframe scan.
     """
 
     frames: tuple[tuple[float, bytes], ...]
     au_is_avcc: bool = False
+    codec_name: str = "h264"
 
     def __len__(self) -> int:
         return len(self.frames)
@@ -395,6 +404,7 @@ class CrashVideoRecorder:
                 frozen[camera_id] = NaluWindow(
                     frames=tuple(window),
                     au_is_avcc=manager._nalu_au_is_annexb() is False,
+                    codec_name=manager.nalu_window_codec() or "h264",
                 )
 
         return frozen
@@ -599,14 +609,25 @@ class CrashVideoRecorder:
         if len(window.frames) < 2:
             raise ValueError("at least two access units are required")
 
-        # A byte-capped window can start mid-GOP, past every IDR. No
-        # key frame means no packet can decode, so fail with a reason
-        # the artifact can record instead of a codec parse error from
-        # the first P-slice.
-        if not any(
-            _au_contains_idr(data, window.au_is_avcc)
-            for _pts, data in window.frames
-        ):
+        demux_format = NALE_DEMUX_FORMAT_BY_CODEC.get(window.codec_name)
+        if demux_format is None:
+            raise ValueError(f"unsupported NALU codec: {window.codec_name}")
+        is_hevc = demux_format == "hevc"
+
+        # A byte-capped window can start mid-GOP, past every key
+        # frame. No key frame means no packet can decode, so fail with
+        # a reason the artifact can record instead of a codec parse
+        # error from the first P-slice.
+        if is_hevc:
+            has_key_frame = any(
+                _au_contains_hevc_keyframe(data) for _pts, data in window.frames
+            )
+        else:
+            has_key_frame = any(
+                _au_contains_idr(data, window.au_is_avcc)
+                for _pts, data in window.frames
+            )
+        if not has_key_frame:
             raise ValueError("NALU window contains no key frame")
 
         safe_camera_id = CAMERA_ID_PATTERN.sub("-", camera_id).strip("-") or "camera"
@@ -616,12 +637,13 @@ class CrashVideoRecorder:
         writer: cv2.VideoWriter | None = None
 
         try:
-            # The access units concatenate into a valid h264 elementary
-            # stream, so a single decode pass over the frozen window works.
+            # The access units concatenate into a valid h264/hevc
+            # elementary stream, so a single decode pass over the frozen
+            # window works.
             elementary = b"".join(data for _pts, data in window.frames)
             container = cast(
                 av.container.InputContainer,
-                av.open(io.BytesIO(elementary), format="h264"),
+                av.open(io.BytesIO(elementary), format=demux_format),
             )
 
             fps = _nalu_window_fps(window)
@@ -630,8 +652,9 @@ class CrashVideoRecorder:
 
             # Decode per packet so one structurally bad AU (RTSP packet
             # loss, mid-window reconnect) loses only its own frames
-            # instead of aborting the whole window. The raw h264 demuxer
-            # leaves dts unset, so every packet gets a decode attempt.
+            # instead of aborting the whole window. The raw h264/hevc
+            # demuxer leaves dts unset, so every packet gets a decode
+            # attempt.
             stream = container.streams.video[0]
             for packet in container.demux(stream):
                 try:

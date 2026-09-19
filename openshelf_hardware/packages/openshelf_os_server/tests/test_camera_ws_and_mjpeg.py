@@ -54,7 +54,7 @@ def _ws_manager() -> ToolCameraStreamManager:
 	manager.first_frame_timeout = 5.0
 	manager.nalu_last_frame_at = time.monotonic()
 	manager.nalu_extradata = FAKE_AVC_C
-	manager.nalu_meta = (704, 576, 25.0)
+	manager.nalu_meta = (704, 576, 25.0, "h264")
 
 	meta = manager.nalu_codec_meta()
 	assert meta is not None
