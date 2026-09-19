@@ -96,16 +96,21 @@ class ScannerSettings(BaseModel):
 class ToolCameraSettings(BaseModel):
     enabled: bool = False
     rtsp_url: str = ""
+    # Optional higher-resolution RTSP stream used only for crash-recorder
+    # capture; the live view always uses rtsp_url (typically the substream).
+    recording_url: str = ""
 
 
 class OverheadCameraSettings(BaseModel):
     enabled: bool = False
     rtsp_url: str = ""
+    recording_url: str = ""
 
 
 class OverviewCameraSettings(BaseModel):
     enabled: bool = False
     rtsp_url: str = ""
+    recording_url: str = ""
 
 
 # Literals that docker-compose.yml published as signing secret defaults. Anyone who

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import threading
+import time
+from fractions import Fraction
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -10,11 +13,12 @@ import cv2
 import numpy as np
 import pytest
 
-from openshelf_os_server.core.camera import camera_registry
+from openshelf_os_server.core.camera import _au_contains_idr, camera_registry
 from openshelf_os_server.core.crash_video_recorder import (
     MIB,
     CrashVideoRecorder,
     CrashVideoRecorderConfig,
+    NaluWindow,
     RecordedCameraFrame,
 )
 
@@ -569,3 +573,216 @@ async def test_opencv_encoder_produces_browser_compatible_webm() -> None:
 
     assert video.startswith(b"\x1aE\xdf\xa3")
     assert len(video) > 100
+
+# --- NALU-window (RTSP) recording path -----------------------------------
+
+
+def _make_rtsp_manager(
+    window: list[tuple[float, bytes]],
+    *,
+    extradata: bytes = b"",
+) -> "ToolCameraStreamManager":
+    """Real ToolCameraStreamManager with a pre-filled NALU ring.
+
+    start/stop are stubbed so the recorder never spawns the NALU worker
+    process. When extradata is given, the manager recognizes the ring's
+    Annex-B AU wire form, like a real RTSP stream with SPS/PPS meta.
+    """
+    from unittest.mock import AsyncMock
+
+    from openshelf_os_server.core.camera import ToolCameraStreamManager
+
+    manager = ToolCameraStreamManager(rtsp_url="rtsp://camera")
+    now = time.monotonic()
+    manager.nalu_view_ring.extend((pts, data, now) for pts, data in window)
+    if extradata:
+        manager.nalu_extradata = extradata
+        manager.nalu_meta = (160, 120, 25.0)
+    manager.start = AsyncMock()
+    manager.stop = AsyncMock()
+    manager.is_running = True
+    return manager
+
+
+def _make_h264_window(frame_count: int = 10, width: int = 160, height: int = 120):
+    """Real Annex-B H.264 access units at 25 fps.
+
+    Returns the (pts, unit) window and the stream's Annex-B SPS/PPS
+    extradata for the manager's codec meta.
+    """
+    import av
+
+    import numpy as np
+
+    buffer = io.BytesIO()
+    container = av.open(buffer, mode="w", format="h264")
+    stream = container.add_stream("libx264", rate=Fraction(25, 1))
+    stream.width = width
+    stream.height = height
+    stream.pix_fmt = "yuv420p"
+
+    for index in range(frame_count):
+        image = np.full((height, width, 3), (index * 20) % 255, dtype=np.uint8)
+        frame = av.VideoFrame.from_ndarray(image, format="bgr24")
+        for packet in stream.encode(frame):
+            container.mux(packet)
+    for packet in stream.encode(None):
+        container.mux(packet)
+    container.close()
+    buffer.seek(0)
+    elementary = buffer.read()
+
+    probe = av.open(io.BytesIO(elementary), format="h264")
+    probe_stream = probe.streams.video[0]
+    for _probe_frame in probe_stream.decode():
+        break
+    extradata = bytes(probe_stream.codec_context.extradata or b"")
+    probe.close()
+
+    markers = [
+        offset
+        for offset in range(len(elementary) - 3)
+        if elementary[offset:offset + 4] == b"\x00\x00\x00\x01"
+    ]
+    units: list[bytes] = []
+    for index, start in enumerate(markers):
+        end = markers[index + 1] if index + 1 < len(markers) else len(elementary)
+        units.append(elementary[start:end])
+
+    return ([(index * 0.04, unit) for index, unit in enumerate(units)], extradata)
+
+
+def _drop_through_first_idr(units: list[tuple[float, bytes]]) -> list[tuple[float, bytes]]:
+    """Window with everything up to and including the first IDR removed."""
+    from openshelf_os_server.core.camera import _au_contains_idr
+
+    for index, (_pts, unit) in enumerate(units):
+        if _au_contains_idr(unit, au_is_avcc=False):
+            return units[index + 1 :]
+    raise AssertionError("window contains no IDR")
+
+
+@pytest.mark.anyio
+async def test_capture_freezes_nalu_window_for_rtsp_cameras() -> None:
+    window = [(0.0, b"au-one"), (0.04, b"au-two"), (0.08, b"au-three")]
+    rtsp_manager = _make_rtsp_manager(window)
+    uvc_manager = FakeCameraManager()
+
+    recorder = CrashVideoRecorder(recorder_config())
+
+    with patch.dict(
+        camera_registry,
+        {"tool": rtsp_manager, "iobox_sizer": uvc_manager},
+        clear=True,
+    ):
+        await recorder.start()
+        uvc_manager.latest_frame = b"jpeg"
+        uvc_manager.last_frame_at = 100.0
+        await recorder._sample_once(100.0)
+
+        frozen = recorder._freeze_buffers(100.0)
+        await recorder.stop()
+
+    assert isinstance(frozen["tool"], NaluWindow)
+    assert frozen["tool"].frames == tuple(window)
+    assert [frame.data for frame in frozen["iobox_sizer"]] == [b"jpeg"]
+
+
+@pytest.mark.anyio
+async def test_capture_freezes_skips_short_nalu_windows() -> None:
+    rtsp_manager = _make_rtsp_manager([(0.0, b"au-one")])
+    recorder = CrashVideoRecorder(recorder_config())
+
+    with patch.dict(camera_registry, {"tool": rtsp_manager}, clear=True):
+        await recorder.start()
+
+        frozen = recorder._freeze_buffers(100.0)
+        await recorder.stop()
+
+    assert frozen == {}
+
+
+@pytest.mark.anyio
+async def test_nalu_window_encode_produces_browser_compatible_webm() -> None:
+    units, _extradata = _make_h264_window()
+    window = NaluWindow(frames=tuple(units))
+    recorder = CrashVideoRecorder(recorder_config(max_width=160))
+
+    video = await recorder._encode_nalu_window("tool", window)
+
+    assert video.startswith(b"\x1aE\xdf\xa3")
+    assert len(video) > 500
+
+
+@pytest.mark.anyio
+async def test_capture_records_keyframe_error_for_window_without_idr() -> None:
+    units, extradata = _make_h264_window(frame_count=30)
+    units = _drop_through_first_idr(units)
+    assert len(units) >= 2
+    rtsp_manager = _make_rtsp_manager(units, extradata=extradata)
+    recorder = CrashVideoRecorder(recorder_config(max_width=160))
+
+    with patch.dict(camera_registry, {"tool": rtsp_manager}, clear=True):
+        await recorder.start()
+        artifacts = await recorder.capture("simulated motor fault")
+        await recorder.stop()
+
+    assert artifacts.attachments == []
+    details = artifacts.context["cameras"]["tool"]
+    assert details["attached"] is False
+    assert "key frame" in details["error"]
+    assert "InvalidData" not in details["error"]
+
+
+@pytest.mark.anyio
+async def test_capture_attaches_idr_window_before_extradata_is_known() -> None:
+    # Right after a worker (re)connect, the ring already holds Annex-B
+    # AUs but nalu_extradata has not surfaced yet, so the codec meta
+    # is unknown. The frozen window must still be labeled Annex-B:
+    # the first AU carries its IDR behind an AUD prefix, which the
+    # AVCC misparse of the old label reports as a missing key frame.
+    units, _extradata = _make_h264_window(frame_count=3)
+    window = [
+        (0.0, units[0][1] + units[1][1]),  # SPS + PPS + AUD + IDR, one AU
+        (0.04, units[2][1]),  # first P-slice AU
+    ]
+    assert _au_contains_idr(window[0][1], au_is_avcc=True) is False
+    rtsp_manager = _make_rtsp_manager(window)
+    assert rtsp_manager.nalu_extradata is None
+    recorder = CrashVideoRecorder(recorder_config(max_width=160))
+
+    with patch.dict(camera_registry, {"tool": rtsp_manager}, clear=True):
+        await recorder.start()
+        artifacts = await recorder.capture("simulated motor fault")
+        await recorder.stop()
+
+    details = artifacts.context["cameras"]["tool"]
+    assert details["attached"] is True
+    assert len(artifacts.attachments) == 1
+    assert artifacts.attachments[0].data.startswith(b"\x1aE\xdf\xa3")
+
+
+@pytest.mark.anyio
+async def test_capture_survives_corrupted_slice_in_nalu_window() -> None:
+    units, extradata = _make_h264_window(frame_count=30)
+    # Flip the first mid-window P-slice's NAL type byte to IDR (5), a
+    # structurally invalid AU that the decoder rejects outright.
+    for index, (pts, unit) in enumerate(units):
+        if unit[4] & 0x1F != 1:
+            continue
+        corrupted = bytearray(unit)
+        corrupted[4] = (corrupted[4] & 0xE0) | 5
+        units[index] = (pts, bytes(corrupted))
+        break
+    rtsp_manager = _make_rtsp_manager(units, extradata=extradata)
+    recorder = CrashVideoRecorder(recorder_config(max_width=160))
+
+    with patch.dict(camera_registry, {"tool": rtsp_manager}, clear=True):
+        await recorder.start()
+        artifacts = await recorder.capture("simulated motor fault")
+        await recorder.stop()
+
+    details = artifacts.context["cameras"]["tool"]
+    assert details["attached"] is True
+    assert len(artifacts.attachments) == 1
+    assert artifacts.attachments[0].data.startswith(b"\x1aE\xdf\xa3")

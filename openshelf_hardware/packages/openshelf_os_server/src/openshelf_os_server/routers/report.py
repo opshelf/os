@@ -1,6 +1,7 @@
 from __future__ import annotations
 from openshelf_os_server.documentation import response_docs
 
+import asyncio
 import json
 import os
 import socket
@@ -12,7 +13,13 @@ from pydantic import BaseModel
 
 from openshelf_os.device import get_device_id
 from openshelf_os.operating_mode import should_enable_sentry
-from openshelf_os_server.core.camera import camera_registry
+from openshelf_os_server.core.camera import (
+    CameraManager,
+    camera_registry,
+    start_camera_stream_by_id,
+    stop_camera_stream_by_id,
+    ToolCameraStreamManager,
+)
 from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.core.robot import get_robot_worker
 from openshelf_os_server.database.models import User
@@ -81,11 +88,37 @@ def _build_system_context() -> dict[str, Any]:
 async def _capture_camera_images() -> dict[str, bytes]:
     images: dict[str, bytes] = {}
 
-    for camera_id, manager in camera_registry.items():
-        if manager.is_running is True:
-            frame = await manager.get_latest_frame()
-            if frame is not None:
-                images[camera_id] = frame
+    async def capture_camera(camera_id: str, manager: CameraManager) -> tuple[str, bytes | None]:
+        frame = await manager.get_latest_frame()
+
+        if isinstance(manager, ToolCameraStreamManager) and (
+            frame is None or manager.mjpeg_path_stale() is True
+        ):
+            # RTSP managers run 24/7 on a background (crash-recorder) lease.
+            # With no /camera consumer the MJPEG decode worker is stopped and
+            # latest_frame is None, or a previously viewed camera keeps a stale
+            # latest_frame in memory after its last viewer left. Take a
+            # temporary consumer lease to capture a fresh frame for the report.
+            await start_camera_stream_by_id(camera_id)
+            try:
+                if await manager.wait_for_fresh_frame(manager.first_frame_timeout) is True:
+                    frame = await manager.get_latest_frame()
+            finally:
+                await stop_camera_stream_by_id(camera_id)
+
+        return camera_id, frame
+
+    captures = [
+        capture_camera(camera_id, manager)
+        for camera_id, manager in camera_registry.items()
+        if manager.is_running is True
+    ]
+
+    # Concurrent so the report waits on the slowest camera's first-frame
+    # budget, not the sum of every idle camera's RTSP startup.
+    for camera_id, frame in await asyncio.gather(*captures):
+        if frame is not None:
+            images[camera_id] = frame
 
     return images
 
