@@ -220,9 +220,11 @@ def _nalu_manager() -> ToolCameraStreamManager:
 
 def test_drain_nalu_queue_fills_rings_and_meta() -> None:
 	manager = _nalu_manager()
+	manager.recording_url = "rtsp://record-camera"
 	manager.nalu_queue = multiprocessing.Queue(maxsize=16)
 	now = time.monotonic()
-	manager.nalu_queue.put(("view", "meta", 0.0, 0.0, (704, 576, 25.0)))
+	manager.nalu_queue.put(("view", "meta", 0.0, 0.0, (704, 576, 25.0, "h264")))
+	manager.nalu_queue.put(("record", "meta", 0.0, 0.0, (1920, 1080, 25.0, "hevc")))
 	manager.nalu_queue.put(("view", "config", 0.0, 0.0, FAKE_AVC_C))
 	manager.nalu_queue.put(("view", "au", 0.0, now, FAKE_AU))
 	manager.nalu_queue.put(("record", "au", 0.0, now, FAKE_AU))
@@ -238,9 +240,24 @@ def test_drain_nalu_queue_fills_rings_and_meta() -> None:
 	assert manager.nalu_view_ring[-1] == (0.0, FAKE_AU, now)
 	assert manager.nalu_record_ring[-1] == (0.0, FAKE_AU, now)
 	assert manager.nalu_extradata == FAKE_AVC_C
-	assert manager.nalu_meta == (704, 576, 25.0)
+	assert manager.nalu_meta == (704, 576, 25.0, "h264")
+	assert manager.nalu_view_codec == "h264"
+	assert manager.nalu_record_codec == "hevc"
+	# With a recording source the frozen window holds the record ring,
+	# so the window codec follows it.
+	assert manager.nalu_window_codec() == "hevc"
+	# The record meta can be evicted by the NALU queue before the
+	# record AUs arrive: the window then has no known codec rather
+	# than falling back to the view codec and mislabeling the record
+	# ring.
+	manager.nalu_record_codec = None
+	assert manager.nalu_window_codec() is None
+
 	assert manager.nalu_last_frame_at == now
 	assert manager.nalu_codec_meta() is not None
+
+	manager.recording_url = ""
+	assert manager.nalu_window_codec() == "h264"
 
 
 def test_drain_nalu_queue_trims_old_entries() -> None:
@@ -327,7 +344,7 @@ def test_add_nalu_subscriber_converts_annexb_catchup() -> None:
 	manager = _nalu_manager()
 	now = time.monotonic()
 	manager.nalu_extradata = FAKE_ANNEX_B_EXTRADATA
-	manager.nalu_meta = (704, 576, 25.0)
+	manager.nalu_meta = (704, 576, 25.0, "h264")
 	manager.nalu_view_ring.append((1.0, FAKE_AU, now - 0.1))
 
 	subscriber = manager.add_nalu_subscriber()
@@ -341,7 +358,7 @@ def test_add_nalu_subscriber_converts_annexb_catchup() -> None:
 def test_add_nalu_subscriber_anchors_catchup_at_idr() -> None:
 	manager = _nalu_manager()
 	manager.nalu_extradata = FAKE_ANNEX_B_EXTRADATA
-	manager.nalu_meta = (704, 576, 25.0)
+	manager.nalu_meta = (704, 576, 25.0, "h264")
 	now = time.monotonic()
 	# An out-of-window IDR must not anchor the replay either.
 	manager.nalu_view_ring.append((0.0, b"\x00\x00\x00\x01\x65" + b"stale-idr", now - 10.0))
@@ -362,7 +379,7 @@ def test_add_nalu_subscriber_anchors_catchup_at_idr() -> None:
 def test_add_nalu_subscriber_replays_window_without_idr() -> None:
 	manager = _nalu_manager()
 	manager.nalu_extradata = FAKE_ANNEX_B_EXTRADATA
-	manager.nalu_meta = (704, 576, 25.0)
+	manager.nalu_meta = (704, 576, 25.0, "h264")
 	now = time.monotonic()
 	manager.nalu_view_ring.append((0.0, FAKE_DELTA_AU, now - 1.0))
 	manager.nalu_view_ring.append((1.0, FAKE_DELTA_AU, now - 0.5))
@@ -402,7 +419,7 @@ async def test_capture_loop_fans_out_new_access_units() -> None:
 	manager.capture_task = asyncio.create_task(manager._capture_loop())
 	subscriber = manager.add_nalu_subscriber()
 	manager.nalu_queue.put(
-		("view", "meta", 0.0, 0.0, (704, 576, 25.0))
+		("view", "meta", 0.0, 0.0, (704, 576, 25.0, "h264"))
 	)
 	manager.nalu_queue.put(("view", "config", 0.0, 0.0, FAKE_AVC_C))
 	manager.nalu_queue.put(
@@ -426,6 +443,7 @@ def _nalu_reader_fake_container() -> MagicMock:
 	stream = MagicMock()
 	stream.codec_context.width = 320
 	stream.codec_context.height = 240
+	stream.codec_context.name = "h264"
 	stream.codec_context.extradata = FAKE_AVC_C
 	stream.average_rate = Fraction(25, 1)
 	stream.time_base = Fraction(1, 12800)
@@ -491,7 +509,7 @@ async def test_capture_loop_converts_annexb_access_units() -> None:
 	manager.capture_task = asyncio.create_task(manager._capture_loop())
 	subscriber = manager.add_nalu_subscriber()
 	manager.nalu_queue.put(
-		("view", "meta", 0.0, 0.0, (704, 576, 25.0))
+		("view", "meta", 0.0, 0.0, (704, 576, 25.0, "h264"))
 	)
 	manager.nalu_queue.put(("view", "config", 0.0, 0.0, FAKE_ANNEX_B_EXTRADATA))
 	manager.nalu_queue.put(

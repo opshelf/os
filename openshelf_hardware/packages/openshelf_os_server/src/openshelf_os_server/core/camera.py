@@ -48,7 +48,7 @@ NALE_CATCHUP_SECONDS = 2.0
 
 # Worker queue item: (source, kind, pts_seconds, arrival_seconds, payload).
 # source: "view" | "record"; kind: "au" (Annex-B access unit), "config"
-# (h264 avcC extradata) or "meta" ((width, height, fps)).
+# (h264 avcC extradata) or "meta" ((width, height, fps, codec name)).
 NaluQueueItem = tuple[str, str, float, float, Any]
 
 class RawCamera(Protocol):
@@ -227,6 +227,25 @@ def _au_contains_idr(unit: bytes, au_is_avcc: bool) -> bool:
 	return False
 
 
+def _au_contains_hevc_keyframe(unit: bytes) -> bool:
+	"""Whether an access unit contains a HEVC key-frame (IRAP) slice NAL.
+
+	HEVC carries the 6-bit NAL unit type in the top six bits of the
+	first byte. Any of 16-21 (BLA_W_LP, BLA_W_RADL, BLA_N_LP, IDR_W_RADL,
+	IDR_N_LP, CRA_NUT) is an instantaneous random
+	access point a decoder can start from, and encoders use different
+	members of that range for the first key frame than for later ones
+	(e.g. libx265), so the gate must accept the whole range. HEVC
+	over RTSP is always Annex-B here, so there is no AVCC form to
+	handle.
+	"""
+	for nal_unit in _split_annexb_nalus(unit):
+		if nal_unit and (nal_unit[0] >> 1) & 0x3F in range(16, 22):
+			return True
+
+	return False
+
+
 @dataclass(frozen=True)
 class NaluCodecMeta:
 	codec: str
@@ -349,6 +368,7 @@ def _nalu_source_reader(
 				int(codec_context.width or 0),
 				int(codec_context.height or 0),
 				float(stream.average_rate) if stream.average_rate else 0.0,
+				codec_context.name,
 			)))
 
 			for packet in container.demux(stream):
@@ -690,7 +710,9 @@ class ToolCameraStreamManager:
 		self.nalu_ring_bytes = {"view": 0, "record": 0}
 		self.nalu_last_frame_at: Optional[float] = None
 		self.nalu_extradata: Optional[bytes] = None
-		self.nalu_meta: Optional[tuple[int, int, float]] = None
+		self.nalu_meta: Optional[tuple[int, int, float, str]] = None
+		self.nalu_view_codec: Optional[str] = None
+		self.nalu_record_codec: Optional[str] = None
 		self.nalu_subscribers: set[asyncio.Queue] = set()
 		self.lifecycle_lock = asyncio.Lock()
 		self.unregistered = asyncio.Event()
@@ -703,6 +725,8 @@ class ToolCameraStreamManager:
 			self.latest_frame = None
 			self.last_frame_at = None
 			self.nalu_last_frame_at = None
+			self.nalu_view_codec = None
+			self.nalu_record_codec = None
 			self.is_running = True
 			try:
 				self._start_nalu_worker()
@@ -902,6 +926,9 @@ class ToolCameraStreamManager:
 				self.nalu_extradata = payload
 			elif kind == "meta" and source == "view":
 				self.nalu_meta = payload
+				self.nalu_view_codec = payload[3]
+			elif kind == "meta" and source == "record":
+				self.nalu_record_codec = payload[3]
 
 		return tick_aus
 
@@ -938,11 +965,23 @@ class ToolCameraStreamManager:
 		cutoff = time.monotonic() - seconds
 		return [(pts, data) for (pts, data, arrival) in ring if arrival >= cutoff]
 
+	def nalu_window_codec(self) -> Optional[str]:
+		# Mirrors get_nalu_window's source selection exactly: the frozen
+		# window holds the ring that source names, so the codec must
+		# come from that same source. The source's meta may still be
+		# missing or evicted, in which case the window has no known
+		# codec and the recorder degrades to its explicit-error path
+		# instead of labeling the ring with the other source's codec.
+		if self.recording_url != "":
+			return self.nalu_record_codec
+
+		return self.nalu_view_codec
+
 	def nalu_codec_meta(self) -> Optional[NaluCodecMeta]:
 		if self.nalu_extradata is None or self.nalu_meta is None:
 			return None
 
-		width, height, fps = self.nalu_meta
+		width, height, fps, _codec_name = self.nalu_meta
 
 		return _parse_avcc_meta(self.nalu_extradata, width, height, fps)
 
