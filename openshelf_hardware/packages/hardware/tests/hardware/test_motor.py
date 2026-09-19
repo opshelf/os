@@ -14,7 +14,7 @@ from hardware.motor import (
     Motor,
     MotorStatus,
 )
-from hardware.exceptions import MotorConfigError, MotorError
+from hardware.exceptions import MotorConfigError, MotorError, MotorLimitError
 from hardware.servo import Servo
 
 def make_motor_params(**overrides):
@@ -749,6 +749,52 @@ async def test_motor_home_runs_clearance_move_before_pre_home_approach(mock_cont
 
     assert events == ["clearance", "approach"]
     motor._move_away_from_home.assert_awaited_once_with(10.0, params.ret_rpm)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "home_limit_input",
+    [
+        pytest.param(None, id="no-input"),
+        pytest.param(SimpleNamespace(name="x_lim_min", read=lambda: True), id="engaged"),
+    ],
+)
+async def test_home_limit_verify_accepts_an_engaged_or_absent_input(
+    mock_controller, home_limit_input
+):
+    motor = Motor(mock_controller, make_motor_params(), home_limit_input=home_limit_input)
+    motor._is_homed = True
+    motor._hard_stopped = False
+
+    await motor._verify_home_limit_engaged()
+
+    assert motor.is_homed() is True
+    assert motor.is_hard_stopped() is False
+
+
+@pytest.mark.asyncio
+async def test_home_fails_when_the_limit_input_never_engages(mock_controller, monkeypatch):
+    # The module constant, not real time, drives the poll timeout.
+    monkeypatch.setattr("hardware.motor.HOME_LIMIT_VERIFY_TIMEOUT_S", 0.0)
+    limit_input = SimpleNamespace(name="x_lim_min", read=lambda: False)
+    motor = Motor(mock_controller, make_motor_params(), home_limit_input=limit_input)
+    motor.clear_alarm = AsyncMock()
+    motor._move_near_home = AsyncMock()
+    motor._prepare_home_motion = AsyncMock()
+    motor._start_path_zero = AsyncMock()
+    motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor._set_zero_position = AsyncMock()
+    motor.move_config = AsyncMock()
+    motor._park = AsyncMock()
+
+    with pytest.raises(MotorLimitError) as excinfo:
+        await motor.home()
+
+    assert "x_lim_min" in str(excinfo.value)
+    assert motor.is_homed() is False
+    assert motor.is_hard_stopped() is True
+    # The interlock must fail before the axis reports itself homed and parked.
+    motor._park.assert_not_awaited()
 
 
 @pytest.mark.asyncio

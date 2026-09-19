@@ -40,8 +40,8 @@ def build_config(config_path: Path, storage_path: Path) -> SimpleNamespace:
 		z_offset_model_param_tolerance_mm=0.2,
 		z_stall_probe_repeats=2,
 		z_stall_probe_repeat_tolerance_mm=0.3,
-		left_xy_offset=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
-		right_xy_offset=None,
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
+		right_gripper_xy_correction_mm=None,
 	)
 	tool = SimpleNamespace(
 		motors=[SimpleNamespace(motor_name="x_axis", lim=950.0, lower_lim=0.0)],
@@ -375,7 +375,7 @@ def build_fake_anchor_result(
 		sample_count=1,
 		x_span_mm=135.0,
 		intercept_mm=intercept_mm,
-		slope_per_mm=slope_per_mm,
+		x_slope_mm_per_mm=slope_per_mm,
 		stage_extension_mm=stage_extension_mm,
 		z_place_mm=10.0,
 		rotation_center_deg=3.0,
@@ -421,7 +421,7 @@ def test_run_hands_the_anchor_the_raw_axis_limits(tmp_path: Path, monkeypatch, c
 	# raw axis limits. A pre-converted limit makes the anchor subtract the offset a second time,
 	# which loosens the reachability guard by the offset.
 	x_axis_motor = config.robot.tool.motors[0]
-	offset_x_mm = float(config.robot.grid.scan.left_xy_offset.x_mm)
+	offset_x_mm = float(config.robot.grid.scan.left_gripper_xy_correction_mm.x_mm)
 	assert captured["x_axis_limit_mm"] == float(x_axis_motor.lim)
 	assert captured["x_axis_lower_limit_mm"] == float(x_axis_motor.lower_lim)
 	converted = (
@@ -588,11 +588,11 @@ def test_short_span_probe_reports_the_model_the_product_would_install(
 	config_path = tmp_path / "config.development.json"
 	config_path.write_text("{}", encoding="utf-8")
 	config = build_config(config_path, tmp_path / "storage.development.json")
-	config.robot.grid.scan.left_z_offset_model = SimpleNamespace(
+	config.robot.grid.scan.left_wall_depth_to_gripper_z_model = SimpleNamespace(
 		intercept_mm=-4.0735,
-		slope_per_mm=0.002,
-		stage_extension_mm=47.0,
-		z_place_mm=10.0,
+		x_slope_mm_per_mm=0.002,
+		reference_stage_mm=47.0,
+		reference_z_place_mm=10.0,
 	)
 	grid = build_grid()
 	run_dir = build_run_dir(tmp_path / "runs" / "left")

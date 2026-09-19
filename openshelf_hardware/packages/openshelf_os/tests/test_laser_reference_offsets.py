@@ -84,7 +84,7 @@ def build_analysis(detected_cells: list[ScanDetectedCell]) -> SimpleNamespace:
 
 def build_scan_config(xy_offset: tuple[float, float] | None = None) -> LaserScanConfig:
 	config = LaserScanConfig()
-	config.left_xy_offset = None if xy_offset is None else LaserScanXYOffsetConfig(
+	config.left_gripper_xy_correction_mm = None if xy_offset is None else LaserScanXYOffsetConfig(
 		x_mm=xy_offset[0], y_mm=xy_offset[1]
 	)
 	return config
@@ -217,7 +217,7 @@ def test_refuses_to_predict_from_zero_when_no_offset_is_configured() -> None:
 
 	with pytest.raises(
 		ValueError,
-		match=r"no robot\.grid\.scan\.left_xy_offset is configured.*set a rough one first",
+		match=r"no robot\.grid\.scan\.left_gripper_xy_correction_mm is configured.*set a rough one first",
 	):
 		derive(grid, analysis, build_scan_config(xy_offset=None))
 

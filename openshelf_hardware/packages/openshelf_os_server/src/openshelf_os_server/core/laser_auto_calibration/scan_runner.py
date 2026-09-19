@@ -26,15 +26,15 @@ class ScanRunnerMixin:
         side_name = _side_to_module_name(side)
         config = get_root_config()
         scan_config = scan_config_override or config.robot.grid.scan
-        config_settle_ms = int(laser_module.get_laser_sample_settle_ms(scan_config))
-        config_samples_per_point = int(laser_module.get_laser_samples_per_point(scan_config))
-        # Fine and coarse scans both honor the configured settling and sample count. Reducing
+        base_settle_ms = int(laser_module.get_laser_sample_settle_ms())
+        base_samples_per_point = int(laser_module.get_laser_samples_per_point())
+        # Fine and coarse scans both honor the shared settling and sample count. Reducing
         # either pass to one read defeats the median filter and lets a transient laser reading
         # erase a narrow wall or move a detected edge by one scan step.
-        settle_ms = int(laser_module.get_fine_settle_ms(config_settle_ms))
-        samples_per_point = int(laser_module.get_fine_samples_per_point(config_samples_per_point))
-        coarse_settle_ms = int(laser_module.get_coarse_settle_ms(config_settle_ms))
-        coarse_samples_per_point = int(laser_module.get_coarse_samples_per_point(config_samples_per_point))
+        settle_ms = int(laser_module.get_fine_settle_ms(base_settle_ms))
+        samples_per_point = int(laser_module.get_fine_samples_per_point(base_samples_per_point))
+        coarse_settle_ms = int(laser_module.get_coarse_settle_ms(base_settle_ms))
+        coarse_samples_per_point = int(laser_module.get_coarse_samples_per_point(base_samples_per_point))
         raw_rescan_target: str | None = None
         raw_x_bounds: tuple[float, float] | None = (bounds.x_min, bounds.x_max)
         raw_y_bounds: tuple[float, float] | None = (bounds.y_min, bounds.y_max)

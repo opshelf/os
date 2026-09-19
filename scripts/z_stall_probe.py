@@ -303,9 +303,9 @@ def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side:
 	decision = laser_module.resolve_z_stall_model(result=result, scan_config=scan_config, side=side)
 	model = {
 		"intercept_mm": round(float(decision.intercept_mm), 3),
-		"slope_per_mm": float(decision.slope_per_mm),
-		"stage_extension_mm": float(result.stage_extension_mm),
-		"z_place_mm": float(result.z_place_mm),
+		"x_slope_mm_per_mm": float(decision.slope_per_mm),
+		"reference_stage_mm": float(result.stage_extension_mm),
+		"reference_z_place_mm": float(result.z_place_mm),
 	}
 	side_name = "left" if side == StorageModuleSide.LEFT else "right"
 	print(f"model for robot.grid.scan.{side_name}_z_offset_model: {model}")
@@ -315,8 +315,10 @@ def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side:
 		f"fit_centroid_x_mm={float(result.fit_centroid_x_mm):.1f}"
 	)
 
-	configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
-	configured_slope_mm = 0.0 if configured_model is None else float(configured_model.slope_per_mm)
+	configured_model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
+	configured_slope_mm = (
+		0.0 if configured_model is None else float(configured_model.x_slope_mm_per_mm)
+	)
 	agreement_mm = laser_module.z_model_datum_agreement_mm(
 		intercept_mm=float(decision.intercept_mm),
 		slope_per_mm=float(decision.slope_per_mm),

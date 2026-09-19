@@ -441,6 +441,7 @@ async def test_report_error_skips_sentry_in_development(tmp_path) -> None:
 		"device_id": "dev",
 		"hostname": "host",
 		"environment": "development",
+		"schema_version": 4,
 		"version": "1",
 	}
 	fake_user = SimpleNamespace(
@@ -461,12 +462,12 @@ async def test_report_error_skips_sentry_in_development(tmp_path) -> None:
 		patch.object(report, "_build_robot_context", new=AsyncMock(return_value={"status": "ok"})),
 		patch.object(report, "_build_system_context", return_value=system_context),
 		patch.object(report, "_capture_camera_images", new=AsyncMock(return_value={})),
-		patch.object(report.sentry_sdk, "push_scope") as push_scope_mock,
+		patch.object(report.sentry_sdk, "new_scope") as new_scope_mock,
 		patch.object(report.sentry_sdk, "capture_message") as capture_message_mock,
 	):
 		clear_config_cache()
 		created = await report.submit_error_report(report.ReportErrorRequest(message="boom"), current_user=fake_user)
 		assert created.status == "ok"
 
-		push_scope_mock.assert_not_called()
+		new_scope_mock.assert_not_called()
 		capture_message_mock.assert_not_called()

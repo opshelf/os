@@ -7,7 +7,6 @@
 		getCalibrationStatus,
 		homeToolMotors,
 		moveToCell,
-		moveToPosition,
 		jogAxis,
 		testGripper,
 		saveCalibration,
@@ -17,8 +16,6 @@
 		homeMotor,
 		getShelfStageExtension,
 		controlGripper,
-		deleteShelf,
-		deleteCell,
 		type ApiErrorDetail,
 		type CalibrationStatus,
 		type StorageGrid,
@@ -54,17 +51,8 @@
 	let needsHomeReason = $state<string>('');
 	let needsHomeAxes = $state<string[]>([]);
 	let isHoming = $state<boolean>(false);
-	let isAddingShelf = $state<boolean>(false);
-	let isAddingCell = $state<boolean>(false);
-	let isDeletingShelf = $state<boolean>(false);
-	let isDeletingCell = $state<boolean>(false);
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
-	const ADD_SHELF_VALUE = '__add_shelf__';
-	const ADD_CELL_VALUE = '__add_cell__';
-	const NEW_CELL_START_X = 475;
-	const NEW_CELL_START_Y = 630;
-	const NEW_CELL_START_Z = 0;
 
 	let jogStep = $state<number>(1);
 
@@ -204,30 +192,9 @@
 		return getShelvesForSide(selectedSide);
 	}
 
-	function getNextShelfIndex(side: 'left_module' | 'right_module'): number {
-		const shelves = getShelvesForSide(side);
-
-		if (shelves.length === 0) {
-			return 0;
-		}
-
-		return Math.max(...shelves.map((shelf) => shelf.shelf_idx)) + 1;
-	}
-
 	function getSelectedShelf() {
 		const shelves = getShelves();
 		return shelves.find((shelf) => shelf.shelf_idx === selectedShelf) ?? null;
-	}
-
-	function getNextCellIndex(shelfIdx: number): number {
-		const shelf =
-			getShelves().find((candidateShelf) => candidateShelf.shelf_idx === shelfIdx) ?? null;
-
-		if (shelf === null || shelf.cells.length === 0) {
-			return 0;
-		}
-
-		return Math.max(...shelf.cells.map((cell) => cell.cell_idx)) + 1;
 	}
 
 	function getCells() {
@@ -268,38 +235,12 @@
 		return [selectedCell, ...cellIndices];
 	}
 
-	function isCreatingCell(): boolean {
-		return isAddingShelf === true || isAddingCell === true;
-	}
-
-	function clearPendingCreation(): void {
-		isAddingShelf = false;
-		isAddingCell = false;
-	}
-
-	function syncPendingCreationTargets(): void {
-		if (isAddingShelf === true) {
-			selectedShelf = getNextShelfIndex(selectedSide);
-			selectedCell = 0;
-			isAddingCell = true;
-			return;
-		}
-
-		if (isAddingCell === true) {
-			selectedCell = getNextCellIndex(selectedShelf);
-		}
-	}
-
 	function syncSelection(preferredShelf?: number, preferredCell?: number): void {
-		clearPendingCreation();
-
 		const shelves = getShelvesForSide(selectedSide);
 
 		if (shelves.length === 0) {
-			selectedShelf = getNextShelfIndex(selectedSide);
+			selectedShelf = 0;
 			selectedCell = 0;
-			isAddingShelf = true;
-			isAddingCell = true;
 			return;
 		}
 
@@ -310,7 +251,6 @@
 
 		if (matchingShelf.cells.length === 0) {
 			selectedCell = 0;
-			isAddingCell = true;
 			return;
 		}
 
@@ -336,20 +276,7 @@
 	function didChangeShelf(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
-		if (target.value === ADD_SHELF_VALUE) {
-			selectedShelf = getNextShelfIndex(selectedSide);
-			selectedCell = 0;
-			isAddingShelf = true;
-			isAddingCell = true;
-			currentPosition = null;
-			error = '';
-			message = '';
-			warning = '';
-			return;
-		}
-
 		selectedShelf = parseInt(target.value, 10);
-		isAddingShelf = false;
 		syncSelection(selectedShelf);
 		currentPosition = null;
 		error = '';
@@ -360,18 +287,7 @@
 	function didChangeCell(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
-		if (target.value === ADD_CELL_VALUE) {
-			selectedCell = getNextCellIndex(selectedShelf);
-			isAddingCell = true;
-			currentPosition = null;
-			error = '';
-			message = '';
-			warning = '';
-			return;
-		}
-
 		selectedCell = parseInt(target.value, 10);
-		isAddingCell = false;
 		currentPosition = null;
 		error = '';
 		message = '';
@@ -387,18 +303,8 @@
 		try {
 			await controlGripper('release');
 			storageGrid = await getStorageGrid();
-			syncPendingCreationTargets();
 
-			if (isCreatingCell() === true) {
-				currentPosition = await moveToPosition(
-					selectedSide,
-					NEW_CELL_START_X,
-					NEW_CELL_START_Y,
-					NEW_CELL_START_Z
-				);
-			} else {
-				currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
-			}
+			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
 
 			const rotationAngles = await getRotationAngles();
 			const targetAngle =
@@ -408,7 +314,7 @@
 			await loadStageExtensionForSide();
 
 			syncEditValues();
-			message = isCreatingCell() === true ? 'moved to new cell start' : 'moved to cell';
+			message = 'moved to cell';
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to start calibration';
@@ -572,7 +478,6 @@
 			);
 
 			storageGrid = await getStorageGrid();
-			clearPendingCreation();
 			syncSelection(selectedShelf, selectedCell);
 
 			await testGripper(selectedSide, selectedShelf, selectedCell);
@@ -645,7 +550,6 @@
 			);
 
 			storageGrid = await getStorageGrid();
-			clearPendingCreation();
 			syncSelection(selectedShelf, selectedCell);
 
 			message = 'calibration saved';
@@ -664,16 +568,7 @@
 		warning = '';
 
 		try {
-			if (isCreatingCell() === true) {
-				currentPosition = await moveToPosition(
-					selectedSide,
-					NEW_CELL_START_X,
-					NEW_CELL_START_Y,
-					NEW_CELL_START_Z
-				);
-			} else {
-				currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
-			}
+			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
 
 			syncEditValues();
 			message = 'position reset';
@@ -687,65 +582,6 @@
 
 	function getSideInitial(): string {
 		return selectedSide === 'left_module' ? 'L' : 'R';
-	}
-
-	async function didClickDeleteShelf(): Promise<void> {
-		const side = selectedSide;
-		const shelfIdx = selectedShelf;
-		const initial = side === 'left_module' ? 'L' : 'R';
-		const confirmed = confirm(`are you sure you want to delete shelf ${initial}:${shelfIdx}?`);
-		if (confirmed !== true) {
-			return;
-		}
-
-		isDeletingShelf = true;
-		error = '';
-		message = '';
-		warning = '';
-
-		try {
-			await deleteShelf(side, shelfIdx);
-			storageGrid = await getStorageGrid();
-			syncSelection();
-			currentPosition = null;
-			message = `shelf ${initial}:${shelfIdx} deleted`;
-		} catch (err) {
-			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to delete shelf';
-		} finally {
-			isDeletingShelf = false;
-		}
-	}
-
-	async function didClickDeleteCell(): Promise<void> {
-		const side = selectedSide;
-		const shelfIdx = selectedShelf;
-		const cellIdx = selectedCell;
-		const initial = side === 'left_module' ? 'L' : 'R';
-		const confirmed = confirm(
-			`are you sure you want to delete cell ${initial}:${shelfIdx}:${cellIdx}?`
-		);
-		if (confirmed !== true) {
-			return;
-		}
-
-		isDeletingCell = true;
-		error = '';
-		message = '';
-		warning = '';
-
-		try {
-			await deleteCell(side, shelfIdx, cellIdx);
-			storageGrid = await getStorageGrid();
-			syncSelection();
-			currentPosition = null;
-			message = `cell ${initial}:${shelfIdx}:${cellIdx} deleted`;
-		} catch (err) {
-			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to delete cell';
-		} finally {
-			isDeletingCell = false;
-		}
 	}
 
 	function handleShelfNeedsHome(event: CustomEvent<CalibrationStatus>): void {
@@ -783,8 +619,7 @@
 						{#each getShelfOptionIndices() as shelfIdx}
 							<option value={String(shelfIdx)}>{shelfIdx}</option>
 						{/each}
-						<option value={ADD_SHELF_VALUE}>add</option>
-					</select>
+						</select>
 				</td>
 				<td>
 					<span class="field-label">cell</span>
@@ -792,8 +627,7 @@
 						{#each getCellOptionIndices() as cellIdx}
 							<option value={String(cellIdx)}>{cellIdx}</option>
 						{/each}
-						<option value={ADD_CELL_VALUE}>add</option>
-					</select>
+						</select>
 				</td>
 			</tr>
 			<tr>
@@ -810,32 +644,6 @@
 								isHoming === true}
 						>
 							calibrate
-						</button>
-						<button
-							type="button"
-							onclick={didClickDeleteShelf}
-							disabled={isMoving === true ||
-								isTesting === true ||
-								isExtending === true ||
-								needsHome === true ||
-								isHoming === true ||
-								isDeletingShelf === true ||
-								isDeletingCell === true}
-						>
-							delete shelf
-						</button>
-						<button
-							type="button"
-							onclick={didClickDeleteCell}
-							disabled={isMoving === true ||
-								isTesting === true ||
-								isExtending === true ||
-								needsHome === true ||
-								isHoming === true ||
-								isDeletingShelf === true ||
-								isDeletingCell === true}
-						>
-							delete cell
 						</button>
 						{#if currentPosition !== null}
 							<button

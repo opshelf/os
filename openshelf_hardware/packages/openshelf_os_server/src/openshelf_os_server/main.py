@@ -66,7 +66,7 @@ from openshelf_os_server.launcher import bootstrap_runtime_state
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
 from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, chemicals, demo, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
-from openshelf_os_server.settings import get_settings, get_operating_mode
+from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings, get_operating_mode
 
 configure_logging()
 logger = get_logger(__name__)
@@ -505,7 +505,7 @@ async def _ensure_developer_user() -> None:
 	database wipe, so the device can never end up fully locked out."""
 	async with AsyncSessionLocal() as db:
 		result = await db.execute(
-			select(User).filter(User.email == "developer@opshelf.com")
+			select(User).filter(User.email == DEVELOPER_SYSTEM_USER_EMAIL)
 		)
 		existing_user = result.scalar_one_or_none()
 
@@ -513,8 +513,8 @@ async def _ensure_developer_user() -> None:
 			if existing_user.is_system is False:
 				existing_user.is_system = True
 				await db.commit()
-				logger.info("developer_user_marked_system", email="developer@opshelf.com")
-			logger.info("developer_user_exists", email="developer@opshelf.com")
+				logger.info("developer_user_marked_system", email=DEVELOPER_SYSTEM_USER_EMAIL)
+			logger.info("developer_user_exists", email=DEVELOPER_SYSTEM_USER_EMAIL)
 			return
 
 		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
@@ -528,7 +528,7 @@ async def _ensure_developer_user() -> None:
 		pin_hash = ph.hash("1111")
 
 		developer_user = User(
-			email="developer@opshelf.com",
+			email=DEVELOPER_SYSTEM_USER_EMAIL,
 			first_name="Developer",
 			last_name="System",
 			pin_hash=pin_hash,
@@ -539,7 +539,20 @@ async def _ensure_developer_user() -> None:
 
 		db.add(developer_user)
 		await db.commit()
-		logger.info("developer_user_created", email="developer@opshelf.com")
+		logger.info("developer_user_created", email=DEVELOPER_SYSTEM_USER_EMAIL)
+
+
+async def _dev_auto_user_is_resolvable(email: str) -> bool:
+	"""Report whether the dev-mode fallback identity resolves to an active user.
+
+	A miss is not fatal at startup, but every unauthenticated request then
+	answers 503 with "Dev auto-user not found in database".
+	"""
+	async with AsyncSessionLocal() as db:
+		result = await db.execute(
+			select(User).filter(User.email == email, User.is_active.is_(True))
+		)
+		return result.scalar_one_or_none() is not None
 
 
 async def _ensure_default_roles_and_access_levels() -> None:
@@ -652,6 +665,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	await _ensure_default_roles_and_access_levels()
 	await _ensure_default_role_permissions()
 	await _ensure_developer_user()
+	if settings.auth.dev_mode and settings.auth.dev_auto_user:
+		if await _dev_auto_user_is_resolvable(settings.auth.dev_auto_user) is False:
+			logger.warning(
+				"dev_auto_user_unresolvable",
+				email=settings.auth.dev_auto_user,
+				impact="unauthenticated requests answer 503 Dev auto-user not found in database",
+				expected=DEVELOPER_SYSTEM_USER_EMAIL,
+			)
 	async with AsyncSessionLocal() as db:
 		await onboarding.ensure_onboarding_state(db)
 	await _apply_mode_transition()
@@ -804,7 +825,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 	correlation_id = getattr(request.state, "correlation_id", None)
 
 	if sentry_enabled is True and sentry_sdk.is_initialized() is True:
-		with sentry_sdk.push_scope() as scope:
+		with sentry_sdk.new_scope() as scope:
 			if correlation_id:
 				scope.set_tag("correlation_id", correlation_id)
 			scope.set_tag("path", request.url.path)

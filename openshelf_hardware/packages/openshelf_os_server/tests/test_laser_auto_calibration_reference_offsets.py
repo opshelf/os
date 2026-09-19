@@ -190,8 +190,8 @@ def _build_scan_config(*, xy_offset: tuple[float, float] | None) -> SimpleNamesp
 	return SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=0.0,
-		left_xy_offset=None if xy_offset is None else SimpleNamespace(x_mm=xy_offset[0], y_mm=xy_offset[1]),
-		right_xy_offset=None,
+		left_gripper_xy_correction_mm=None if xy_offset is None else SimpleNamespace(x_mm=xy_offset[0], y_mm=xy_offset[1]),
+		right_gripper_xy_correction_mm=None,
 		left_bounds_x_min_mm=5.0,
 		left_bounds_x_max_mm=950.0,
 		left_bounds_y_min_mm=0.0,
@@ -201,8 +201,8 @@ def _build_scan_config(*, xy_offset: tuple[float, float] | None) -> SimpleNamesp
 		right_bounds_y_min_mm=0.0,
 		right_bounds_y_max_mm=1250.0,
 		z_offset_model_param_tolerance_mm=0.2,
-		left_z_offset_model=None,
-		right_z_offset_model=None,
+		left_wall_depth_to_gripper_z_model=None,
+		right_wall_depth_to_gripper_z_model=None,
 		z_stall_anchor_enabled=False,
 		z_stall_manual_agreement_mm=1.0,
 	)
@@ -276,8 +276,8 @@ async def test_reference_run_uses_derived_offset_and_persists_it() -> None:
 
 	assert len(saved_configs) == 1
 	saved_scan_config = saved_configs[0].robot.grid.scan
-	assert saved_scan_config.left_xy_offset.x_mm == pytest.approx(DERIVED_OFFSET[0])
-	assert saved_scan_config.left_xy_offset.y_mm == pytest.approx(DERIVED_OFFSET[1])
+	assert saved_scan_config.left_gripper_xy_correction_mm.x_mm == pytest.approx(DERIVED_OFFSET[0])
+	assert saved_scan_config.left_gripper_xy_correction_mm.y_mm == pytest.approx(DERIVED_OFFSET[1])
 
 	# The frame the scan wrote is the manual datum, because the derived offset is what turns
 	# the detected opening back into the operator's grab point.
@@ -328,7 +328,7 @@ async def test_reference_run_needs_a_manual_cell_on_every_side_in_scope() -> Non
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	# Both sides carry a configured offset: the derivation needs one as its predictor, and this
 	# test is about the manual-cell rule, not about that refusal.
-	scan_config.right_xy_offset = SimpleNamespace(x_mm=-97.0, y_mm=0.0)
+	scan_config.right_gripper_xy_correction_mm = SimpleNamespace(x_mm=-97.0, y_mm=0.0)
 	config = _build_root_config(scan_config)
 	worker = SimpleNamespace(_robot=SimpleNamespace(_grid=_build_source_grid()))
 
@@ -406,8 +406,8 @@ async def test_single_cell_reference_run_keeps_the_datum_and_persists_the_offset
 	assert cell_point.y == pytest.approx(MANUAL_Y_MM)
 
 	assert len(saved_configs) == 1
-	assert saved_configs[0].robot.grid.scan.left_xy_offset.x_mm == pytest.approx(DERIVED_OFFSET[0])
-	assert saved_configs[0].robot.grid.scan.left_xy_offset.y_mm == pytest.approx(DERIVED_OFFSET[1])
+	assert saved_configs[0].robot.grid.scan.left_gripper_xy_correction_mm.x_mm == pytest.approx(DERIVED_OFFSET[0])
+	assert saved_configs[0].robot.grid.scan.left_gripper_xy_correction_mm.y_mm == pytest.approx(DERIVED_OFFSET[1])
 	assert manager._snapshot.reference_offset_results[0].applied is True
 	assert manager._snapshot.reference_offset_results[0].persisted is True
 
@@ -471,7 +471,7 @@ async def test_cell_scoped_reference_run_uses_only_the_in_scope_datum() -> None:
 
 	apply_rescan.assert_not_called()
 	assert len(saved_configs) == 1
-	saved_offset = saved_configs[0].robot.grid.scan.left_xy_offset
+	saved_offset = saved_configs[0].robot.grid.scan.left_gripper_xy_correction_mm
 	# The in-scope datum alone: the sibling shelf's point sits 1.1mm away, so a derivation that
 	# dropped the shelf would have persisted the median of the two datums, a value neither holds.
 	assert saved_offset.x_mm == pytest.approx(SECOND_SHELF_DERIVED_OFFSET[0])
@@ -535,10 +535,10 @@ async def test_shelf_reference_run_frames_the_apply_with_the_derived_offset() ->
 								)
 
 	assert len(applied_scan_configs) == 1
-	assert applied_scan_configs[0].left_xy_offset.x_mm == pytest.approx(DERIVED_OFFSET[0])
-	assert applied_scan_configs[0].left_xy_offset.y_mm == pytest.approx(DERIVED_OFFSET[1])
+	assert applied_scan_configs[0].left_gripper_xy_correction_mm.x_mm == pytest.approx(DERIVED_OFFSET[0])
+	assert applied_scan_configs[0].left_gripper_xy_correction_mm.y_mm == pytest.approx(DERIVED_OFFSET[1])
 	# The configured config object itself stays untouched; the derived frame rides the copy.
-	assert scan_config.left_xy_offset.x_mm == pytest.approx(CONFIGURED_OFFSET[0])
+	assert scan_config.left_gripper_xy_correction_mm.x_mm == pytest.approx(CONFIGURED_OFFSET[0])
 	assert len(saved_configs) == 1
 	assert manager._snapshot.reference_offset_results[0].persisted is True
 
@@ -731,11 +731,11 @@ async def test_z_stall_replaces_the_configured_model_with_the_probed_one() -> No
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
-	scan_config.left_z_offset_model = SimpleNamespace(
+	scan_config.left_wall_depth_to_gripper_z_model = SimpleNamespace(
 		intercept_mm=1.052,
-		slope_per_mm=-4.5e-05,
-		stage_extension_mm=47.0,
-		z_place_mm=160.5,
+		x_slope_mm_per_mm=-4.5e-05,
+		reference_stage_mm=47.0,
+		reference_z_place_mm=160.5,
 	)
 	config = _build_root_config(scan_config)
 	worker = _build_z_worker()
@@ -761,11 +761,11 @@ async def test_z_stall_replaces_the_configured_model_with_the_probed_one() -> No
 
 	assert result == (pytest.approx(MANUAL_INTERCEPT_MM), pytest.approx(0.0))
 	# The probed model is installed on the run's config, which is what persists it.
-	installed = scan_config.left_z_offset_model
+	installed = scan_config.left_wall_depth_to_gripper_z_model
 	assert installed.intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
-	assert installed.slope_per_mm == pytest.approx(0.0)
-	assert installed.stage_extension_mm == pytest.approx(47.0)
-	assert installed.z_place_mm == pytest.approx(160.5)
+	assert installed.x_slope_mm_per_mm == pytest.approx(0.0)
+	assert installed.reference_stage_mm == pytest.approx(47.0)
+	assert installed.reference_z_place_mm == pytest.approx(160.5)
 
 	entries = manager._snapshot.z_stall_results
 	assert len(entries) == 1
@@ -805,7 +805,7 @@ async def test_z_stall_refuses_a_probe_the_datum_does_not_corroborate() -> None:
 				)
 
 	# Nothing was written, and the failed fit is still visible in the snapshot.
-	assert scan_config.left_z_offset_model is None
+	assert scan_config.left_wall_depth_to_gripper_z_model is None
 	assert len(manager._snapshot.z_stall_results) == 1
 	assert manager._snapshot.z_stall_results[0].persisted is False
 
@@ -919,11 +919,11 @@ async def test_z_stall_keeps_the_configured_slope_when_the_probe_could_not_span(
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
-	scan_config.left_z_offset_model = SimpleNamespace(
+	scan_config.left_wall_depth_to_gripper_z_model = SimpleNamespace(
 		intercept_mm=1.052,
-		slope_per_mm=-0.00285,
-		stage_extension_mm=47.0,
-		z_place_mm=160.5,
+		x_slope_mm_per_mm=-0.00285,
+		reference_stage_mm=47.0,
+		reference_z_place_mm=160.5,
 	)
 	config = _build_root_config(scan_config)
 	worker = _build_z_worker()
@@ -948,8 +948,8 @@ async def test_z_stall_keeps_the_configured_slope_when_the_probe_could_not_span(
 			)
 
 	assert result == (pytest.approx(rebased_intercept_mm), pytest.approx(-0.00285))
-	assert scan_config.left_z_offset_model.intercept_mm == pytest.approx(rebased_intercept_mm)
-	assert scan_config.left_z_offset_model.slope_per_mm == pytest.approx(-0.00285)
+	assert scan_config.left_wall_depth_to_gripper_z_model.intercept_mm == pytest.approx(rebased_intercept_mm)
+	assert scan_config.left_wall_depth_to_gripper_z_model.x_slope_mm_per_mm == pytest.approx(-0.00285)
 	assert manager._snapshot.z_stall_results[0].slope_source == "config_short_span"
 
 
@@ -964,11 +964,11 @@ async def test_z_stall_short_span_substitution_reproduces_the_probe_contacts() -
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
-	scan_config.left_z_offset_model = SimpleNamespace(
+	scan_config.left_wall_depth_to_gripper_z_model = SimpleNamespace(
 		intercept_mm=-3.0,
-		slope_per_mm=0.002382,
-		stage_extension_mm=47.0,
-		z_place_mm=160.5,
+		x_slope_mm_per_mm=0.002382,
+		reference_stage_mm=47.0,
+		reference_z_place_mm=160.5,
 	)
 	config = _build_root_config(scan_config)
 	worker = _build_z_worker()
@@ -989,15 +989,15 @@ async def test_z_stall_short_span_substitution_reproduces_the_probe_contacts() -
 				manual_reference=datum,
 			)
 
-	installed = scan_config.left_z_offset_model
+	installed = scan_config.left_wall_depth_to_gripper_z_model
 
 	assert slope_per_mm == pytest.approx(0.002382)
-	assert installed.slope_per_mm == pytest.approx(0.002382)
+	assert installed.x_slope_mm_per_mm == pytest.approx(0.002382)
 	# The probe's own reading at x = 350 (the centroid of 300 and 400).
-	assert installed.intercept_mm + installed.slope_per_mm * 350.0 == pytest.approx(-2.1663, abs=1e-6)
+	assert installed.intercept_mm + installed.x_slope_mm_per_mm * 350.0 == pytest.approx(-2.1663, abs=1e-6)
 	# And at the sample ends, where a missing re-base would show up as slope * centroid.
-	assert installed.intercept_mm + installed.slope_per_mm * 300.0 == pytest.approx(-2.2854, abs=1e-3)
-	assert installed.intercept_mm + installed.slope_per_mm * 400.0 == pytest.approx(-2.0472, abs=1e-3)
+	assert installed.intercept_mm + installed.x_slope_mm_per_mm * 300.0 == pytest.approx(-2.2854, abs=1e-3)
+	assert installed.intercept_mm + installed.x_slope_mm_per_mm * 400.0 == pytest.approx(-2.0472, abs=1e-3)
 	assert intercept_mm == pytest.approx(installed.intercept_mm)
 
 
@@ -1009,11 +1009,11 @@ async def test_z_stall_takes_a_probed_slope_when_it_measured_one() -> None:
 	# The configured tilt is close enough that the datum corroborates the probe's own: the datum
 	# intercept was derived with the configured slope, so a large swing between the two would move
 	# the installed model away from the datum cell by more than the agreement tolerance.
-	scan_config.left_z_offset_model = SimpleNamespace(
+	scan_config.left_wall_depth_to_gripper_z_model = SimpleNamespace(
 		intercept_mm=1.052,
-		slope_per_mm=0.0022,
-		stage_extension_mm=47.0,
-		z_place_mm=160.5,
+		x_slope_mm_per_mm=0.0022,
+		reference_stage_mm=47.0,
+		reference_z_place_mm=160.5,
 	)
 	config = _build_root_config(scan_config)
 	worker = _build_z_worker()
@@ -1204,11 +1204,11 @@ async def test_z_stall_refuses_a_probed_slope_the_datum_cannot_corroborate() -> 
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
-	scan_config.left_z_offset_model = SimpleNamespace(
+	scan_config.left_wall_depth_to_gripper_z_model = SimpleNamespace(
 		intercept_mm=MANUAL_INTERCEPT_MM,
-		slope_per_mm=0.0,
-		stage_extension_mm=47.0,
-		z_place_mm=160.5,
+		x_slope_mm_per_mm=0.0,
+		reference_stage_mm=47.0,
+		reference_z_place_mm=160.5,
 	)
 	config = _build_root_config(scan_config)
 	worker = _build_z_worker()
@@ -1324,7 +1324,7 @@ async def test_scope_flag_requests_the_probe_without_touching_the_config() -> No
 			)
 
 	anchor.assert_awaited_once()
-	assert scan_config.left_z_offset_model.intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
+	assert scan_config.left_wall_depth_to_gripper_z_model.intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
 	assert manager._snapshot.z_stall_results[0].persisted is True
 
 
@@ -1373,11 +1373,11 @@ async def test_cell_scoped_probe_verifies_the_datum_and_persists_the_model() -> 
 		derive_z_model_from_stall=True,
 	)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
-	scan_config.left_z_offset_model = SimpleNamespace(
+	scan_config.left_wall_depth_to_gripper_z_model = SimpleNamespace(
 		intercept_mm=1.052,
-		slope_per_mm=-0.00285,
-		stage_extension_mm=47.0,
-		z_place_mm=160.5,
+		x_slope_mm_per_mm=-0.00285,
+		reference_stage_mm=47.0,
+		reference_z_place_mm=160.5,
 	)
 	config = _build_root_config(scan_config)
 	grid = _build_source_grid()
@@ -1443,9 +1443,9 @@ async def test_cell_scoped_probe_verifies_the_datum_and_persists_the_model() -> 
 	assert (0, 0) not in anchor.await_args.kwargs["excluded_cells"]
 	assert len(saved_configs) == 1
 	# The intercept comes from the probe; the span is one cell, so the machine keeps its slope.
-	installed = saved_configs[0].robot.grid.scan.left_z_offset_model
+	installed = saved_configs[0].robot.grid.scan.left_wall_depth_to_gripper_z_model
 	assert installed.intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
-	assert installed.slope_per_mm == pytest.approx(-0.00285)
+	assert installed.x_slope_mm_per_mm == pytest.approx(-0.00285)
 	assert manager._snapshot.z_stall_results[0].slope_source == "config_short_span"
 	# The probed cell is the datum: it must not be rewritten from its own detection.
 	assert grid.left_module[0].cells[0].calibration_point.z_offset == pytest.approx(MANUAL_Z_OFFSET_MM)

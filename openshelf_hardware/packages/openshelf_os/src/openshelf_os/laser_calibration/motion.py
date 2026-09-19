@@ -18,7 +18,7 @@ async def get_laser_scan_z_extension_mm(tool: Any, scan_config: Any) -> float:
 	if z_extension_place is None:
 		raise ValueError("Z_EXTENSION_PLACE parameter is not configured")
 
-	return float(z_extension_place) + get_laser_scan_z_offset_from_place_mm(scan_config)
+	return float(z_extension_place) + get_laser_scan_pose_z_delta_from_place_mm(scan_config)
 
 
 async def ensure_scan_tool_ready(tool: Any) -> None:
@@ -61,7 +61,7 @@ async def enter_scan_mode(tool: Any, side: StorageModuleSide, scan_config: Any) 
 		side_number = 1
 		target_position = "back"
 
-	stage_extension_mm = get_laser_scan_stage_extension_mm(scan_config)
+	stage_extension_mm = get_laser_scan_pose_stage_mm(scan_config)
 	z_extension_mm = await get_laser_scan_z_extension_mm(tool, scan_config)
 	z_move_rpm = await tool.get_param("Z_MOVE_RPM")
 	z_move_accel = await tool.get_param("Z_MOVE_ACCEL")

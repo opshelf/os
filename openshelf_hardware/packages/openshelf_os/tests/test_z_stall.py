@@ -805,13 +805,13 @@ def test_resolved_model_rebases_the_intercept_when_it_substitutes_a_slope() -> N
 		samples=samples,
 	)
 	scan_config = SimpleNamespace(
-		left_z_offset_model=SimpleNamespace(
+		left_wall_depth_to_gripper_z_model=SimpleNamespace(
 			intercept_mm=-1.0,
-			slope_per_mm=0.002382,
-			stage_extension_mm=47.0,
-			z_place_mm=160.5,
+			x_slope_mm_per_mm=0.002382,
+			reference_stage_mm=47.0,
+			reference_z_place_mm=160.5,
 		),
-		right_z_offset_model=None,
+		right_wall_depth_to_gripper_z_model=None,
 	)
 
 	decision = resolve_z_stall_model(result=result, scan_config=scan_config, side=StorageModuleSide.LEFT)
@@ -842,7 +842,7 @@ def test_resolved_model_keeps_a_tilt_the_probe_measured() -> None:
 
 	decision = resolve_z_stall_model(
 		result=result,
-		scan_config=SimpleNamespace(left_z_offset_model=None, right_z_offset_model=None),
+		scan_config=SimpleNamespace(left_wall_depth_to_gripper_z_model=None, right_wall_depth_to_gripper_z_model=None),
 		side=StorageModuleSide.LEFT,
 	)
 
@@ -903,8 +903,8 @@ def test_grid_built_analysis_feeds_the_reference_derivation() -> None:
 		laser_offset_y_mm=0.0,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
-		left_xy_offset=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
-		left_z_offset_model=None,
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
+		left_wall_depth_to_gripper_z_model=None,
 	)
 	analysis = SimpleNamespace(
 		shelves=[SimpleNamespace(shelf_idx=0, cells=[], center_y_mm=0.0)],
