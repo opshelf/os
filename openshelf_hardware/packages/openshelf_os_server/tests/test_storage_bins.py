@@ -203,8 +203,9 @@ async def test_item_barcodes_and_locations_claim_only_live_trays(
         # A live tray home stays reserved for automatic allocation, while an explicit
         # location edit may use it: the tray's return reports an occupied home instead.
         await storage_router.add_item_location(
-            item.barcode,
-            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
+            storage_router.ItemLocationRequest(
+                barcode=item.barcode, side="left_module", shelf_idx=0, cell_idx=0
+            ),
             db,
             current_user,
         )
@@ -227,8 +228,9 @@ async def test_item_barcodes_and_locations_claim_only_live_trays(
         assert await bin_storage.is_reserved_bin_location(("left_module", 0, 1), db) is False
         assert await bin_storage.is_reserved_bin_barcode("900000000018", db) is False
         await storage_router.add_item_location(
-            item.barcode,
-            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=1),
+            storage_router.ItemLocationRequest(
+                barcode=item.barcode, side="left_module", shelf_idx=0, cell_idx=1
+            ),
             db,
             current_user,
         )
@@ -611,11 +613,12 @@ async def test_parked_tray_interaction_allows_item_and_location_mutations() -> N
             current_user,
         )
         await storage_router.update_item(
-            item.barcode, storage_router.ItemUpdate(name="Changed again"), db, current_user
+            storage_router.ItemUpdateRequest(barcode=item.barcode, name="Changed again"), db, current_user
         )
         await storage_router.add_item_location(
-            item.barcode,
-            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
+            storage_router.ItemLocationRequest(
+                barcode=item.barcode, side="left_module", shelf_idx=0, cell_idx=0
+            ),
             db,
             current_user,
         )
@@ -624,13 +627,19 @@ async def test_parked_tray_interaction_allows_item_and_location_mutations() -> N
         with pytest.raises(BinWorkflowConflict, match="direct storage location"):
             await service.close(workflow)
 
-        await storage_router.remove_item_location(item.barcode, "left_module", 0, 0, db, current_user)
+        await storage_router.remove_item_location(
+            storage_router.ItemLocationRequest(
+                barcode=item.barcode, side="left_module", shelf_idx=0, cell_idx=0
+            ),
+            db,
+            current_user,
+        )
         await service.close(workflow)
         assert workflow.state == "completed"
 
         # Deletion stays out of reach once the item is a tray member with retained history.
         with pytest.raises(HTTPException, match="Retrieve the item before deleting it"):
-            await storage_router.delete_item(item.barcode, db)
+            await storage_router.delete_item(storage_router.BarcodeRequest(barcode=item.barcode), db)
 
 
 @pytest.mark.anyio
@@ -664,7 +673,7 @@ async def test_delete_item_with_historical_bin_workflow_returns_clear_conflict(s
         await db.commit()
 
         with pytest.raises(HTTPException) as error:
-            await storage_router.delete_item(item.barcode, db)
+            await storage_router.delete_item(storage_router.BarcodeRequest(barcode=item.barcode), db)
 
         assert error.value.status_code == 409
         assert (
