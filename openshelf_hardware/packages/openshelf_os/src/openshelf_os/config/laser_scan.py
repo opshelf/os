@@ -80,6 +80,16 @@ class LaserScanConfig(BaseModel):
 
     z_stall_anchor_enabled: bool = False
     z_stall_tray_engagement_mm: float = 0.0
+    z_stall_manual_agreement_mm: float = Field(1.0, gt=0)
+    # How many shelves to probe, spread across the module (3 -> bottom, middle, top). One point per
+    # shelf samples the rack's own variation and validates the model shelf by shelf, where three
+    # points on one shelf only measure the tool's tilt there.
+    z_stall_probe_shelves: int = Field(3, ge=1)
+    z_stall_probe_repeats: int = Field(2, ge=1)
+    # A stall is detected at the first probe step that fails to progress, so the repeat check is
+    # quantised by z_stall_probe_step_mm: a tolerance below that step rejects every point by
+    # construction (0.5mm step, 0.34-0.64mm spreads measured on lb4a-2). Halve the step to tighten.
+    z_stall_probe_repeat_tolerance_mm: float = Field(1.0, gt=0)
     z_stall_probe_x_shift_mm: float = 40.0
 
     left_bounds_x_min_mm: float = 0.0

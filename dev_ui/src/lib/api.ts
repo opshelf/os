@@ -565,6 +565,69 @@ export interface LaserAutoCalibrationAngleResult {
 	updated_rotation_deg: number;
 }
 
+export interface LaserAutoCalibrationReferenceOffsetSample {
+	shelf_idx: number;
+	cell_idx: number;
+	manual_x_mm: number;
+	manual_y_mm: number;
+	detected_x_mm: number;
+	detected_y_mm: number;
+	delta_x_mm: number;
+	delta_y_mm: number;
+	wall_depth_mm: number | null;
+	derived_intercept_mm: number | null;
+}
+
+export interface LaserAutoCalibrationReferenceOffset {
+	side: StorageModuleSide;
+	offset_x_mm: number;
+	offset_y_mm: number;
+	spread_x_mm: number;
+	spread_y_mm: number;
+	sample_count: number;
+	intercept_mm: number | null;
+	slope_per_mm: number;
+	configured_offset_x_mm: number | null;
+	configured_offset_y_mm: number | null;
+	applied: boolean;
+	persisted: boolean;
+	samples: LaserAutoCalibrationReferenceOffsetSample[];
+	skipped: string[];
+}
+
+export interface LaserAutoCalibrationZStallSample {
+	shelf_idx: number;
+	cell_idx: number;
+	probe_x_mm: number;
+	probe_y_mm: number;
+	wall_depth_mm: number;
+	z_contact_mm: number;
+	z_contact_repeat_mm: number | null;
+	delta_mm: number;
+}
+
+export interface LaserAutoCalibrationZStallResult {
+	side: StorageModuleSide;
+	intercept_mm: number;
+	slope_per_mm: number;
+	slope_source: string;
+	fit_source: string;
+	sample_count: number;
+	x_span_mm: number;
+	stage_extension_mm: number;
+	z_place_mm: number;
+	manual_intercept_mm: number | null;
+	manual_agreement_mm: number | null;
+	manual_agreement_tolerance_mm: number;
+	manual_captured_stage_mm: number | null;
+	manual_capture_unstamped: number;
+	applied: boolean;
+	persisted: boolean;
+	samples: LaserAutoCalibrationZStallSample[];
+	skipped: string[];
+	dropped_repeats: string[];
+}
+
 export interface LaserAutoCalibrationRequest {
 	mode: 'all' | 'both' | 'side' | 'shelf' | 'cell';
 	side?: StorageModuleSide;
@@ -572,6 +635,8 @@ export interface LaserAutoCalibrationRequest {
 	cell_idx?: number;
 	include_angle_calibration?: boolean;
 	include_extension_calibration?: boolean;
+	derive_offsets_from_manual_cells?: boolean;
+	derive_z_model_from_stall?: boolean;
 }
 
 export interface LaserAutoCalibrationSnapshot {
@@ -599,6 +664,8 @@ export interface LaserAutoCalibrationSnapshot {
 	shelf_candidates: LaserAutoCalibrationCandidate[];
 	detected_cells: LaserAutoCalibrationCell[];
 	angle_results: LaserAutoCalibrationAngleResult[];
+	reference_offset_results: LaserAutoCalibrationReferenceOffset[];
+	z_stall_results: LaserAutoCalibrationZStallResult[];
 	stage_detail: Record<string, unknown>;
 	error: string | null;
 }
@@ -622,6 +689,14 @@ export function buildLaserAutoCalibrationStreamUrl(
 
 	if (request.include_extension_calibration !== undefined) {
 		url.searchParams.set('include_extension_calibration', String(request.include_extension_calibration));
+	}
+
+	if (request.derive_offsets_from_manual_cells === true) {
+		url.searchParams.set('derive_offsets_from_manual_cells', 'true');
+	}
+
+	if (request.derive_z_model_from_stall === true) {
+		url.searchParams.set('derive_z_model_from_stall', 'true');
 	}
 
 	if (request.mode === 'both') {

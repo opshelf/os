@@ -8,6 +8,10 @@ build/
 .ruff_cache/
 .uv-cache
 .venv
+# coverage.py writes these wherever the suite runs from, including openshelf_hardware/.
+.coverage
+.coverage.*
+htmlcov/
 
 # macOS metadata (unanchored patterns already match at any depth)
 .DS_Store

@@ -539,6 +539,34 @@ def build_candidate_lookup_by_cell(
 	return candidate_lookup
 
 
+def wall_depths_by_cell(
+	*,
+	analysis: Any,
+	candidates: list[Any] | None = None,
+) -> dict[tuple[int, int], float]:
+	"""Wall depth per detected cell: the sweep candidate that measured it, or one the analysis carries.
+
+	A grid-built analysis (a rack that moved since the last scan) supplies its own depths, because
+	its positions come from stored calibration points rather than from a scan frame.
+	"""
+	lookup: dict[tuple[int, int], float] = {}
+
+	if candidates:
+		candidate_lookup = build_candidate_lookup_by_cell(analysis=analysis, candidates=candidates)
+
+		for key, candidate in candidate_lookup.items():
+			if candidate.wall_depth_mm is None:
+				continue
+
+			lookup[(int(key[0]), int(key[1]))] = float(candidate.wall_depth_mm)
+
+	for key, wall_depth_mm in getattr(analysis, "wall_depths_by_cell", {}).items():
+		if wall_depth_mm is not None and float(wall_depth_mm) > 0.0:
+			lookup[(int(key[0]), int(key[1]))] = float(wall_depth_mm)
+
+	return lookup
+
+
 def apply_xy_reference_offsets(
 	*,
 	scanned_shelves: list[Any],
@@ -1076,7 +1104,16 @@ def apply_single_cell_rescan(
 	calibration_point = target_cell.calibration_point
 	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
-	if xy_offset is not None:
+	if getattr(target_cell, "is_manual", False) is True:
+		# A hand-calibrated cell is the datum every derive/probe run is judged against, and this
+		# rescan runs before the probe and saves the grid: rewriting its point from the configured
+		# offset would corrupt the very value the manual calibration exists to correct, even when
+		# the probe is subsequently refused.
+		print_status(
+			f"xy_offset_inference=skipped reason=single_cell_preserves_manual_datum "
+			f"cell={target.shelf_idx}:{target.cell_idx}"
+		)
+	elif xy_offset is not None:
 		print_status(
 			f"xy_offset_inference=fixed_offset offset_x_mm={xy_offset[0]:.3f} "
 			f"offset_y_mm={xy_offset[1]:.3f}"
@@ -1135,7 +1172,33 @@ def apply_single_shelf_analysis(
 
 	scanned_shelf = scanned_shelves[0]
 	scanned_shelf.divider_width = float(target_shelf.divider_width)
-	detected_output_keys = set(detected_cell_key_map.values()) if len(detected_cell_key_map) > 0 else None
+	# Manual cells keep the operator's point (see _build_scan_cell): leave them out of the x/y and
+	# z rewrites below, so the datum a later probe is judged against stays a hand-set value.
+	manual_cell_keys = {
+		(int(shelf.shelf_idx), int(cell.cell_idx))
+		for shelf in [target_shelf, remapped_existing_shelf]
+		for cell in shelf.cells
+		if getattr(cell, "is_manual", False) is True
+	}
+	manual_cell_keys |= {
+		(0, cell_idx) for shelf_idx, cell_idx in manual_cell_keys if shelf_idx == target_shelf_idx
+	}
+
+
+	def is_manual_key(key: tuple[int, int]) -> bool:
+		# Only ever called with an OUTPUT key: `detected_cell_key_map` is keyed by the detected
+		# indices while the rebuilt cells carry the stored ones, so testing the analysis key here
+		# would drop an unrelated opening's rewrite - silently, as a "preserved" manual cell.
+		return (int(key[0]), int(key[1])) in manual_cell_keys
+	detected_output_keys = (
+		{
+			output_key
+			for output_key in detected_cell_key_map.values()
+			if is_manual_key(output_key) is False
+		}
+		if len(detected_cell_key_map) > 0
+		else None
+	)
 
 	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
@@ -1164,8 +1227,16 @@ def apply_single_shelf_analysis(
 		)
 	if z_delta_override_mm is not None:
 		z_apply_kwargs: dict[str, Any] = {}
+		z_apply_map = {
+			source_key: target_key
+			for source_key, target_key in detected_cell_key_map.items()
+			if is_manual_key(target_key) is False
+		}
+		# Keyed on the unfiltered map: passing an empty map is meaningful, because it tells
+		# `apply_wall_depth_z_offsets` that every cell it can see is preserved. Omitting it would
+		# fall back to analysis-keyed cells and rewrite the manual datum it is meant to leave alone.
 		if len(detected_cell_key_map) > 0:
-			z_apply_kwargs["detected_cell_key_map"] = detected_cell_key_map
+			z_apply_kwargs["detected_cell_key_map"] = z_apply_map
 
 		apply_wall_depth_z_offsets(
 			analysis=analysis,
@@ -1203,78 +1274,6 @@ def apply_single_shelf_analysis(
 		filename=grid.filename if grid.filename != "" else str(grid_path),
 	)
 	storage_grid.save()
-
-
-def apply_single_cell_shelf_analysis(
-	*,
-	analysis: Any,
-	grid: StorageGrid,
-	grid_path: Path,
-	scan_config: Any,
-	side: StorageModuleSide,
-	target: SingleCellRescanTarget,
-	) -> None:
-	if len(analysis.shelves) == 0:
-		raise ValueError("No tray openings detected from scan")
-
-	if len(analysis.shelves) != 1:
-		raise ValueError("Expected exactly one shelf from single-cell calibration")
-
-	target_shelf = resolve_target_shelf(
-		grid=grid,
-		side=side,
-		shelf_idx=target.shelf_idx,
-	)
-	target_cell = resolve_target_cell(
-		grid=grid,
-		side=side,
-		target=target,
-	)
-	remapped_existing_shelf = target_shelf.model_copy(
-		deep=True,
-		update={"shelf_idx": 0},
-	)
-	scanned_shelves = build_shelves_from_scan(
-		side=side,
-		analysis=analysis,
-		existing_shelves=[remapped_existing_shelf],
-	)
-
-	if len(scanned_shelves) != 1:
-		raise ValueError("Expected exactly one scanned shelf for single-cell calibration")
-
-	scanned_shelf = scanned_shelves[0]
-	scanned_shelf.shelf_idx = target.shelf_idx
-	delta_x_mm, delta_y_mm = get_existing_shelf_xy_delta(
-		scanned_shelf=scanned_shelf,
-		target_shelf=target_shelf,
-	)
-	apply_xy_reference_delta(
-		scanned_shelves=[scanned_shelf],
-		delta_x_mm=delta_x_mm,
-		delta_y_mm=delta_y_mm,
-	)
-
-	try:
-		scanned_target_cell = scanned_shelf.get_cell(target.cell_idx)
-	except IndexError as exc:
-		raise ValueError(
-			f"No detected cell matched the single-cell calibration target {target.shelf_idx}:{target.cell_idx}"
-		) from exc
-
-	if scanned_target_cell.calibration_point is None:
-		raise ValueError("Detected single-cell calibration target has no calibration point")
-
-	target_cell.calibration_point.x = float(scanned_target_cell.calibration_point.x)
-	target_cell.calibration_point.y = float(scanned_target_cell.calibration_point.y)
-	grid.save()
-	print_status(
-		f"single_cell_shelf_apply=updated side={side.value} "
-		f"cell={target.shelf_idx}:{target.cell_idx} "
-		f"x={float(target_cell.calibration_point.x):.3f} "
-		f"y={float(target_cell.calibration_point.y):.3f} "
-		f"z_offset={float(target_cell.calibration_point.z_offset):.3f}"
-	)
 
 
 def resolve_validation_coordinate(
