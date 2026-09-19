@@ -401,3 +401,53 @@ async def test_save_calibration_bootstraps_first_cell_on_empty_shelf(client, tmp
 	assert grid.left_module[0].cells[0].calibration_point is not None
 	assert grid.left_module[0].cells[0].calibration_point.x == pytest.approx(475.0)
 	assert grid.left_module[0].cells[0].calibration_point.y == pytest.approx(630.0)
+
+
+@pytest.mark.anyio
+async def test_save_calibration_updates_dimensions(client, tmp_path) -> None:
+	grid = build_grid(tmp_path)
+	worker = build_worker(grid)
+
+	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
+		response = await client.post(
+			'/api/calibration/save',
+			json={
+				'side': 'left_module',
+				'shelf_idx': 0,
+				'cell_idx': 0,
+				'x': 475.0,
+				'y': 630.0,
+				'z_offset': 0.0,
+				'dimensions': {'width': 30.0, 'height': 25.0, 'length': 350.0},
+			},
+		)
+
+	assert response.status_code == 200
+
+	cell = grid.left_module[0].cells[0]
+	assert cell.dimensions == Dimensions(width=30.0, height=25.0, length=350.0)
+	assert cell.calibration_point is not None
+	assert cell.calibration_point.x == pytest.approx(475.0)
+
+
+@pytest.mark.anyio
+async def test_save_calibration_keeps_dimensions_when_omitted(client, tmp_path) -> None:
+	grid = build_grid(tmp_path)
+	original = grid.left_module[0].cells[0].dimensions
+	worker = build_worker(grid)
+
+	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
+		response = await client.post(
+			'/api/calibration/save',
+			json={
+				'side': 'left_module',
+				'shelf_idx': 0,
+				'cell_idx': 0,
+				'x': 475.0,
+				'y': 630.0,
+				'z_offset': 0.0,
+			},
+		)
+
+	assert response.status_code == 200
+	assert grid.left_module[0].cells[0].dimensions == original

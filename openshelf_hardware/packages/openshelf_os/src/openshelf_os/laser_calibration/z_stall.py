@@ -26,10 +26,19 @@ from typing import Any, Callable
 
 from openshelf_os.storage import CellStatus, StorageModuleSide
 from .core import (
+	get_gripper_xy_correction,
 	get_laser_sample_settle_ms,
-	get_scan_xy_offset,
-	get_scan_z_offset_model,
+	get_wall_depth_to_gripper_z_model,
 	print_status,
+)
+from .defaults import (
+	Z_STALL_PROBE_FAST_APPROACH_MM,
+	Z_STALL_PROBE_NO_PROGRESS_S,
+	Z_STALL_PROBE_RPM,
+	Z_STALL_PROBE_START_MM,
+	Z_STALL_PROBE_STEP_MM,
+	Z_STALL_PROBE_TARGET_MM,
+	Z_STALL_PROBE_TIMEOUT_S,
 )
 from .recording import load_candidates_from_metadata, load_json_file
 from .scan import ScanDetectedCell, ScanDetectedShelf
@@ -175,7 +184,7 @@ def _shielded_positions(
 	`derive_reference_offsets` pairs a manual cell with the opening it predicts at `manual - offset`;
 	the same prediction is what makes a position match survive the scan re-indexing the cells.
 	"""
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
 	offset_y_mm = 0.0 if xy_offset is None else float(xy_offset[1])
 	datum_positions: list[tuple[float, float]] = []
@@ -535,8 +544,8 @@ async def run_z_stall_anchor(
 	stage_extension_mm = float(stage_extension_value)
 	z_place_mm = float(z_place)
 	tray_engagement_mm = float(scan_config.z_stall_tray_engagement_mm)
-	probe_rpm = scan_config.z_stall_probe_rpm
-	probe_target_mm = float(scan_config.z_stall_probe_target_mm)
+	probe_rpm = Z_STALL_PROBE_RPM
+	probe_target_mm = float(Z_STALL_PROBE_TARGET_MM)
 	probe_repeats = int(getattr(scan_config, "z_stall_probe_repeats", 2))
 	repeat_tolerance_mm = float(getattr(scan_config, "z_stall_probe_repeat_tolerance_mm", 1.0))
 	print_status(
@@ -593,7 +602,7 @@ async def run_z_stall_anchor(
 				y_mm=probe_y_mm,
 				absolute_rotation_deg=rotation_center_deg,
 				stage_extension_mm=stage_extension_mm,
-				z_mm=float(scan_config.z_stall_probe_start_mm),
+				z_mm=float(Z_STALL_PROBE_START_MM),
 				z_move_rpm=float(z_move_rpm),
 				z_move_accel=float(z_move_accel),
 				should_abort=should_abort,
@@ -601,14 +610,14 @@ async def run_z_stall_anchor(
 
 			did_stall, z_contact_mm, reason, _alarm_code = await probe_z_until_stall(
 				tool,
-				target_z_mm=float(scan_config.z_stall_probe_target_mm),
-				retract_z_mm=float(scan_config.z_stall_probe_start_mm),
-				settle_ms=get_laser_sample_settle_ms(scan_config),
-				timeout_s=float(scan_config.z_stall_probe_timeout_s),
+				target_z_mm=float(Z_STALL_PROBE_TARGET_MM),
+				retract_z_mm=float(Z_STALL_PROBE_START_MM),
+				settle_ms=get_laser_sample_settle_ms(),
+				timeout_s=float(Z_STALL_PROBE_TIMEOUT_S),
 				probe_rpm=None if probe_rpm is None else int(probe_rpm),
-				no_progress_s=float(scan_config.z_stall_probe_no_progress_s),
-				probe_step_mm=float(scan_config.z_stall_probe_step_mm),
-				fast_approach_mm=float(scan_config.z_stall_probe_fast_approach_mm),
+				no_progress_s=float(Z_STALL_PROBE_NO_PROGRESS_S),
+				probe_step_mm=float(Z_STALL_PROBE_STEP_MM),
+				fast_approach_mm=float(Z_STALL_PROBE_FAST_APPROACH_MM),
 				fast_approach_rpm=None if probe_rpm is None else int(probe_rpm),
 				auto_retract=True,
 				should_abort=should_abort,
@@ -660,11 +669,11 @@ async def run_z_stall_anchor(
 
 			# The rapid approach already traversed to fast_approach_mm unobstructed, so a wall cannot
 			# sit closer than that. Anything shallower is the tool hitting something else.
-			if z_contact_mm < float(scan_config.z_stall_probe_fast_approach_mm):
+			if z_contact_mm < float(Z_STALL_PROBE_FAST_APPROACH_MM):
 				print_status(
 					f"z_stall_anchor=reject_shallow probe={cell_key[0]}:{cell_key[1]} reason={reason} "
 					f"z_mm={z_contact_mm:.3f} "
-					f"fast_approach_mm={float(scan_config.z_stall_probe_fast_approach_mm):.3f}"
+					f"fast_approach_mm={float(Z_STALL_PROBE_FAST_APPROACH_MM):.3f}"
 				)
 				break
 
@@ -831,9 +840,9 @@ def resolve_z_stall_model(
 			source="probe",
 		)
 
-	configured_model = get_scan_z_offset_model(scan_config=scan_config, side=side)
+	configured_model = get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
 
-	if configured_model is None or float(configured_model.slope_per_mm) == 0.0:
+	if configured_model is None or float(configured_model.x_slope_mm_per_mm) == 0.0:
 		return ZStallDecision(
 			intercept_mm=float(result.intercept_mm), slope_per_mm=0.0, source="probe_constant"
 		)
@@ -843,7 +852,7 @@ def resolve_z_stall_model(
 			intercept_mm=float(result.intercept_mm), slope_per_mm=0.0, source="probe_constant"
 		)
 
-	slope_per_mm = float(configured_model.slope_per_mm)
+	slope_per_mm = float(configured_model.x_slope_mm_per_mm)
 	centroid_x_mm = float(result.fit_centroid_x_mm)
 	print_status(
 		f"z_stall_anchor=slope_from_config side={side.value} x_span_mm={float(result.x_span_mm):.1f} "
@@ -965,7 +974,7 @@ def build_probe_analysis_from_grid(
 	`derive_reference_offsets` pairs a manual cell with the opening it predicts; without it the
 	keys are taken as they are.
 	"""
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
 	offset_y_mm = 0.0 if xy_offset is None else float(xy_offset[1])
 	laser_offset_x_mm = float(getattr(scan_config, "laser_offset_x_mm", 0.0) or 0.0)

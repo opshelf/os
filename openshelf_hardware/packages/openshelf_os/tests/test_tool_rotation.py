@@ -386,6 +386,77 @@ async def test_rotate_to_position_refuses_unsafe_z_clearance() -> None:
     tool._handle_fault.assert_awaited_once()
 
 
+def _tool_for_x_lim_safe_check(
+    *, x_lim_minunsafe: bool | None = True, x_lim_maxunsafe: bool | None = True
+) -> tuple[Tool, AsyncMock]:
+    rotate_motor = AsyncMock()
+    rotate_motor.get_position = AsyncMock(return_value=2.0)
+    rotate_motor.move_to_position = AsyncMock()
+
+    tool = Tool.__new__(Tool)
+    tool._params = SimpleNamespace(parameters=SimpleNamespace(
+        ROTATION_STAGE_MAX_EXTENSION_MM=0.5,
+        ROTATION_Z_MAX_EXTENSION_MM=0.5,
+    ))
+    tool._ms = None
+    tool._mg = None
+    tool._mr = rotate_motor
+    tool._mx = None
+    tool._handle_fault = AsyncMock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 182.25,
+        'ROTATION_BACK': 2.0,
+    }[name])
+    tool._x_lim_minunsafe_input = (
+        None if x_lim_minunsafe is None else SimpleNamespace(read=lambda: x_lim_minunsafe)
+    )
+    tool._x_lim_maxunsafe_input = (
+        None if x_lim_maxunsafe is None else SimpleNamespace(read=lambda: x_lim_maxunsafe)
+    )
+
+    return tool, rotate_motor
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_refuses_when_x_lim_minunsafe_not_engaged() -> None:
+    tool, rotate_motor = _tool_for_x_lim_safe_check(x_lim_minunsafe=False)
+
+    with pytest.raises(MovementError, match="x_lim_minunsafe is not engaged"):
+        await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_not_awaited()
+    tool._handle_fault.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_refuses_when_x_lim_maxunsafe_not_engaged() -> None:
+    tool, rotate_motor = _tool_for_x_lim_safe_check(x_lim_maxunsafe=False)
+
+    with pytest.raises(MovementError, match="x_lim_maxunsafe is not engaged"):
+        await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_not_awaited()
+    tool._handle_fault.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_proceeds_when_x_lim_safe_inputs_are_high() -> None:
+    tool, rotate_motor = _tool_for_x_lim_safe_check(x_lim_minunsafe=True, x_lim_maxunsafe=True)
+
+    await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_awaited_once_with(182.25)
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_skips_x_lim_safe_check_when_not_configured() -> None:
+    tool, rotate_motor = _tool_for_x_lim_safe_check(x_lim_minunsafe=None, x_lim_maxunsafe=None)
+
+    await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_awaited_once_with(182.25)
+
+
 @pytest.mark.asyncio
 async def test_ensure_safe_rotation_stage_extension_raises_when_limit_too_small() -> None:
     tool = Tool.__new__(Tool)

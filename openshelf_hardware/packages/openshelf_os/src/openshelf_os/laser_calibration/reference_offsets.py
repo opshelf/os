@@ -28,7 +28,7 @@ from statistics import median
 from typing import Any
 
 from openshelf_os.storage import Cell, StorageGrid, StorageModuleSide
-from .core import get_scan_xy_offset, get_scan_z_offset_model
+from .core import get_gripper_xy_correction, get_wall_depth_to_gripper_z_model
 from .recording import load_candidates_from_metadata, load_json_file
 from .scan import ScanDetectedCell
 from .staged_scan import collect_detected_cells, wall_depths_by_cell
@@ -270,7 +270,7 @@ def derive_reference_offsets(
 			f"the {side.value}; tick 'keep manual' when saving the reference cell"
 		)
 
-	configured_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	configured_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	configured_offset_x_mm = None if configured_offset is None else float(configured_offset[0])
 	configured_offset_y_mm = None if configured_offset is None else float(configured_offset[1])
 
@@ -281,7 +281,7 @@ def derive_reference_offsets(
 		side_name = "left" if side == StorageModuleSide.LEFT else "right"
 		raise ValueError(
 			f"derive_offsets_from_manual_cells on the {side.value}: no "
-			f"robot.grid.scan.{side_name}_xy_offset is configured, so there is nothing to "
+			f"robot.grid.scan.{side_name}_gripper_xy_correction_mm is configured, so there is nothing to "
 			"predict the manual cells' detected positions from; set a rough one first (it only "
 			"needs to land within a few tens of millimetres of the truth), then re-run; the "
 			"derivation replaces it with the value the reference cells imply"
@@ -292,8 +292,8 @@ def derive_reference_offsets(
 
 	detected_cells = collect_detected_cells(analysis)
 	wall_depths = _wall_depths_by_cell(analysis=analysis, candidates=candidates)
-	configured_model = get_scan_z_offset_model(scan_config=scan_config, side=side)
-	slope_per_mm = 0.0 if configured_model is None else float(configured_model.slope_per_mm)
+	configured_model = get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
+	slope_per_mm = 0.0 if configured_model is None else float(configured_model.x_slope_mm_per_mm)
 
 	samples: list[ReferenceOffsetSample] = []
 	skipped: list[str] = []

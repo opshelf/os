@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from ..settings import get_settings
+from ..core.logging_config import get_logger
 from ..database.session import get_db
 from ..database.models import User, Item, Role
 from ..core.auth import AuthService
@@ -20,6 +21,11 @@ from ..core.permissions import has_permission
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login/json", auto_error=False)
 oauth2_scheme.scheme_name = "UserBearer"
 RELAY_SERVICE_TOKEN_SHA256_ENV = "OPSHELF_RELAY_SERVICE_TOKEN_SHA256"
+
+# The dev fallback can fail on every request once the database lacks the
+# configured identity, so log the reason once per process instead of per request.
+logger = get_logger(__name__)
+_did_report_missing_dev_auto_user = False
 
 
 def get_token_from_request(
@@ -89,9 +95,17 @@ async def get_current_user(
 			return user
 		
 		if settings.auth.dev_mode and settings.auth.dev_auto_user:
+			global _did_report_missing_dev_auto_user
+			if _did_report_missing_dev_auto_user is False:
+				_did_report_missing_dev_auto_user = True
+				logger.warning(
+					"dev_auto_user_not_found",
+					email=settings.auth.dev_auto_user,
+					action="answering 503 for unauthenticated requests",
+				)
 			raise HTTPException(
 				status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-				detail="Dev auto-user not found in database"
+				detail=f"Dev auto-user {settings.auth.dev_auto_user} not found in database"
 			)
 	
 	if not token:

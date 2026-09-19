@@ -1,6 +1,13 @@
 # ruff: noqa: F401, F403, F405
 from __future__ import annotations
 
+from openshelf_os.laser_calibration.defaults import (
+	EXPECTED_HOLE_HEIGHT_MM,
+	EXPECTED_HOLE_WIDTH_MM,
+	HOLE_HEIGHT_TOLERANCE_MM,
+	HOLE_WIDTH_TOLERANCE_MM,
+)
+
 from .core import *
 from .recording import *
 from .motion import *
@@ -389,15 +396,15 @@ def build_detected_cell_from_segments(
 ) -> Optional[ScanDetectedCell]:
 	if dimensions_match(
 		x_segment.width_mm,
-		expected_mm=scan_config.expected_hole_width_mm,
-		tolerance_mm=scan_config.hole_width_tolerance_mm + step_mm,
+		expected_mm=EXPECTED_HOLE_WIDTH_MM,
+		tolerance_mm=HOLE_WIDTH_TOLERANCE_MM + step_mm,
 	) is False:
 		return None
 
 	if dimensions_match(
 		y_segment.width_mm,
-		expected_mm=scan_config.expected_hole_height_mm,
-		tolerance_mm=scan_config.hole_height_tolerance_mm + step_mm,
+		expected_mm=EXPECTED_HOLE_HEIGHT_MM,
+		tolerance_mm=HOLE_HEIGHT_TOLERANCE_MM + step_mm,
 	) is False:
 		return None
 
@@ -457,7 +464,7 @@ def get_shelf_grouping_threshold_mm(
 ) -> float:
 	return max(
 		step_mm * 2.0,
-		scan_config.expected_hole_height_mm * 0.75,
+		EXPECTED_HOLE_HEIGHT_MM * 0.75,
 		20.0,
 	)
 
@@ -618,7 +625,7 @@ async def capture_cross_scan(
 	candidate_center_x_mm = float((candidate.x_min + candidate.x_max) / 2.0)
 	candidate_center_y_mm = float((candidate.y_min + candidate.y_max) / 2.0)
 	probe_offset_mm = min(
-		scan_config.expected_hole_height_mm / 4.0,
+		EXPECTED_HOLE_HEIGHT_MM / 4.0,
 		FINE_SCAN_MARGIN_Y_MM,
 	)
 	horizontal_probe_targets = [
@@ -655,7 +662,7 @@ async def capture_cross_scan(
 			settle_ms=settle_ms,
 			samples_per_point=samples_per_point,
 			wall_depth_mm=wall_depth_mm,
-			expected_span_mm=scan_config.expected_hole_width_mm,
+			expected_span_mm=EXPECTED_HOLE_WIDTH_MM,
 			on_update=on_update,
 			should_abort=should_abort,
 		)
@@ -700,7 +707,7 @@ async def capture_cross_scan(
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
 		wall_depth_mm=wall_depth_mm,
-		expected_span_mm=scan_config.expected_hole_height_mm,
+		expected_span_mm=EXPECTED_HOLE_HEIGHT_MM,
 		on_update=on_update,
 		should_abort=should_abort,
 		should_infer_far_edge=True,
@@ -723,7 +730,7 @@ async def capture_cross_scan(
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
 		wall_depth_mm=wall_depth_mm,
-		expected_span_mm=scan_config.expected_hole_width_mm,
+		expected_span_mm=EXPECTED_HOLE_WIDTH_MM,
 		on_update=on_update,
 		should_abort=should_abort,
 	)
@@ -739,8 +746,8 @@ async def capture_cross_scan(
 		settle_ms=settle_ms,
 		samples_per_point=samples_per_point,
 		wall_depth_mm=wall_depth_mm,
-		expected_span_mm=scan_config.expected_hole_width_mm,
-		width_tolerance_mm=scan_config.hole_width_tolerance_mm + FINE_X_REFINEMENT_STEP_MM,
+		expected_span_mm=EXPECTED_HOLE_WIDTH_MM,
+		width_tolerance_mm=HOLE_WIDTH_TOLERANCE_MM + FINE_X_REFINEMENT_STEP_MM,
 		progress_prefix=f"{progress_prefix}_h_precision",
 		should_abort=should_abort,
 	)
@@ -767,8 +774,8 @@ def dedupe_detected_cells(
 	scan_config: Any,
 ) -> list[ScanDetectedCell]:
 	deduped_cells: list[ScanDetectedCell] = []
-	x_threshold_mm = max(scan_config.expected_hole_width_mm / 2.0, 8.0)
-	y_threshold_mm = max(scan_config.expected_hole_height_mm / 2.0, 8.0)
+	x_threshold_mm = max(EXPECTED_HOLE_WIDTH_MM / 2.0, 8.0)
+	y_threshold_mm = max(EXPECTED_HOLE_HEIGHT_MM / 2.0, 8.0)
 
 	for cell in sorted(detected_cells, key=lambda current: (current.center_y_mm, current.center_x_mm)):
 		existing_cell: Optional[ScanDetectedCell] = None

@@ -127,7 +127,7 @@ async def submit_error_report(
 	)
 
 	if sentry_enabled is True and sentry_sdk.is_initialized() is True:
-		with sentry_sdk.push_scope() as scope:
+		with sentry_sdk.new_scope() as scope:
 			scope.set_context("user_report", {"message": request.message})
 			scope.set_context("user", user_context)
 			scope.set_context("robot_state", robot_context)

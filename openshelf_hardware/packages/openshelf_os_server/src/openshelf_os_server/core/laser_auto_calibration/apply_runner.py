@@ -7,6 +7,7 @@ from pathlib import Path
 
 from openshelf_os.config.laser_scan import LaserScanXYOffsetConfig, LaserScanZOffsetModelConfig
 from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
+from openshelf_os.laser_calibration.defaults import Z_OFFSET_MODEL_PARAM_TOLERANCE_MM
 from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
 
 from .models import *
@@ -40,9 +41,9 @@ def _reference_offset_scan_config(
 	)
 
 	if side == StorageModuleSide.LEFT:
-		scan_config.left_xy_offset = offset
+		scan_config.left_gripper_xy_correction_mm = offset
 	else:
-		scan_config.right_xy_offset = offset
+		scan_config.right_gripper_xy_correction_mm = offset
 
 
 def _build_reference_offset_entry(
@@ -216,15 +217,15 @@ class ApplyRunnerMixin:
         """Write the probed model onto the run's config, pinned to the geometry it was probed at."""
         model = LaserScanZOffsetModelConfig(
             intercept_mm=float(result.intercept_mm if intercept_mm is None else intercept_mm),
-            slope_per_mm=float(result.slope_per_mm if slope_per_mm is None else slope_per_mm),
-            stage_extension_mm=float(result.stage_extension_mm),
-            z_place_mm=float(result.z_place_mm),
+            x_slope_mm_per_mm=float(result.slope_per_mm if slope_per_mm is None else slope_per_mm),
+            reference_stage_mm=float(result.stage_extension_mm),
+            reference_z_place_mm=float(result.z_place_mm),
         )
 
         if result.side == StorageModuleSide.LEFT:
-            scan_config.left_z_offset_model = model
+            scan_config.left_wall_depth_to_gripper_z_model = model
         else:
-            scan_config.right_z_offset_model = model
+            scan_config.right_wall_depth_to_gripper_z_model = model
 
     def _resolve_manual_z_intercept(
         self,
@@ -262,8 +263,10 @@ class ApplyRunnerMixin:
         if manual_reference is None or manual_intercept_mm is None:
             return None
 
-        configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
-        configured_slope_mm = 0.0 if configured_model is None else float(configured_model.slope_per_mm)
+        configured_model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
+        configured_slope_mm = (
+            0.0 if configured_model is None else float(configured_model.x_slope_mm_per_mm)
+        )
 
         return laser_module.z_model_datum_agreement_mm(
             intercept_mm=float(decision.intercept_mm),
@@ -319,7 +322,7 @@ class ApplyRunnerMixin:
             )
 
         captured_stage_mm = manual_reference.z_captured_stage_mm
-        pin_tolerance_mm = float(scan_config.z_offset_model_param_tolerance_mm)
+        pin_tolerance_mm = float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM)
 
         if captured_stage_mm is not None and abs(float(captured_stage_mm) - float(result.stage_extension_mm)) > pin_tolerance_mm:
             raise ValueError(
@@ -444,7 +447,7 @@ class ApplyRunnerMixin:
             x_axis_limit_mm=_get_x_axis_limit_mm(worker),
             x_axis_lower_limit_mm=_get_x_axis_lower_limit_mm(worker),
             z_axis_limit_mm=_get_z_axis_limit_mm(worker),
-            xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
+            xy_offset=laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side),
             should_abort=self._should_abort_work,
         )
         try:
@@ -639,7 +642,7 @@ class ApplyRunnerMixin:
                 manual_reference=manual_reference,
             )
 
-        configured_model = laser_module.get_scan_z_offset_model(scan_config=scan_config, side=side)
+        configured_model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
 
         if configured_model is not None:
             tool = worker._robot._tool
@@ -652,16 +655,16 @@ class ApplyRunnerMixin:
             if stage_extension_value is None or z_place_value is None:
                 raise ValueError(f"{stage_param} and Z_EXTENSION_PLACE are required to apply the z offset model")
 
-            laser_module.require_z_offset_model_matches_tool(
+            laser_module.require_wall_depth_to_gripper_z_model_matches_tool(
                 model=configured_model,
                 side=side,
                 stage_extension_mm=float(stage_extension_value),
                 z_place_mm=float(z_place_value),
-                tolerance_mm=float(scan_config.z_offset_model_param_tolerance_mm),
+                tolerance_mm=float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM),
             )
 
             intercept_mm = float(configured_model.intercept_mm)
-            slope_per_mm = float(configured_model.slope_per_mm)
+            slope_per_mm = float(configured_model.x_slope_mm_per_mm)
             laser_module.print_status(
                 f"z_offset_model=config side={'left' if side == StorageModuleSide.LEFT else 'right'} "
                 f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.6f} "

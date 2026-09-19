@@ -73,9 +73,9 @@ def expander(module):
     return module.ExpanderTarget(
         bus=1,
         address=0x20,
-        configured_y_min_name="y_limit_min",
+        configured_y_min_name="y_lim_min",
         configured_y_min_pin=4,
-        configured_y_max_name="y_limit_max",
+        configured_y_max_name="y_lim_max",
         configured_y_max_pin=5,
     )
 

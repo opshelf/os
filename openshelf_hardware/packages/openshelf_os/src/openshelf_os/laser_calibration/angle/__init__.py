@@ -23,8 +23,8 @@ from .config import (
 	build_standalone_config,
 	get_laser_sample_settle_ms,
 	get_laser_samples_per_point,
-	get_laser_scan_stage_extension_mm,
-	get_laser_scan_z_offset_from_place_mm,
+	get_laser_scan_pose_stage_mm,
+	get_laser_scan_pose_z_delta_from_place_mm,
 )
 from .constants import (
 	GAP_DEPTH_THRESHOLD_MM,

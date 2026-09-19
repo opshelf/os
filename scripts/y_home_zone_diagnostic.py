@@ -226,26 +226,26 @@ def load_expander_target(config_path: Path) -> ExpanderTarget:
         and spec.expander == EXPECTED_EXPANDER_NAME
         and spec.pin == EXPECTED_RAW_YMAX_PIN
     )
-    if y_min_names != ["y_limit_min"]:
+    if y_min_names != ["y_lim_min"]:
         raise RuntimeError(
-            f"expected y_limit_min on raw P04, found configured names: {y_min_names}"
+            f"expected y_lim_min on raw P04, found configured names: {y_min_names}"
         )
-    if y_max_names != ["y_limit_max"]:
+    if y_max_names != ["y_lim_max"]:
         raise RuntimeError(
-            f"expected y_limit_max on raw P05, found configured names: {y_max_names}"
+            f"expected y_lim_max on raw P05, found configured names: {y_max_names}"
         )
     try:
-        y_min = pins["y_limit_min"]
-        y_max = pins["y_limit_max"]
+        y_min = pins["y_lim_min"]
+        y_max = pins["y_lim_max"]
     except KeyError as exc:
         raise RuntimeError("software configuration is missing a Y limit input") from exc
 
     return ExpanderTarget(
         bus=expander.bus,
         address=expander.address,
-        configured_y_min_name="y_limit_min",
+        configured_y_min_name="y_lim_min",
         configured_y_min_pin=y_min.pin,
-        configured_y_max_name="y_limit_max",
+        configured_y_max_name="y_lim_max",
         configured_y_max_pin=y_max.pin,
     )
 
@@ -1001,8 +1001,8 @@ async def async_main(args: argparse.Namespace) -> int:
             logical_y_max_input = None
             if args.command == "scan-confirmed-limits":
                 application_gpio_manager = load_application_gpio_manager(args.config)
-                logical_y_min_input = application_gpio_manager.input("y_limit_min")
-                logical_y_max_input = application_gpio_manager.input("y_limit_max")
+                logical_y_min_input = application_gpio_manager.input("y_lim_min")
+                logical_y_max_input = application_gpio_manager.input("y_lim_max")
             if args.command == "inspect":
                 return await run_inspect(
                     controller,
