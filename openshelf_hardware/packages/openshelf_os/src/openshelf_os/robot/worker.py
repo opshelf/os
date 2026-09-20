@@ -136,7 +136,7 @@ def _normalize_command(command: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
 
     location = _normalize_location(command.get("location"))
 
-    if command_name == "retrieve_item" and location is None and command.get("upca") is None:
+    if command_name == "retrieve_item" and location is None and command.get("barcode") is None:
         return None
 
     normalized: Dict[str, Any] = {"command": command_name}
@@ -151,8 +151,8 @@ def _normalize_command(command: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     if location is not None:
         normalized["location"] = location
 
-    if command.get("upca") is not None:
-        normalized["upca"] = str(command.get("upca"))
+    if command.get("barcode") is not None:
+        normalized["barcode"] = str(command.get("barcode"))
 
     if command_name == "store_item":
         item_payload = command.get("item")
@@ -1291,12 +1291,12 @@ class RobotWorker:
         if command is None:
             return
 
-        upca: Optional[str] = command.upca if isinstance(command, RetrieveItemCommand) else None
+        barcode: Optional[str] = command.barcode if isinstance(command, RetrieveItemCommand) else None
         location = command.location if isinstance(command, RetrieveItemCommand) else None
         if isinstance(command, StoreItemCommand) and isinstance(command.item, dict):
-            item_upca = command.item.get("upca")
-            if item_upca is not None:
-                upca = str(item_upca)
+            item_barcode = command.item.get("barcode")
+            if item_barcode is not None:
+                barcode = str(item_barcode)
             location = command.item.get("location")
 
         payload: dict[str, Any] = {
@@ -1306,7 +1306,7 @@ class RobotWorker:
             "error": error,
             "code": code,
             "request_id": getattr(command, "request_id", None),
-            "upca": upca,
+            "barcode": barcode,
             "location": location,
         }
         if operation is not None and operation.visibility == "internal":

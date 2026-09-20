@@ -17,8 +17,8 @@ on the device for complete schemas.
 | Endpoint | Mass input or output |
 | --- | --- |
 | `POST /api/storage/items` | Create/upsert an item with mass fields; returns the item. |
-| `PUT /api/storage/items/{upca}` | Update selected fields; returns the item. |
-| `GET /api/storage/items/{upca}` | Read current item mass fields. |
+| `POST /api/storage/items/update` | Update selected fields, taking the barcode in the body; returns the item. |
+| `POST /api/storage/items/lookup` | Read current item mass fields, taking the barcode in the body. |
 | `GET /api/storage/items` | Read the same fields in `items[]`. |
 | `POST /api/robot/commands` | Enroll a new item through the `store_item` command's `item` object. Returns `command_id` and acceptance status, not a measurement. |
 | `GET /api/robot/events` | Live SSE command results, with optional top-level `weight` in each decoded JSON event. |
@@ -30,7 +30,7 @@ For example, send this JSON to `POST /api/storage/items`:
 
 ```json
 {
-  "upca": "880000000001",
+  "barcode": "880000000001",
   "name": "Opened bottle",
   "dimensions": {"width": 10, "height": 10, "length": 10},
   "tare_weight": 100,
@@ -41,17 +41,17 @@ For example, send this JSON to `POST /api/storage/items`:
 
 The response includes `weight: 350.5`, `tare_weight: 100`, `net_weight: 250.5`,
 and `full_net_weight: 500`. Creating the inventory record does not move the item.
-Submit `{"command":"store_item","item":{"upca":"880000000001"}}` to
+Submit `{"command":"store_item","item":{"barcode":"880000000001"}}` to
 `POST /api/robot/commands` to store it.
 
-Alternatively, for a **new UPCA**, enroll and queue storage in one request:
+Alternatively, for a **new barcode**, enroll and queue storage in one request:
 
 ```json
 {
   "command": "store_item",
   "request_id": "opened-bottle-first-store",
   "item": {
-    "upca": "880000000002",
+    "barcode": "880000000002",
     "name": "Opened bottle",
     "dimensions": {"width": 10, "height": 10, "length": 10},
     "tare_weight": 100,
@@ -62,7 +62,7 @@ Alternatively, for a **new UPCA**, enroll and queue storage in one request:
 ```
 
 Provide a name and complete positive dimensions for new command-enrolled items.
-For an existing UPCA, edit mass through the item endpoints before submitting its
+For an existing barcode, edit mass through the item endpoints before submitting its
 store command; the command uses the existing inventory mass. An accepted command
 can still fail during execution. Its enrollment survives failure or restart, so
 edit that record and submit a new command when retrying; replaying the same
@@ -78,8 +78,9 @@ edit that record and submit a new command when retrying; replaying the same
 Omitting any of the three new fields (`tare_weight`, `net_weight`,
 `full_net_weight`) preserves its stored state on updates. Omitted `weight` also
 preserves gross. Never supply both `weight` and `net_weight` in one request,
-even if either is `null`; this returns `422`. To clear current mass on PUT,
-use `{"net_weight":null}`; legacy `{"weight":null}` on PUT does not clear it.
+even if either is `null`; this returns `422`. To clear current mass on an item
+update, use `{"net_weight":null}`; legacy `{"weight":null}` on
+`POST /api/storage/items/update` does not clear it.
 For example, `{"tare_weight":null,"full_net_weight":null}` clears both
 references while retaining gross, and `{"net_weight":0}` records empty contents
 when tare is known. Changing tare alone retains gross and recalculates net.
@@ -98,7 +99,7 @@ successful result appears in an SSE `data:` frame as:
   "message": "success",
   "command": "store_item",
   "command_id": "00000000-0000-4000-8000-000000000001",
-  "upca": "880000000001",
+  "barcode": "880000000001",
   "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
   "weight": 350
 }

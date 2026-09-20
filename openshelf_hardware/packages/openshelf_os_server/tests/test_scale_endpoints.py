@@ -37,13 +37,13 @@ def _mock_worker():
 	return worker
 
 
-async def _create_bin_workflow_resources(upca: str) -> tuple[int, int]:
+async def _create_bin_workflow_resources(barcode: str) -> tuple[int, int]:
 	async with AsyncSessionLocal() as db:
 		item = await StorageService(db).create_item(
-			upca, "Scale guard item", {"width": 10, "height": 10, "length": 10}
+			barcode, "Scale guard item", {"width": 10, "height": 10, "length": 10}
 		)
 		bin_row = StorageBin(
-			barcode=f"bin-{upca}",
+			barcode=f"bin-{barcode}",
 			side="left_module",
 			shelf_idx=0,
 			cell_idx=0,
@@ -57,8 +57,8 @@ async def _create_bin_workflow_resources(upca: str) -> tuple[int, int]:
 		return item.id, bin_row.id
 
 
-async def _create_active_bin_workflow(upca: str) -> tuple[str, int, int]:
-	item_id, bin_id = await _create_bin_workflow_resources(upca)
+async def _create_active_bin_workflow(barcode: str) -> tuple[str, int, int]:
+	item_id, bin_id = await _create_bin_workflow_resources(barcode)
 	async with AsyncSessionLocal() as db:
 		item = await db.get(Item, item_id)
 		assert item is not None
@@ -499,7 +499,7 @@ async def test_retrieve_command_bypasses_occupied_scale_with_global_safety_overr
 @pytest.mark.anyio
 async def test_store_command_rejects_already_stored_item() -> None:
 	worker = _mock_worker()
-	item = SimpleNamespace(id=42, upca="123456789012", name="Stored", dimensions={"length": 1.0, "width": 1.0, "height": 1.0}, weight=None)
+	item = SimpleNamespace(id=42, barcode="123456789012", name="Stored", dimensions={"length": 1.0, "width": 1.0, "height": 1.0}, weight=None)
 	location = SimpleNamespace(item_id=42, side="right_module", shelf_idx=1, cell_idx=0)
 	item_result = MagicMock()
 	item_result.scalar_one_or_none.return_value = item
@@ -517,7 +517,7 @@ async def test_store_command_rejects_already_stored_item() -> None:
 			await robot_router.robot_commands(
 				command=StoreItemCommand(
 					item={
-						"upca": "123456789012",
+						"barcode": "123456789012",
 						"dimensions": {"length": 1.0, "width": 1.0, "height": 1.0},
 					},
 				),

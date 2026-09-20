@@ -10,13 +10,13 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 @pytest.mark.anyio
 @pytest.mark.parametrize("in_bin", [False, True])
 async def test_upsert_preserves_cycle_zero_and_allows_net_correction(client: AsyncClient, in_bin: bool) -> None:
-    payload = {"upca": "123456789019", "name": "Bottle"}
+    payload = {"barcode": "123456789019", "name": "Bottle"}
     response = await client.post("/api/storage/items", json={
         **payload, "weight": 350, "tare_weight": 100, "full_net_weight": 500,
     })
     assert response.status_code == 200, response.text
     async with AsyncSessionLocal() as db:
-        item = await StorageService(db).get_item(payload["upca"])
+        item = await StorageService(db).get_item(payload["barcode"])
         assert item is not None
         apply_cycle_mass(item, 0, stored=True, command_id="zero-cycle")
         if in_bin:
@@ -39,7 +39,8 @@ async def test_upsert_preserves_cycle_zero_and_allows_net_correction(client: Asy
     for invalid_weight in (0, -1):
         response = await client.post("/api/storage/items", json={**payload, "weight": invalid_weight})
         assert response.status_code == 422, response.text
-    response = await client.get(f"/api/storage/items/{payload['upca']}")
+    response = await client.post("/api/storage/items/lookup",
+        json={"barcode": payload['barcode']})
     assert response.json()["weight"] == 0
 
     response = await client.post("/api/storage/items", json={**payload, "net_weight": 250})
@@ -78,7 +79,7 @@ async def test_storage_items_endpoint_unauthorized(unauthenticated_client: Async
 
     # Test POST /api/storage/items without auth
     response = await unauthenticated_client.post("/api/storage/items", json={
-        "upca": "123456789012",
+        "barcode": "123456789012",
         "name": "Test Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
     })
@@ -123,7 +124,7 @@ async def test_create_storage_item(client: AsyncClient) -> None:
 
     # Create item
     item_data = {
-        "upca": "123456789012",
+        "barcode": "123456789012",
         "name": "Test Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0},
         "weight": 500.0,
@@ -136,7 +137,7 @@ async def test_create_storage_item(client: AsyncClient) -> None:
 
     # Validate response structure
     assert data["id"] is not None
-    assert data["upca"] == "123456789012"
+    assert data["barcode"] == "123456789012"
     assert data["name"] == "Test Item"
     assert data["dimensions"] == {"width": 10.0, "height": 20.0, "length": 30.0}
     assert data["weight"] == 500.0
@@ -160,7 +161,7 @@ async def test_create_storage_item_validation_error(client: AsyncClient) -> None
 
     # Create item with invalid dimensions
     item_data = {
-        "upca": "123456789012",
+        "barcode": "123456789012",
         "name": "Test Item",
         "dimensions": {"width": 10.0, "height": 20.0}  # missing length
     }
@@ -185,19 +186,20 @@ async def test_get_storage_item(client: AsyncClient) -> None:
 
     # Create item first
     item_data = {
-        "upca": "123456789012",
+        "barcode": "123456789012",
         "name": "Test Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
     }
     create_response = await client.post("/api/storage/items", json=item_data, headers=headers)
     created_item = create_response.json()
 
-    # Get item by UPCA
-    response = await client.get(f"/api/storage/items/{created_item['upca']}", headers=headers)
+    # Get item by barcode
+    response = await client.post("/api/storage/items/lookup",
+        json={"barcode": created_item['barcode']}, headers=headers)
     assert response.status_code == 200
     data = response.json()
 
-    assert data["upca"] == created_item["upca"]
+    assert data["barcode"] == created_item["barcode"]
     assert data["name"] == created_item["name"]
 
 
@@ -213,7 +215,7 @@ async def test_get_nonexistent_storage_item(client: AsyncClient) -> None:
     token = login_response.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    response = await client.get("/api/storage/items/nonexistent", headers=headers)
+    response = await client.post("/api/storage/items/lookup", json={"barcode": "nonexistent"}, headers=headers)
     assert response.status_code == 404
 
 
@@ -231,7 +233,7 @@ async def test_update_storage_item(client: AsyncClient) -> None:
 
     # Create item first
     item_data = {
-        "upca": "123456789012",
+        "barcode": "123456789012",
         "name": "Original Name",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
     }
@@ -244,8 +246,8 @@ async def test_update_storage_item(client: AsyncClient) -> None:
         "weight": 1000.0
     }
 
-    response = await client.put(f"/api/storage/items/{created_item['upca']}",
-                               json=update_data, headers=headers)
+    response = await client.post("/api/storage/items/update",
+        json={**update_data, "barcode": created_item['barcode']}, headers=headers)
     assert response.status_code == 200
     data = response.json()
 
@@ -268,7 +270,7 @@ async def test_delete_storage_item(client: AsyncClient) -> None:
 
     # Create item first
     item_data = {
-        "upca": "123456789012",
+        "barcode": "123456789012",
         "name": "Test Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
     }
@@ -276,14 +278,15 @@ async def test_delete_storage_item(client: AsyncClient) -> None:
     created_item = create_response.json()
 
     # Delete item
-    response = await client.delete(f"/api/storage/items/{created_item['upca']}",
-                                   headers=headers)
+    response = await client.post("/api/storage/items/delete",
+        json={"barcode": created_item['barcode']}, headers=headers)
     assert response.status_code == 200
     data = response.json()
     assert "message" in data
 
     # Verify item is deleted
-    get_response = await client.get(f"/api/storage/items/{created_item['upca']}",
+    get_response = await client.post("/api/storage/items/lookup",
+        json={"barcode": created_item['barcode']},
                                   headers=headers)
     assert get_response.status_code == 404
 
@@ -302,7 +305,7 @@ async def test_item_location_operations(client: AsyncClient) -> None:
 
     # Create item first
     item_data = {
-        "upca": "123456789012",
+        "barcode": "123456789012",
         "name": "Test Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
     }
@@ -316,19 +319,21 @@ async def test_item_location_operations(client: AsyncClient) -> None:
         "side": "left"
     }
 
-    response = await client.post(f"/api/storage/items/{created_item['upca']}/locations",
-                               json=location_data, headers=headers)
+    response = await client.post(
+        "/api/storage/items/locations/add",
+        json={**location_data, "barcode": created_item['barcode']}, headers=headers)
     assert response.status_code == 200
     data = response.json()
 
-    assert data["upca"] == created_item["upca"]
+    assert data["barcode"] == created_item["barcode"]
     assert len(data["locations"]) == 1
     assert data["locations"][0]["shelf_idx"] == 1
     assert data["locations"][0]["cell_idx"] == 2
 
     # Get item with location
-    get_response = await client.get(
-        f"/api/storage/items/{created_item['upca']}",
+    get_response = await client.post(
+        "/api/storage/items/lookup",
+        json={"barcode": created_item["barcode"]},
         headers=headers
     )
     assert get_response.status_code == 200
@@ -339,8 +344,14 @@ async def test_item_location_operations(client: AsyncClient) -> None:
     assert data["locations"][0]["cell_idx"] == 2
 
     # Remove location
-    remove_response = await client.delete(
-        f"/api/storage/items/{created_item['upca']}/locations?shelf_idx=1&cell_idx=2&side=left",
+    remove_response = await client.post(
+        "/api/storage/items/locations/remove",
+        json={
+            "barcode": created_item["barcode"],
+            "side": "left_module",
+            "shelf_idx": 1,
+            "cell_idx": 2,
+        },
         headers=headers
     )
     assert remove_response.status_code == 200
@@ -348,8 +359,9 @@ async def test_item_location_operations(client: AsyncClient) -> None:
     assert len(data["locations"]) == 0
 
     # Verify location is removed
-    get_response = await client.get(
-        f"/api/storage/items/{created_item['upca']}",
+    get_response = await client.post(
+        "/api/storage/items/lookup",
+        json={"barcode": created_item["barcode"]},
         headers=headers
     )
     assert get_response.status_code == 200
@@ -368,12 +380,12 @@ async def test_add_item_location_occupied_returns_conflict(client: AsyncClient) 
     headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
 
     first_item = {
-        "upca": "111111111111",
+        "barcode": "111111111111",
         "name": "First Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
     }
     second_item = {
-        "upca": "222222222222",
+        "barcode": "222222222222",
         "name": "Second Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
     }
@@ -383,14 +395,14 @@ async def test_add_item_location_occupied_returns_conflict(client: AsyncClient) 
     location_data = {"shelf_idx": 3, "cell_idx": 4, "side": "left"}
 
     first_response = await client.post(
-        f"/api/storage/items/{first_item['upca']}/locations",
-        json=location_data, headers=headers
+        "/api/storage/items/locations/add",
+        json={**location_data, "barcode": first_item['barcode']}, headers=headers
     )
     assert first_response.status_code == 200
 
     conflict_response = await client.post(
-        f"/api/storage/items/{second_item['upca']}/locations",
-        json=location_data, headers=headers
+        "/api/storage/items/locations/add",
+        json={**location_data, "barcode": second_item['barcode']}, headers=headers
     )
     assert conflict_response.status_code == 409
 
@@ -406,15 +418,15 @@ async def test_add_item_location_invalid_index_returns_unprocessable(client: Asy
     headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
 
     item_data = {
-        "upca": "333333333333",
+        "barcode": "333333333333",
         "name": "Third Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
     }
     await client.post("/api/storage/items", json=item_data, headers=headers)
 
     response = await client.post(
-        f"/api/storage/items/{item_data['upca']}/locations",
-        json={"shelf_idx": -1, "cell_idx": 2, "side": "left"}, headers=headers
+        "/api/storage/items/locations/add",
+        json={**{"shelf_idx": -1, "cell_idx": 2, "side": "left"}, "barcode": item_data['barcode']}, headers=headers
     )
     assert response.status_code == 422
 
@@ -472,7 +484,7 @@ async def test_storage_permissions_enforcement(client: AsyncClient) -> None:
 
     # Try to write to storage endpoints
     item_data = {
-        "upca": "123456789012",
+        "barcode": "123456789012",
         "name": "Test Item",
         "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
     }
@@ -498,7 +510,7 @@ async def test_pagination_items_endpoint(client: AsyncClient) -> None:
     # Create multiple items
     for i in range(3):
         item_data = {
-            "upca": f"1234567890{i}",
+            "barcode": f"1234567890{i}",
             "name": f"Test Item {i}",
             "dimensions": {"width": 10.0, "height": 20.0, "length": 30.0}
         }

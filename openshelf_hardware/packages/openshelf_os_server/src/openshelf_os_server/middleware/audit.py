@@ -32,6 +32,11 @@ ALWAYS_EXCLUDED_ENDPOINTS = frozenset([
     "/api/calibration/laser/stream",
 ])
 SUCCESSFUL_READ_METHODS = frozenset(["GET", "HEAD"])
+# Reads that had to move to POST so the barcode can travel in the body; they stay unaudited
+# like their GET counterparts, and only failures are recorded.
+SUCCESSFUL_READ_POST_ENDPOINTS = frozenset([
+    "/api/storage/items/lookup",
+])
 SUCCESSFUL_READ_EXCLUDED_ENDPOINTS = frozenset([
     "/api/auth/me",
     "/api/auth/users",
@@ -85,6 +90,8 @@ def should_skip_before_request(request: Request) -> bool:
 def should_skip_after_response(request: Request, status_code: int) -> bool:
     if status_code >= 400:
         return False
+    if request.url.path in SUCCESSFUL_READ_POST_ENDPOINTS:
+        return True
     if request.method not in SUCCESSFUL_READ_METHODS:
         return False
     return is_successful_read_excluded_endpoint(request.url.path)

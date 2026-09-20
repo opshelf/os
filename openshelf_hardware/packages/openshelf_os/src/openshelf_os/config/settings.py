@@ -2,6 +2,10 @@ from __future__ import annotations
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
+# Item and tray barcodes are arbitrary customer strings; the item and sizer columns are
+# VARCHAR(255), so the API and config schemas share that bound instead of a UPC-A shape.
+BARCODE_MAX_LENGTH = 255
+
 
 class StorageBinLocationSettings(BaseModel):
     side: Literal["left_module", "right_module"]
@@ -27,7 +31,7 @@ class CompartmentLayoutSettings(BaseModel):
 
 
 class StorageBinSettings(BaseModel):
-    barcode: str = Field(pattern=r"^\d{12}$")
+    barcode: str = Field(min_length=1, max_length=BARCODE_MAX_LENGTH)
     home_location: StorageBinLocationSettings
     inner_dimensions: StorageBinDimensionsSettings
     max_item_dimensions: Optional[StorageBinItemDimensionsSettings] = None

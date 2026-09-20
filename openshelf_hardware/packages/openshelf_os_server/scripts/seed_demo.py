@@ -66,7 +66,7 @@ class SeedLocation:
 
 @dataclass(frozen=True)
 class SeedRecord:
-	upca: str
+	barcode: str
 	name: str
 	weight: float
 	dimensions: Dict[str, float]
@@ -247,9 +247,9 @@ def resolve_expiration(data: Dict[str, Any], fallback: str) -> str:
 	return fallback
 
 
-def calculate_upca_check_digit(base_digits: str) -> str:
+def calculate_check_digit(base_digits: str) -> str:
 	if len(base_digits) != 11 or base_digits.isdigit() is False:
-		raise ValueError(f"invalid base upca digits: {base_digits!r}")
+		raise ValueError(f"invalid base barcode digits: {base_digits!r}")
 
 	odd_sum = 0
 	even_sum = 0
@@ -265,14 +265,14 @@ def calculate_upca_check_digit(base_digits: str) -> str:
 	return str(check_digit)
 
 
-def generate_placeholder_upca(counter: int, used: set[str]) -> str:
+def generate_placeholder_barcode(counter: int, used: set[str]) -> str:
 	index = counter
 	while True:
 		base_digits = f"299{index:08d}"
-		upca = f"{base_digits}{calculate_upca_check_digit(base_digits)}"
-		if upca not in used:
-			used.add(upca)
-			return upca
+		barcode = f"{base_digits}{calculate_check_digit(base_digits)}"
+		if barcode not in used:
+			used.add(barcode)
+			return barcode
 		index += 1
 
 
@@ -374,9 +374,9 @@ def normalize_demo_payload(demo_path: Path) -> Dict[str, Dict[str, Any]]:
 				nudge_by_location[location] = float(nudge)
 
 		converted: Dict[str, Dict[str, Any]] = {}
-		for upca, location in legacy_mapping.items():
+		for barcode, location in legacy_mapping.items():
 			if isinstance(location, str) is False:
-				raise ValueError(f"legacy demo entry for {upca!r} must be a location string")
+				raise ValueError(f"legacy demo entry for {barcode!r} must be a location string")
 
 			entry: Dict[str, Any] = {
 				"cell": location,
@@ -387,29 +387,29 @@ def normalize_demo_payload(demo_path: Path) -> Dict[str, Dict[str, Any]]:
 			if nudge_value is not None:
 				entry["nudge_override_mm"] = nudge_value
 
-			converted[str(upca)] = entry
+			converted[str(barcode)] = entry
 
 		return converted
 
 	converted: Dict[str, Dict[str, Any]] = {}
-	for upca, payload in raw.items():
+	for barcode, payload in raw.items():
 		if isinstance(payload, str):
-			converted[str(upca)] = {
+			converted[str(barcode)] = {
 				"cell": payload,
 				"data": {},
 			}
 			continue
 
 		if isinstance(payload, dict) is False:
-			raise ValueError(f"demo entry for {upca!r} must be an object")
+			raise ValueError(f"demo entry for {barcode!r} must be an object")
 
 		cell = payload.get("cell")
 		if isinstance(cell, str) is False:
-			raise ValueError(f"demo entry for {upca!r} must include string field 'cell'")
+			raise ValueError(f"demo entry for {barcode!r} must include string field 'cell'")
 
 		data = payload.get("data", {})
 		if isinstance(data, dict) is False:
-			raise ValueError(f"demo entry for {upca!r} field 'data' must be an object")
+			raise ValueError(f"demo entry for {barcode!r} field 'data' must be an object")
 
 		entry = {
 			"cell": cell,
@@ -420,7 +420,7 @@ def normalize_demo_payload(demo_path: Path) -> Dict[str, Dict[str, Any]]:
 		if isinstance(nudge_override, (int, float)):
 			entry["nudge_override_mm"] = float(nudge_override)
 
-		converted[str(upca)] = entry
+		converted[str(barcode)] = entry
 
 	return converted
 
@@ -440,56 +440,56 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 	for location, cell in iter_grid_cells(grid):
 		all_cells[location_key(location)] = cell
 
-	demo_rank_by_upca: Dict[str, int] = {}
-	for demo_rank, demo_upca in enumerate(demo_entries.keys()):
-		demo_rank_by_upca[demo_upca] = demo_rank
+	demo_rank_by_barcode: Dict[str, int] = {}
+	for demo_rank, demo_barcode in enumerate(demo_entries.keys()):
+		demo_rank_by_barcode[demo_barcode] = demo_rank
 
 	mapped_by_location: Dict[tuple[str, int, int], tuple[str, Dict[str, Any]]] = {}
-	for upca, entry in demo_entries.items():
+	for barcode, entry in demo_entries.items():
 		location = parse_demo_location(str(entry["cell"]))
 		key = location_key(location)
 
 		if key not in all_cells:
 			raise ValueError(
-				f"demo entry {upca!r} points to missing cell {location.side.value}:{location.shelf_idx}:{location.cell_idx}"
+				f"demo entry {barcode!r} points to missing cell {location.side.value}:{location.shelf_idx}:{location.cell_idx}"
 			)
 
 		if key in mapped_by_location:
-			existing_upca = mapped_by_location[key][0]
+			existing_barcode = mapped_by_location[key][0]
 			raise ValueError(
 				f"duplicate demo cell mapping for {location.side.value}:{location.shelf_idx}:{location.cell_idx}: "
-				f"{existing_upca!r} and {upca!r}"
+				f"{existing_barcode!r} and {barcode!r}"
 			)
 
 		cell = all_cells[key]
 		if cell.status in (CellStatus.DISABLED, CellStatus.MAINTENANCE):
 			raise ValueError(
-				f"demo entry {upca!r} targets non-placeable cell {location.side.value}:{location.shelf_idx}:{location.cell_idx} "
+				f"demo entry {barcode!r} targets non-placeable cell {location.side.value}:{location.shelf_idx}:{location.cell_idx} "
 				f"with status {cell.status.value!r}"
 			)
 
-		mapped_by_location[key] = (upca, entry)
+		mapped_by_location[key] = (barcode, entry)
 
-	demo_name_to_upca: Dict[str, str] = {}
-	for mapped_upca, mapped_entry in mapped_by_location.values():
+	demo_name_to_barcode: Dict[str, str] = {}
+	for mapped_barcode, mapped_entry in mapped_by_location.values():
 		mapped_data = mapped_entry.get("data", {})
 		if isinstance(mapped_data, dict) is False:
 			mapped_data = {}
 
-		mapped_name = resolve_name(mapped_data, mapped_upca)
+		mapped_name = resolve_name(mapped_data, mapped_barcode)
 		name_key = make_name_key(mapped_name)
-		existing_upca = demo_name_to_upca.get(name_key)
-		if existing_upca is not None and existing_upca != mapped_upca:
+		existing_barcode = demo_name_to_barcode.get(name_key)
+		if existing_barcode is not None and existing_barcode != mapped_barcode:
 			raise ValueError(
-				f"demo items must have unique names: {mapped_upca!r} and {existing_upca!r} both use {mapped_name!r}"
+				f"demo items must have unique names: {mapped_barcode!r} and {existing_barcode!r} both use {mapped_name!r}"
 			)
 
-		demo_name_to_upca[name_key] = mapped_upca
+		demo_name_to_barcode[name_key] = mapped_barcode
 
-	reserved_demo_name_keys = set(demo_name_to_upca.keys())
+	reserved_demo_name_keys = set(demo_name_to_barcode.keys())
 	name_counts: Dict[str, int] = {}
 
-	used_upcas: set[str] = set(demo_entries.keys())
+	used_barcodes: set[str] = set(demo_entries.keys())
 	placeholder_counter = 0
 	placeholder_count = 0
 
@@ -510,19 +510,19 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 			data["is_demo_physical"] = False
 			if "demo_rank" in data:
 				del data["demo_rank"]
-			upca = generate_placeholder_upca(placeholder_counter, used_upcas)
+			barcode = generate_placeholder_barcode(placeholder_counter, used_barcodes)
 			placeholder_counter += 1
 			placeholder_count += 1
 		else:
-			upca = mapped_entry[0]
+			barcode = mapped_entry[0]
 			data = dict(mapped_entry[1].get("data", {}))
 			data["is_demo_physical"] = True
 			if isinstance(data.get("demo_rank"), int) is False:
-				data["demo_rank"] = demo_rank_by_upca.get(upca)
-			if upca in used_upcas:
+				data["demo_rank"] = demo_rank_by_barcode.get(barcode)
+			if barcode in used_barcodes:
 				pass
 			else:
-				used_upcas.add(upca)
+				used_barcodes.add(barcode)
 
 		cell_dimensions = {
 			"width": float(cell.dimensions.width),
@@ -534,7 +534,7 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 			data["name"] = f"Well plate {format_cell_coordinate(location)}"
 
 		dimensions = resolve_dimensions(data, cell_dimensions)
-		name = resolve_name(data, upca)
+		name = resolve_name(data, barcode)
 		name_counts[name] = name_counts.get(name, 0) + 1
 		weight = coerce_positive_float(data.get("weight"))
 		if weight is None:
@@ -574,7 +574,7 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 
 		records.append(
 			SeedRecord(
-				upca=upca,
+				barcode=barcode,
 				name=name,
 				weight=weight,
 				dimensions=dimensions,
@@ -587,7 +587,7 @@ def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]
 			cell.status = CellStatus.OCCUPIED
 
 		cell.item = CellItem(
-			upca=upca,
+			barcode=barcode,
 			weight=weight,
 			dimensions=Dimensions(
 				width=dimensions["width"],
@@ -614,22 +614,22 @@ async def seed_database(records: list[SeedRecord]) -> None:
 		await session.execute(delete(ItemLocation))
 		await session.execute(delete(Item))
 
-		item_by_upca: Dict[str, Item] = {}
+		item_by_barcode: Dict[str, Item] = {}
 		for record in records:
 			item = Item(
-				upca=record.upca,
+				barcode=record.barcode,
 				name=record.name,
 				dimensions=record.dimensions,
 				weight=record.weight,
 				item_metadata=record.metadata,
 			)
 			session.add(item)
-			item_by_upca[record.upca] = item
+			item_by_barcode[record.barcode] = item
 
 		await session.flush()
 
 		for record in records:
-			item = item_by_upca[record.upca]
+			item = item_by_barcode[record.barcode]
 			location = ItemLocation(
 				item_id=item.id,
 				side=record.location.side.value,

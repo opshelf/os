@@ -91,7 +91,7 @@ the virtual cabinet has 80 deterministic cells: left module then right module, f
 - `POST /api/robot/commands`: queues `store_item` or `retrieve_item` and returns a command uuid
 - `GET /api/robot/commands/{command_id}`: returns the persisted lifecycle and result
 - `GET /api/robot/status` and `GET /api/robot/events`: stream status snapshots and results over sse
-- `POST /api/print/{upca}`: accepts 11 or 12 decimal digits and returns `printed=true` without producing a label
+- `POST /api/print`: prints the supplied barcode (in the request body) as a Code 128 label and returns `printed=true` without producing a label in mock mode
 
 commands run through one deterministic fifo worker with a 30-second simulated execution time and a limit of 32 queued/running commands. an optional top-level `request_id` makes a request idempotent for seven days: an exact replay returns the original command, while reuse with a different payload returns `409`. a full queue returns `429` with `Retry-After: 1`. commands interrupted by a service restart are persisted as failed rather than replayed.
 

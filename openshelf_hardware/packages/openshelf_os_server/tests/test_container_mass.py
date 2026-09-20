@@ -32,7 +32,7 @@ async def cycle_session_factory(tmp_path, monkeypatch):
 
 
 def test_mass_inputs_and_overflow():
-    item = Item(upca='mass', name='mass', dimensions={}, weight=350)
+    item = Item(barcode='mass', name='mass', dimensions={}, weight=350)
     apply_mass(item, {'tare_weight': 100, 'net_weight': 250, 'full_net_weight': 500}, enrollment=True)
     assert item.net_weight == 250 and item.enrollment_weight_pending
     for values in ({'net_weight': -1}, {'tare_weight': float('nan')}, {'net_weight': 0, 'weight': None},
@@ -47,7 +47,7 @@ def test_mass_inputs_and_overflow():
 
 
 def test_below_tare_and_replay():
-    item = Item(upca='mass', name='mass', dimensions={}, weight=350, tare_weight=100,
+    item = Item(barcode='mass', name='mass', dimensions={}, weight=350, tare_weight=100,
                 enrollment_weight_pending=True)
     apply_cycle_mass(item, 345, stored=True, command_id='first')
     assert item.weight == 350 and not item.enrollment_weight_pending
@@ -64,7 +64,7 @@ async def test_durable_first_store_failed_retry_and_replay(cycle_session_factory
     async with cycle_session_factory() as db:
         await StorageService(db).create_item('mass-cycle', 'Bottle', None,
             mass_values={'tare_weight': 100, 'net_weight': 250, 'full_net_weight': 500})
-    base = {'upca': 'mass-cycle', 'location': {'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0}}
+    base = {'barcode': 'mass-cycle', 'location': {'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0}}
     first = {**base, 'command': 'store_item', 'command_id': 'mass-first', 'message': 'success', 'weight': 345}
     await process_robot_event({**first, 'message': 'failure'})
     async with cycle_session_factory() as db:
@@ -87,16 +87,16 @@ async def test_durable_first_store_failed_retry_and_replay(cycle_session_factory
 
 @pytest.mark.anyio
 async def test_api_mass_null_omission_and_validation(client):
-    response = await client.post('/api/storage/items', json={'upca': 'mass-api', 'name': 'Bottle', 'tare_weight': 100, 'net_weight': 250})
+    response = await client.post('/api/storage/items', json={'barcode': 'mass-api', 'name': 'Bottle', 'tare_weight': 100, 'net_weight': 250})
     assert response.status_code == 200, response.text
     assert response.json()['weight'] == 350
-    response = await client.put('/api/storage/items/mass-api', json={'name': 'Renamed'})
+    response = await client.post("/api/storage/items/update", json={**{'name': 'Renamed'}, "barcode": "mass-api"})
     assert response.json()['net_weight'] == 250
-    response = await client.put('/api/storage/items/mass-api', json={'tare_weight': None, 'net_weight': 1})
+    response = await client.post("/api/storage/items/update", json={**{'tare_weight': None, 'net_weight': 1}, "barcode": "mass-api"})
     assert response.status_code == 422
-    response = await client.put('/api/storage/items/mass-api', json={'net_weight': None, 'full_net_weight': None})
+    response = await client.post("/api/storage/items/update", json={**{'net_weight': None, 'full_net_weight': None}, "barcode": "mass-api"})
     assert response.status_code == 200 and response.json()['weight'] is None
-    response = await client.put('/api/storage/items/mass-api', json={'weight': None, 'net_weight': None})
+    response = await client.post("/api/storage/items/update", json={**{'weight': None, 'net_weight': None}, "barcode": "mass-api"})
     assert response.status_code == 422
 
 

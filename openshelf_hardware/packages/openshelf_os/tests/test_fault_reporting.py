@@ -357,7 +357,7 @@ async def test_store_fault_preserves_resolved_cell_and_coordinate_context() -> N
     robot.io_pick = did_fail_io_pick
 
     with pytest.raises(MovementError):
-        await robot.store({"upca": "123", "name": "test", "dimensions": {"width": 1, "height": 2, "length": 3}})
+        await robot.store({"barcode": "123", "name": "test", "dimensions": {"width": 1, "height": 2, "length": 3}})
 
     fault_context = robot.get_last_fault_context()
     assert fault_context is not None

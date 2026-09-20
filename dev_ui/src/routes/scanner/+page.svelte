@@ -61,7 +61,7 @@
 		}
 	}
 
-	function generateRandomUpca(): string {
+	function generateRandomBarcode(): string {
 		const digits: number[] = [];
 
 		for (let i = 0; i < 11; i++) {
@@ -86,7 +86,7 @@
 	}
 
 	function didClickGenerate(): void {
-		simulatedCode = generateRandomUpca();
+		simulatedCode = generateRandomBarcode();
 	}
 
 	function connectEventSource(): void {

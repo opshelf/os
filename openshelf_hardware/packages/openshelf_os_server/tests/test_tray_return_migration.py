@@ -111,7 +111,7 @@ async def _seed_legacy_return(engine, operation, resolution, state, *, physical=
         session.add_all(
             Item(
                 id=i,
-                upca=f"12345678900{i}",
+                barcode=f"12345678900{i}",
                 name=f"Item {i}",
                 dimensions={"width": 1, "height": 1, "length": 1},
                 enrollment_weight_pending=True,

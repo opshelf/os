@@ -74,7 +74,19 @@ class CellItem(BaseModel):
 	weight: Optional[float] = None
 	dimensions: Dimensions
 	data: Optional[Json] = None
-	upca: Optional[str] = None
+	barcode: Optional[str] = None
+
+	# Grid files written before the upca -> barcode rename stored the item code under
+	# "upca"; map it back at read time so a device upgrading from the previous
+	# release keeps its barcodes. Read-time normalization only: saves always write
+	# "barcode", the model itself never writes the legacy key back.
+	@model_validator(mode="before")
+	@classmethod
+	def migrate_legacy_upca(cls, data: object) -> object:
+		if isinstance(data, dict) and "upca" in data and "barcode" not in data:
+			data = {**data, "barcode": data["upca"]}
+
+		return data
 
 
 class Cell(BaseModel):

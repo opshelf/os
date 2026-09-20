@@ -84,7 +84,7 @@
 			if (result.printed === false) {
 				printError = 'printer is disabled; label was not printed';
 			} else {
-				message = `printed ${result.code}`;
+				message = `printed ${result.barcode}`;
 			}
 		} catch (err) {
 			printError = err instanceof Error ? err.message : 'failed to print label';
@@ -94,7 +94,7 @@
 		}
 	}
 
-	function generateRandomUpca(): string {
+	function generateRandomBarcode(): string {
 		const digits: number[] = [];
 
 		for (let i = 0; i < 11; i++) {
@@ -118,7 +118,7 @@
 	}
 
 	function didClickGenerate(): void {
-		code = generateRandomUpca();
+		code = generateRandomBarcode();
 		printError = '';
 	}
 

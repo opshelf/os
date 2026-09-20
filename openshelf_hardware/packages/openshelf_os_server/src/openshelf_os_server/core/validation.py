@@ -1,6 +1,8 @@
 """Data validation utilities for storage operations."""
 from typing import Dict, Any, Optional
 
+from openshelf_os.config.settings import BARCODE_MAX_LENGTH
+
 
 class ValidationError(Exception):
     """Custom validation error."""
@@ -92,7 +94,7 @@ class StorageValidator:
     """Main storage validator combining all validation logic."""
 
     @staticmethod
-    def validate_item_creation(upca: str, name: str, dimensions: Dict[str, float],
+    def validate_item_creation(barcode: str, name: str, dimensions: Dict[str, float],
                              weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Validate complete item creation data."""
         ItemValidator.validate_name(name)
@@ -100,12 +102,12 @@ class StorageValidator:
         ItemValidator.validate_weight(weight)
         ItemValidator.validate_metadata(metadata)
 
-        if not isinstance(upca, str):
-            raise ValidationError("UPCA must be a string")
-        if len(upca.strip()) == 0:
-            raise ValidationError("UPCA cannot be empty")
-        if len(upca) > 50:
-            raise ValidationError("UPCA cannot exceed 50 characters")
+        if not isinstance(barcode, str):
+            raise ValidationError("Barcode must be a string")
+        if len(barcode.strip()) == 0:
+            raise ValidationError("Barcode cannot be empty")
+        if len(barcode) > BARCODE_MAX_LENGTH:
+            raise ValidationError(f"Barcode cannot exceed {BARCODE_MAX_LENGTH} characters")
 
     @staticmethod
     def validate_item_update(name: Optional[str] = None, dimensions: Optional[Dict[str, float]] = None,

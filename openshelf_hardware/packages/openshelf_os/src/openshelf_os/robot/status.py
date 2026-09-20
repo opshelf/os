@@ -99,7 +99,7 @@ class RobotCommandSuccessful(BaseModel):
     command: str = "unknown"
     message: Literal["success"] = "success"
     location: Optional[StorageModuleCellLocation] = None
-    upca: Optional[str] = None
+    barcode: Optional[str] = None
     weight: Optional[float] = None
 
 

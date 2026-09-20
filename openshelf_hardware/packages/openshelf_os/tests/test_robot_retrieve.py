@@ -9,7 +9,7 @@ from openshelf_os.storage import CellItem, Dimensions, StorageModuleCellLocation
 
 
 @pytest.mark.asyncio
-async def test_retrieve_preserves_upca_hint_for_cached_placeholder_item() -> None:
+async def test_retrieve_preserves_barcode_hint_for_cached_placeholder_item() -> None:
     location = StorageModuleCellLocation(
         side=StorageModuleSide.LEFT,
         shelf_idx=0,
@@ -44,10 +44,10 @@ async def test_retrieve_preserves_upca_hint_for_cached_placeholder_item() -> Non
 
     result = await robot.retrieve_by_location(
         location.model_dump(),
-        upca_hint="999900000001",
+        barcode_hint="999900000001",
     )
 
     assert isinstance(result, RobotCommandSuccessful)
-    assert result.upca == "999900000001"
+    assert result.barcode == "999900000001"
     assert result.location == location
     assert cleared_locations == [location]

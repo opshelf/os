@@ -165,7 +165,7 @@ def stream_docs(media_type: str, description: str, example: str | None = None) -
 
 
 PARAMETER_DESCRIPTIONS = {
-    "upca": "Item barcode identifying the inventory record.",
+    "barcode": "Item barcode identifying the inventory record.",
     "workflow_id": "Identifier of the bin workflow to inspect or operate on.",
     "motor_name": "Motor identifier returned by the motor diagnostics endpoint.",
     "shelf_idx": "Zero-based shelf index.",
