@@ -567,6 +567,51 @@ async def _dev_auto_user_is_resolvable(email: str) -> bool:
 		return result.scalar_one_or_none() is not None
 
 
+async def _ensure_dev_auto_user(email: str) -> None:
+	"""Create the configured dev auto user so the unauthenticated fallback
+	resolves on any database (e.g. a fresh one created on first start in this
+	mode). Mirrors _ensure_developer_user: admin role, PIN 1111, is_system.
+	An existing inactive user is activated instead of duplicated."""
+	if await _dev_auto_user_is_resolvable(email) is True:
+		return
+
+	async with AsyncSessionLocal() as db:
+		result = await db.execute(select(User).filter(User.email == email))
+		existing_user = result.scalar_one_or_none()
+
+		if existing_user is not None:
+			if existing_user.is_active is False:
+				existing_user.is_active = True
+				await db.commit()
+				logger.info("dev_auto_user_activated", email=email)
+			return
+
+		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
+		admin_role = role_result.scalar_one_or_none()
+
+		if admin_role is None:
+			logger.warning("admin_role_not_found", action="skipping_dev_auto_user_creation")
+			return
+
+		ph = PasswordHasher()
+		pin_hash = ph.hash("1111")
+		local_part = email.partition("@")[0]
+
+		db.add(
+			User(
+				email=email,
+				first_name=local_part.capitalize(),
+				last_name="User",
+				pin_hash=pin_hash,
+				role_id=admin_role.id,
+				is_active=True,
+				is_system=True,
+			)
+		)
+		await db.commit()
+		logger.info("dev_auto_user_created", email=email)
+
+
 async def _ensure_default_roles_and_access_levels() -> None:
 	async with AsyncSessionLocal() as db:
 		for role_name, permissions in DEFAULT_ROLES.items():
@@ -678,6 +723,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	await _ensure_default_role_permissions()
 	await _ensure_developer_user()
 	if settings.auth.dev_mode and settings.auth.dev_auto_user:
+		await _ensure_dev_auto_user(settings.auth.dev_auto_user)
 		if await _dev_auto_user_is_resolvable(settings.auth.dev_auto_user) is False:
 			logger.warning(
 				"dev_auto_user_unresolvable",
