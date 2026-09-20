@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import re
+import statistics
 import tempfile
 import time
 from collections import deque
@@ -12,6 +14,7 @@ from pathlib import Path
 from collections.abc import Awaitable, Generator
 from typing import Any, cast
 
+import av
 import cv2
 import numpy as np
 
@@ -21,6 +24,10 @@ from openshelf_os.robot.models import (
 )
 from openshelf_os_server.core.camera import (
     CameraManager,
+    ToolCameraStreamManager,
+    _all_consumer_counts,
+    _au_contains_hevc_keyframe,
+    _au_contains_idr,
     camera_registry,
     start_camera_stream_by_id,
 )
@@ -38,12 +45,32 @@ DEFAULT_MAX_TOTAL_ATTACHMENT_BYTES = 14 * MIB
 MAX_PENDING_CAPTURES = 2
 CAMERA_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_.-]+")
 
+# Raw elementary-stream demuxer format per codec name, spelled as PyAV
+# spells it (this av build registers the raw HEVC demuxer as "hevc").
+# A codec name missing here is an unsupported window.
+NALE_DEMUX_FORMAT_BY_CODEC = {"h264": "h264", "hevc": "hevc", "h265": "hevc"}
+
 
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _nalu_window_fps(window: NaluWindow) -> float:
+    pts_list = [pts for pts, _data in window.frames]
+    deltas = [
+        later - earlier
+        for earlier, later in zip(pts_list, pts_list[1:], strict=False)
+        if 0 < (later - earlier) < 2.0
+    ]
+
+    if not deltas:
+        return 25.0
+
+    fps = 1.0 / statistics.median(deltas)
+    return min(30.0, max(1.0, round(fps)))
 
 
 def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
@@ -122,6 +149,33 @@ class RecordedCameraFrame:
     data: bytes
 
 
+@dataclass(frozen=True)
+class NaluWindow:
+    """A frozen slice of a camera's live elementary access-unit ring.
+
+    frames are (pts_seconds, access unit) tuples in stream order.
+    au_is_avcc records the AUs' wire form: False (the default) means
+    Annex-B start-code framing, True means AVCC (u32 length-prefixed
+    NALs). codec_name is the demuxer's codec for the ring's source
+    ("h264" or "hevc"); it selects the elementary-stream demuxer
+    and the keyframe scan.
+    """
+
+    frames: tuple[tuple[float, bytes], ...]
+    au_is_avcc: bool = False
+    codec_name: str = "h264"
+
+    def __len__(self) -> int:
+        return len(self.frames)
+
+    @property
+    def duration_seconds(self) -> float:
+        if len(self.frames) < 2:
+            return 0.0
+
+        return max(0.0, self.frames[-1][0] - self.frames[0][0])
+
+
 class PreparedCrashCapture(Awaitable[CrashReportArtifacts]):
     """A frozen recorder snapshot whose encoding starts only when awaited."""
 
@@ -130,7 +184,7 @@ class PreparedCrashCapture(Awaitable[CrashReportArtifacts]):
         recorder: "CrashVideoRecorder",
         reason: str,
         crash_at_utc: datetime,
-        frozen: dict[str, list[RecordedCameraFrame]],
+        frozen: dict[str, list[RecordedCameraFrame] | NaluWindow],
     ) -> None:
         self._recorder = recorder
         self._reason = reason
@@ -267,9 +321,13 @@ class CrashVideoRecorder:
 
     async def _release_manager_lease(self, manager: CameraManager) -> None:
         manager.decrement_background_consumers()
+        mjpeg_consumers, nalu_consumers, background_consumers = _all_consumer_counts(
+            manager
+        )
         if (
-            manager.consumer_count == 0
-            and manager.background_consumer_count == 0
+            mjpeg_consumers == 0
+            and nalu_consumers == 0
+            and background_consumers == 0
             and manager.is_running is True
         ):
             try:
@@ -293,6 +351,11 @@ class CrashVideoRecorder:
     async def _sample_once(self, sampled_at: float | None = None) -> None:
         now = time.monotonic() if sampled_at is None else sampled_at
         for camera_id, manager in list(self._owned_managers.items()):
+            # RTSP cameras are sampled on demand from their NALU ring at
+            # freeze time; only JPEG-ring cameras (UVC) sample here.
+            if isinstance(manager, ToolCameraStreamManager) is True:
+                continue
+
             frame = await manager.get_latest_frame()
             frame_at = manager.last_frame_at
             if frame is None or frame_at is None:
@@ -317,8 +380,10 @@ class CrashVideoRecorder:
             removed = frames.popleft()
             self._buffer_bytes[camera_id] -= len(removed.data)
 
-    def _freeze_buffers(self, crash_at: float) -> dict[str, list[RecordedCameraFrame]]:
-        frozen: dict[str, list[RecordedCameraFrame]] = {}
+    def _freeze_buffers(
+        self, crash_at: float
+    ) -> dict[str, list[RecordedCameraFrame] | NaluWindow]:
+        frozen: dict[str, list[RecordedCameraFrame] | NaluWindow] = {}
         cutoff = crash_at - self.config.lookback_seconds
         for camera_id, frames in self._buffers.items():
             if camera_registry.get(camera_id) is not self._owned_managers.get(camera_id):
@@ -326,6 +391,22 @@ class CrashVideoRecorder:
             selected = [frame for frame in frames if cutoff <= frame.captured_at <= crash_at]
             if selected:
                 frozen[camera_id] = selected
+
+        for camera_id, manager in self._owned_managers.items():
+            if not isinstance(manager, ToolCameraStreamManager):
+                continue
+            if camera_registry.get(camera_id) is not manager:
+                continue
+            if frozen.get(camera_id) is not None:
+                continue
+            window = manager.get_nalu_window(self.config.lookback_seconds)
+            if len(window) >= 2:
+                frozen[camera_id] = NaluWindow(
+                    frames=tuple(window),
+                    au_is_avcc=manager._nalu_au_is_annexb() is False,
+                    codec_name=manager.nalu_window_codec() or "h264",
+                )
+
         return frozen
 
     def begin_capture(self, reason: str) -> PreparedCrashCapture | CrashReportArtifacts:
@@ -367,7 +448,7 @@ class CrashVideoRecorder:
         self,
         reason: str,
         crash_at_utc: datetime,
-        frozen: dict[str, list[RecordedCameraFrame]],
+        frozen: dict[str, list[RecordedCameraFrame] | NaluWindow],
     ) -> CrashReportArtifacts:
         try:
             context: dict[str, object] = {
@@ -385,14 +466,24 @@ class CrashVideoRecorder:
 
             async with self._capture_lock:
                 for camera_id, frames in frozen.items():
-                    duration_seconds = 0.0
-                    if len(frames) > 1:
-                        duration_seconds = frames[-1].captured_at - frames[0].captured_at
-                    details: dict[str, object] = {
-                        "frame_count": len(frames),
-                        "duration_seconds": round(duration_seconds, 3),
-                        "buffer_bytes": sum(len(frame.data) for frame in frames),
-                    }
+                    if isinstance(frames, NaluWindow):
+                        frame_count = len(frames.frames)
+                        duration_seconds = frames.duration_seconds
+                        details: dict[str, object] = {
+                            "frame_count": frame_count,
+                            "duration_seconds": round(duration_seconds, 3),
+                            "buffer_bytes": sum(len(data) for _pts, data in frames.frames),
+                        }
+                    else:
+                        frame_count = len(frames)
+                        duration_seconds = 0.0
+                        if frame_count > 1:
+                            duration_seconds = frames[-1].captured_at - frames[0].captured_at
+                        details = {
+                            "frame_count": frame_count,
+                            "duration_seconds": round(duration_seconds, 3),
+                            "buffer_bytes": sum(len(frame.data) for frame in frames),
+                        }
                     camera_context[camera_id] = details
 
                     try:
@@ -400,14 +491,24 @@ class CrashVideoRecorder:
                             0,
                             self.config.max_total_attachment_bytes - total_attachment_bytes,
                         )
-                        video_bytes = await self._encode_camera(
-                            camera_id,
-                            frames,
-                            max_attachment_bytes=min(
-                                self.config.max_attachment_bytes,
-                                remaining_attachment_bytes,
-                            ),
-                        )
+                        if isinstance(frames, NaluWindow):
+                            video_bytes = await self._encode_nalu_window(
+                                camera_id,
+                                frames,
+                                max_attachment_bytes=min(
+                                    self.config.max_attachment_bytes,
+                                    remaining_attachment_bytes,
+                                ),
+                            )
+                        else:
+                            video_bytes = await self._encode_camera(
+                                camera_id,
+                                frames,
+                                max_attachment_bytes=min(
+                                    self.config.max_attachment_bytes,
+                                    remaining_attachment_bytes,
+                                ),
+                            )
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
@@ -483,6 +584,139 @@ class CrashVideoRecorder:
             frames,
             max_attachment_bytes=max_attachment_bytes,
         )
+
+    async def _encode_nalu_window(
+        self,
+        camera_id: str,
+        window: NaluWindow,
+        *,
+        max_attachment_bytes: int | None = None,
+    ) -> bytes:
+        return await asyncio.to_thread(
+            self._encode_nalu_window_sync,
+            camera_id,
+            window,
+            max_attachment_bytes=max_attachment_bytes,
+        )
+
+    def _encode_nalu_window_sync(
+        self,
+        camera_id: str,
+        window: NaluWindow,
+        *,
+        max_attachment_bytes: int | None = None,
+    ) -> bytes:
+        if len(window.frames) < 2:
+            raise ValueError("at least two access units are required")
+
+        demux_format = NALE_DEMUX_FORMAT_BY_CODEC.get(window.codec_name)
+        if demux_format is None:
+            raise ValueError(f"unsupported NALU codec: {window.codec_name}")
+        is_hevc = demux_format == "hevc"
+
+        # A byte-capped window can start mid-GOP, past every key
+        # frame. No key frame means no packet can decode, so fail with
+        # a reason the artifact can record instead of a codec parse
+        # error from the first P-slice.
+        if is_hevc:
+            has_key_frame = any(
+                _au_contains_hevc_keyframe(data) for _pts, data in window.frames
+            )
+        else:
+            has_key_frame = any(
+                _au_contains_idr(data, window.au_is_avcc)
+                for _pts, data in window.frames
+            )
+        if not has_key_frame:
+            raise ValueError("NALU window contains no key frame")
+
+        safe_camera_id = CAMERA_ID_PATTERN.sub("-", camera_id).strip("-") or "camera"
+        descriptor, output_name = tempfile.mkstemp(prefix=f"crash-{safe_camera_id}-", suffix=".webm")
+        os.close(descriptor)
+        output_path = Path(output_name)
+        writer: cv2.VideoWriter | None = None
+
+        try:
+            # The access units concatenate into a valid h264/hevc
+            # elementary stream, so a single decode pass over the frozen
+            # window works.
+            elementary = b"".join(data for _pts, data in window.frames)
+            container = cast(
+                av.container.InputContainer,
+                av.open(io.BytesIO(elementary), format=demux_format),
+            )
+
+            fps = _nalu_window_fps(window)
+            output_size: tuple[int, int] | None = None
+            decoded_frame_count = 0
+
+            # Decode per packet so one structurally bad AU (RTSP packet
+            # loss, mid-window reconnect) loses only its own frames
+            # instead of aborting the whole window. The raw h264/hevc
+            # demuxer leaves dts unset, so every packet gets a decode
+            # attempt.
+            stream = container.streams.video[0]
+            for packet in container.demux(stream):
+                try:
+                    for decoded in stream.codec_context.decode(packet):
+                        if decoded is None:
+                            continue
+                        frame = decoded.to_ndarray(format="bgr24")
+
+                        if output_size is None:
+                            source_height, source_width = frame.shape[:2]
+                            scale = min(1.0, self.config.max_width / source_width)
+                            output_width = max(2, int(source_width * scale))
+                            output_height = max(2, int(source_height * scale))
+                            output_width -= output_width % 2
+                            output_height -= output_height % 2
+                            output_size = (output_width, output_height)
+                            writer = cv2.VideoWriter(
+                                str(output_path),
+                                cast(Any, cv2).VideoWriter_fourcc(*"VP80"),
+                                fps,
+                                output_size,
+                            )
+                            if writer.isOpened() is False:
+                                raise RuntimeError(
+                                    "OpenCV VP8 video encoder is unavailable"
+                                )
+
+                        resized: np.ndarray
+                        if (frame.shape[1], frame.shape[0]) != output_size:
+                            resized = cv2.resize(
+                                frame, output_size, interpolation=cv2.INTER_AREA
+                            )
+                        else:
+                            resized = frame
+
+                        assert writer is not None
+                        writer.write(resized)
+                        decoded_frame_count += 1
+                        del decoded
+                except av.error.InvalidDataError:
+                    continue
+
+            if writer is None:
+                raise ValueError("no decodable frames in NALU window")
+            if decoded_frame_count < 2:
+                raise ValueError("at least two decodable frames are required")
+
+            writer.release()
+            writer = None
+
+            effective_max_attachment_bytes = (
+                self.config.max_attachment_bytes
+                if max_attachment_bytes is None
+                else max_attachment_bytes
+            )
+            if output_path.stat().st_size > effective_max_attachment_bytes:
+                raise ValueError("encoded attachment exceeds size budget")
+            return output_path.read_bytes()
+        finally:
+            if writer is not None:
+                writer.release()
+            output_path.unlink(missing_ok=True)
 
     def _encode_camera_sync(
         self,
