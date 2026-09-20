@@ -27,28 +27,28 @@ from openshelf_os_server.routers import robot as robot_router
 from openshelf_os.operating_mode import OperatingMode
 
 
-async def _seed_item_with_location(upca: str, side: str, shelf_idx: int, cell_idx: int) -> None:
+async def _seed_item_with_location(barcode: str, side: str, shelf_idx: int, cell_idx: int) -> None:
     async with AsyncSessionLocal() as session:
         storage = StorageService(session)
         await storage.create_item(
-            upca=upca,
+            barcode=barcode,
             name="Test Item",
             dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
             weight=None,
             metadata={"name": "Test Item"},
         )
-        await storage.add_item_location(upca, side, shelf_idx, cell_idx)
+        await storage.add_item_location(barcode, side, shelf_idx, cell_idx)
 
 
 @pytest.mark.anyio
 async def test_process_robot_event_removes_location_on_success() -> None:
-    await _seed_item_with_location(upca="111", side="left_module", shelf_idx=1, cell_idx=2)
+    await _seed_item_with_location(barcode="111", side="left_module", shelf_idx=1, cell_idx=2)
 
     payload = {
         "command": "retrieve_item",
         "message": "success",
         "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
-        "upca": "111",
+        "barcode": "111",
     }
 
     await process_robot_event(payload)
@@ -57,20 +57,20 @@ async def test_process_robot_event_removes_location_on_success() -> None:
         result = await session.execute(
             select(ItemLocation)
             .join(Item)
-            .where(Item.upca == "111")
+            .where(Item.barcode == "111")
         )
         assert result.scalar_one_or_none() is None
 
 
 @pytest.mark.anyio
 async def test_process_robot_event_ignores_incomplete_payload() -> None:
-    await _seed_item_with_location(upca="222", side="left_module", shelf_idx=0, cell_idx=0)
+    await _seed_item_with_location(barcode="222", side="left_module", shelf_idx=0, cell_idx=0)
 
     payload = {
         "command": "retrieve_item",
         "message": "error",
         "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
-        "upca": "222",
+        "barcode": "222",
     }
 
     await process_robot_event(payload)
@@ -79,7 +79,7 @@ async def test_process_robot_event_ignores_incomplete_payload() -> None:
         result = await session.execute(
             select(ItemLocation)
             .join(Item)
-            .where(Item.upca == "222")
+            .where(Item.barcode == "222")
         )
         assert result.scalar_one_or_none() is not None
 
@@ -89,7 +89,7 @@ async def test_process_robot_event_adds_location_on_store_success() -> None:
     async with AsyncSessionLocal() as session:
         storage = StorageService(session)
         await storage.create_item(
-            upca="333",
+            barcode="333",
             name="Store Target",
             dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
             weight=None,
@@ -100,7 +100,7 @@ async def test_process_robot_event_adds_location_on_store_success() -> None:
         "command": "store_item",
         "message": "success",
         "location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 4},
-        "upca": "333",
+        "barcode": "333",
     }
 
     await process_robot_event(payload)
@@ -109,7 +109,7 @@ async def test_process_robot_event_adds_location_on_store_success() -> None:
         result = await session.execute(
             select(ItemLocation)
             .join(Item)
-            .where(Item.upca == "333")
+            .where(Item.barcode == "333")
         )
         location = result.scalar_one_or_none()
         assert location is not None
@@ -123,20 +123,20 @@ async def test_process_robot_event_creates_item_when_missing() -> None:
         "command": "store_item",
         "message": "success",
         "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 1},
-        "upca": "444",
+        "barcode": "444",
     }
 
     await process_robot_event(payload)
 
     async with AsyncSessionLocal() as session:
-        item_result = await session.execute(select(Item).where(Item.upca == "444"))
+        item_result = await session.execute(select(Item).where(Item.barcode == "444"))
         item = item_result.scalar_one_or_none()
         assert item is not None
 
         location_result = await session.execute(
             select(ItemLocation)
             .join(Item)
-            .where(Item.upca == "444")
+            .where(Item.barcode == "444")
         )
         location = location_result.scalar_one_or_none()
         assert location is not None
@@ -144,12 +144,12 @@ async def test_process_robot_event_creates_item_when_missing() -> None:
 
 @pytest.mark.anyio
 async def test_process_robot_event_updates_weight_from_scale() -> None:
-    upca = "555"
+    barcode = "555"
 
     async with AsyncSessionLocal() as session:
         storage = StorageService(session)
         await storage.create_item(
-            upca=upca,
+            barcode=barcode,
             name="Has Weight",
             dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
             weight=50.0,
@@ -160,14 +160,14 @@ async def test_process_robot_event_updates_weight_from_scale() -> None:
         "command": "store_item",
         "message": "success",
         "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
-        "upca": upca,
+        "barcode": barcode,
         "weight": 152.0,
     }
 
     await process_robot_event(payload)
 
     async with AsyncSessionLocal() as session:
-        item_result = await session.execute(select(Item).where(Item.upca == upca))
+        item_result = await session.execute(select(Item).where(Item.barcode == barcode))
         item = item_result.scalar_one_or_none()
 
         assert item is not None
@@ -191,7 +191,7 @@ async def test_mock_debug_scanner_publishes_outside_tray_without_motion(
 
     async with AsyncSessionLocal() as session:
         item = await StorageService(session).create_item(
-            upca="scanner-restore-item",
+            barcode="scanner-restore-item",
             name="Scanner restore item",
             dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
         )
@@ -221,7 +221,7 @@ async def test_mock_debug_scanner_publishes_outside_tray_without_motion(
 
     response = await client.post(
         "/api/robot/debug/scanner/scan",
-        json={"code": "scanner-restore-bin"},
+        json={"barcode": "scanner-restore-bin"},
     )
     assert response.status_code == 200
     assert response.json() == {"message": "success"}
@@ -243,7 +243,7 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
 
     async with AsyncSessionLocal() as session:
         item = await StorageService(session).create_item(
-            upca="scanner-active-item",
+            barcode="scanner-active-item",
             name="Scanner active item",
             dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
         )
@@ -270,7 +270,7 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
         commands_before_scans = len((await session.execute(select(MockRobotCommand))).scalars().all())
 
     await robot_router.emit_scanner_scan_event(
-        robot_router.LabelScanRequest(code="scanner-active-item"),
+        robot_router.LabelScanRequest(barcode="scanner-active-item"),
         None,
     )
     async with AsyncSessionLocal() as session:
@@ -279,7 +279,7 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
         assert workflow.state == "awaiting_operator"
 
     await robot_router.emit_scanner_scan_event(
-        robot_router.LabelScanRequest(code="scanner-active-bin"),
+        robot_router.LabelScanRequest(barcode="scanner-active-bin"),
         None,
     )
     async with AsyncSessionLocal() as session:
@@ -304,7 +304,7 @@ async def test_debug_scanner_uses_worker_publish_outside_mock(
     monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
 
     await robot_router.emit_scanner_scan_event(
-        robot_router.LabelScanRequest(code="production-scan"),
+        robot_router.LabelScanRequest(barcode="production-scan"),
         worker,  # type: ignore[arg-type]
     )
 
@@ -325,7 +325,7 @@ async def test_debug_scanner_requires_hardware_enabled_outside_mock(
 
     response = await client.post(
         "/api/robot/debug/scanner/scan",
-        json={"code": "production-scan"},
+        json={"barcode": "production-scan"},
     )
 
     assert response.status_code == 503
@@ -336,7 +336,7 @@ async def _seed_active_bin_workflow(state: str) -> tuple[str, str]:
     async with AsyncSessionLocal() as session:
         storage = StorageService(session)
         item = await storage.create_item(
-            upca=f"target-{state}",
+            barcode=f"target-{state}",
             name="Bin workflow target",
             dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
         )
@@ -387,7 +387,7 @@ async def test_shutdown_drains_completed_return_before_unsubscribing_listener(
                     "command": "store_item",
                     "message": "success",
                     "request_id": workflow_id,
-                    "upca": barcode,
+                    "barcode": barcode,
                     "weight": 200.0,
                 }
             )
@@ -436,7 +436,7 @@ async def test_correlated_bin_event_handler_exception_never_uses_legacy_mutation
             "command": command,
             "message": "success",
             "request_id": workflow_id,
-            "upca": barcode,
+            "barcode": barcode,
             "location": {"side": "left_module", "shelf_idx": 3, "cell_idx": 3},
             "weight": 200.0,
         },
@@ -445,7 +445,7 @@ async def test_correlated_bin_event_handler_exception_never_uses_legacy_mutation
 
     async with AsyncSessionLocal() as session:
         item = (
-            await session.execute(select(Item).where(Item.upca == barcode))
+            await session.execute(select(Item).where(Item.barcode == barcode))
         ).scalar_one_or_none()
         if command == "retrieve_item":
             assert item is not None
@@ -498,19 +498,19 @@ async def test_reserved_bin_barcode_and_home_never_use_legacy_mutation_without_w
             )
             await session.commit()
 
-    for upca, location in (
+    for barcode, location in (
         (barcode, {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}),
         (f"direct-{reservation}", {"side": home[0], "shelf_idx": home[1], "cell_idx": home[2]}),
     ):
         await process_robot_event(
-            {"command": "store_item", "message": "success", "upca": upca, "location": location}
+            {"command": "store_item", "message": "success", "barcode": barcode, "location": location}
         )
 
     async with AsyncSessionLocal() as session:
         items = (
             (
                 await session.execute(
-                    select(Item).where(Item.upca.in_([barcode, f"direct-{reservation}"]))
+                    select(Item).where(Item.barcode.in_([barcode, f"direct-{reservation}"]))
                 )
             )
             .scalars()
@@ -540,25 +540,25 @@ async def test_released_bin_barcode_and_home_allow_legacy_mutation(
         )
         await session.commit()
 
-    for upca, location in (
+    for barcode, location in (
         (barcode, {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}),
         ("direct-released", {"side": home[0], "shelf_idx": home[1], "cell_idx": home[2]}),
     ):
         await process_robot_event(
-            {"command": "store_item", "message": "success", "upca": upca, "location": location}
+            {"command": "store_item", "message": "success", "barcode": barcode, "location": location}
         )
 
     async with AsyncSessionLocal() as session:
         items = (
             (
                 await session.execute(
-                    select(Item).where(Item.upca.in_([barcode, "direct-released"]))
+                    select(Item).where(Item.barcode.in_([barcode, "direct-released"]))
                 )
             )
             .scalars()
             .all()
         )
-        assert {item.upca for item in items} == {barcode, "direct-released"}
+        assert {item.barcode for item in items} == {barcode, "direct-released"}
 
 
 @pytest.mark.anyio
@@ -569,7 +569,7 @@ async def test_unrelated_direct_event_is_not_swallowed_by_active_bin_workflow() 
         {
             "command": "store_item",
             "message": "success",
-            "upca": "ordinary-direct",
+            "barcode": "ordinary-direct",
             "location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 4},
         },
         worker=object(),  # type: ignore[arg-type]
@@ -577,19 +577,19 @@ async def test_unrelated_direct_event_is_not_swallowed_by_active_bin_workflow() 
 
     async with AsyncSessionLocal() as session:
         item = (
-            await session.execute(select(Item).where(Item.upca == "ordinary-direct"))
+            await session.execute(select(Item).where(Item.barcode == "ordinary-direct"))
         ).scalar_one_or_none()
         assert item is not None
 
 
 @pytest.mark.anyio
 async def test_add_item_location_rejects_occupied_cell() -> None:
-    await _seed_item_with_location(upca="666", side="right_module", shelf_idx=3, cell_idx=0)
+    await _seed_item_with_location(barcode="666", side="right_module", shelf_idx=3, cell_idx=0)
 
     async with AsyncSessionLocal() as session:
         storage = StorageService(session)
         await storage.create_item(
-            upca="777",
+            barcode="777",
             name="Second Item",
             dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
         )

@@ -198,37 +198,45 @@ class TestStorageValidator:
         """Test valid item creation data."""
         # Should not raise exception
         StorageValidator.validate_item_creation(
-            upca="123456789012",
+            barcode="123456789012",
             name="Test Item",
             dimensions={"width": 10.0, "height": 20.0, "length": 30.0},
             weight=500.0,
             metadata={"category": "test"}
         )
 
-    def test_invalid_upca_creation(self) -> None:
-        """Test invalid UPCA in item creation."""
-        with pytest.raises(ValidationError, match="UPCA must be a string"):
+    def test_invalid_barcode_creation(self) -> None:
+        """Test invalid barcode in item creation."""
+        with pytest.raises(ValidationError, match="Barcode must be a string"):
             StorageValidator.validate_item_creation(
-                upca=123456789012,  # type: ignore[arg-type]
+                barcode=123456789012,  # type: ignore[arg-type]
                 name="Test Item",
                 dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
             )
 
-    def test_empty_upca_creation(self) -> None:
-        """Test empty UPCA in item creation."""
-        with pytest.raises(ValidationError, match="UPCA cannot be empty"):
+    def test_empty_barcode_creation(self) -> None:
+        """Test empty barcode in item creation."""
+        with pytest.raises(ValidationError, match="Barcode cannot be empty"):
             StorageValidator.validate_item_creation(
-                upca="",
+                barcode="",
                 name="Test Item",
                 dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
             )
 
-    def test_long_upca_creation(self) -> None:
-        """Test UPCA that exceeds maximum length."""
-        long_upca = "a" * 51
-        with pytest.raises(ValidationError, match="UPCA cannot exceed 50 characters"):
+    def test_bespoke_barcode_creation(self) -> None:
+        """Customer barcodes are arbitrary strings rather than UPC-A digits."""
+        StorageValidator.validate_item_creation(
+            barcode="CR-00006174/ A",
+            name="Test Item",
+            dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
+        )
+
+    def test_long_barcode_creation(self) -> None:
+        """Test barcode that exceeds the VARCHAR(255) column width."""
+        long_barcode = "a" * 256
+        with pytest.raises(ValidationError, match="Barcode cannot exceed 255 characters"):
             StorageValidator.validate_item_creation(
-                upca=long_upca,
+                barcode=long_barcode,
                 name="Test Item",
                 dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
             )
@@ -237,7 +245,7 @@ class TestStorageValidator:
         """Test invalid dimensions in item creation."""
         with pytest.raises(ValidationError, match="Missing required dimension"):
             StorageValidator.validate_item_creation(
-                upca="123456789012",
+                barcode="123456789012",
                 name="Test Item",
                 dimensions={"width": 10.0, "height": 20.0}  # missing length
             )
@@ -246,7 +254,7 @@ class TestStorageValidator:
         """Test invalid weight in item creation."""
         with pytest.raises(ValidationError, match="must be a positive number"):
             StorageValidator.validate_item_creation(
-                upca="123456789012",
+                barcode="123456789012",
                 name="Test Item",
                 dimensions={"width": 10.0, "height": 20.0, "length": 30.0},
                 weight=-100.0
@@ -256,7 +264,7 @@ class TestStorageValidator:
         """Test invalid name in item creation."""
         with pytest.raises(ValidationError, match="Name cannot be empty"):
             StorageValidator.validate_item_creation(
-                upca="123456789012",
+                barcode="123456789012",
                 name="",
                 dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
             )

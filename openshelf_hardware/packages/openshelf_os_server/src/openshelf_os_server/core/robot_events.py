@@ -83,13 +83,13 @@ async def process_robot_event(
             return
 
         location = payload.get("location") or {}
-        upca = payload.get("upca")
+        barcode = payload.get("barcode")
 
         side = location.get("side")
         shelf_idx = location.get("shelf_idx")
         cell_idx = location.get("cell_idx")
 
-        if upca is None or side is None or shelf_idx is None or cell_idx is None:
+        if barcode is None or side is None or shelf_idx is None or cell_idx is None:
             logger.warning("Skipping retrieve_item event with incomplete data: %s", payload)
             return
 
@@ -108,19 +108,19 @@ async def process_robot_event(
                 return
             storage_service = StorageService(session)
             try:
-                item = await storage_service.get_item(str(upca))
+                item = await storage_service.get_item(str(barcode))
                 if item is not None:
                     if not apply_cycle_mass(item, payload.get("weight"), stored=False, command_id=payload.get("command_id")):
                         return
-                removed = await storage_service.remove_item_location(upca, side, shelf_idx_int, cell_idx_int, commit=False)
+                removed = await storage_service.remove_item_location(barcode, side, shelf_idx_int, cell_idx_int, commit=False)
                 await session.commit()
                 if removed:
                     logger.info(
-                        "Removed location for retrieved item: upca=%s side=%s shelf=%s cell=%s",
-                        upca, side, shelf_idx_int, cell_idx_int,
+                        "Removed location for retrieved item: barcode=%s side=%s shelf=%s cell=%s",
+                        barcode, side, shelf_idx_int, cell_idx_int,
                     )
             except Exception as err:
-                logger.exception("Failed to process retrieve_item event for %s: %s", upca, err)
+                logger.exception("Failed to process retrieve_item event for %s: %s", barcode, err)
 
         await flush_telemetry(is_cycle=True)
 
@@ -129,19 +129,19 @@ async def process_robot_event(
             return
 
         location = payload.get("location") or {}
-        upca = payload.get("upca")
+        barcode = payload.get("barcode")
         weight = payload.get("weight")
 
         logger.info(
-            "Processing store_item event: upca=%s weight=%s location=%s",
-            upca, weight, location
+            "Processing store_item event: barcode=%s weight=%s location=%s",
+            barcode, weight, location
         )
 
         side = location.get("side")
         shelf_idx = location.get("shelf_idx")
         cell_idx = location.get("cell_idx")
 
-        if upca is None or side is None or shelf_idx is None or cell_idx is None:
+        if barcode is None or side is None or shelf_idx is None or cell_idx is None:
             logger.warning("Skipping store_item event with incomplete data: %s", payload)
             return
 
@@ -180,35 +180,35 @@ async def process_robot_event(
                 return
             storage_service = StorageService(session)
             try:
-                existing_item = await storage_service.get_item(str(upca))
+                existing_item = await storage_service.get_item(str(barcode))
                 logger.info(
-                    "Existing item lookup: upca=%s found=%s existing_weight=%s",
-                    upca, existing_item is not None,
+                    "Existing item lookup: barcode=%s found=%s existing_weight=%s",
+                    barcode, existing_item is not None,
                     existing_item.weight if existing_item else None
                 )
                 if existing_item is None:
                     logger.info("Creating new item with weight=%s", normalized_weight)
                     existing_item = await storage_service.create_item(
-                        upca=str(upca),
-                        name=str(upca),
+                        barcode=str(barcode),
+                        name=str(barcode),
                         dimensions=None,
                         weight=normalized_weight,
-                        metadata={"name": str(upca)},
+                        metadata={"name": str(barcode)},
                     )
                 if not apply_cycle_mass(existing_item, payload.get("weight"), stored=True, command_id=payload.get("command_id")):
                     return
 
-                existing_locations = await storage_service.get_item_locations(str(upca))
+                existing_locations = await storage_service.get_item_locations(str(barcode))
                 already_assigned = any(
                     loc.side == side and loc.shelf_idx == shelf_idx_int and loc.cell_idx == cell_idx_int
                     for loc in existing_locations
                 )
 
                 if already_assigned is False:
-                    await storage_service.add_item_location(str(upca), side, shelf_idx_int, cell_idx_int, commit=False)
+                    await storage_service.add_item_location(str(barcode), side, shelf_idx_int, cell_idx_int, commit=False)
                 await session.commit()
             except Exception as err:
-                logger.exception("Failed to process store_item event for %s: %s", upca, err)
+                logger.exception("Failed to process store_item event for %s: %s", barcode, err)
 
         await flush_telemetry(is_cycle=True)
 

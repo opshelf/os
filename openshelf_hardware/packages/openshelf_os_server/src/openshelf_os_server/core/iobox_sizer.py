@@ -225,7 +225,7 @@ def _consume_measurement_task_result(task: asyncio.Task[IOBoxSizerMeasurement]) 
 
 async def record_store_sizer_measurement(
 	*,
-	upca: str | None,
+	barcode: str | None,
 	item_name: str | None,
 	user_id: int | None,
 	request_correlation_id: str | None,
@@ -260,14 +260,14 @@ async def record_store_sizer_measurement(
 
 		async with AsyncSessionLocal() as session:
 			item_id = None
-			if upca is not None:
-				result = await session.execute(select(Item.id).where(Item.upca == upca))
+			if barcode is not None:
+				result = await session.execute(select(Item.id).where(Item.barcode == barcode))
 				item_id = result.scalar_one_or_none()
 
 			session.add(
 				ItemSizerMeasurement(
 					item_id=item_id,
-					upca=upca,
+					barcode=barcode,
 					item_name=item_name,
 					user_id=user_id,
 					request_correlation_id=request_correlation_id,
@@ -286,7 +286,7 @@ async def record_store_sizer_measurement(
 	except Exception as exc:
 		logger.warning(
 			"iobox_sizer_observer_measurement_persist_failed",
-			upca=upca,
+			barcode=barcode,
 			error=str(exc),
 			error_type=type(exc).__name__,
 			exc_info=True,
@@ -297,7 +297,7 @@ async def record_store_sizer_measurement(
 
 async def capture_store_observer_measurement(
 	*,
-	upca: str | None,
+	barcode: str | None,
 	item_name: str | None,
 	user_id: int | None,
 	request_correlation_id: str | None,
@@ -310,7 +310,7 @@ async def capture_store_observer_measurement(
 		logger.info("iobox_sizer_observer_capture_skipped", reason="disabled")
 		return
 
-	logger.info("iobox_sizer_observer_capture_started", upca=upca)
+	logger.info("iobox_sizer_observer_capture_started", barcode=barcode)
 
 	measurement_task = asyncio.create_task(measure_iobox_size())
 
@@ -319,9 +319,9 @@ async def capture_store_observer_measurement(
 			asyncio.shield(measurement_task),
 			timeout=config.store_measurement_timeout_s,
 		)
-		logger.info("iobox_sizer_observer_capture_completed", upca=upca, detected=measurement.detected)
+		logger.info("iobox_sizer_observer_capture_completed", barcode=barcode, detected=measurement.detected)
 		await record_store_sizer_measurement(
-			upca=upca,
+			barcode=barcode,
 			item_name=item_name,
 			user_id=user_id,
 			request_correlation_id=request_correlation_id,
@@ -335,12 +335,12 @@ async def capture_store_observer_measurement(
 		measurement_task.add_done_callback(_consume_measurement_task_result)
 		logger.warning(
 			"iobox_sizer_observer_capture_timed_out",
-			upca=upca,
+			barcode=barcode,
 			error=str(exc),
 			error_type=type(exc).__name__,
 		)
 		await record_store_sizer_measurement(
-			upca=upca,
+			barcode=barcode,
 			item_name=item_name,
 			user_id=user_id,
 			request_correlation_id=request_correlation_id,
@@ -356,12 +356,12 @@ async def capture_store_observer_measurement(
 	except Exception as exc:
 		logger.warning(
 			"iobox_sizer_observer_capture_failed",
-			upca=upca,
+			barcode=barcode,
 			error=str(exc),
 			error_type=type(exc).__name__,
 		)
 		await record_store_sizer_measurement(
-			upca=upca,
+			barcode=barcode,
 			item_name=item_name,
 			user_id=user_id,
 			request_correlation_id=request_correlation_id,

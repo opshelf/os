@@ -15,6 +15,7 @@ from typing import Any, AsyncGenerator, Callable, Iterable, List, Literal, NoRet
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from openshelf_os.common import ConfigError
+from openshelf_os.config.settings import BARCODE_MAX_LENGTH
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.storage import CellItem, CellStatus, Dimensions, StorageModuleCellLocation
 from openshelf_os.robot.commands import (
@@ -299,7 +300,7 @@ def inject_mode_field(payload_json: str) -> str:
 
 
 class LabelScanRequest(BaseModel):
-    code: str = Field(..., min_length=1)
+    barcode: str = Field(..., min_length=1)
 
 
 class ScaleCalibrationParamsRequest(BaseModel):
@@ -411,14 +412,14 @@ def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: Rob
 
 async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> None:
     item_data = command.item or {}
-    upca = item_data.get("upca")
-    if not isinstance(upca, str) or upca.strip() == "" or len(upca) > 50:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="item.upca is required")
+    barcode = item_data.get("barcode")
+    if not isinstance(barcode, str) or barcode.strip() == "" or len(barcode) > BARCODE_MAX_LENGTH:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="item.barcode is required")
 
     _parse_requested_store_location(item_data)
     await _validate_direct_store_reservation(item_data, db)
 
-    item = (await db.execute(select(Item).where(Item.upca == upca))).scalar_one_or_none()
+    item = (await db.execute(select(Item).where(Item.barcode == barcode))).scalar_one_or_none()
     if item is not None:
         bin_membership = (
             await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
@@ -444,7 +445,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
     if not isinstance(name, str) or name.strip() == "" or not isinstance(dimensions, dict):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="A new item requires upca, name, and complete dimensions",
+            detail="A new item requires barcode, name, and complete dimensions",
         )
     try:
         if any(
@@ -702,7 +703,7 @@ async def robot_commands(
     replayed.
 
     Create inventory first, then submit
-    `{"command":"store_item","request_id":"store-001","item":{"upca":"880000000001"}}`. New
+    `{"command":"store_item","request_id":"store-001","item":{"barcode":"880000000001"}}`. New
     command-enrolled items require positive complete dimensions; include a name for
     compatibility with mock mode. Existing items use stored dimensions and mass: update
     inventory before submitting if these must change. Accepted enrollment survives execution
@@ -805,21 +806,21 @@ async def robot_commands(
     if isinstance(command, StoreItemCommand):
         logging.info("Processing StoreItemCommand: item=%s", command.item)
         item_data = deepcopy(command.item or {})
-        upca = item_data.get("upca")
+        barcode = item_data.get("barcode")
         if any(key in item_data for key in MASS_FIELDS) and (
-            not isinstance(upca, str) or not upca.strip() or len(upca) > 50
+            not isinstance(barcode, str) or not barcode.strip() or len(barcode) > BARCODE_MAX_LENGTH
         ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="item.upca is required for container mass enrollment",
+                detail="item.barcode is required for container mass enrollment",
             )
         _parse_requested_store_location(item_data)
         await _validate_direct_store_reservation(item_data, db)
         human_dimensions_source = "command_payload" if item_data.get("dimensions") is not None else "none"
 
-        if upca is not None:
-            logging.info("Looking up item by upca: %s", upca)
-            result = await db.execute(select(Item).where(Item.upca == upca))
+        if barcode is not None:
+            logging.info("Looking up item by barcode: %s", barcode)
+            result = await db.execute(select(Item).where(Item.barcode == barcode))
             item = result.scalar_one_or_none()
 
             if item is not None:
@@ -854,7 +855,7 @@ async def robot_commands(
                 item_data["full_net_weight"] = item.full_net_weight
                 command = StoreItemCommand(item=item_data, request_id=request_id)
             else:
-                logging.info("Item not found in db for upca: %s", upca)
+                logging.info("Item not found in db for barcode: %s", barcode)
                 dimensions = item_data.get("dimensions")
                 if not isinstance(dimensions, dict) or any(
                     isinstance(dimensions.get(key), bool)
@@ -873,7 +874,7 @@ async def robot_commands(
                     raise HTTPException(status_code=422, detail=str(exc)) from exc
                 # Prepare enrollment for the command admission transaction, so
                 # rejected submissions cannot establish an operator baseline.
-                item = Item(upca=str(upca), name=str(item_data.get("name") or upca),
+                item = Item(barcode=str(barcode), name=str(item_data.get("name") or barcode),
                             dimensions=dimensions,
                             weight=item_data.get("weight"), item_metadata=item_data.get("metadata") or {},
                             access_level_id=item_data.get("access_level_id"))
@@ -885,7 +886,7 @@ async def robot_commands(
         _validate_requested_store_location(final_item_data, worker)
         try:
             await capture_store_observer_measurement(
-                upca=final_item_data.get("upca"),
+                barcode=final_item_data.get("barcode"),
                 item_name=final_item_data.get("name"),
                 user_id=current_user.id,
                 request_correlation_id=correlation_id_var.get(),
@@ -897,12 +898,12 @@ async def robot_commands(
             logging.warning("IO box sizer observer capture failed: %s", exc)
 
     if isinstance(command, RetrieveItemCommand):
-        if command.upca:
+        if command.barcode:
             binned_item = (
                 await db.execute(
                     select(Item)
                     .join(StorageBinItem, StorageBinItem.item_id == Item.id)
-                    .where(Item.upca == command.upca)
+                    .where(Item.barcode == command.barcode)
                 )
             ).scalar_one_or_none()
             if binned_item is not None:
@@ -1226,11 +1227,11 @@ async def emit_scanner_scan_event(
 ) -> SuccessResponse:
     """Inject a barcode scan event.
 
-    Publishes a `label_scanned` event as if the scanner had read `code`; requires
+    Publishes a `label_scanned` event as if the scanner had read `barcode`; requires
     `robot:control`. Available in mock mode as well as hardware modes. The event can advance
     a waiting bin workflow, so this is not a read-only scanner test.
     """
-    payload = {"kind": "label_scanned", "payload": request.code}
+    payload = {"kind": "label_scanned", "payload": request.barcode}
     try:
         if get_operating_mode() == OperatingMode.mock:
             # Mock mode does not run a RobotEventListener. Route the scan through
@@ -2038,7 +2039,7 @@ async def stream_sse() -> EventSourceResponse:
         existing=stream_docs(
             "text/event-stream",
             "Live JSON robot events in SSE data frames; command, scanner, safety and workflow events share this stream.",
-            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","upca":"880000000001","location":{"side":"left_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
+            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"left_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
         ),
     ),
     response_class=Response,

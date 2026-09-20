@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime, timezone
 from .base import Base
 from pydantic import ConfigDict
+from openshelf_os.config.settings import BARCODE_MAX_LENGTH
 from ..utils.audit_constants import LEGACY_COMMAND_RECORDS_FIELD
 
 
@@ -144,7 +145,7 @@ class Item(Base):
 		super().__init__(**kwargs)
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
-	upca: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+	barcode: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
 	name: Mapped[str] = mapped_column(String(255), nullable=False)
 	dimensions: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
 	weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -178,7 +179,7 @@ class ItemSizerMeasurement(Base):
 	__tablename__ = "item_sizer_measurements"
 	__table_args__ = (
 		Index("ix_item_sizer_measurements_item_id", "item_id"),
-		Index("ix_item_sizer_measurements_upca", "upca"),
+		Index("ix_item_sizer_measurements_barcode", "barcode"),
 		Index("ix_item_sizer_measurements_request_correlation_id", "request_correlation_id"),
 		Index("ix_item_sizer_measurements_created_at", "created_at"),
 	)
@@ -187,7 +188,7 @@ class ItemSizerMeasurement(Base):
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
 	item_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
-	upca: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+	barcode: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 	item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 	user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 	request_correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -239,7 +240,7 @@ class StorageBin(Base):
 	)
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
-	barcode: Mapped[str] = mapped_column(String(12), unique=True, nullable=False, index=True)
+	barcode: Mapped[str] = mapped_column(String(BARCODE_MAX_LENGTH), unique=True, nullable=False, index=True)
 	side: Mapped[str] = mapped_column(String(20), nullable=False)
 	shelf_idx: Mapped[int] = mapped_column(Integer, nullable=False)
 	cell_idx: Mapped[int] = mapped_column(Integer, nullable=False)

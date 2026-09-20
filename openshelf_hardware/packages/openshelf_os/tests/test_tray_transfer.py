@@ -107,10 +107,10 @@ async def test_tray_servo_fault_preserves_context_and_requires_recovery(
     getattr(robot._tool._gs, servo_method).side_effect = fault
     location = {'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 2}
     if operation == 'deliver_tray':
-        command = DeliverTrayCommand(upca='900000000001', location=location)
+        command = DeliverTrayCommand(barcode='900000000001', location=location)
     else:
         command = ReturnTrayCommand(item={
-            'upca': '900000000001', 'location': location,
+            'barcode': '900000000001', 'location': location,
             'dimensions': {'width': 1, 'height': 1, 'length': 1},
         })
 
@@ -155,13 +155,13 @@ async def test_internal_commands_dispatch_tray_motion_and_public_payload_cannot_
     robot.store = AsyncMock()
     robot.retrieve_by_location = AsyncMock()
     location = {'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 2}
-    deliver = DeliverTrayCommand(upca='900000000001', location=location)
+    deliver = DeliverTrayCommand(barcode='900000000001', location=location)
     worker = RobotWorker.__new__(RobotWorker)
     queued = worker._snapshot_command(deliver)
     assert isinstance(queued.command, DeliverTrayCommand)
     await robot.handle_command(queued.command)
-    robot.retrieve_by_location.assert_awaited_once_with(location, deliver.upca, tray=True)
-    item = {'upca': deliver.upca, 'location': location}
+    robot.retrieve_by_location.assert_awaited_once_with(location, deliver.barcode, tray=True)
+    item = {'barcode': deliver.barcode, 'location': location}
     await robot.handle_command(ReturnTrayCommand(item=item))
     robot.store.assert_awaited_once_with(item, tray=True)
     public = TypeAdapter(RobotCommands).validate_python(deliver.model_dump())

@@ -314,18 +314,36 @@ async def test_successful_excluded_get_is_not_audited(client: AsyncClient) -> No
 
 @pytest.mark.anyio
 async def test_failed_excluded_get_is_audited(client: AsyncClient) -> None:
-	response = await client.get("/api/storage/items/missing-upca")
+	response = await client.post("/api/storage/items/lookup", json={"barcode": "missing-barcode"})
 	assert response.status_code == 404
 
-	log = await latest_audit_log("/api/storage/items/missing-upca", "GET")
+	log = await latest_audit_log("/api/storage/items/lookup", "POST")
 	assert log is not None
 	assert log.response_status == 404
 
 
 @pytest.mark.anyio
+async def test_successful_barcode_lookup_is_not_audited(client: AsyncClient) -> None:
+	created = await client.post("/api/storage/items", json={
+		"barcode": "audit-lookup-barcode",
+		"name": "Lookup item",
+		"dimensions": {"width": 10, "height": 10, "length": 10},
+	})
+	assert created.status_code == 200, created.text
+	before_count = await audit_count(endpoint="/api/storage/items/lookup", method="POST")
+
+	response = await client.post(
+		"/api/storage/items/lookup", json={"barcode": "audit-lookup-barcode"}
+	)
+
+	assert response.status_code == 200
+	assert await audit_count(endpoint="/api/storage/items/lookup", method="POST") == before_count
+
+
+@pytest.mark.anyio
 async def test_successful_storage_mutation_is_audited(client: AsyncClient) -> None:
 	payload = {
-		"upca": f"{uuid.uuid4().int % 10**12:012d}",
+		"barcode": f"{uuid.uuid4().int % 10**12:012d}",
 		"name": "Audit Test Item",
 		"dimensions": {"width": 1.0, "height": 2.0, "length": 3.0},
 		"weight": 4.0,

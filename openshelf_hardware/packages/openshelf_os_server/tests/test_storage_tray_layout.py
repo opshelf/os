@@ -270,7 +270,7 @@ async def test_assign_tray_barcode_is_item(client: AsyncClient, monkeypatch: pyt
     async with AsyncSessionLocal() as session:
         session.add(
             Item(
-                upca=BARCODE,
+                barcode=BARCODE,
                 name="Reserved",
                 dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
             )
@@ -332,7 +332,7 @@ async def test_unassign_tray_refuses_members(client: AsyncClient, monkeypatch: p
             status="at_home",
         )
         item = Item(
-            upca="333456789012",
+            barcode="333456789012",
             name="Member",
             dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
         )

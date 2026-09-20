@@ -100,7 +100,7 @@ async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
 
     async with AsyncSessionLocal() as db:
         with pytest.raises(HTTPException) as barcode_error:
-            await robot_router._validate_direct_store_reservation({"upca": configured.barcode}, db)
+            await robot_router._validate_direct_store_reservation({"barcode": configured.barcode}, db)
         assert barcode_error.value.status_code == 409
         assert barcode_error.value.detail["code"] == "reserved_bin_barcode"
 
@@ -111,7 +111,7 @@ async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
             await robot_router._validate_mock_store(
                 StoreItemCommand(
                     item={
-                        "upca": "123456789012",
+                        "barcode": "123456789012",
                         "name": "Direct item",
                         "dimensions": {"width": 1, "height": 1, "length": 1},
                         "location": tray_home,
@@ -123,14 +123,14 @@ async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
         assert home_error.value.detail["code"] == "cell_unavailable"
 
         await robot_router._validate_direct_store_reservation(
-            {"upca": "123456789013", "location": tray_home}, db
+            {"barcode": "123456789013", "location": tray_home}, db
         )
 
         with pytest.raises(HTTPException) as malformed_mock_error:
             await robot_router._validate_mock_store(
                 StoreItemCommand(
                     item={
-                        "upca": "123456789015",
+                        "barcode": "123456789015",
                         "name": "Direct item",
                         "dimensions": {"width": 1, "height": 1, "length": 1},
                         "location": {"side": "left_module", "shelf_idx": False, "cell_idx": 0},
@@ -150,7 +150,7 @@ async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
                 StoreItemCommand(
                     location={"side": "left_module", "shelf_idx": "0", "cell_idx": 0},
                     item={
-                        "upca": "123456789016",
+                        "barcode": "123456789016",
                         "name": "Direct item",
                         "dimensions": {"width": 1, "height": 1, "length": 1},
                     },
@@ -167,7 +167,7 @@ async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
             StoreItemCommand(
                 location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
                 item={
-                    "upca": "123456789014",
+                    "barcode": "123456789014",
                     "name": "Direct item",
                     "dimensions": {"width": 1, "height": 1, "length": 1},
                 },
@@ -192,7 +192,7 @@ async def test_item_barcodes_and_locations_claim_only_live_trays(
     async with AsyncSessionLocal() as db:
         with pytest.raises(HTTPException, match="Barcode is reserved"):
             await storage_router.create_item(
-                storage_router.ItemCreate(upca=configured.barcode, name="Not a bin"),
+                storage_router.ItemCreate(barcode=configured.barcode, name="Not a bin"),
                 db,
                 current_user,
             )
@@ -203,8 +203,9 @@ async def test_item_barcodes_and_locations_claim_only_live_trays(
         # A live tray home stays reserved for automatic allocation, while an explicit
         # location edit may use it: the tray's return reports an occupied home instead.
         await storage_router.add_item_location(
-            item.upca,
-            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
+            storage_router.ItemLocationRequest(
+                barcode=item.barcode, side="left_module", shelf_idx=0, cell_idx=0
+            ),
             db,
             current_user,
         )
@@ -227,8 +228,9 @@ async def test_item_barcodes_and_locations_claim_only_live_trays(
         assert await bin_storage.is_reserved_bin_location(("left_module", 0, 1), db) is False
         assert await bin_storage.is_reserved_bin_barcode("900000000018", db) is False
         await storage_router.add_item_location(
-            item.upca,
-            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=1),
+            storage_router.ItemLocationRequest(
+                barcode=item.barcode, side="left_module", shelf_idx=0, cell_idx=1
+            ),
             db,
             current_user,
         )
@@ -271,7 +273,7 @@ async def test_mock_allocation_excludes_live_bin_homes(
         {
             "command": "store_item",
             "item": {
-                "upca": "123456789014",
+                "barcode": "123456789014",
                 "name": "Direct item",
                 "dimensions": {"width": 1, "height": 1, "length": 1},
             },
@@ -305,7 +307,7 @@ async def test_mock_allocation_uses_released_bin_homes(
         {
             "command": "store_item",
             "item": {
-                "upca": "123456789014",
+                "barcode": "123456789014",
                 "name": "Direct item",
                 "dimensions": {"width": 1, "height": 1, "length": 1},
             },
@@ -324,7 +326,7 @@ async def test_mock_allocation_keeps_empty_bin_config_backward_compatible(
         {
             "command": "store_item",
             "item": {
-                "upca": "123456789015",
+                "barcode": "123456789015",
                 "name": "Direct item",
                 "dimensions": {"width": 1, "height": 1, "length": 1},
             },
@@ -364,7 +366,7 @@ async def test_explicit_storage_mode_controls_new_item_flow(
 
         direct = await storage_router.create_bin_workflow(
             storage_router.BinWorkflowCreate(
-                operation="store", upca=direct_item.upca, storage_mode="direct"
+                operation="store", barcode=direct_item.barcode, storage_mode="direct"
             ),
             session=db,
             current_user=current_user,
@@ -375,7 +377,7 @@ async def test_explicit_storage_mode_controls_new_item_flow(
 
         selected_bin = await storage_router.create_bin_workflow(
             storage_router.BinWorkflowCreate(
-                operation="store", upca=bin_item.upca, storage_mode="bin"
+                operation="store", barcode=bin_item.barcode, storage_mode="bin"
             ),
             session=db,
             current_user=current_user,
@@ -401,7 +403,7 @@ async def test_explicit_bin_mode_rejects_when_no_compatible_bin_exists(
         with pytest.raises(HTTPException) as error:
             await storage_router.create_bin_workflow(
                 storage_router.BinWorkflowCreate(
-                    operation="store", upca=item.upca, storage_mode="bin"
+                    operation="store", barcode=item.barcode, storage_mode="bin"
                 ),
                 session=db,
                 current_user=SimpleNamespace(id=1),
@@ -567,7 +569,7 @@ async def test_stale_or_direct_robot_results_do_not_change_active_workflow() -> 
                 "command": "retrieve_item",
                 "message": "error",
                 "request_id": "stale-workflow",
-                "upca": bin_row.barcode,
+                "barcode": bin_row.barcode,
                 "error": "motor fault",
             },
             worker,  # type: ignore[arg-type]
@@ -603,7 +605,7 @@ async def test_parked_tray_interaction_allows_item_and_location_mutations() -> N
         # A parked tray holds the item for its own completion, not against every edit.
         await storage_router.create_item(
             storage_router.ItemCreate(
-                upca=item.upca,
+                barcode=item.barcode,
                 name="Changed",
                 dimensions={"width": 10, "height": 10, "length": 10},
             ),
@@ -611,11 +613,12 @@ async def test_parked_tray_interaction_allows_item_and_location_mutations() -> N
             current_user,
         )
         await storage_router.update_item(
-            item.upca, storage_router.ItemUpdate(name="Changed again"), db, current_user
+            storage_router.ItemUpdateRequest(barcode=item.barcode, name="Changed again"), db, current_user
         )
         await storage_router.add_item_location(
-            item.upca,
-            storage_router.ItemLocationCreate(side="left_module", shelf_idx=0, cell_idx=0),
+            storage_router.ItemLocationRequest(
+                barcode=item.barcode, side="left_module", shelf_idx=0, cell_idx=0
+            ),
             db,
             current_user,
         )
@@ -624,13 +627,19 @@ async def test_parked_tray_interaction_allows_item_and_location_mutations() -> N
         with pytest.raises(BinWorkflowConflict, match="direct storage location"):
             await service.close(workflow)
 
-        await storage_router.remove_item_location(item.upca, "left_module", 0, 0, db, current_user)
+        await storage_router.remove_item_location(
+            storage_router.ItemLocationRequest(
+                barcode=item.barcode, side="left_module", shelf_idx=0, cell_idx=0
+            ),
+            db,
+            current_user,
+        )
         await service.close(workflow)
         assert workflow.state == "completed"
 
         # Deletion stays out of reach once the item is a tray member with retained history.
         with pytest.raises(HTTPException, match="Retrieve the item before deleting it"):
-            await storage_router.delete_item(item.upca, db)
+            await storage_router.delete_item(storage_router.BarcodeRequest(barcode=item.barcode), db)
 
 
 @pytest.mark.anyio
@@ -664,7 +673,7 @@ async def test_delete_item_with_historical_bin_workflow_returns_clear_conflict(s
         await db.commit()
 
         with pytest.raises(HTTPException) as error:
-            await storage_router.delete_item(item.upca, db)
+            await storage_router.delete_item(storage_router.BarcodeRequest(barcode=item.barcode), db)
 
         assert error.value.status_code == 409
         assert (
@@ -672,7 +681,7 @@ async def test_delete_item_with_historical_bin_workflow_returns_clear_conflict(s
             == "Item cannot be deleted because storage bin workflow history is retained"
         )
         assert await db.get(StorageBinWorkflow, workflow.id) is not None
-        assert await StorageService(db).get_item(item.upca) is not None
+        assert await StorageService(db).get_item(item.barcode) is not None
 
 
 @pytest.mark.anyio
@@ -695,13 +704,13 @@ async def test_return_rejects_occupied_tray_home(monkeypatch) -> None:
         occupant = await StorageService(db).create_item(
             "123456788099", "Home occupant", {"width": 10, "length": 10, "height": 10}
         )
-        occupant_upca = occupant.upca
+        occupant_barcode = occupant.barcode
         # An item recorded in the cell the tray returns to is rejected at confirmation.
-        await StorageService(db).add_item_location(occupant_upca, *home)
+        await StorageService(db).add_item_location(occupant_barcode, *home)
         with pytest.raises(BinWorkflowConflict, match="home cell is occupied"):
             await service.prepare_return(returned, [])
 
-        await StorageService(db).remove_item_location(occupant_upca, *home)
+        await StorageService(db).remove_item_location(occupant_barcode, *home)
         refreshed = await db.get(StorageBinWorkflow, returned_id)
         assert refreshed is not None
         assert await service.prepare_return(refreshed, []) is True
@@ -739,7 +748,7 @@ async def test_member_upsert_preserves_omitted_bin_invariant_fields() -> None:
         await db.commit()
 
         updated = await storage_router.create_item(
-            storage_router.ItemCreate(upca=item.upca, name="Renamed"), db, current_user
+            storage_router.ItemCreate(barcode=item.barcode, name="Renamed"), db, current_user
         )
 
         assert updated.name == "Renamed"
@@ -865,14 +874,14 @@ async def test_mock_checkout_close_and_barcode_return_simulates_placement(
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
     async with AsyncSessionLocal() as db:
         items, trays = await setup_trays(db)
-        upca = items[0].upca
+        item_barcode = items[0].barcode
         selected_id, omitted_id = items[0].id, items[1].id
-        barcode, tray_id = trays[0].barcode, trays[0].id
+        tray_barcode, tray_id = trays[0].barcode, trays[0].id
 
     statuses, _ = await runtime.subscribe_status()
     try:
         checkout = await client.post(
-            "/api/storage/bin-workflows", json={"operation": "retrieve", "upca": upca},
+            "/api/storage/bin-workflows", json={"operation": "retrieve", "barcode": item_barcode},
         )
         assert checkout.status_code == 200, checkout.text
         checkout_id = checkout.json()["workflow"]["id"]
@@ -884,7 +893,7 @@ async def test_mock_checkout_close_and_barcode_return_simulates_placement(
         assert json.loads(statuses.get_nowait())["robot_status"]["scale"]["occupied"] is False
 
         returned = await client.post(
-            "/api/storage/bin-workflows/returns", json={"barcode": barcode},
+            "/api/storage/bin-workflows/returns", json={"barcode": tray_barcode},
         )
         assert returned.status_code == 200, returned.text
         workflow = returned.json()["workflow"]
@@ -1151,11 +1160,11 @@ async def test_direct_store_reserves_only_tray_members(monkeypatch):
         assert w is not None
         await service.transition(w, "awaiting_operator")
         # A parked interaction does not reserve its item, and unrelated items stay eligible.
-        await robot_router._validate_direct_store_reservation({"upca": target.upca}, db)
-        await robot_router._validate_direct_store_reservation({"upca": "123456788078"}, db)
+        await robot_router._validate_direct_store_reservation({"barcode": target.barcode}, db)
+        await robot_router._validate_direct_store_reservation({"barcode": "123456788078"}, db)
         await service.close(w)
         with pytest.raises(HTTPException) as stored:
-            await robot_router._validate_direct_store_reservation({"upca": target.upca}, db)
+            await robot_router._validate_direct_store_reservation({"barcode": target.barcode}, db)
         assert stored.value.status_code == 409
         assert stored.value.detail["code"] == "reserved_tray_item"
 
@@ -1165,7 +1174,7 @@ async def test_direct_store_allows_return_candidate_until_confirmation(monkeypat
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
     async with AsyncSessionLocal() as db:
         items, trays = await setup_trays(db)
-        upca = items[0].upca
+        barcode = items[0].barcode
         item_id = items[0].id
         service = BinStorageService(db)
         checkout = await service.begin("retrieve", items[0], None)
@@ -1175,12 +1184,12 @@ async def test_direct_store_allows_return_candidate_until_confirmation(monkeypat
         returned = await service.begin_return(trays[0].barcode)
         returned_id = returned.id
         # The open return dialog names the candidate but does not reserve it for storage.
-        await robot_router._validate_direct_store_reservation({"upca": upca}, db)
-        await StorageService(db).add_item_location(upca, "left_module", shelf_idx=5, cell_idx=0)
+        await robot_router._validate_direct_store_reservation({"barcode": barcode}, db)
+        await StorageService(db).add_item_location(barcode, "left_module", shelf_idx=5, cell_idx=0)
         # Confirming the return, not the open dialog, rejects the conflicting location.
         with pytest.raises(BinWorkflowConflict, match="direct storage location"):
             await service.prepare_return(returned, [item_id])
-        await StorageService(db).remove_item_location(upca, "left_module", 5, 0)
+        await StorageService(db).remove_item_location(barcode, "left_module", 5, 0)
         confirmed = await db.get(StorageBinWorkflow, returned_id)
         assert confirmed is not None
         assert await service.prepare_return(confirmed, [item_id]) is True
@@ -1208,17 +1217,17 @@ async def test_mock_direct_admission_excludes_overlapping_tray_start(monkeypatch
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
     async with AsyncSessionLocal() as db:
         items, _ = await setup_trays(db)
-        upca = items[0].upca
+        barcode = items[0].barcode
     async with AsyncSessionLocal() as direct_db, AsyncSessionLocal() as tray_db:
         command = asyncio.create_task(robot_router.robot_commands(
-            StoreItemCommand(item={"upca": "123456788078"}),
+            StoreItemCommand(item={"barcode": "123456788078"}),
             worker=None, current_user=SimpleNamespace(id=1), db=direct_db,
         ))
         try:
             await asyncio.wait_for(entered.wait(), 1)
             with pytest.raises(HTTPException) as rejected:
                 await storage_router.create_bin_workflow(
-                    storage_router.BinWorkflowCreate(operation="retrieve", upca=upca),
+                    storage_router.BinWorkflowCreate(operation="retrieve", barcode=barcode),
                     session=tray_db, current_user=SimpleNamespace(id=1),
                 )
             assert rejected.value.status_code == 409

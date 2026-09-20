@@ -15,7 +15,7 @@ async def test_item_creation() -> None:
         service = StorageService(db)
 
         item = await service.create_item(
-            upca="123456789012",
+            barcode="123456789012",
             name="Test Item",
             dimensions={"width": 10.0, "height": 20.0, "length": 30.0},
             weight=500.0,
@@ -23,7 +23,7 @@ async def test_item_creation() -> None:
         )
 
         assert item.id is not None
-        assert item.upca == "123456789012"
+        assert item.barcode == "123456789012"
         assert item.name == "Test Item"
         assert item.dimensions == {"width": 10.0, "height": 20.0, "length": 30.0}
         assert item.weight == 500
@@ -34,13 +34,13 @@ async def test_item_creation() -> None:
 
 @pytest.mark.anyio
 async def test_item_get() -> None:
-    """Test retrieving an item by UPCA."""
+    """Test retrieving an item by barcode."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
 
         # Create item first
         created_item = await service.create_item(
-            upca="123456789012",
+            barcode="123456789012",
             name="Test Item",
             dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
         )
@@ -50,7 +50,7 @@ async def test_item_get() -> None:
 
         assert item is not None
         assert item.id == created_item.id
-        assert item.upca == "123456789012"
+        assert item.barcode == "123456789012"
         assert item.name == "Test Item"
 
 
@@ -73,14 +73,14 @@ async def test_item_update() -> None:
 
         # Create item first
         created_item = await service.create_item(
-            upca="123456789012",
+            barcode="123456789012",
             name="Original Name",
             dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
         )
 
         # Update item
         updated_item = await service.update_item(
-            upca="123456789012",
+            barcode="123456789012",
             name="Updated Name",
             weight=1000.0
         )
@@ -99,7 +99,7 @@ async def test_item_update_nonexistent() -> None:
         service = StorageService(db)
 
         updated_item = await service.update_item(
-            upca="nonexistent",
+            barcode="nonexistent",
             name="Updated Name"
         )
 
@@ -114,7 +114,7 @@ async def test_item_delete() -> None:
 
         # Create item first
         created_item = await service.create_item(
-            upca="123456789012",
+            barcode="123456789012",
             name="Test Item",
             dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
         )
@@ -172,14 +172,14 @@ async def test_item_location() -> None:
 
         # Create item first
         item = await service.create_item(
-            upca="123456789012",
+            barcode="123456789012",
             name="Test Item",
             dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
         )
 
         # Add location
         location = await service.add_item_location(
-            upca="123456789012",
+            barcode="123456789012",
             side="left_module",
             shelf_idx=1,
             cell_idx=2
@@ -206,16 +206,16 @@ async def test_item_location_remove() -> None:
 
         # Create item and add location
         item = await service.create_item(
-            upca="123456789012",
+            barcode="123456789012",
             name="Test Item",
             dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
         )
 
-        await service.add_item_location(upca="123456789012", side="left_module", shelf_idx=1, cell_idx=2)
+        await service.add_item_location(barcode="123456789012", side="left_module", shelf_idx=1, cell_idx=2)
 
         # Remove location
         success = await service.remove_item_location(
-            upca="123456789012",
+            barcode="123456789012",
             side="left_module",
             shelf_idx=1,
             cell_idx=2
@@ -278,19 +278,19 @@ async def test_get_all_occupied_cells() -> None:
         assert result == []
 
         await service.create_item(
-            upca="item1",
+            barcode="item1",
             name="Item 1",
             dimensions={"width": 10, "height": 10, "length": 10}
         )
         await service.create_item(
-            upca="item2",
+            barcode="item2",
             name="Item 2",
             dimensions={"width": 20, "height": 20, "length": 20}
         )
 
-        await service.add_item_location(upca="item1", side="left_module", shelf_idx=0, cell_idx=1)
-        await service.add_item_location(upca="item1", side="right_module", shelf_idx=2, cell_idx=3)
-        await service.add_item_location(upca="item2", side="left_module", shelf_idx=1, cell_idx=0)
+        await service.add_item_location(barcode="item1", side="left_module", shelf_idx=0, cell_idx=1)
+        await service.add_item_location(barcode="item1", side="right_module", shelf_idx=2, cell_idx=3)
+        await service.add_item_location(barcode="item2", side="left_module", shelf_idx=1, cell_idx=0)
 
         result = await service.get_all_occupied_cells()
 

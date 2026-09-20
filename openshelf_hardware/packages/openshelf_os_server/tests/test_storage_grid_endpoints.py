@@ -538,7 +538,7 @@ async def test_delete_grid_shelf_refuses_stored_item_at_or_above(client: AsyncCl
 
 	async with AsyncSessionLocal() as session:
 		item = Item(
-			upca="123456789012",
+			barcode="123456789012",
 			name="Stored",
 			dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
 		)
@@ -594,7 +594,7 @@ async def test_delete_grid_cell_refuses_stored_item_at_exact_cell(client: AsyncC
 
 	async with AsyncSessionLocal() as session:
 		item = Item(
-			upca="123456789012",
+			barcode="123456789012",
 			name="Stored",
 			dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
 		)

@@ -1167,16 +1167,16 @@ class Robot:
         if not self._grid:
             return RobotCommandError(command=command_name, error="Storage grid not calibrated")
 
-        resolved_upca: str
+        resolved_barcode: str
         resolved_item_name: str
         if isinstance(item_payload, str):
-            resolved_upca = item_payload
+            resolved_barcode = item_payload
             resolved_item_name = item_payload
         elif isinstance(item_payload, dict):
-            resolved_upca = item_payload.get("upca") or item_payload.get("name") or "item"
-            resolved_item_name = item_payload.get("name") or resolved_upca
+            resolved_barcode = item_payload.get("barcode") or item_payload.get("name") or "item"
+            resolved_item_name = item_payload.get("name") or resolved_barcode
         else:
-            resolved_upca = "item"
+            resolved_barcode = "item"
             resolved_item_name = "item"
 
         provided_dimensions = None
@@ -1186,7 +1186,7 @@ class Robot:
         self.set_operation_context(
             command=command_name,
             phase="store.resolving_item_location",
-            item={"upca": resolved_upca, "name": resolved_item_name},
+            item={"barcode": resolved_barcode, "name": resolved_item_name},
         )
         if provided_dimensions is None:
             return RobotCommandError(command=command_name, error="Item dimensions required")
@@ -1209,7 +1209,7 @@ class Robot:
             ),
             weight=weight,
             data={"name": resolved_item_name},
-            upca=resolved_upca
+            barcode=resolved_barcode
         )
 
         provided_location = None
@@ -1253,11 +1253,11 @@ class Robot:
                 location = parsed_location
 
         if location is None and self._demo_cell_map is not None:
-            demo_location = self._demo_cell_map.get(resolved_upca)
+            demo_location = self._demo_cell_map.get(resolved_barcode)
             if demo_location is None:
                 return RobotCommandError(
                     command=command_name,
-                    error=f"barcode {resolved_upca} not in demo mapping",
+                    error=f"barcode {resolved_barcode} not in demo mapping",
                 )
             if (
                 demo_location.side.value,
@@ -1283,7 +1283,7 @@ class Robot:
             command=command_name,
             phase="store.moving_from_shelf_to_io",
             target_cell=location,
-            item={"upca": resolved_upca, "name": resolved_item_name},
+            item={"barcode": resolved_barcode, "name": resolved_item_name},
         )
         try:
             coord = self._grid.get_cell_coordinate(location)
@@ -1297,7 +1297,7 @@ class Robot:
             self.set_operation_context(phase="store.grid_update_commit")
             self._grid.store_item(location, item)
             self._logger.info("Store: command successful for %s at %s", resolved_item_name, location)
-            return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca, weight=weight)
+            return RobotCommandSuccessful(command=command_name, location=location, barcode=resolved_barcode, weight=weight)
         except (MotorError, MovementError, ToolError) as err:
             self._capture_fault_context(err)
             raise
@@ -1331,24 +1331,24 @@ class Robot:
 
         return await self.retrieve_by_location(location.model_dump())
 
-    async def _find_location_for_upca(self, upca: str) -> Optional[StorageModuleCellLocation]:
+    async def _find_location_for_barcode(self, barcode: str) -> Optional[StorageModuleCellLocation]:
         for entry in self._grid.get_all_cell_data():
             cell = entry.cell
 
             if cell is None:
                 continue
 
-            if cell.upca == upca:
+            if cell.barcode == barcode:
                 return entry.location
 
-            if isinstance(cell.data, dict) and cell.data.get("upca") == upca:
+            if isinstance(cell.data, dict) and cell.data.get("barcode") == barcode:
                 return entry.location
 
         return None
 
-    async def retrieve_by_upca(
+    async def retrieve_by_barcode(
         self,
-        upca: str,
+        barcode: str,
         *,
         location_payload: Optional[Dict[str, Any]] = None,
     ) -> RobotResponse:
@@ -1366,16 +1366,16 @@ class Robot:
                 return RobotCommandError(command=command_name, error="Invalid location payload")
 
         if resolved_location is None:
-            resolved_location = await self._find_location_for_upca(upca)
+            resolved_location = await self._find_location_for_barcode(barcode)
             if resolved_location is None:
-                return RobotCommandError(command=command_name, error=f"Item '{upca}' not found in storage")
+                return RobotCommandError(command=command_name, error=f"Item '{barcode}' not found in storage")
 
-        return await self.retrieve_by_location(resolved_location.model_dump(), upca_hint=upca)
+        return await self.retrieve_by_location(resolved_location.model_dump(), barcode_hint=barcode)
 
     async def retrieve_by_location(
         self,
         location_payload: Dict[str, Any],
-        upca_hint: Optional[str] = None,
+        barcode_hint: Optional[str] = None,
         *, tray: bool = False,
     ) -> RobotResponse:
         command_name = "retrieve_item"
@@ -1395,7 +1395,7 @@ class Robot:
             return RobotCommandError(command=command_name, error="Location out of range")
 
         cached_item = cell.item
-        if cached_item is None and upca_hint is None:
+        if cached_item is None and barcode_hint is None:
             self._logger.info(
                 "No cached item for location %s/%s/%s; proceeding with retrieval based on command payload",
                 location.side,
@@ -1404,12 +1404,12 @@ class Robot:
             )
 
         self._state.current_cell = location
-        retrieved_upca: str | None = upca_hint
+        retrieved_barcode: str | None = barcode_hint
         if cached_item is not None:
-            upca_from_data = cached_item.data.get("upca") if cached_item.data else None
-            cached_upca = cached_item.upca or (str(upca_from_data) if upca_from_data is not None else None)
-            if cached_upca is not None:
-                retrieved_upca = cached_upca
+            barcode_from_data = cached_item.data.get("barcode") if cached_item.data else None
+            cached_barcode = cached_item.barcode or (str(barcode_from_data) if barcode_from_data is not None else None)
+            if cached_barcode is not None:
+                retrieved_barcode = cached_barcode
 
         self.set_operation_context(command=command_name, phase="retrieve.moving_from_io_to_shelf", target_cell=location)
         try:
@@ -1426,7 +1426,7 @@ class Robot:
                 await self.io_place(coord, nudge_override=nudge_override)
             self.set_operation_context(phase="retrieve.grid_clear_commit")
             self._grid.clear_item(location)
-            return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
+            return RobotCommandSuccessful(command=command_name, location=location, barcode=retrieved_barcode)
         except (MotorError, MovementError, ToolError) as err:
             self._capture_fault_context(err)
             raise
@@ -1472,19 +1472,19 @@ class Robot:
                 if command.location is None:
                     result = RobotCommandError(command=command_name, error="Tray home location required")
                 else:
-                    result = await self.retrieve_by_location(command.location, command.upca, tray=True)
+                    result = await self.retrieve_by_location(command.location, command.barcode, tray=True)
             elif isinstance(command, StoreItemCommand):
-                payload = getattr(command, "upca", None)
+                payload = getattr(command, "barcode", None)
                 if payload is None:
                     payload = getattr(command, "item", None)
                 result = await self.store(payload)
             elif isinstance(command, RetrieveItemCommand):
-                if command.upca:
-                    result = await self.retrieve_by_upca(command.upca, location_payload=command.location)
+                if command.barcode:
+                    result = await self.retrieve_by_barcode(command.barcode, location_payload=command.location)
                 elif command.location:
                     result = await self.retrieve_by_location(command.location)
                 else:
-                    result = RobotCommandError(command=command_name, error="Missing upca or location for retrieval")
+                    result = RobotCommandError(command=command_name, error="Missing barcode or location for retrieval")
             else:
                 result = RobotCommandError(command=command_name, error="Invalid Robot Command")
             self.clear_operation_context()
