@@ -40,6 +40,20 @@ export function buildAuthenticatedUrl(path: string): string {
 	return `${url}${separator}token=${encodeURIComponent(token)}`;
 }
 
+export function buildAuthenticatedWsUrl(path: string): string {
+	const url = buildApiUrl(path)
+		.replace(/^http:/, 'ws:')
+		.replace(/^https:/, 'wss:');
+	const token = getAccessToken();
+
+	if (token === null) {
+		return url;
+	}
+
+	const separator = url.includes('?') ? '&' : '?';
+	return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export type ApiErrorDetail = {
 	message?: string;
 	code?: string;

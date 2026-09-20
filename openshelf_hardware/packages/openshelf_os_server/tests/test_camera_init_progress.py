@@ -27,7 +27,9 @@ def _make_manager_mock(is_delivering_frames: bool) -> MagicMock:
 	manager.stop = AsyncMock(side_effect=stop)
 	manager.increment_consumers = MagicMock(return_value=1)
 	manager.decrement_consumers = MagicMock(return_value=0)
-	manager.wait_for_fresh_frame = AsyncMock(return_value=is_delivering_frames)
+	manager.increment_nalu_consumers = MagicMock(return_value=1)
+	manager.decrement_nalu_consumers = MagicMock(return_value=0)
+	manager.wait_for_nalu_ready = AsyncMock(return_value=is_delivering_frames)
 	return manager
 
 
@@ -108,5 +110,5 @@ async def test_init_camera_progress_probes_every_camera() -> None:
 	components = _components(tracker)
 	assert components["tool_camera"]["phase"] == "ready"
 	assert components["overhead_camera"]["phase"] == "failed"
-	tool_manager.wait_for_fresh_frame.assert_awaited_once_with(15.0)
-	overhead_manager.wait_for_fresh_frame.assert_awaited_once_with(15.0)
+	tool_manager.wait_for_nalu_ready.assert_awaited_once_with(15.0)
+	overhead_manager.wait_for_nalu_ready.assert_awaited_once_with(15.0)
