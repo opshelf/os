@@ -296,3 +296,5 @@ writing. The contract tests check coverage, examples, references, and media type
 
 Publishing both references is owned by the sibling relay's `scripts/deploy-docs.py`,
 which regenerates each document at build time.
+
+<!-- release workflow smoke test 1/2 -->
