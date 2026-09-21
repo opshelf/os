@@ -16,6 +16,66 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 EVENT_DRAIN_TIMEOUT_S = 5.0
+EVENT_FORWARD_WAIT_TIMEOUT_S = 5.0
+
+
+class EventProcessingTracker:
+    """Track worker events whose side effects have finished.
+
+    The event listener commits DB state after the worker emits an event, so SSE
+    clients must not observe an event before that commit. The event stream waits
+    on this tracker before forwarding each payload; fan-out preserves order in
+    every subscriber queue, so a per-connection sequence number maps 1:1 onto
+    the monotonically growing processed count.
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Condition()
+        self._processed = 0
+        self._active = False
+
+    def activate(self) -> None:
+        self._active = True
+
+    def deactivate(self) -> None:
+        self._active = False
+
+    async def record_processed(self) -> None:
+        async with self._lock:
+            self._processed += 1
+            self._lock.notify_all()
+
+    async def wait_until_processed(self, target: int, timeout_s: float) -> bool:
+        async with self._lock:
+            if self._active is False or self._processed >= target:
+                return True
+            try:
+                while self._processed < target:
+                    await asyncio.wait_for(self._lock.wait(), timeout_s)
+            except asyncio.TimeoutError:
+                return False
+            return self._processed >= target
+
+
+event_processing_tracker = EventProcessingTracker()
+
+
+async def _refresh_status_after_commit(worker: Optional[RobotEventPublisher]) -> None:
+    """Push a fresh status snapshot so SSE overlays reflect committed DB state.
+
+    The status overlay re-reads item locations from the database on every push,
+    so a push issued after the commit corrects the stale occupancy published
+    alongside the pre-commit state change.
+    """
+    if worker is None:
+        return
+    snapshot = getattr(worker, "get_status_snapshot", None)
+    if snapshot is None:
+        return
+    try:
+        await snapshot(force_refresh=True)
+    except Exception as err:
+        logger.warning("Failed to refresh robot status after commit: %s", err)
 
 
 async def flush_telemetry(is_cycle: bool) -> None:
@@ -100,6 +160,7 @@ async def process_robot_event(
             logger.warning("Skipping retrieve_item event with non-integer location: %s", payload)
             return
 
+        removed = False
         async with AsyncSessionLocal() as session:
             if await BinStorageService(session).targets_reserved_bin_identity(payload):
                 logger.warning(
@@ -123,6 +184,8 @@ async def process_robot_event(
                 logger.exception("Failed to process retrieve_item event for %s: %s", barcode, err)
 
         await flush_telemetry(is_cycle=True)
+        if removed:
+            await _refresh_status_after_commit(active_worker)
 
     if command == "store_item":
         if message != "success":
@@ -174,6 +237,7 @@ async def process_robot_event(
             weight, normalized_weight
         )
 
+        location_added = False
         async with AsyncSessionLocal() as session:
             if await BinStorageService(session).targets_reserved_bin_identity(payload):
                 logger.warning("Skipping legacy mutation for reserved bin store event: %s", payload)
@@ -206,11 +270,14 @@ async def process_robot_event(
 
                 if already_assigned is False:
                     await storage_service.add_item_location(str(barcode), side, shelf_idx_int, cell_idx_int, commit=False)
+                    location_added = True
                 await session.commit()
             except Exception as err:
                 logger.exception("Failed to process store_item event for %s: %s", barcode, err)
 
         await flush_telemetry(is_cycle=True)
+        if location_added:
+            await _refresh_status_after_commit(active_worker)
 
 
 class RobotEventListener:
@@ -229,6 +296,7 @@ class RobotEventListener:
         logger.info("Starting robot event listener")
         self._queue = await self._worker.subscribe_events()
         self._task = asyncio.create_task(self._consume_events(), name="robot-event-listener")
+        event_processing_tracker.activate()
 
     async def stop(self) -> None:
         if self._queue is not None:
@@ -249,6 +317,8 @@ class RobotEventListener:
                 logger.warning("Failed to stop robot event listener task: %s", err)
 
             self._task = None
+
+        event_processing_tracker.deactivate()
 
     async def drain(self) -> None:
         """Wait briefly for events already emitted by the worker to be persisted."""
@@ -283,3 +353,4 @@ class RobotEventListener:
                 await process_robot_event(payload, self._worker)
             finally:
                 queue.task_done()
+                await event_processing_tracker.record_processed()
