@@ -514,7 +514,7 @@ class Robot:
             "laser": {
                 "port": DEFAULT_LASER_PORT,
                 "fallback_ports": LASER_PORT_CANDIDATES,
-                "baudrate": 9600,
+                "baudrate": 115200,
                 "parity": "N",
                 "timeout": 2.0,
                 "retry_delay_s": 0.25,

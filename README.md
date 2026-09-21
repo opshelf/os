@@ -110,7 +110,7 @@ the default modbus bus config prefers stable symlinks for the waveshare ch344l h
 ```text
 /dev/openshelf-rs485-ch1  motor bus, 115200 baud
 /dev/openshelf-rs485-ch2  scale bus, 9600 baud
-/dev/openshelf-rs485-ch3  laser bus, 9600 baud
+/dev/openshelf-rs485-ch3  laser bus, 115200 baud
 /dev/openshelf-rs485-ch4  spare rs485 channel
 ```
 
