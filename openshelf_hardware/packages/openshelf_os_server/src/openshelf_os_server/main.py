@@ -67,6 +67,7 @@ from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
 from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, chemicals, demo, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
 from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings, get_operating_mode
+from openshelf_os_server.utils.cors_policy import allows_credentials, resolve_allowed_origins
 
 configure_logging()
 logger = get_logger(__name__)
@@ -870,10 +871,16 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
+# The UI is served from its own port, so any origin may call the API, but the API
+# authenticates with bearer tokens and query tokens rather than cookies. A wildcard
+# origin therefore never advertises credentialed access; operators who pin the origin
+# list with OPENSHELF_CORS_ORIGINS get credentialed handling for those origins.
+CORS_ALLOWED_ORIGINS = resolve_allowed_origins()
+
 app.add_middleware(
 	CORSMiddleware,
-	allow_origins=["*"],
-	allow_credentials=True,
+	allow_origins=CORS_ALLOWED_ORIGINS,
+	allow_credentials=allows_credentials(CORS_ALLOWED_ORIGINS),
 	allow_methods=["*"],
 	allow_headers=["*"],
 )

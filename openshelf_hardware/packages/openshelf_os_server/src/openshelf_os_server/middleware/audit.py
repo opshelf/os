@@ -21,6 +21,7 @@ from ..utils.audit_integrity import (
     get_hmac_key_id,
 )
 from ..utils.audit_constants import AUDIT_RETENTION_DAYS, LEGACY_COMMAND_RECORDS_FIELD
+from ..utils.cors_policy import response_allow_origin, resolve_allowed_origins
 from ..routers.auth_deps import get_current_user_optional
 
 command_records_context: ContextVar[List[Dict[str, Any]]] = ContextVar("command_records", default=[])
@@ -148,8 +149,13 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				status_code=500,
 				content={"detail": {"message": "Internal server error", "code": "internal_error"}}
 			)
-			if request.headers.get("origin") is not None:
-				response.headers["Access-Control-Allow-Origin"] = "*"
+			# This response never travels back through the CORS middleware, so it carries
+			# the origin header itself, under the same policy as every other response.
+			allow_origin = response_allow_origin(
+				resolve_allowed_origins(), request.headers.get("origin")
+			)
+			if allow_origin is not None:
+				response.headers["Access-Control-Allow-Origin"] = allow_origin
 
 		duration_ms = int((time.time() - start_time) * 1000)
 
