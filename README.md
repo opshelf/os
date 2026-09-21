@@ -22,7 +22,7 @@ the backend persists runtime data in `openshelf_hardware/data` (including local 
 - `docker-compose.dev.yml`: development overrides (hot reload for api/ui source)
 - `docker-compose.hardware.yml`: usb/device passthrough for hardware-connected machines
 - `scripts/start`, `scripts/stop`: preferred lifecycle commands
-- `scripts/laser.py`, `scripts/motor.py`: hardware debugging helpers
+- `scripts/laser.py`, `scripts/z_stall_probe.py`, `scripts/y_*_diagnostic.py` (+ `scripts/run_y_*.sh` wrappers): hardware debugging helpers
 
 ## development setup
 
@@ -159,7 +159,7 @@ docker compose -f docker-compose.yml logs -f api
 docker compose -f docker-compose.yml logs -f dev_ui
 ```
 
-in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers.
+in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers. the overlay does not mount `scripts/` or the test directories, so a one-off hardware container needs its own `-v` for the scripts (see [hardware scripts](#hardware-scripts)).
 
 dependency changes, dockerfile changes, or mode switches across the development/non-development boundary need a rebuild on laptops:
 
@@ -171,13 +171,17 @@ on deployed devices the stack runs prebuilt images pulled from the team registry
 
 runtime state lives in `openshelf_hardware/data`. delete or edit this directory carefully because it contains the local sqlite database and mode files.
 
+every checkout of this repository shares the compose project name `openshelf_os`, so starting a second checkout replaces the containers of the first. set `OPSHELF_COMPOSE_PROJECT` per worktree when two stacks must run side by side. `scripts/start` also adds `docker-compose.hardware.yml` by itself when the selected mode's config enables `robot.enabled` or `robot_app.enabled` (never in mock mode), and accepts `--force-recreate` next to `-d`, `-h`, `-b`, and `-p`.
+
+the api accepts cross-origin requests from any origin because the ui is served from its own port, and it never advertises credentialed access, because authentication travels in an `Authorization` header or a `token` query parameter rather than a cookie. set `OPENSHELF_CORS_ORIGINS` to a comma-separated list of exact origins to narrow the policy to those origins.
+
 ## local quality checks
 
 backend:
 
 ```bash
 cd openshelf_hardware
-uv sync
+uv sync --all-packages   # bare `uv sync` prunes the dependencies workspace members need
 uv run pytest
 uv run ruff check packages
 uv run mypy packages/openshelf_os_server/src
@@ -338,6 +342,8 @@ response models so adding documentation does not change runtime serialization.
 committed. `uv run openapi --check` validates the generated contract without
 writing. The contract tests check coverage, examples, references, and media types.
 
-Publishing both references is owned by the sibling relay's `scripts/deploy-docs.py`,
-which regenerates each document at build time.
+Publishing both references and this manual is owned by the sibling relay's
+`scripts/deploy-docs.py`, which regenerates each document at build time. the developer
+manual lives in `../relay/docs/developer-manual.md` and is rendered into
+`https://api.opshelf.com/docs/manual/` by `../relay/scripts/build-manual.py`.
 
