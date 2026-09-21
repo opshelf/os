@@ -18,41 +18,23 @@ htmlcov/
 
 # Runtime state: databases, mode files, calibration, scans, motion fault
 # recorders, and per-mode config/storage/workspace files.
-#
-# Unanchored on purpose. Each checkout resolves data dirs per package, so live
-# state appears as data/ in more than one place (openshelf_hardware/data,
-# openshelf_hardware/packages/openshelf_os_server/data), and an anchored rule
-# would let a newly created one become committable.
 data/
 
-# The device runtime environment that provisioning writes into the checkout:
-# opshelf-stage-os-env merges Sentry/CAS/mode values and the per-device signing keys
-# into it at 0600, and Compose reads it from the project directory. It carries live
-# JWT secrets on every provisioned device, so it must never become committable.
+# The device runtime environment that provisioning writes into the checkout.
 .env
 
-# Provisioned device configuration. This repository does not own config.json:
-# provisioning generates it per device and engineers copy device and backup copies
-# into a checkout to diff or calibrate. Older provisioned devices persisted
-# auth.jwt_secret in it, so it must never become committable. The mode variants come
-# from the same place; neither pattern matches the tracked dev_ui/tsconfig.json.
+# Provisioned device configuration.
 config.json
 config.*.json
 
-# Local docs scratch folders, at any depth, per team convention. The tracked
-# docs modules are re-included explicitly, because ignoring a directory hides
-# everything inside it from `git add`: adding a new file to a docs package would
-# otherwise require `git add -f`. docs/openapi.json remains ignored by that
-# package's own .gitignore.
+# Local docs scratch folders, at any depth, per team convention.
 docs/
 !openshelf_hardware/packages/openshelf_os_server/docs/
 
-# Agent instruction files and local agent settings. `.pi/*` rather than `.pi/` so
-# the negation below is effective: a negated file inside an excluded directory is
-# unreachable, which is why the previous `.pi` + `!.pi/settings.json` pair was
-# inert. `.claude` is listed here so it does not depend on any operator's global
-# gitignore.
+# Agent instruction files and local agent settings.
 .pi/*
 !.pi/settings.json
 CLAUDE.md
 .claude/
+docs
+.pi
