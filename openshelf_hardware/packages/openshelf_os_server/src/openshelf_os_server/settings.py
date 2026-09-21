@@ -191,7 +191,7 @@ def _build_minimal_config(data: dict) -> dict:
                 },
                 "laser": {
                     "port": DEFAULT_LASER_PORT,
-                    "baudrate": 9600,
+                    "baudrate": 115200,
                     "parity": "N",
                     "timeout": 2.0,
                     "retry_delay_s": 0.25,
