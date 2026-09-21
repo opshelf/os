@@ -43,7 +43,13 @@ def _create_motor_if_enabled(
         return None
 
     home_limit_input = None
-    if gpio is not None and home_limit_pin is not None and gpio.has_pin(home_limit_pin):
+    if home_limit_pin is not None and cfg.limit_switches_enabled is False:
+        logger.info(
+            "Motor '%s' limit switches disabled via config; skipping home limit switch '%s'",
+            name,
+            home_limit_pin,
+        )
+    elif gpio is not None and home_limit_pin is not None and gpio.has_pin(home_limit_pin):
         home_limit_input = gpio.input(home_limit_pin)
 
     return Motor(controller, cfg, safety, home_limit_input=home_limit_input)

@@ -62,10 +62,24 @@ def _create_motor_if_enabled(
         return None
 
     home_limit_input = None
-    if gpio is not None and home_limit_pin is not None and gpio.has_pin(home_limit_pin):
+    if home_limit_pin is not None and cfg.limit_switches_enabled is False:
+        logger.info(
+            "Motor '%s' limit switches disabled via config; skipping home limit switch '%s'",
+            name,
+            home_limit_pin,
+        )
+    elif gpio is not None and home_limit_pin is not None and gpio.has_pin(home_limit_pin):
         home_limit_input = gpio.input(home_limit_pin)
 
     return Motor(controller, cfg, safety, home_limit_input=home_limit_input)
+
+
+def _limit_switches_enabled(motors: c.Motors, name: str) -> bool:
+    """Only false when this machine's config says the axis has no limit switches."""
+    try:
+        return motors.by_name(name).limit_switches_enabled is not False
+    except KeyError:
+        return True
 
 
 def derive_rotation_home_orientation(
@@ -132,12 +146,22 @@ class Tool:
         )
 
         self._gpio = gpio
-        self._x_lim_minunsafe_input = (
-            gpio.input("x_lim_minunsafe") if gpio is not None and gpio.has_pin("x_lim_minunsafe") else None
-        )
-        self._x_lim_maxunsafe_input = (
-            gpio.input("x_lim_maxunsafe") if gpio is not None and gpio.has_pin("x_lim_maxunsafe") else None
-        )
+        # Unfitted clearance inputs float, so reading them on a machine without
+        # the switches would report every rotation as unsafe.
+        if _limit_switches_enabled(motors, "x_axis") is False:
+            self._x_lim_minunsafe_input = None
+            self._x_lim_maxunsafe_input = None
+            self._logger.info(
+                "Motor 'x_axis' limit switches disabled via config; skipping rotation clearance "
+                "limit switches 'x_lim_minunsafe' and 'x_lim_maxunsafe'"
+            )
+        else:
+            self._x_lim_minunsafe_input = (
+                gpio.input("x_lim_minunsafe") if gpio is not None and gpio.has_pin("x_lim_minunsafe") else None
+            )
+            self._x_lim_maxunsafe_input = (
+                gpio.input("x_lim_maxunsafe") if gpio is not None and gpio.has_pin("x_lim_maxunsafe") else None
+            )
 
         self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
 
