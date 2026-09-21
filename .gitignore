@@ -27,7 +27,9 @@ data/
 config.json
 config.*.json
 
-# Local docs scratch folders, at any depth, per team convention.
+# Local docs scratch folders, at any depth, per team convention. The server's docs
+# package is tracked Python code, so the negation keeps it visible; that package's own
+# .gitignore still excludes its generated OpenAPI document.
 docs/
 !openshelf_hardware/packages/openshelf_os_server/docs/
 
@@ -36,5 +38,3 @@ docs/
 !.pi/settings.json
 CLAUDE.md
 .claude/
-docs
-.pi
