@@ -192,6 +192,50 @@ npm run check
 npm run build
 ```
 
+## config schema migrations
+
+`schema_version` is a top-level positive integer in the config files, independent of the application's `version` string. a missing `schema_version` means **1** (the pre-versioning provisioning schema); the current schema is **4** (`config.schema.CURRENT_SCHEMA_VERSION`). the application requires the current schema at startup, never auto-migrates, and refuses older or newer versions before parsing nested config models. do not fix a startup error by changing only `schema_version`: the old field names would then lose their meaning.
+
+### applying a migration
+
+use the new release's migration runner and dependencies. from the checkout:
+
+```bash
+cd openshelf_hardware
+uv sync --all-packages
+uv run --no-sync python ../scripts/migrate_config.py data
+```
+
+the directory form selects only `config.json` and `config.*.json` immediately in that directory (production, development, demo, mock); it never recurses into config history or touches storage grids, databases, or scan recordings. individual files and multiple directories can also be supplied explicitly.
+
+when the preview is correct, stop the application and write:
+
+```bash
+./scripts/stop
+cd openshelf_hardware
+uv run --no-sync python ../scripts/migrate_config.py data --write
+```
+
+on a containerized device, obtain the matching released api image and checkout, stop the stack, then run the new image without starting its server or dependencies:
+
+```bash
+docker compose -f docker-compose.yml run --rm --no-deps --pull never --entrypoint sh \
+  -v "$PWD/scripts:/app/scripts:ro" api -lc \
+  'cd /app/openshelf_hardware && uv run --no-sync python /app/scripts/migrate_config.py data'
+```
+
+repeat with `--write` added after `data` once the preview is correct. hardware passthrough is unnecessary for this offline operation; restart through the repo-managed flow, preserving the selected mode and hardware overlay (e.g. `./scripts/start -d -h --mode development`).
+
+every selected file is migrated in memory and validated against the current config model before anything is written; unknown fields and numeric calibration values are retained, and the output lists changed key names, not config values. each changed file gets an exclusive byte-for-byte `<filename>.schema-v<N>.bak` backup (the number is its source schema) and is replaced atomically, preserving owner and permissions. replacement is atomic per file, not across the directory: if a batch is interrupted, inspect the reported files and backups before retrying. for rollback, restore the affected config files from their backups together with the prior firmware; do not lower only the version number. backups contain credentials — keep them private.
+
+at release time, migrate `../provision/config/config.json` with the same runner and coordinate its template schema with the firmware schema; do not ship a new template to firmware predating the release.
+
+### adding a migration
+
+add `v005_<description>.py` under `openshelf_hardware/packages/openshelf_os/src/openshelf_os/config_migrations/`. its `migrate(config)` function accepts the raw previous-schema dictionary and returns the transformed dictionary plus a list of changed field paths. register it under the destination version in `runner.MIGRATIONS` and increment `config.schema.CURRENT_SCHEMA_VERSION`. the runner advances the version only after each step succeeds and validates the complete result before persistence.
+
+never modify a released migration; append a new step. test value preservation, conflicting keys, optional fields, the whole migration chain, and startup rejection. update generated config defaults, fixtures, release notes, and the provisioning template for each new schema; do not include secrets in migration diagnostics.
+
 ## development pi workflow
 
 list known devices from the sibling provision repo:
