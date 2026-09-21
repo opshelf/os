@@ -12,7 +12,12 @@ from openshelf_os_server.core import bin_storage
 from openshelf_os_server.core import mock_robot as mock_core
 from openshelf_os_server.core.bin_storage import BinStorageService
 from openshelf_os_server.core.mock_robot import MockRobotRuntime
-from openshelf_os_server.core.robot_events import RobotEventListener, process_robot_event
+import openshelf_os_server.core.robot_events as robot_events_module
+from openshelf_os_server.core.robot_events import (
+    EventProcessingTracker,
+    RobotEventListener,
+    process_robot_event,
+)
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.validation import ValidationError
 from openshelf_os_server.database.models import (
@@ -596,3 +601,136 @@ async def test_add_item_location_rejects_occupied_cell() -> None:
 
         with pytest.raises(ValidationError, match="already occupied"):
             await storage.add_item_location("777", "right_module", 3, 0)
+
+
+@pytest.mark.anyio
+async def test_tracker_inactive_waits_nothing() -> None:
+    tracker = EventProcessingTracker()
+    assert await tracker.wait_until_processed(1, timeout_s=0.05) is True
+
+
+@pytest.mark.anyio
+async def test_tracker_waits_until_recorded() -> None:
+    tracker = EventProcessingTracker()
+    tracker.activate()
+
+    observed: dict[str, bool] = {}
+
+    async def waiter() -> None:
+        observed["done"] = await tracker.wait_until_processed(2, timeout_s=5.0)
+
+    task = asyncio.create_task(waiter())
+    await asyncio.sleep(0.01)
+    await tracker.record_processed()
+    assert observed.get("done") is None
+    await tracker.record_processed()
+    await task
+    assert observed["done"] is True
+
+
+@pytest.mark.anyio
+async def test_tracker_wait_times_out_when_unprocessed() -> None:
+    tracker = EventProcessingTracker()
+    tracker.activate()
+    assert await tracker.wait_until_processed(1, timeout_s=0.05) is False
+
+
+@pytest.mark.anyio
+async def test_listener_records_processed_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fresh_tracker = EventProcessingTracker()
+    monkeypatch.setattr(robot_events_module, "event_processing_tracker", fresh_tracker)
+
+    class ListenerWorker:
+        def __init__(self) -> None:
+            self.queues: list[asyncio.Queue[str]] = []
+
+        async def subscribe_events(self) -> asyncio.Queue[str]:
+            queue: asyncio.Queue[str] = asyncio.Queue()
+            self.queues.append(queue)
+            return queue
+
+        async def unsubscribe_events(self, queue: asyncio.Queue[str]) -> None:
+            self.queues.remove(queue)
+
+    worker = ListenerWorker()
+    listener = RobotEventListener(worker)  # type: ignore[arg-type]
+    await listener.start()
+    try:
+        queue = worker.queues[0]
+        await queue.put(
+            json.dumps({"command": "retrieve_item", "message": "skipped", "barcode": "x"})
+        )
+        assert await fresh_tracker.wait_until_processed(1, timeout_s=2.0) is True
+    finally:
+        await listener.stop()
+
+
+@pytest.mark.anyio
+async def test_retrieve_commit_pushes_fresh_status() -> None:
+    await _seed_item_with_location(barcode="781", side="left_module", shelf_idx=2, cell_idx=3)
+
+    snapshots: list[bool] = []
+
+    class StatusWorker:
+        async def get_status_snapshot(self, force_refresh: bool = False) -> str:
+            snapshots.append(force_refresh)
+            return "{}"
+
+    await process_robot_event(
+        {
+            "command": "retrieve_item",
+            "message": "success",
+            "barcode": "781",
+            "location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 3},
+        },
+        worker=StatusWorker(),  # type: ignore[arg-type]
+    )
+
+    assert snapshots == [True]
+
+
+@pytest.mark.anyio
+async def test_store_commit_pushes_fresh_status() -> None:
+    snapshots: list[bool] = []
+
+    class StatusWorker:
+        async def get_status_snapshot(self, force_refresh: bool = False) -> str:
+            snapshots.append(force_refresh)
+            return "{}"
+
+    await process_robot_event(
+        {
+            "command": "store_item",
+            "message": "success",
+            "barcode": "782",
+            "location": {"side": "right_module", "shelf_idx": 1, "cell_idx": 4},
+            "weight": 250.0,
+        },
+        worker=StatusWorker(),  # type: ignore[arg-type]
+    )
+
+    assert snapshots == [True]
+
+
+@pytest.mark.anyio
+async def test_retrieve_without_removal_does_not_push_status() -> None:
+    snapshots: list[bool] = []
+
+    class StatusWorker:
+        async def get_status_snapshot(self, force_refresh: bool = False) -> str:
+            snapshots.append(force_refresh)
+            return "{}"
+
+    await process_robot_event(
+        {
+            "command": "retrieve_item",
+            "message": "success",
+            "barcode": "no-such-barcode",
+            "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        },
+        worker=StatusWorker(),  # type: ignore[arg-type]
+    )
+
+    assert snapshots == []

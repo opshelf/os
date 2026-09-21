@@ -34,7 +34,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from openshelf_os_server.core.robot import get_robot_instance, get_robot_worker
-from openshelf_os_server.core.robot_events import process_robot_event
+from openshelf_os_server.core.robot_events import (
+    EVENT_FORWARD_WAIT_TIMEOUT_S,
+    event_processing_tracker,
+    process_robot_event,
+)
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.iobox_sizer import capture_store_observer_measurement
 from openshelf_os_server.core.logging_config import correlation_id_var
@@ -2054,9 +2058,9 @@ async def stream_events() -> EventSourceResponse:
 
     A terminal result includes `command_id`; use durable command polling after a disconnect.
     `weight`, when present, is the cycle's gross reading in grams, not container net mass.
-    Physical retrieval currently supplies no weight reading. Inventory persistence may
-    briefly lag the event. User tokens can be supplied through the bearer header or
-    `?token=`.
+    Physical retrieval currently supplies no weight reading. Inventory changes are
+    committed before an event is forwarded. User tokens can be supplied through the
+    bearer header or `?token=`.
     """
     if get_operating_mode() == OperatingMode.mock:
         runtime = get_mock_robot_runtime()
@@ -2087,8 +2091,15 @@ async def stream_events() -> EventSourceResponse:
             if event_queue is None:
                 return
 
+            forwarded = 0
             while True:
                 message = await event_queue.get()
+                forwarded += 1
+                # The event listener commits DB state after the worker emits, so
+                # wait for that work to settle before clients observe the event.
+                await event_processing_tracker.wait_until_processed(
+                    forwarded, EVENT_FORWARD_WAIT_TIMEOUT_S
+                )
                 yield {"data": message}
         finally:
             if worker is not None and event_queue is not None:
