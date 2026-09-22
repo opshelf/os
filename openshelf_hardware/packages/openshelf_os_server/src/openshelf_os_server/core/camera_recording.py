@@ -88,6 +88,8 @@ class CameraDiskRecorder:
 		self.started_at = time.monotonic()
 		self._codec_name = codec_name if codec_name in NALE_DEMUX_FORMAT_BY_CODEC else "h264"
 		self._fps = fps if fps > 0 else RECORD_DEFAULT_FPS
+		self._width: Optional[int] = None
+		self._height: Optional[int] = None
 		self._au_queue: "queue.Queue[bytes]" = queue.Queue(maxsize=RECORDER_QUEUE_MAXSIZE)
 		self._stop_event = threading.Event()
 		self._finalized = threading.Event()
@@ -123,8 +125,17 @@ class CameraDiskRecorder:
 			return
 
 		if isinstance(payload, tuple) and len(payload) == 4:
-			_width, _height, meta_fps, codec_name = payload
+			width, height, meta_fps, codec_name = payload
 			with self._stream_lock:
+				if (
+					isinstance(width, int)
+					and isinstance(height, int)
+					and width > 0
+					and height > 0
+					and self._out_stream is None
+				):
+					self._width = width
+					self._height = height
 				if isinstance(meta_fps, float) and meta_fps > 0:
 					self._fps = meta_fps
 				if (
@@ -284,6 +295,14 @@ class CameraDiskRecorder:
 			av.video.VideoStream,
 			self._output_container.add_stream(self._codec_name, rate=int(round(self._fps))),
 		)
+		# The raw demuxer leaves the muxer to infer dimensions from the SPS,
+		# which it mis-parses for some HEVC streams (the container header
+		# then reports the wrong resolution). Pin the stream meta's
+		# dimensions explicitly so the header matches the bitstream.
+		if self._width is not None:
+			self._out_stream.width = self._width
+		if self._height is not None:
+			self._out_stream.height = self._height
 		return self._out_stream
 
 	def _remux_batch(

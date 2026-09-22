@@ -224,6 +224,70 @@ def test_recorder_remuxes_hevc_units_into_decodable_mp4(tmp_path: Path) -> None:
 	container.close()
 
 
+def test_recorder_pins_header_dimensions_from_meta(tmp_path: Path) -> None:
+	try:
+		units = make_hevc_units(n=12, size=(128, 96))
+	except Exception as exc:
+		pytest.skip(f"libx265 is unavailable: {exc}")
+
+	path = tmp_path / "cam" / build_recording_file_name("cam")
+	recorder = CameraDiskRecorder("cam", "view", path, codec_name="hevc")
+	recorder.start()
+
+	# The NALU worker emits meta before any access unit; the header must
+	# carry the meta's dimensions even where the muxer's SPS inference
+	# would mislabel the stream.
+	recorder.update_meta("view", (128, 96, 25.0, "hevc"))
+
+	for unit in units:
+		recorder.push(unit, "view")
+
+	recorder.stop()
+	_wait_finalized(recorder)
+
+	assert recorder.error is None
+	container, stream = open_video(recorder.path)
+	assert stream.width == 128
+	assert stream.height == 96
+	container.close()
+
+
+def test_recorder_ignores_meta_dimensions_after_the_track_exists(
+	tmp_path: Path,
+) -> None:
+	try:
+		units = make_hevc_units(n=12, size=(128, 96))
+	except Exception as exc:
+		pytest.skip(f"libx265 is unavailable: {exc}")
+
+	path = tmp_path / "cam" / build_recording_file_name("cam")
+	recorder = CameraDiskRecorder("cam", "view", path, codec_name="hevc")
+	recorder.start()
+	recorder.update_meta("view", (128, 96, 25.0, "hevc"))
+
+	for unit in units[:6]:
+		recorder.push(unit, "view")
+
+	# Let the first batch create the track.
+	assert _wait_until(lambda: recorder.written_packets >= 1, 5.0)
+
+	# A late, conflicting meta must not reshape the header of an
+	# in-flight file.
+	recorder.update_meta("view", (640, 480, 25.0, "hevc"))
+
+	for unit in units[6:]:
+		recorder.push(unit, "view")
+
+	recorder.stop()
+	_wait_finalized(recorder)
+
+	assert recorder.error is None
+	container, stream = open_video(recorder.path)
+	assert stream.width == 128
+	assert stream.height == 96
+	container.close()
+
+
 def test_recorder_drops_units_before_first_key(tmp_path: Path) -> None:
 	units = make_h264_units()
 	# units[0] carries SPS/PPS/IDR; the rest are deltas until the next key.
