@@ -151,7 +151,7 @@ async def test_stream_camera_not_found(client: AsyncClient) -> None:
 
 	assert response.status_code == 404
 	data = response.json()
-	assert "not found" in data["detail"].lower()
+	assert "not found" in data["detail"]["message"].lower()
 
 
 @pytest.mark.anyio
@@ -185,7 +185,7 @@ async def test_stream_camera_unavailable_when_no_frames_arrive(client: AsyncClie
 		response = await client.get("/api/camera/tool")
 
 	assert response.status_code == 503
-	assert "not delivering frames" in response.json()["detail"]
+	assert "not delivering frames" in response.json()["detail"]["message"]
 	manager.stop.assert_awaited_once()
 
 

@@ -223,7 +223,7 @@ async def test_tests_reject_cells_that_are_not_testable(client, endpoint: str, c
 			)
 
 	assert response.status_code == 400
-	assert cell_status.value in response.json()['detail']
+	assert cell_status.value in response.json()['detail']['message']
 
 	assert worker._robot._tool.pick.await_count == 0
 	assert worker._robot._tool.place.await_count == 0

@@ -263,7 +263,7 @@ async def test_save_calibration_rejects_negative_indices(client, tmp_path) -> No
 		)
 
 	assert response.status_code == 400
-	assert response.json()['detail'] == 'Invalid shelf_idx: -1'
+	assert response.json()['detail']['message'] == 'Invalid shelf_idx: -1'
 
 
 

@@ -332,7 +332,7 @@ async def test_mock_store_accepts_long_barcode_but_rejects_blank_or_non_string(
 			},
 		)
 		assert rejected.status_code == 422
-		assert rejected.json()["detail"] == "item.barcode is required"
+		assert rejected.json()["detail"]["message"] == "item.barcode is required"
 
 
 @pytest.mark.anyio

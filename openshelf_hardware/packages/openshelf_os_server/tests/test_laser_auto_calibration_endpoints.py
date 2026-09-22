@@ -2024,7 +2024,7 @@ async def test_stream_laser_auto_calibration_rejects_cell_without_shelf(client) 
     response = await client.get("/api/calibration/laser/stream?side=left_module&cell_idx=1")
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "shelf_idx is required when cell_idx is provided"
+    assert response.json()["detail"]["message"] == "shelf_idx is required when cell_idx is provided"
 
 
 @pytest.mark.asyncio
@@ -2055,7 +2055,7 @@ async def test_move_is_blocked_while_laser_auto_calibration_is_running(client) -
         )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "laser auto calibration is running"
+    assert response.json()["detail"]["message"] == "laser auto calibration is running"
 
 
 @pytest.mark.asyncio
@@ -2067,7 +2067,7 @@ async def test_demo_cycle_start_is_blocked_while_laser_auto_calibration_is_runni
         response = await client.post("/api/demo/cycle/start")
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "laser auto calibration is running"
+    assert response.json()["detail"]["message"] == "laser auto calibration is running"
 
 
 @pytest.mark.asyncio
