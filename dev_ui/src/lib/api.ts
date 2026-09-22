@@ -90,9 +90,8 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 			...init,
 			headers
 		});
-	} catch (error) {
-		const message = error instanceof Error ? error.message : 'network error';
-		throw new ApiError(`Network error: ${message}`, 0);
+	} catch {
+		throw new ApiError('device or API is unreachable', 0);
 	}
 
 	if (response.status === 401) {
@@ -137,10 +136,26 @@ function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
 	return output;
 }
 
+function unreachableMessage(status: number): string {
+	if (status === 502) {
+		return 'device or API is unreachable';
+	}
+	if (status === 503) {
+		return 'device API is unavailable';
+	}
+	if (status === 504) {
+		return 'device connection dropped';
+	}
+	return `request failed with status ${status}`;
+}
+
+const MAX_ERROR_BODY_LENGTH = 200;
+
 async function readErrorDetail(
 	response: Response
 ): Promise<{ message: string; detail?: ApiErrorDetail }> {
 	const fallback = `${response.status} ${response.statusText}`;
+	const contentType = response.headers.get('content-type') ?? '';
 	let text = '';
 
 	try {
@@ -151,6 +166,10 @@ async function readErrorDetail(
 
 	if (text.length === 0) {
 		return { message: fallback };
+	}
+
+	if (contentType.includes('text/html') === true) {
+		return { message: unreachableMessage(response.status) };
 	}
 
 	try {
@@ -174,10 +193,10 @@ async function readErrorDetail(
 			return { message: JSON.stringify(payload) };
 		}
 	} catch {
-		return { message: text };
+		return { message: text.length <= MAX_ERROR_BODY_LENGTH ? text : fallback };
 	}
 
-	return { message: text };
+	return { message: text.length <= MAX_ERROR_BODY_LENGTH ? text : fallback };
 }
 
 export type StorageModuleSide = 'left_module' | 'right_module';
