@@ -22,7 +22,6 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.exceptions import ConfigError as HardwareConfigError
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
-from openshelf_os_server.core.mass import ValidationError as MassValidationError
 from openshelf_os_server.core.validation import CellOccupiedError, ValidationError
 
 # Exception types that are not code bugs. In an unhandled 500 they get a
@@ -119,7 +118,6 @@ async def http_exception_handler(request: Request, exc: Exception) -> JSONRespon
 MAPPED_EXCEPTIONS: list[tuple[type[Exception], int, str]] = [
 	(CellOccupiedError, status.HTTP_409_CONFLICT, "conflict"),
 	(ValidationError, status.HTTP_422_UNPROCESSABLE_ENTITY, "validation_failed"),
-	(MassValidationError, status.HTTP_422_UNPROCESSABLE_ENTITY, "validation_failed"),
 	(ChemicalNotFound, status.HTTP_404_NOT_FOUND, "chemical_not_found"),
 	(ChemicalUnavailable, status.HTTP_503_SERVICE_UNAVAILABLE, "chemical_unavailable"),
 	(IntegrityError, status.HTTP_409_CONFLICT, "conflict"),
