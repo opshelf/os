@@ -6,6 +6,7 @@
 		createReconnectingEventSource,
 		isApiConnected,
 		isAuthenticated,
+		getOperatingMode,
 		loginAsDeveloper,
 		robotInit,
 		robotStatus,
@@ -19,7 +20,7 @@
 
 	const version = import.meta.env.PUBLIC_VERSION;
 
-	const links = [
+	const baseLinks = [
 		{ href: '/', label: 'status' },
 		{ href: '/storage', label: 'storage' },
 		{ href: '/camera', label: 'cameras' },
@@ -31,6 +32,12 @@
 		{ href: '/power', label: 'power' },
 		{ href: '/wifi', label: 'wifi' }
 	];
+
+	let demoVisible = $state<boolean>(false);
+
+	let links = $derived(
+		demoVisible === true ? [...baseLinks, { href: '/demo', label: 'DEMO' }] : baseLinks
+	);
 
 	let { children } = $props();
 	let authReady = $state(false);
@@ -73,6 +80,12 @@
 			}
 
 			authReady = true;
+
+			try {
+				demoVisible = (await getOperatingMode()) === 'demo';
+			} catch (error) {
+				console.error('failed to load operating mode:', error);
+			}
 
 			const stream = createReconnectingEventSource({
 				path: '/robot/status',

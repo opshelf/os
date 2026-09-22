@@ -1453,3 +1453,84 @@ export interface PowerCycleResult {
 export async function powerCycleRail(rail: string): Promise<PowerCycleResult> {
 	return apiFetch<PowerCycleResult>(`/robot/debug/power/${rail}/cycle`, { method: 'POST' });
 }
+
+export interface OperatingModeResponse {
+	mode: string;
+}
+
+export async function getOperatingMode(): Promise<string> {
+	const response = await apiFetch<OperatingModeResponse>('/system/mode');
+	return response.mode;
+}
+
+export interface CameraRecordStatus {
+	is_recording: boolean;
+	source: string | null;
+	file_name: string | null;
+	started_at: string | null;
+	elapsed_s: number | null;
+	size_bytes: number | null;
+	max_duration_s: number | null;
+	dropped_units: number;
+	written_packets: number;
+}
+
+export interface CameraRecordingFile {
+	camera_id: string;
+	file_name: string;
+	size_bytes: number;
+	modified_at: string;
+	duration_s: number | null;
+	is_recording: boolean;
+}
+
+export interface CameraRecordingsResponse {
+	recordings: CameraRecordingFile[];
+}
+
+export interface StartRecordingOptions {
+	source?: 'auto' | 'view' | 'record';
+	max_duration_s?: number;
+}
+
+export async function startCameraRecording(
+	cameraId: string,
+	options: StartRecordingOptions = {}
+): Promise<CameraRecordStatus> {
+	const body: Record<string, unknown> = {};
+
+	if (options.source !== undefined) {
+		body.source = options.source;
+	}
+
+	if (options.max_duration_s !== undefined) {
+		body.max_duration_s = options.max_duration_s;
+	}
+
+	return apiFetch<CameraRecordStatus>(`/camera/${cameraId}/record`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+}
+
+export async function stopCameraRecording(cameraId: string): Promise<CameraRecordStatus> {
+	return apiFetch<CameraRecordStatus>(`/camera/${cameraId}/record`, { method: 'DELETE' });
+}
+
+export async function getCameraRecordingStatus(cameraId: string): Promise<CameraRecordStatus> {
+	return apiFetch<CameraRecordStatus>(`/camera/${cameraId}/record`);
+}
+
+export async function listCameraRecordings(): Promise<CameraRecordingFile[]> {
+	const response = await apiFetch<CameraRecordingsResponse>('/camera/recordings');
+	return response.recordings;
+}
+
+export async function deleteCameraRecording(cameraId: string, fileName: string): Promise<void> {
+	await apiFetch(`/camera/recordings/${cameraId}/${fileName}`, { method: 'DELETE' });
+}
+
+export function buildRecordingDownloadUrl(cameraId: string, fileName: string): string {
+	return buildAuthenticatedUrl(`/camera/recordings/${cameraId}/${fileName}/download`);
+}

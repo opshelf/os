@@ -533,6 +533,61 @@ class CameraStreamManager:
 		self.stale_frame_timeout = 5.0
 		self.lifecycle_lock = asyncio.Lock()
 		self.unregistered = asyncio.Event()
+		self._disk_recorder: Optional[Any] = None
+
+	async def start_recording(
+		self,
+		camera_id: str,
+		source: str,
+		max_duration_s: Optional[int] = None,
+	) -> None:
+		if self._disk_recorder is not None and self._disk_recorder.is_finalized is False:
+			raise ValueError("Camera is already recording")
+
+		if source not in ("view", "auto"):
+			raise ValueError("Camera has no recording stream configured")
+
+		# Lazy: camera_recording imports helpers from this module.
+		from openshelf_os_server.core.camera_recording import (  # noqa: PLC0415
+			MjpegDiskRecorder,
+			get_recording_store,
+		)
+
+		if self.is_running is False:
+			await self.start()
+
+		recorder = MjpegDiskRecorder(
+			camera_id=camera_id,
+			path=get_recording_store().new_file_path(camera_id, "view"),
+			max_duration_s=max_duration_s,
+			frame_fetch=self.get_latest_frame,
+		)
+		recorder.start()
+		self._disk_recorder = recorder
+
+	async def stop_recording(self) -> None:
+		if self._disk_recorder is None:
+			raise ValueError("Camera is not recording")
+
+		await self._finalize_disk_recorder()
+
+	async def _finalize_disk_recorder(self) -> None:
+		recorder = self._disk_recorder
+
+		if recorder is None:
+			return
+
+		if recorder.is_finalized is False:
+			recorder.stop()
+			await asyncio.to_thread(recorder.wait_for_finalization, 10.0)
+
+		self._disk_recorder = None
+
+	def recording_status(self) -> Optional[dict]:
+		if self._disk_recorder is None:
+			return None
+
+		return self._disk_recorder.status()
 
 	# run and then pull from this, or size separately
 	async def start(self) -> None:
@@ -560,6 +615,8 @@ class CameraStreamManager:
 				except asyncio.CancelledError:
 					pass
 				self.capture_task = None
+
+			await self._finalize_disk_recorder()
 
 			if self.unregistered.is_set() is True:
 				self.camera = None
@@ -716,6 +773,69 @@ class ToolCameraStreamManager:
 		self.nalu_subscribers: set[asyncio.Queue] = set()
 		self.lifecycle_lock = asyncio.Lock()
 		self.unregistered = asyncio.Event()
+		self._disk_recorder: Optional[Any] = None
+
+	async def start_recording(
+		self,
+		camera_id: str,
+		source: str,
+		max_duration_s: Optional[int] = None,
+	) -> None:
+		if self._disk_recorder is not None and self._disk_recorder.is_finalized is False:
+			raise ValueError("Camera is already recording")
+
+		if self._disk_recorder is not None:
+			self._disk_recorder = None
+
+		if source == "record" and self.recording_url == "":
+			raise ValueError("Camera has no recording stream configured")
+
+		# Lazy: camera_recording imports helpers from this module.
+		from openshelf_os_server.core.camera_recording import (  # noqa: PLC0415
+			CameraDiskRecorder,
+			get_recording_store,
+		)
+
+		if self.is_running is False:
+			await self.start()
+
+		codec_name = (
+			self.nalu_record_codec if source == "record" else self.nalu_view_codec
+		)
+
+		recorder = CameraDiskRecorder(
+			camera_id=camera_id,
+			source=source,
+			path=get_recording_store().new_file_path(camera_id, source),
+			max_duration_s=max_duration_s,
+			codec_name=codec_name,
+		)
+		recorder.start()
+		self._disk_recorder = recorder
+
+	async def stop_recording(self) -> None:
+		if self._disk_recorder is None:
+			raise ValueError("Camera is not recording")
+
+		await self._finalize_disk_recorder()
+
+	async def _finalize_disk_recorder(self) -> None:
+		recorder = self._disk_recorder
+
+		if recorder is None:
+			return
+
+		if recorder.is_finalized is False:
+			recorder.stop()
+			await asyncio.to_thread(recorder.wait_for_finalization, 10.0)
+
+		self._disk_recorder = None
+
+	def recording_status(self) -> Optional[dict]:
+		if self._disk_recorder is None:
+			return None
+
+		return self._disk_recorder.status()
 
 	async def start(self) -> None:
 		async with self.lifecycle_lock:
@@ -763,6 +883,7 @@ class ToolCameraStreamManager:
 
 			self._stop_worker()
 			self._stop_nalu_worker()
+			await self._finalize_disk_recorder()
 			self.latest_frame = None
 			self.last_frame_at = None
 			self.nalu_last_frame_at = None
@@ -908,6 +1029,8 @@ class ToolCameraStreamManager:
 			if kind == "au":
 				ring = self.nalu_record_ring if source == "record" else self.nalu_view_ring
 				ring.append((pts, payload, _arrival))
+				if self._disk_recorder is not None:
+					self._disk_recorder.push(payload, source)
 				byte_counter = self.nalu_ring_bytes
 				byte_counter[source] = byte_counter[source] + len(payload)
 				cutoff = time.monotonic() - NALE_RING_SECONDS
@@ -924,11 +1047,15 @@ class ToolCameraStreamManager:
 					tick_aus.append(payload)
 			elif kind == "config" and source == "view":
 				self.nalu_extradata = payload
-			elif kind == "meta" and source == "view":
-				self.nalu_meta = payload
-				self.nalu_view_codec = payload[3]
-			elif kind == "meta" and source == "record":
-				self.nalu_record_codec = payload[3]
+			elif kind == "meta":
+				if source == "view":
+					self.nalu_meta = payload
+					self.nalu_view_codec = payload[3]
+				elif source == "record":
+					self.nalu_record_codec = payload[3]
+
+				if self._disk_recorder is not None:
+					self._disk_recorder.update_meta(source, payload)
 
 		return tick_aus
 

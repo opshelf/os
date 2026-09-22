@@ -4,8 +4,8 @@ import asyncio
 from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field
 
 import base64
 
@@ -15,11 +15,12 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from openshelf_os_server.documentation import response_docs, stream_docs
+from openshelf_os_server.documentation import BooleanSuccess, response_docs, stream_docs
 from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.core.camera import (
 	CameraManager,
 	ToolCameraStreamManager,
+	camera_registry,
 	get_all_cameras_status,
 	get_camera_manager_by_id,
 	start_camera_stream_by_id,
@@ -27,6 +28,7 @@ from openshelf_os_server.core.camera import (
 	stop_camera_stream_by_id,
 	stop_nalu_stream_by_id,
 )
+from openshelf_os_server.core.camera_recording import get_recording_store
 from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.database.models import User
 from openshelf_os_server.database.session import AsyncSessionLocal
@@ -54,7 +56,69 @@ class CamerasResponse(BaseModel):
     cameras: list[CameraInfo]
 
 
+class RecordStartRequest(BaseModel):
+    source: Optional[str] = Field(
+        default="auto",
+        description="auto (recording stream when configured, else view), view, or record",
+    )
+    max_duration_s: Optional[int] = Field(default=None, gt=0, le=3600)
+
+
+class RecordStatusResponse(BaseModel):
+    is_recording: bool
+    source: Optional[str] = None
+    file_name: Optional[str] = None
+    started_at: Optional[str] = None
+    elapsed_s: Optional[float] = None
+    size_bytes: Optional[int] = None
+    max_duration_s: Optional[int] = None
+    dropped_units: int = 0
+    written_packets: int = 0
+
+
+class RecordingFile(BaseModel):
+    camera_id: str
+    file_name: str
+    size_bytes: int
+    modified_at: str
+    duration_s: Optional[float] = None
+    is_recording: bool = False
+
+
+class RecordingsResponse(BaseModel):
+    recordings: list[RecordingFile]
+
+
 router = APIRouter(tags=["camera"])
+
+
+def _get_recording_manager(camera_id: str) -> CameraManager:
+    manager = get_camera_manager_by_id(camera_id)
+
+    if manager is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Camera '{camera_id}' not found",
+        )
+
+    return manager
+
+
+def _resolve_recording_source(manager: CameraManager, requested: str) -> str:
+    if requested not in ("auto", "view", "record"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid source: {requested}",
+        )
+
+    if requested == "auto":
+        return (
+            "record"
+            if isinstance(manager, ToolCameraStreamManager) and manager.recording_url != ""
+            else "view"
+        )
+
+    return requested
 
 
 def _mjpeg_frame_thumbnail(frame_bytes: bytes) -> Optional[np.ndarray]:
@@ -147,6 +211,220 @@ async def list_cameras() -> dict:
 	cameras = await get_all_cameras_status()
 
 	return {"cameras": cameras}
+
+
+@router.get(
+    "/recordings",
+    dependencies=[Depends(get_current_user)],
+    summary="List recorded camera files",
+    responses=response_docs(model=RecordingsResponse, errors=(401,)),
+)
+async def list_recordings() -> RecordingsResponse:
+	"""List recorded camera files.
+
+	Returns every recorded file on disk with its size and finalised duration; the
+	file of an in-progress recording is listed with `is_recording` true. Requires a
+	user token.
+	"""
+	active: dict[str, dict] = {}
+
+	for camera_id, manager in camera_registry.items():
+		rec_status = manager.recording_status()
+		if rec_status is not None and rec_status.get("is_recording") is True:
+			active[camera_id] = rec_status
+
+	files = get_recording_store().list_recordings(active)
+
+	return RecordingsResponse(recordings=[RecordingFile(**file) for file in files])
+
+
+@router.get(
+    "/recordings/{camera_id}/{file_name}/download",
+    dependencies=[Depends(get_current_user)],
+    summary="Download a recorded camera file",
+    responses=response_docs(
+        errors=(400, 401, 404),
+        existing=stream_docs(
+            "video/mp4",
+            "The recorded MP4 file bytes.",
+        ),
+    ),
+    response_class=Response,
+)
+async def download_recording(camera_id: str, file_name: str) -> FileResponse:
+	"""Download a recorded camera file.
+
+	Streams the MP4 from disk. Invalid names return `400`; missing files return
+	`404`. Requires a user token.
+	"""
+	store = get_recording_store()
+
+	if store.validate_camera_id(camera_id) is False or store.validate_file_name(file_name) is False:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="Invalid recording path",
+		)
+
+	path = store.resolve(camera_id, file_name)
+
+	if path.exists() is False:
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail="Recording file not found",
+		)
+
+	return FileResponse(path, media_type="video/mp4", filename=file_name)
+
+
+@router.delete(
+    "/recordings/{camera_id}/{file_name}",
+    response_model=BooleanSuccess,
+    dependencies=[Depends(get_current_user)],
+    summary="Delete a recorded camera file",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 404, 409)),
+)
+async def delete_recording(camera_id: str, file_name: str) -> BooleanSuccess:
+	"""Delete a recorded camera file.
+
+	Removes the file from disk. In-progress files return `409`; invalid names
+	return `400`; missing files return `404`. Requires a user token.
+	"""
+	store = get_recording_store()
+
+	if store.validate_camera_id(camera_id) is False or store.validate_file_name(file_name) is False:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail="Invalid recording path",
+		)
+
+	path = store.resolve(camera_id, file_name)
+
+	if path.exists() is False:
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail="Recording file not found",
+		)
+
+	manager = camera_registry.get(camera_id)
+
+	if manager is not None:
+		rec_status = manager.recording_status()
+		if (
+			rec_status is not None
+			and rec_status.get("is_recording") is True
+			and rec_status.get("file_name") == file_name
+		):
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail="Recording is still in progress",
+			)
+
+	path.unlink()
+
+	return BooleanSuccess(success=True)
+
+
+@router.post(
+    "/{camera_id}/record",
+    response_model=RecordStatusResponse,
+    dependencies=[Depends(get_current_user)],
+    summary="Start recording a camera to disk",
+    responses=response_docs(errors=(400, 401, 404, 409)),
+)
+async def start_recording(
+    camera_id: str, payload: RecordStartRequest = RecordStartRequest()
+) -> RecordStatusResponse:
+	"""Start recording a camera to disk.
+
+	Records the camera at full stream quality into an MP4 on disk. `source` selects
+	the recording stream (the higher-resolution one when configured) or the live
+	view; an already recording camera returns `409`. Requires a user token.
+	"""
+	manager = _get_recording_manager(camera_id)
+	source = _resolve_recording_source(manager, payload.source or "auto")
+
+	try:
+		await start_camera_stream_by_id(camera_id, background=True)
+	except ValueError as exc:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+		) from exc
+
+	try:
+		await manager.start_recording(camera_id, source, payload.max_duration_s)
+	except ValueError as exc:
+		await stop_camera_stream_by_id(camera_id, background=True)
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+		) from exc
+
+	rec_status = manager.recording_status()
+
+	if rec_status is None:
+		raise HTTPException(
+			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			detail="Recording failed to start",
+		)
+
+	return RecordStatusResponse(**rec_status)
+
+
+@router.get(
+    "/{camera_id}/record",
+    response_model=RecordStatusResponse,
+    dependencies=[Depends(get_current_user)],
+    summary="Read camera recording status",
+    responses=response_docs(errors=(401, 404)),
+)
+async def get_recording_status(camera_id: str) -> RecordStatusResponse:
+	"""Read camera recording status.
+
+	Reports whether the camera is recording, the source, elapsed time, and file
+	size. A finalised recording reports `is_recording` false. Requires a user
+	token.
+	"""
+	manager = _get_recording_manager(camera_id)
+	rec_status = manager.recording_status()
+
+	if rec_status is None:
+		return RecordStatusResponse(is_recording=False)
+
+	return RecordStatusResponse(**rec_status)
+
+
+@router.delete(
+    "/{camera_id}/record",
+    response_model=RecordStatusResponse,
+    dependencies=[Depends(get_current_user)],
+    summary="Stop the camera recording",
+    responses=response_docs(errors=(401, 404, 409)),
+)
+async def stop_recording_endpoint(camera_id: str) -> RecordStatusResponse:
+	"""Stop the camera recording.
+
+	Finalises the MP4 on disk and releases the camera. A camera that is not
+	recording returns `409`; the response carries the final file status. Requires a
+	user token.
+	"""
+	manager = _get_recording_manager(camera_id)
+
+	if manager.recording_status() is None:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail="Camera is not recording",
+		)
+
+	rec_status = manager.recording_status()
+
+	try:
+		await manager.stop_recording()
+	finally:
+		await stop_camera_stream_by_id(camera_id, background=True)
+
+	if rec_status is not None:
+		return RecordStatusResponse(**{**rec_status, "is_recording": False})
+
+	return RecordStatusResponse(is_recording=False)
 
 
 @router.get(
