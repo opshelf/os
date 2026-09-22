@@ -135,42 +135,6 @@
 		}
 	}
 
-	function formatBytes(size: number | null): string {
-		if (size === null) {
-			return '-';
-		}
-
-		if (size < 1024) {
-			return `${size} B`;
-		}
-
-		if (size < 1024 * 1024) {
-			return `${(size / 1024).toFixed(1)} KB`;
-		}
-
-		return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-	}
-
-	function formatDuration(seconds: number | null): string {
-		if (seconds === null) {
-			return '-';
-		}
-
-		const whole = Math.floor(seconds);
-		const minutes = Math.floor(whole / 60);
-		const rest = whole % 60;
-		return `${minutes}:${rest.toString().padStart(2, '0')}`;
-	}
-
-	function formatTimestamp(iso: string): string {
-		const date = new Date(iso);
-
-		if (Number.isNaN(date.getTime()) === true) {
-			return iso;
-		}
-
-		return date.toLocaleString();
-	}
 </script>
 
 {#if loading}
@@ -179,8 +143,6 @@
 	<ErrorMessage message={pageError} />
 {:else}
 	<section>
-		<h2>cameras</h2>
-
 		{#if cameras.length === 0}
 			<p>no cameras available</p>
 		{:else}
@@ -189,7 +151,6 @@
 					<tr>
 						<th>camera</th>
 						<th>status</th>
-						<th>recording</th>
 						<th></th>
 					</tr>
 				</thead>
@@ -198,25 +159,8 @@
 						{@const status = recordingStatus.get(camera.id)}
 						{@const isRecording = status?.is_recording === true}
 						<tr>
-							<td>
-								{camera.id}
-								<span class="dim">({camera.type})</span>
-							</td>
-							<td>
-								{camera.online === true ? 'online' : 'offline'}
-								{camera.running === true ? ' · running' : ''}
-							</td>
-							<td>
-								{#if isRecording}
-									<span class="recording-label">
-										recording {status?.source ?? ''}
-									</span>
-									{formatDuration(status?.elapsed_s ?? null)}
-									· {formatBytes(status?.size_bytes ?? null)}
-								{:else}
-									<span class="dim">idle</span>
-								{/if}
-							</td>
+							<td>{camera.id}</td>
+							<td>{camera.online === true ? 'online' : 'offline'}</td>
 							<td>
 								<button
 									type="button"
@@ -237,8 +181,6 @@
 	<div class="section-gap"></div>
 
 	<section>
-		<h2>recordings</h2>
-
 		{#if recordings.length === 0}
 			<p>no recorded files</p>
 		{:else}
@@ -246,10 +188,6 @@
 				<thead>
 					<tr>
 						<th>file</th>
-						<th>camera</th>
-						<th>size</th>
-						<th>duration</th>
-						<th>created</th>
 						<th></th>
 					</tr>
 				</thead>
@@ -257,10 +195,6 @@
 					{#each recordings as file (file.camera_id + file.file_name)}
 						<tr>
 							<td>{file.file_name}</td>
-							<td>{file.camera_id}</td>
-							<td>{formatBytes(file.size_bytes)}</td>
-							<td>{formatDuration(file.duration_s)}</td>
-							<td>{formatTimestamp(file.modified_at)}</td>
 							<td class="button-cell">
 								<a
 									href={buildRecordingDownloadUrl(file.camera_id, file.file_name)}
@@ -288,16 +222,6 @@
 		height: 1.5em;
 	}
 
-	.dim {
-		opacity: 0.6;
-		font-size: 0.9em;
-	}
-
-	.recording-label {
-		color: #e05020;
-		font-weight: 700;
-	}
-
 	.record-toggle.active {
 		background: #e05020;
 		color: white;
@@ -310,5 +234,10 @@
 	.button-cell a,
 	.button-cell button {
 		margin-left: 0.5em;
+	}
+
+	.button-cell a {
+		color: black;
+		text-decoration: none;
 	}
 </style>

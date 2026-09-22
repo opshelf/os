@@ -135,7 +135,7 @@ def _wait_finalized(recorder: CameraDiskRecorder) -> None:
 
 def test_recorder_remuxes_units_into_decodable_mp4(tmp_path: Path) -> None:
 	units = make_h264_units()
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path)
 	recorder.start()
 
@@ -193,7 +193,7 @@ def test_recorder_remuxes_hevc_units_into_decodable_mp4(tmp_path: Path) -> None:
 	except Exception as exc:
 		pytest.skip(f"libx265 is unavailable: {exc}")
 
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path, codec_name="hevc")
 	recorder.start()
 
@@ -228,7 +228,7 @@ def test_recorder_drops_units_before_first_key(tmp_path: Path) -> None:
 	units = make_h264_units()
 	# units[0] carries SPS/PPS/IDR; the rest are deltas until the next key.
 	assert units[0] != units[1]
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path)
 	recorder.start()
 
@@ -261,7 +261,7 @@ def test_remux_batch_drops_units_before_a_mid_batch_key(tmp_path: Path) -> None:
 	batch = units[2:6]
 	assert [_is_key_unit(unit) for unit in batch] == [False, False, True, False]
 
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	path.parent.mkdir(parents=True)
 	recorder = CameraDiskRecorder("cam", "view", path)
 	recorder._output_container = av.open(str(path), mode="w")
@@ -291,7 +291,7 @@ def test_recorder_drops_units_before_a_key_inside_a_burst(tmp_path: Path) -> Non
 	burst = units[2:6]
 	assert [_is_key_unit(unit) for unit in burst] == [False, False, True, False]
 
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path)
 	for unit in burst:
 		recorder.push(unit, "view")
@@ -315,7 +315,7 @@ def test_stop_drain_writes_nothing_without_a_key_unit(tmp_path: Path) -> None:
 	units = [unit for unit in make_h264_units(n=40, keyint=20) if _is_key_unit(unit) is False][:8]
 	assert len(units) == 8
 
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path)
 	for unit in units:
 		recorder.push(unit, "view")
@@ -332,7 +332,7 @@ def test_stop_drain_writes_nothing_without_a_key_unit(tmp_path: Path) -> None:
 
 
 def test_recorder_auto_stops_at_max_duration(tmp_path: Path) -> None:
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path, max_duration_s=1)
 	recorder.start()
 
@@ -345,7 +345,7 @@ def test_recorder_push_never_blocks_and_keeps_newest(tmp_path: Path, monkeypatch
 	monkeypatch.setattr(
 		"openshelf_os_server.core.camera_recording.RECORDER_QUEUE_MAXSIZE", 3
 	)
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path)
 
 	units = [b"\x00\x00\x00\x01\x41%s" % b"x" * i for i in range(8)]
@@ -362,7 +362,7 @@ def test_recorder_push_never_blocks_and_keeps_newest(tmp_path: Path, monkeypatch
 
 def test_recorder_ignores_other_sources(tmp_path: Path) -> None:
 	units = make_h264_units()
-	path = tmp_path / "cam" / build_recording_file_name("record")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "record", path)
 	recorder.start()
 
@@ -383,7 +383,7 @@ def test_recorder_ignores_other_sources(tmp_path: Path) -> None:
 
 
 def test_recorder_update_meta_switches_codec(tmp_path: Path) -> None:
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path)
 	recorder.update_meta("view", (1920, 1080, 30.0, "hevc"))
 	recorder.update_meta("record", (1920, 1080, 30.0, "hevc"))
@@ -397,7 +397,7 @@ def test_update_meta_after_the_track_exists_keeps_the_file_codec(tmp_path: Path)
 	# ignored for this file. Flipping the demux format under the existing track
 	# would mux hevc payloads into an h264 track.
 	units = make_h264_units(n=12, keyint=4)
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path)
 	recorder.start()
 
@@ -440,7 +440,7 @@ def test_update_meta_never_adds_a_second_output_track(tmp_path: Path) -> None:
 	# remuxed packets always carry the raw demuxer's stream_index 0, so PyAV
 	# would buffer every later packet for that track's extradata and write no
 	# moov at all.
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	path.parent.mkdir(parents=True)
 	recorder = CameraDiskRecorder("cam", "view", path)
 	recorder._output_container = av.open(str(path), mode="w")
@@ -465,7 +465,7 @@ def test_meta_before_the_first_unit_creates_the_hevc_track(tmp_path: Path) -> No
 		pytest.skip(f"libx265 is unavailable: {exc}")
 
 	assert _is_hevc_key_unit(units[0]) is True
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path)
 	recorder.update_meta("view", (1920, 1080, 25.0, "hevc"))
 	recorder.start()
@@ -489,8 +489,8 @@ def test_meta_before_the_first_unit_creates_the_hevc_track(tmp_path: Path) -> No
 
 def test_store_lists_and_deletes_files(tmp_path: Path) -> None:
 	store = CameraRecordingStore(tmp_path / "recordings")
-	file_name = build_recording_file_name("view")
-	path = store.new_file_path("overview_two", "view")
+	file_name = build_recording_file_name("overview_two")
+	path = store.new_file_path("overview_two")
 	path.parent.mkdir(parents=True)
 	path.write_bytes(b"video-bytes")
 
@@ -510,8 +510,8 @@ def test_store_ignores_invalid_names(tmp_path: Path) -> None:
 	camera_dir = tmp_path / "recordings" / "overview_two"
 	camera_dir.mkdir(parents=True)
 	(camera_dir / "notes.txt").write_text("x")
-	(camera_dir / "20260101T000000Z-weird.mp4").write_text("x")
-	(camera_dir / "20260101T000000Z-view-2x.mp4").write_text("x")
+	(camera_dir / "260101000000-overview_two-2x.mp4").write_text("x")
+	(camera_dir / "26010100000-overview_two.mp4").write_text("x")
 
 	assert store.list_recordings() == []
 
@@ -520,7 +520,7 @@ def test_store_resolve_rejects_traversal(tmp_path: Path) -> None:
 	store = CameraRecordingStore(tmp_path / "recordings")
 
 	with pytest.raises(ValueError):
-		store.resolve("../", "20260101T000000Z-view.mp4")
+		store.resolve("../", "260101000000-cam.mp4")
 
 	with pytest.raises(ValueError):
 		store.resolve("overview_two", "../../etc/passwd")
@@ -528,8 +528,8 @@ def test_store_resolve_rejects_traversal(tmp_path: Path) -> None:
 
 def test_store_marks_active_file(tmp_path: Path) -> None:
 	store = CameraRecordingStore(tmp_path / "recordings")
-	file_name = build_recording_file_name("view")
-	path = store.new_file_path("tool", "view")
+	file_name = build_recording_file_name("tool")
+	path = store.new_file_path("tool")
 	path.parent.mkdir(parents=True)
 	path.write_bytes(b"video-bytes")
 
@@ -550,25 +550,25 @@ def test_store_allocates_unused_names_inside_the_same_second(tmp_path: Path) -> 
 	store = CameraRecordingStore(tmp_path / "recordings")
 	when = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
-	first = store.new_file_path("tool", "view", when)
-	assert first.name == "20260102T030405Z-view.mp4"
+	first = store.new_file_path("tool", when)
+	assert first.name == "260102030405-tool.mp4"
 	first.parent.mkdir(parents=True)
 	first.write_bytes(b"take-one")
 
-	second = store.new_file_path("tool", "view", when)
-	assert second.name == "20260102T030405Z-view-2.mp4"
+	second = store.new_file_path("tool", when)
+	assert second.name == "260102030405-tool-2.mp4"
 	second.write_bytes(b"take-two")
 
-	assert store.new_file_path("tool", "view", when).name == "20260102T030405Z-view-3.mp4"
-	# Other sources and later seconds keep their own sequence.
-	assert store.new_file_path("tool", "record", when).name == "20260102T030405Z-record.mp4"
-	assert store.new_file_path("tool", "view", when + timedelta(seconds=1)).name == "20260102T030406Z-view.mp4"
+	assert store.new_file_path("tool", when).name == "260102030405-tool-3.mp4"
+	# Other cameras and later seconds keep their own sequence.
+	assert store.new_file_path("overview_two", when).name == "260102030405-overview_two.mp4"
+	assert store.new_file_path("tool", when + timedelta(seconds=1)).name == "260102030406-tool.mp4"
 
 	# resolve still gates the counter names, so download and delete reach them.
 	assert store.resolve("tool", second.name) == second
 	assert sorted(e["file_name"] for e in store.list_recordings()) == [
-		"20260102T030405Z-view-2.mp4",
-		"20260102T030405Z-view.mp4",
+		"260102030405-tool-2.mp4",
+		"260102030405-tool.mp4",
 	]
 
 	store.delete("tool", second.name)
@@ -584,7 +584,7 @@ def test_two_take_recordings_keep_both_files(tmp_path: Path) -> None:
 	takes: list[tuple[Path, int]] = []
 
 	for _ in range(2):
-		path = store.new_file_path("overview_two", "view", when)
+		path = store.new_file_path("overview_two", when)
 		recorder = CameraDiskRecorder("overview_two", "view", path)
 		recorder.start()
 
@@ -597,8 +597,8 @@ def test_two_take_recordings_keep_both_files(tmp_path: Path) -> None:
 		takes.append((path, recorder.written_packets))
 
 	assert [path.name for path, _ in takes] == [
-		"20260102T030405Z-view.mp4",
-		"20260102T030405Z-view-2.mp4",
+		"260102030405-overview_two.mp4",
+		"260102030405-overview_two-2.mp4",
 	]
 
 	for path, written in takes:
@@ -620,7 +620,7 @@ def test_manager_drain_forwards_units_to_recorder(tmp_path: Path) -> None:
 	# Stay under the queue maxsize: put() blocks once the deque is full on
 	# this platform, and the real reader thread only ever queues one unit ahead.
 	units = make_h264_units(n=8)
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = CameraDiskRecorder("cam", "view", path)
 	recorder.start()
 	manager._disk_recorder = recorder
@@ -842,23 +842,23 @@ async def test_concurrent_delete_releases_lease_once_with_real_manager(
 
 def test_store_file_name_format() -> None:
 	store = CameraRecordingStore(Path("unused"))
-	name = build_recording_file_name("view", None)
+	name = build_recording_file_name("cam", None)
 
-	assert name.endswith("-view.mp4")
+	assert name.endswith("-cam.mp4")
 
-	for source in ("view", "record"):
-		file_name = build_recording_file_name(source)
+	for camera_id in ("cam", "overview_two"):
+		file_name = build_recording_file_name(camera_id)
 		assert store.validate_file_name(file_name) is True
 		# The counter suffix a same-second take is allocated stays valid.
 		assert store.validate_file_name(file_name.replace(".mp4", "-2.mp4")) is True
 
 	for malformed in (
-		"20260101T000000Z-view-.mp4",
-		"20260101T000000Z-view-2x.mp4",
-		"20260101T000000Z-view-2.txt",
-		"20260101T00000Z-view-2.mp4",
-		"20260101T000000Z-view-2.MP4",
-		"../20260101T000000Z-view-2.mp4",
+		"260101000000-cam-.mp4",
+		"260101000000-cam-2x.mp4",
+		"260101000000-cam-2.txt",
+		"26010100000-cam-2.mp4",
+		"260101000000-cam-2.MP4",
+		"../260101000000-cam-2.mp4",
 	):
 		assert store.validate_file_name(malformed) is False
 
@@ -903,7 +903,7 @@ async def test_start_and_stop_recording_lifecycle(client: AsyncClient) -> None:
 	status_during = {
 		"is_recording": True,
 		"source": "record",
-		"file_name": "20260101T000000Z-record.mp4",
+		"file_name": "260101000000-overview_two.mp4",
 		"started_at": "2026-01-01T00:00:00+00:00",
 		"elapsed_s": 1.0,
 		"size_bytes": 10,
@@ -941,7 +941,7 @@ async def test_start_and_stop_recording_lifecycle(client: AsyncClient) -> None:
 
 		status = await client.get("/api/camera/overview_two/record")
 		assert status.status_code == 200
-		assert status.json()["file_name"] == "20260101T000000Z-record.mp4"
+		assert status.json()["file_name"] == "260101000000-overview_two.mp4"
 
 		again = await client.post("/api/camera/overview_two/record")
 		assert again.status_code == 409
@@ -1070,7 +1070,7 @@ async def test_list_recordings_uses_store(
 	client: AsyncClient, tmp_path: Path
 ) -> None:
 	manager = _make_recording_manager_mock()
-	file_name = build_recording_file_name("view")
+	file_name = build_recording_file_name("overview_two")
 	path = tmp_path / "recordings" / "overview_two" / file_name
 	path.parent.mkdir(parents=True)
 	path.write_bytes(b"video-bytes")
@@ -1108,11 +1108,11 @@ async def test_list_recordings_survives_registry_pop_during_reap(
 	"dictionary changed size during iteration" and 500s the endpoint the demo
 	 page polls every 2 s.
 	"""
-	file_name = build_recording_file_name("view")
+	file_name = build_recording_file_name("cam")
 	store = CameraRecordingStore(tmp_path / "recordings")
 
 	for camera_id in ("tool", "overview_two"):
-		path = store.root / camera_id / file_name
+		path = store.root / camera_id / build_recording_file_name(camera_id)
 		path.parent.mkdir(parents=True)
 		path.write_bytes(b"video-bytes")
 
@@ -1120,7 +1120,11 @@ async def test_list_recordings_survives_registry_pop_during_reap(
 	# the listing loop; the second camera must still be reached and listed.
 	tearing_down = _make_recording_manager_mock()
 	tearing_down.recording_status = MagicMock(
-		return_value={"is_recording": False, "source": "view", "file_name": file_name}
+		return_value={
+			"is_recording": False,
+			"source": "view",
+			"file_name": build_recording_file_name("tool"),
+		}
 	)
 	tearing_down.stop_recording = AsyncMock(
 		side_effect=lambda *a, **k: camera_registry.pop("tool", None)
@@ -1128,7 +1132,11 @@ async def test_list_recordings_survives_registry_pop_during_reap(
 
 	recording = _make_recording_manager_mock()
 	recording.recording_status = MagicMock(
-		return_value={"is_recording": True, "source": "view", "file_name": file_name}
+		return_value={
+			"is_recording": True,
+			"source": "view",
+			"file_name": build_recording_file_name("overview_two"),
+		}
 	)
 
 	with (
@@ -1159,7 +1167,7 @@ async def test_list_recordings_survives_registry_pop_during_reap(
 
 @pytest.mark.anyio
 async def test_download_recording(client: AsyncClient, tmp_path: Path) -> None:
-	file_name = build_recording_file_name("view")
+	file_name = build_recording_file_name("tool")
 	path = tmp_path / "recordings" / "tool" / file_name
 	path.parent.mkdir(parents=True)
 	path.write_bytes(b"video-bytes")
@@ -1173,7 +1181,8 @@ async def test_download_recording(client: AsyncClient, tmp_path: Path) -> None:
 		assert ok.content == b"video-bytes"
 
 		missing = await client.get(
-			f"/api/camera/recordings/tool/{build_recording_file_name('record')}/download"
+			f"/api/camera/recordings/tool/"
+			f"{build_recording_file_name('tool', datetime.now(timezone.utc) + timedelta(seconds=1))}/download"
 		)
 		assert missing.status_code == 404
 
@@ -1183,7 +1192,7 @@ async def test_download_recording(client: AsyncClient, tmp_path: Path) -> None:
 
 @pytest.mark.anyio
 async def test_delete_recording(client: AsyncClient, tmp_path: Path) -> None:
-	file_name = build_recording_file_name("view")
+	file_name = build_recording_file_name("tool")
 	path = tmp_path / "recordings" / "tool" / file_name
 	path.parent.mkdir(parents=True)
 	path.write_bytes(b"video-bytes")
@@ -1223,7 +1232,7 @@ async def test_status_poll_releases_stale_lease_after_auto_stop(
 	finalized_status: dict = {
 		"is_recording": False,
 		"source": "record",
-		"file_name": "20260101T000000Z-record.mp4",
+		"file_name": "260101000000-overview_two.mp4",
 		"started_at": "2026-01-01T00:00:00+00:00",
 		"elapsed_s": 30.0,
 		"size_bytes": 10,
@@ -1283,7 +1292,7 @@ async def test_status_poll_releases_stale_lease_after_recorder_crash(
 	crashed_status: dict = {
 		"is_recording": False,
 		"source": "record",
-		"file_name": "20260101T000000Z-record.mp4",
+		"file_name": "260101000000-overview_two.mp4",
 		"started_at": "2026-01-01T00:00:00+00:00",
 		"elapsed_s": 30.0,
 		"size_bytes": 10,
@@ -1341,7 +1350,7 @@ async def test_reap_skips_release_when_concurrent_stop_cleared_recorder() -> Non
 		return_value={
 			"is_recording": False,
 			"source": "record",
-			"file_name": "20260101T000000Z-record.mp4",
+			"file_name": "260101000000-overview_two.mp4",
 			"stop_reason": None,
 		}
 	)
@@ -1368,7 +1377,7 @@ async def test_status_poll_releases_stale_lease_after_explicit_stop(
 	stopped_status: dict = {
 		"is_recording": False,
 		"source": "record",
-		"file_name": "20260101T000000Z-record.mp4",
+		"file_name": "260101000000-overview_two.mp4",
 		"started_at": "2026-01-01T00:00:00+00:00",
 		"elapsed_s": 10.0,
 		"size_bytes": 10,
@@ -1417,7 +1426,7 @@ async def test_concurrent_delete_releases_lease_once(client: AsyncClient) -> Non
 	recording_status_dict: dict = {
 		"is_recording": True,
 		"source": "record",
-		"file_name": "20260101T000000Z-record.mp4",
+		"file_name": "260101000000-overview_two.mp4",
 		"started_at": "2026-01-01T00:00:00+00:00",
 		"elapsed_s": 1.0,
 		"size_bytes": 10,
@@ -1471,7 +1480,7 @@ async def test_start_recording_reaps_stale_auto_stop_before_new_lease(
 	fresh_status: dict = {
 		"is_recording": True,
 		"source": "record",
-		"file_name": "20260101T000000Z-record.mp4",
+		"file_name": "260101000000-overview_two.mp4",
 		"started_at": "2026-01-01T00:00:00+00:00",
 		"elapsed_s": 0.0,
 		"size_bytes": 0,
@@ -1521,7 +1530,7 @@ async def test_mjpeg_recorder_samples_frames_into_mp4(tmp_path: Path) -> None:
 		return buffer.tobytes()
 
 	frames = iter([make_jpeg() for _ in range(100)])
-	path = tmp_path / "cam" / build_recording_file_name("view")
+	path = tmp_path / "cam" / build_recording_file_name("cam")
 	recorder = MjpegDiskRecorder("cam", path, frame_fetch=lambda: _next_frame(frames))
 	recorder.start()
 

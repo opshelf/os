@@ -558,7 +558,7 @@ class CameraStreamManager:
 
 		recorder = MjpegDiskRecorder(
 			camera_id=camera_id,
-			path=get_recording_store().new_file_path(camera_id, "view"),
+			path=get_recording_store().new_file_path(camera_id),
 			max_duration_s=max_duration_s,
 			frame_fetch=self.get_latest_frame,
 		)
@@ -827,7 +827,7 @@ class ToolCameraStreamManager:
 		recorder = CameraDiskRecorder(
 			camera_id=camera_id,
 			source=source,
-			path=get_recording_store().new_file_path(camera_id, source),
+			path=get_recording_store().new_file_path(camera_id),
 			max_duration_s=max_duration_s,
 			codec_name=codec_name,
 		)

@@ -34,7 +34,7 @@ NALE_DEMUX_FORMAT_BY_CODEC = {"h264": "h264", "hevc": "hevc"}
 # The optional -N suffix marks the Nth take allocated inside one timestamp
 # second (see CameraRecordingStore.new_file_path). Listing, download, and
 # delete all gate on this pattern, so it has to accept those names.
-FILE_NAME_RE = re.compile(r"^\d{8}T\d{6}Z-(view|record)(-\d+)?\.mp4$")
+FILE_NAME_RE = re.compile(r"^\d{12}-[a-z0-9_]{1,32}(-\d+)?\.mp4$")
 CAMERA_ID_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 
 RECORDER_QUEUE_MAXSIZE = 1024
@@ -495,9 +495,9 @@ class MjpegDiskRecorder:
 			self._finalized.set()
 
 
-def build_recording_file_name(source: str, when: datetime | None = None) -> str:
-	stamp = (when or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
-	return f"{stamp}-{source}.mp4"
+def build_recording_file_name(camera_id: str, when: datetime | None = None) -> str:
+	stamp = (when or datetime.now(timezone.utc)).strftime("%y%m%d%H%M%S")
+	return f"{stamp}-{camera_id}.mp4"
 
 
 _default_store: Optional[CameraRecordingStore] = None
@@ -525,7 +525,7 @@ class CameraRecordingStore:
 	def camera_dir(self, camera_id: str) -> Path:
 		return self.root / camera_id
 
-	def new_file_path(self, camera_id: str, source: str, when: datetime | None = None) -> Path:
+	def new_file_path(self, camera_id: str, when: datetime | None = None) -> Path:
 		"""Allocate a file name no existing recording already uses.
 
 		Names resolve to one second, so a take started in the same second as a
@@ -535,7 +535,7 @@ class CameraRecordingStore:
 		listing, download, and delete keep working for it.
 		"""
 		camera_dir = self.camera_dir(camera_id)
-		base = Path(build_recording_file_name(source, when))
+		base = Path(build_recording_file_name(camera_id, when))
 		path = camera_dir / base.name
 		counter = 2
 
@@ -555,6 +555,14 @@ class CameraRecordingStore:
 		# Both names are validated before callers reach here; re-check so the
 		# store stays safe if a new caller forgets.
 		if self.validate_camera_id(camera_id) is False or self.validate_file_name(file_name) is False:
+			raise ValueError(f"invalid recording path: {camera_id}/{file_name}")
+
+		match = re.match(
+			r"^\d{12}-(?P<camera>[a-z0-9_]{1,32})(?:-\d+)?\.mp4$",
+			file_name,
+		)
+
+		if match is None or match["camera"] != camera_id:
 			raise ValueError(f"invalid recording path: {camera_id}/{file_name}")
 
 		return self.camera_dir(camera_id) / file_name
