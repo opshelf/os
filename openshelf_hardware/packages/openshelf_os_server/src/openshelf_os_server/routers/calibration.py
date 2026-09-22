@@ -25,7 +25,7 @@ from openshelf_os.storage import (
 	StorageModuleCellLocation,
 	StorageModuleSide,
 )
-from openshelf_os.exceptions import IOBoxError, MotorError, ToolError
+from openshelf_os.exceptions import ConfigError, IOBoxError, MotorError, MovementError, ToolError
 from hardware.exceptions import MotorError as HardwareMotorError
 
 from openshelf_os_server.core.robot import get_robot_worker
@@ -2009,14 +2009,15 @@ async def get_rotation_angles() -> RotationAnglesResponse:
 @router.post(
     "/rotation/rotate",
     summary="Test tool rotation",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
 )
 async def rotate_to_angle(angle: float):
 	"""Test tool rotation.
 
 	Rotates to the requested angle, clamped to the configured motor limits. Positions the
 	stage as needed for rotation and restores its safe X position. Does not persist
-	front/back calibration.
+	front/back calibration. Blocked by the rotation clearance guard (e.g. the tool is
+	extended) with a 409 that names the unsafe axis; a misconfigured machine returns 400.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
@@ -2043,6 +2044,19 @@ async def rotate_to_angle(angle: float):
 				await tool.restore_safe_rotation_x_position(original_x)
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Rotation failed: {str(e)}", e)
+	except MovementError as e:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail=_build_error_detail(
+				f"Rotation blocked: {str(e)}",
+				code="rotation_blocked",
+			),
+		) from e
+	except ConfigError as e:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=_build_error_detail(f"Invalid rotation configuration: {str(e)}", code="config_error"),
+		) from e
 
 	return {"success": True}
 
