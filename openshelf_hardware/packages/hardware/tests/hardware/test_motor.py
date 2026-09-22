@@ -1,4 +1,7 @@
 import asyncio
+import os
+import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call
 
@@ -9,10 +12,12 @@ from hardware.motor import (
     BRAKE_RELEASE_MARGIN_S,
     MotionAlarmState,
     MotionFaultState,
+    MotionRecordEntry,
     MotionSnapshot,
     MotionWaitState,
     Motor,
     MotorStatus,
+    _prune_motion_fault_dumps,
 )
 from hardware.exceptions import MotorConfigError, MotorError, MotorLimitError
 from hardware.servo import Servo
@@ -1854,3 +1859,92 @@ async def test_motor_throttles_repeated_garbage_position_logs(mock_controller):
     assert first == 7.5
     assert second == 7.5
     motor._logger.warning.assert_called_once()
+
+
+def test_prune_motion_fault_dumps_removes_only_stale_files(tmp_path):
+    now = 1_000_000.0
+    stale = tmp_path / "20260101T000000.000000Z-no_run-motor_1-fault.json"
+    stale.write_text("{}")
+    os.utime(stale, (now - 40 * 86400.0, now - 40 * 86400.0))
+    fresh = tmp_path / "20260922T000000.000000Z-no_run-motor_1-fault.json"
+    fresh.write_text("{}")
+    os.utime(fresh, (now - 1 * 86400.0, now - 1 * 86400.0))
+
+    deleted = _prune_motion_fault_dumps(tmp_path, now=now)
+
+    assert deleted == 1
+    assert not stale.exists()
+    assert fresh.exists()
+
+
+def test_prune_motion_fault_dumps_enforces_max_files_by_oldest_name(tmp_path):
+    now = 1_000_000.0
+    names = [f"20260922T0000{i:02d}.000000Z-no_run-motor_1-fault.json" for i in range(5)]
+    for name in names:
+        path = tmp_path / name
+        path.write_text("{}")
+        os.utime(path, (now, now))
+
+    deleted = _prune_motion_fault_dumps(tmp_path, max_files=2, now=now)
+
+    assert deleted == 3
+    assert {path.name for path in tmp_path.iterdir()} == {names[3], names[4]}
+
+
+def test_prune_motion_fault_dumps_ignores_non_json_files_and_missing_dir(tmp_path):
+    (tmp_path / "notes.txt").write_text("{}")
+    (tmp_path / "subdir").mkdir()
+
+    assert _prune_motion_fault_dumps(tmp_path) == 0
+    assert (tmp_path / "notes.txt").exists()
+    assert (tmp_path / "subdir").exists()
+    assert _prune_motion_fault_dumps(tmp_path / "does_not_exist") == 0
+
+
+@pytest.mark.asyncio
+async def test_dump_flight_recorder_prunes_stale_dumps(mock_controller, tmp_path, monkeypatch):
+    import hardware.motor as motor_module
+
+    now = time.time()
+    stale = tmp_path / "20260101T000000.000000Z-no_run-motor_1-fault.json"
+    stale.write_text("{}")
+    os.utime(stale, (now - 40 * 86400.0, now - 40 * 86400.0))
+    monkeypatch.setattr(motor_module, "MOTION_FAULT_DUMP_DIR", tmp_path)
+
+    motor = Motor(
+        mock_controller,
+        make_motor_params(logical_to_physical=lambda value: value),
+    )
+    motor._logger = Mock()
+    motor._flight_recorder.append(
+        MotionRecordEntry(
+            timestamp="2026-09-22T00:00:00Z",
+            elapsed_s=1.0,
+            motor_id=1,
+            motor_name=None,
+            status_word=None,
+            is_complete=False,
+            has_fault_bit=False,
+            alarm_code=None,
+            alarm_active=False,
+            raw_position=None,
+            logical_position_mm=None,
+            position_read_latency_s=None,
+            position_delta_mm=None,
+            seconds_since_progress=0.1,
+            command_target_mm=None,
+            command_start_mm=None,
+            command_rpm=None,
+            command_accel=None,
+            safety_blocked=False,
+            run_id=None,
+            correlation_id=None,
+        )
+    )
+    state = MotionWaitState(start_time=now, last_movement_time=now)
+
+    path = motor._dump_flight_recorder(reason="fault", state=state)
+
+    assert path is not None
+    assert Path(path).exists()
+    assert not stale.exists()
