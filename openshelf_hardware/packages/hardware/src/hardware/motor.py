@@ -176,6 +176,59 @@ class MotionRecordEntry:
 
 MOTION_FLIGHT_RECORDER_SIZE = 256
 MOTION_FAULT_DUMP_DIR = Path("data/motion_faults")
+MOTION_FAULT_DUMP_MAX_FILES = 256
+MOTION_FAULT_DUMP_MAX_AGE_DAYS = 30.0
+
+
+def _prune_motion_fault_dumps(
+    directory: Path,
+    *,
+    max_files: int = MOTION_FAULT_DUMP_MAX_FILES,
+    max_age_days: float = MOTION_FAULT_DUMP_MAX_AGE_DAYS,
+    now: float | None = None,
+) -> int:
+    """Delete old flight recorder dumps so the dump directory stays bounded.
+
+    Removes dumps older than max_age_days, then the oldest (by filename
+    timestamp) beyond max_files. Returns the number of files deleted.
+    """
+    if not directory.is_dir():
+        return 0
+    timestamp = time.time() if now is None else now
+    cutoff = timestamp - max_age_days * 86400.0
+    entries = [
+        entry
+        for entry in directory.iterdir()
+        if entry.is_file() and entry.suffix == ".json"
+    ]
+    if not entries:
+        return 0
+
+    def _mtime(entry: Path) -> float:
+        try:
+            return entry.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    doomed = {entry.name for entry in entries if _mtime(entry) < cutoff}
+    survivors = sorted(
+        (entry for entry in entries if entry.name not in doomed),
+        key=lambda entry: entry.name,
+    )
+    if len(survivors) > max_files:
+        for entry in survivors[: len(survivors) - max_files]:
+            doomed.add(entry.name)
+
+    deleted = 0
+    for entry in entries:
+        if entry.name not in doomed:
+            continue
+        try:
+            entry.unlink()
+            deleted += 1
+        except OSError:
+            continue
+    return deleted
 
 class Motor():
     _motor_id: int
@@ -491,6 +544,12 @@ class Motor():
                     "sample_count": len(self._flight_recorder),
                 },
             )
+            pruned = _prune_motion_fault_dumps(MOTION_FAULT_DUMP_DIR)
+            if pruned > 0:
+                self._logger.warning(
+                    "Motion flight recorder dumps pruned",
+                    extra={"motor_id": self._motor_id, "deleted_count": pruned},
+                )
             return str(path)
         except Exception as exc:
             self._logger.warning(
