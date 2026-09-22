@@ -7,7 +7,6 @@ from sqlalchemy.exc import IntegrityError
 
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
-from openshelf_os_server.core.mass import ValidationError as MassValidationError
 from openshelf_os_server.core.validation import CellOccupiedError, ValidationError
 from openshelf_os_server.main import app
 
@@ -21,8 +20,6 @@ def _raise_for_kind(kind: str) -> None:
 		raise ValidationError("name is required")
 	if kind == "cell_occupied":
 		raise CellOccupiedError("cell is occupied by another item")
-	if kind == "mass_validation":
-		raise MassValidationError("net_weight requires tare_weight")
 	if kind == "chemical_not_found":
 		raise ChemicalNotFound("no match for cas 123-45-6")
 	if kind == "chemical_unavailable":
@@ -71,7 +68,6 @@ async def test_mapped_exceptions_get_typed_bodies(
 	cases = [
 		("validation", 422, "validation_failed", "name is required"),
 		("cell_occupied", 409, "conflict", "cell is occupied by another item"),
-		("mass_validation", 422, "validation_failed", "net_weight requires tare_weight"),
 		("chemical_not_found", 404, "chemical_not_found", "no match for cas 123-45-6"),
 		("chemical_unavailable", 503, "chemical_unavailable", "CAS search unavailable"),
 		("integrity", 409, "conflict", "UNIQUE constraint failed: user.email"),

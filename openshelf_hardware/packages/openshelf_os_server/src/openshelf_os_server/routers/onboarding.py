@@ -6,6 +6,7 @@ state is pending. Completing onboarding requires the newly created admin to
 authenticate.
 """
 from openshelf_os_server.documentation import response_docs
+from openshelf_os_server.errors import api_error
 import asyncio
 import os
 import uuid
@@ -102,18 +103,22 @@ def _write_onboarding_state(value: str) -> None:
 
 async def ensure_onboarding_state(db: AsyncSession) -> str:
 	"""Create explicit state once, migrating already-provisioned installations."""
-	state = _read_onboarding_state()
-	if state is not None:
-		return state
-
-	async with _onboarding_state_lock:
+	try:
 		state = _read_onboarding_state()
 		if state is not None:
 			return state
 
-		state = ONBOARDING_COMPLETED if await _count_regular_users(db) > 0 else ONBOARDING_PENDING
-		_write_onboarding_state(state)
-		return state
+		async with _onboarding_state_lock:
+			state = _read_onboarding_state()
+			if state is not None:
+				return state
+
+			state = ONBOARDING_COMPLETED if await _count_regular_users(db) > 0 else ONBOARDING_PENDING
+			_write_onboarding_state(state)
+			return state
+	except (RuntimeError, ValueError) as exc:
+		# A corrupt or unwritable state file is a device fault, not a client error.
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", str(exc)) from exc
 
 
 async def require_first_run(db: AsyncSession = Depends(get_db)) -> None:

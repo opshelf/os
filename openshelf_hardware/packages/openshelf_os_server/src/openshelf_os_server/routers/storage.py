@@ -483,7 +483,10 @@ async def get_bins(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     home and is not an individual item mass.
     """
     service = BinStorageService(session)
-    await service.sync_config()
+    try:
+        await service.sync_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"bins": await service.list_bins()}
 
 
@@ -806,7 +809,10 @@ async def create_bin_workflow(
     """
     storage = StorageService(session)
     service = BinStorageService(session)
-    await service.sync_config()
+    try:
+        await service.sync_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     item = await storage.get_item(request.barcode)
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -1101,34 +1107,34 @@ async def create_item(
     """
     storage_service = StorageService(session)
 
+    if await is_reserved_bin_barcode(item.barcode, session):
+        raise HTTPException(status_code=409, detail="Barcode is reserved for a storage bin")
+    existing = await storage_service.get_item(item.barcode)
+    bin_service = BinStorageService(session)
+    dimensions = item.dimensions
+    metadata = item.item_metadata or {}
+    access_level_id = item.access_level_id
+    if existing is not None and await bin_service.item_bin(existing.id) is not None:
+        provided_fields = item.model_fields_set
+        dimensions_changed = (
+            "dimensions" in provided_fields and item.dimensions != existing.dimensions
+        )
+        access_changed = (
+            "access_level_id" in provided_fields
+            and item.access_level_id != existing.access_level_id
+        )
+        if dimensions_changed or access_changed:
+            raise HTTPException(
+                status_code=409,
+                detail="Retrieve the item before changing dimensions or access level",
+            )
+        if "dimensions" not in provided_fields:
+            dimensions = existing.dimensions
+        if "item_metadata" not in provided_fields:
+            metadata = existing.item_metadata or {}
+        if "access_level_id" not in provided_fields:
+            access_level_id = existing.access_level_id
     try:
-        if await is_reserved_bin_barcode(item.barcode, session):
-            raise HTTPException(status_code=409, detail="Barcode is reserved for a storage bin")
-        existing = await storage_service.get_item(item.barcode)
-        bin_service = BinStorageService(session)
-        dimensions = item.dimensions
-        metadata = item.item_metadata or {}
-        access_level_id = item.access_level_id
-        if existing is not None and await bin_service.item_bin(existing.id) is not None:
-            provided_fields = item.model_fields_set
-            dimensions_changed = (
-                "dimensions" in provided_fields and item.dimensions != existing.dimensions
-            )
-            access_changed = (
-                "access_level_id" in provided_fields
-                and item.access_level_id != existing.access_level_id
-            )
-            if dimensions_changed or access_changed:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Retrieve the item before changing dimensions or access level",
-                )
-            if "dimensions" not in provided_fields:
-                dimensions = existing.dimensions
-            if "item_metadata" not in provided_fields:
-                metadata = existing.item_metadata or {}
-            if "access_level_id" not in provided_fields:
-                access_level_id = existing.access_level_id
         db_item = await storage_service.create_item(
             barcode=item.barcode,
             name=item.name,
@@ -1139,17 +1145,12 @@ async def create_item(
             access_level_id=access_level_id,
             mass_values={k: v for k, v in item.model_dump(exclude_unset=True).items() if k in (*MASS_FIELDS, "weight")},
         )
-
-        locations = await storage_service.get_item_locations(item.barcode)
-
-        return await _build_item_payload_with_bin(db_item, locations, current_user, session)
-
-    except HTTPException:
-        raise
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    locations = await storage_service.get_item_locations(item.barcode)
+
+    return await _build_item_payload_with_bin(db_item, locations, current_user, session)
 
 
 @router.post(
