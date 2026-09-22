@@ -892,7 +892,7 @@ app.add_middleware(
 	allow_headers=["*"],
 )
 app.add_middleware(CorrelationIdMiddleware)
-app.add_middleware(AuditMiddleware)
+app.add_middleware(AuditMiddleware, sentry_enabled=sentry_enabled)
 register_mapped_handlers(app)
 
 
@@ -900,7 +900,7 @@ register_mapped_handlers(app)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
 	correlation_id = get_correlation_id() or request_correlation_id(request)
 
-	capture_unhandled_exception(exc, request.url.path, request.method, correlation_id)
+	capture_unhandled_exception(exc, request.url.path, request.method, correlation_id, enabled=sentry_enabled)
 
 	logger.error(
 		"unhandled_exception",
