@@ -133,13 +133,13 @@ async def require_first_run(db: AsyncSession = Depends(get_db)) -> None:
     "/status",
     response_model=OnboardingStatus,
     summary="Read first-run setup state",
-    responses=response_docs(),
+    responses=response_docs(errors=(503,)),
 )
 async def get_onboarding_status(db: AsyncSession = Depends(get_db)) -> OnboardingStatus:
 	"""Read first-run setup state.
 
 	Public endpoint indicating whether onboarding is pending. The check ensures onboarding
-	state exists; it is not a robot health check.
+	state exists; it is not a robot health check. A corrupt state file returns `503`.
 	"""
 	return OnboardingStatus(needs_onboarding=await ensure_onboarding_state(db) == ONBOARDING_PENDING)
 
@@ -260,7 +260,7 @@ async def create_admin_user(
     response_model=OnboardingStatus,
     dependencies=[Depends(require_permissions("users:write"))],
     summary="Complete first-run setup",
-    responses=response_docs(errors=(401, 403)),
+    responses=response_docs(errors=(401, 403, 503)),
 )
 async def complete_onboarding() -> OnboardingStatus:
 	"""Complete first-run setup.
