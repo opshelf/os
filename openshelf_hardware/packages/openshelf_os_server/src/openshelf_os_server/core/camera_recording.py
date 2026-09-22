@@ -24,24 +24,41 @@ import av
 import cv2
 import numpy as np
 
-from openshelf_os_server.core.camera import _au_contains_idr
+from openshelf_os_server.core.camera import _au_contains_hevc_keyframe, _au_contains_idr
 from openshelf_os_server.core.logging_config import get_logger
 
 logger = get_logger(__name__)
 
 RECORDINGS_DIRNAME = "camera_recordings"
 NALE_DEMUX_FORMAT_BY_CODEC = {"h264": "h264", "hevc": "hevc"}
-FILE_NAME_RE = re.compile(r"^\d{8}T\d{6}Z-(view|record)\.mp4$")
+# The optional -N suffix marks the Nth take allocated inside one timestamp
+# second (see CameraRecordingStore.new_file_path). Listing, download, and
+# delete all gate on this pattern, so it has to accept those names.
+FILE_NAME_RE = re.compile(r"^\d{8}T\d{6}Z-(view|record)(-\d+)?\.mp4$")
 CAMERA_ID_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 
 RECORDER_QUEUE_MAXSIZE = 1024
 RECORD_DEFAULT_FPS = 25.0
 
 
-def _batch_has_key(units: list[bytes]) -> bool:
-	return any(
-		_au_contains_idr(unit, False) or _au_contains_idr(unit, True) for unit in units
-	)
+def _unit_has_key(unit: bytes, codec_name: str) -> bool:
+	if codec_name == "hevc":
+		return _au_contains_hevc_keyframe(unit)
+
+	return _au_contains_idr(unit, False) or _au_contains_idr(unit, True)
+
+
+def _first_key_unit_index(units: list[bytes], codec_name: str) -> int:
+	"""Index of the first key access unit in a batch, or -1 when it has none."""
+	for index, unit in enumerate(units):
+		if _unit_has_key(unit, codec_name):
+			return index
+
+	return -1
+
+
+def _batch_has_key(units: list[bytes], codec_name: str) -> bool:
+	return _first_key_unit_index(units, codec_name) >= 0
 
 
 def _elapsed_status_fields(started_at: float) -> dict[str, Any]:
@@ -75,6 +92,8 @@ class CameraDiskRecorder:
 		self._stop_event = threading.Event()
 		self._finalized = threading.Event()
 		self._output_container: Optional[av.container.OutputContainer] = None
+		self._out_stream: Optional[av.video.VideoStream] = None
+		self._stream_lock = threading.Lock()
 		self.stop_reason: Optional[str] = None
 		self.dropped_units = 0
 		self.written_packets = 0
@@ -89,16 +108,32 @@ class CameraDiskRecorder:
 		return self._finalized.is_set() is False
 
 	def update_meta(self, source: str, payload: Any) -> None:
-		# Meta item: (width, height, fps, codec name).
+		# Meta item: (width, height, fps, codec name). The codec selects both
+		# the demux format and the MP4 output track. The NALU worker emits meta
+		# before any access unit, so the codec is normally resolved before the
+		# first batch creates the track, and the lazy track creation follows it.
+		# A codec change once the track exists is ignored for the duration of
+		# this file (the next recording follows the new codec): the track and
+		# the demux format both stay with the codec the track was created with.
+		# Swapping in a second track could not work anyway: the packets remuxed
+		# here always carry the raw demuxer's stream_index 0, so a track with a
+		# higher index would never receive a packet, and PyAV would buffer every
+		# later packet while waiting for that track's extradata.
 		if source != self.source:
 			return
 
 		if isinstance(payload, tuple) and len(payload) == 4:
 			_width, _height, meta_fps, codec_name = payload
-			if isinstance(meta_fps, float) and meta_fps > 0:
-				self._fps = meta_fps
-			if isinstance(codec_name, str) and codec_name in NALE_DEMUX_FORMAT_BY_CODEC:
-				self._codec_name = codec_name
+			with self._stream_lock:
+				if isinstance(meta_fps, float) and meta_fps > 0:
+					self._fps = meta_fps
+				if (
+					isinstance(codec_name, str)
+					and codec_name in NALE_DEMUX_FORMAT_BY_CODEC
+					and codec_name != self._codec_name
+					and self._out_stream is None
+				):
+					self._codec_name = codec_name
 
 	def push(self, payload: bytes, source: str) -> None:
 		if source != self.source or self._finalized.is_set() is True:
@@ -146,6 +181,7 @@ class CameraDiskRecorder:
 			**_elapsed_status_fields(self.started_at),
 			"size_bytes": size_bytes,
 			"max_duration_s": self.max_duration_s,
+			"stop_reason": self.stop_reason,
 			"dropped_units": self.dropped_units,
 			"written_packets": self.written_packets,
 		}
@@ -155,12 +191,11 @@ class CameraDiskRecorder:
 
 		try:
 			self.path.parent.mkdir(parents=True, exist_ok=True)
+			# The container opens immediately, but the output track is created
+			# lazily so it follows the codec resolved from update_meta.
 			self._output_container = cast(
 				av.container.OutputContainer,
 				av.open(str(self.path), mode="w"),
-			)
-			out_stream = self._output_container.add_stream(
-				"h264", rate=int(round(self._fps))
 			)
 			saw_key_unit = False
 
@@ -179,10 +214,13 @@ class CameraDiskRecorder:
 							unit = self._au_queue.get_nowait()
 						except queue.Empty:
 							break
-						remuxed, next_frame_index = self._remux(
-							[unit], out_stream, saw_key_unit, next_frame_index
+						remuxed, next_frame_index = self._remux_batch(
+							[unit], saw_key_unit, next_frame_index
 						)
-						saw_key_unit = True
+						# A keyless drain must stay keyless: the gate follows the
+						# units actually seen, so the file finalizes empty instead of
+						# opening with deltas that reference an IDR never recorded.
+						saw_key_unit = saw_key_unit or _unit_has_key(unit, self._codec_name)
 						self.written_packets += remuxed
 					break
 
@@ -199,11 +237,11 @@ class CameraDiskRecorder:
 					except queue.Empty:
 						break
 
-				remuxed, next_frame_index = self._remux(
-					units, out_stream, saw_key_unit, next_frame_index
+				remuxed, next_frame_index = self._remux_batch(
+					units, saw_key_unit, next_frame_index
 				)
 				self.written_packets += remuxed
-				saw_key_unit = saw_key_unit or _batch_has_key(units)
+				saw_key_unit = saw_key_unit or _batch_has_key(units, self._codec_name)
 
 			if self._output_container is not None:
 				self._output_container.close()
@@ -233,23 +271,57 @@ class CameraDiskRecorder:
 		finally:
 			self._finalized.set()
 
+	def _ensure_output_stream(self) -> av.video.VideoStream:
+		# Caller holds _stream_lock. The track name follows the codec:
+		# "h264" for h264, "hevc" for hevc.
+		if self._out_stream is not None:
+			return self._out_stream
+
+		if self._output_container is None:
+			raise RuntimeError("recording output container is closed")
+
+		self._out_stream = cast(
+			av.video.VideoStream,
+			self._output_container.add_stream(self._codec_name, rate=int(round(self._fps))),
+		)
+		return self._out_stream
+
+	def _remux_batch(
+		self,
+		units: list[bytes],
+		saw_key_unit: bool,
+		next_frame_index: int,
+	) -> tuple[int, int]:
+		# update_meta may run on the manager's thread, so serialize output
+		# track creation with the remux path. The track is created only when a
+		# batch actually passes the key gate.
+		with self._stream_lock:
+			if saw_key_unit is False:
+				# The gate is per unit, not per batch: a batch may hold the key
+				# anywhere, and the units ahead of it reference an IDR that never
+				# reaches the file. Drop them so the mux starts at the key.
+				first_key = _first_key_unit_index(units, self._codec_name)
+				if first_key < 0:
+					return 0, next_frame_index
+
+				units = units[first_key:]
+
+			out_stream = self._ensure_output_stream()
+			return self._remux(units, out_stream, next_frame_index)
+
 	def _remux(
 		self,
 		units: list[bytes],
 		out_stream: av.video.VideoStream,
-		saw_key_unit: bool,
 		next_frame_index: int,
 	) -> tuple[int, int]:
 		"""Remux one batch of access units into the open MP4.
 
-		Units before the first key unit are dropped so the file is
-		decodable from its first frame. Returns (packets written, next
-		frame index).
+		The key gate is applied per unit in _remux_batch, which trims every
+		access unit ahead of the first key unit, so the file is decodable from
+		its first frame. Returns (packets written, next frame index).
 		"""
 		if len(units) == 0 or out_stream is None:
-			return 0, next_frame_index
-
-		if saw_key_unit is False and _batch_has_key(units) is False:
 			return 0, next_frame_index
 
 		elementary = b"".join(units)
@@ -270,9 +342,15 @@ class CameraDiskRecorder:
 
 				# The raw h264/hevc demuxer leaves timestamps unset; assign a
 				# monotonic frame index at the source rate so the MP4 muxer
-				# has a consistent timeline even across reconnects.
+				# has a consistent timeline even across reconnects. The raw
+				# demuxer also leaves duration unset, so give each sample one
+				# frame period: without it the MP4 muxer writes junk per-sample
+				# durations and players hold the first frames for minutes.
+				# dts stays None on purpose: B-frame sources need the muxer's
+				# dts derivation, not a forced dts == pts.
 				packet.pts = next_frame_index
 				packet.dts = None
+				packet.duration = 1
 				packet.time_base = Fraction(1, int(round(self._fps)))
 				if self._output_container is None:
 					raise RuntimeError("recording output container is closed")
@@ -354,6 +432,7 @@ class MjpegDiskRecorder:
 			**_elapsed_status_fields(self.started_at),
 			"size_bytes": size_bytes,
 			"max_duration_s": self.max_duration_s,
+			"stop_reason": self.stop_reason,
 			"dropped_units": 0,
 			"written_packets": self.frames_written,
 		}
@@ -446,8 +525,25 @@ class CameraRecordingStore:
 	def camera_dir(self, camera_id: str) -> Path:
 		return self.root / camera_id
 
-	def new_file_path(self, camera_id: str, source: str) -> Path:
-		return self.camera_dir(camera_id) / build_recording_file_name(source)
+	def new_file_path(self, camera_id: str, source: str, when: datetime | None = None) -> Path:
+		"""Allocate a file name no existing recording already uses.
+
+		Names resolve to one second, so a take started in the same second as a
+		file already on disk would otherwise be opened over it and truncate it.
+		The first take keeps the exact timestamp name; every later take in that
+		second takes a -2, -3, ... suffix, which FILE_NAME_RE accepts so
+		listing, download, and delete keep working for it.
+		"""
+		camera_dir = self.camera_dir(camera_id)
+		base = Path(build_recording_file_name(source, when))
+		path = camera_dir / base.name
+		counter = 2
+
+		while path.exists():
+			path = camera_dir / f"{base.stem}-{counter}{base.suffix}"
+			counter += 1
+
+		return path
 
 	def validate_camera_id(self, camera_id: str) -> bool:
 		return CAMERA_ID_RE.fullmatch(camera_id) is not None

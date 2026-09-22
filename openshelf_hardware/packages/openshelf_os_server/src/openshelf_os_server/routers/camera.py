@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect, status
@@ -42,6 +43,10 @@ logger = get_logger(__name__)
 MJPEG_MOTION_DIFF_THRESHOLD = 2.5
 MJPEG_HEARTBEAT_SECONDS = 1.0
 
+# Recordings share the data volume with the database, so a start that would
+# leave less than this free is refused before any lease is taken.
+RECORDING_MIN_FREE_BYTES = 1024**3
+
 
 class CameraInfo(BaseModel):
     id: str
@@ -61,7 +66,12 @@ class RecordStartRequest(BaseModel):
         default="auto",
         description="auto (recording stream when configured, else view), view, or record",
     )
-    max_duration_s: Optional[int] = Field(default=None, gt=0, le=3600)
+    max_duration_s: Optional[int] = Field(
+        default=3600,
+        gt=0,
+        le=3600,
+        description="Auto-stop after this many seconds; default 3600 s",
+    )
 
 
 class RecordStatusResponse(BaseModel):
@@ -93,32 +103,60 @@ router = APIRouter(tags=["camera"])
 
 
 def _get_recording_manager(camera_id: str) -> CameraManager:
-    manager = get_camera_manager_by_id(camera_id)
+	manager = get_camera_manager_by_id(camera_id)
 
-    if manager is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Camera '{camera_id}' not found",
-        )
+	if manager is None:
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail=f"Camera '{camera_id}' not found",
+		)
 
-    return manager
+	return manager
 
 
 def _resolve_recording_source(manager: CameraManager, requested: str) -> str:
-    if requested not in ("auto", "view", "record"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid source: {requested}",
-        )
+	if requested not in ("auto", "view", "record"):
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"Invalid source: {requested}",
+		)
 
-    if requested == "auto":
-        return (
-            "record"
-            if isinstance(manager, ToolCameraStreamManager) and manager.recording_url != ""
-            else "view"
-        )
+	if requested == "auto":
+		return (
+			"record"
+			if isinstance(manager, ToolCameraStreamManager) and manager.recording_url != ""
+			else "view"
+		)
 
-    return requested
+	return requested
+
+
+async def _reap_self_stopped(camera_id: str, manager: CameraManager) -> None:
+	"""Clear a finalised recorder and release its background lease.
+
+	Every way a recording ends leaves the POST's background lease held
+	unless the side that clears the recorder releases it: an explicit
+	stop releases it in the DELETE handler, and this function covers the
+	recorder ending on its own (max_duration) or its worker thread dying
+	on an exception (disk full, read-only data dir), where stop_reason
+	stays None. Whoever successfully cleared the recorder releases the
+	lease, exactly once per recording: a ValueError means a concurrent
+	clear already owns it, and a second release could stop a newer
+	recording. Idempotent: once cleared, later calls no-op.
+	"""
+	status = manager.recording_status()
+
+	if status is None or status.get("is_recording") is True:
+		return
+
+	try:
+		await manager.stop_recording()
+	except ValueError:
+		# A concurrent stop already cleared the recorder and owns the
+		# lease release; a second release could stop a newer recording.
+		return
+
+	await stop_camera_stream_by_id(camera_id, background=True)
 
 
 def _mjpeg_frame_thumbnail(frame_bytes: bytes) -> Optional[np.ndarray]:
@@ -228,12 +266,16 @@ async def list_recordings() -> RecordingsResponse:
 	"""
 	active: dict[str, dict] = {}
 
-	for camera_id, manager in camera_registry.items():
+	# Snapshot before the awaits: unregister_camera_manager pops from the live
+	# registry (sizer teardown, camera config reload), which would raise
+	# "dictionary changed size during iteration" mid-reap.
+	for camera_id, manager in list(camera_registry.items()):
+		await _reap_self_stopped(camera_id, manager)
 		rec_status = manager.recording_status()
 		if rec_status is not None and rec_status.get("is_recording") is True:
 			active[camera_id] = rec_status
 
-	files = get_recording_store().list_recordings(active)
+	files = await asyncio.to_thread(get_recording_store().list_recordings, active)
 
 	return RecordingsResponse(recordings=[RecordingFile(**file) for file in files])
 
@@ -329,7 +371,7 @@ async def delete_recording(camera_id: str, file_name: str) -> BooleanSuccess:
     response_model=RecordStatusResponse,
     dependencies=[Depends(get_current_user)],
     summary="Start recording a camera to disk",
-    responses=response_docs(errors=(400, 401, 404, 409)),
+    responses=response_docs(errors=(400, 401, 404, 409, 503)),
 )
 async def start_recording(
     camera_id: str, payload: RecordStartRequest = RecordStartRequest()
@@ -338,10 +380,20 @@ async def start_recording(
 
 	Records the camera at full stream quality into an MP4 on disk. `source` selects
 	the recording stream (the higher-resolution one when configured) or the live
-	view; an already recording camera returns `409`. Requires a user token.
+	view; an already recording camera returns `409`. The recording stops on its own
+	at `max_duration_s` (default 3600 s), and a data volume below the free-space
+	floor returns `503`. Requires a user token.
 	"""
 	manager = _get_recording_manager(camera_id)
 	source = _resolve_recording_source(manager, payload.source or "auto")
+
+	await _reap_self_stopped(camera_id, manager)
+
+	if shutil.disk_usage(get_recording_store().root.parent).free < RECORDING_MIN_FREE_BYTES:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail="insufficient disk space for recording",
+		)
 
 	try:
 		await start_camera_stream_by_id(camera_id, background=True)
@@ -389,6 +441,9 @@ async def get_recording_status(camera_id: str) -> RecordStatusResponse:
 	if rec_status is None:
 		return RecordStatusResponse(is_recording=False)
 
+	if rec_status.get("is_recording") is False:
+		await _reap_self_stopped(camera_id, manager)
+
 	return RecordStatusResponse(**rec_status)
 
 
@@ -418,8 +473,15 @@ async def stop_recording_endpoint(camera_id: str) -> RecordStatusResponse:
 
 	try:
 		await manager.stop_recording()
-	finally:
-		await stop_camera_stream_by_id(camera_id, background=True)
+	except ValueError:
+		# A concurrent stop already cleared the recorder and owns the
+		# lease release; a second release could stop a newer recording.
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail="Camera is not recording",
+		)
+
+	await stop_camera_stream_by_id(camera_id, background=True)
 
 	if rec_status is not None:
 		return RecordStatusResponse(**{**rec_status, "is_recording": False})

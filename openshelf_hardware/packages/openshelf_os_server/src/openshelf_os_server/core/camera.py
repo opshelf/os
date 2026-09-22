@@ -577,11 +577,15 @@ class CameraStreamManager:
 		if recorder is None:
 			return
 
+		# Claim before the first await: only one caller may transition the
+		# field to None. A concurrent stop_recording() that enters during
+		# the finalization below observes None and raises, so the
+		# background lease is released exactly once per recording.
+		self._disk_recorder = None
+
 		if recorder.is_finalized is False:
 			recorder.stop()
 			await asyncio.to_thread(recorder.wait_for_finalization, 10.0)
-
-		self._disk_recorder = None
 
 	def recording_status(self) -> Optional[dict]:
 		if self._disk_recorder is None:
@@ -675,6 +679,17 @@ class CameraStreamManager:
 	def effective_target_fps(self) -> int:
 		if self.consumer_count > 0:
 			return self.target_fps
+
+		# An active disk recording is itself a frame consumer: MjpegDiskRecorder
+		# samples latest_frame on its own interval, so the background lease it
+		# holds must not pace the capture loop down to the idle rate and turn the
+		# recording into duplicates. The lease is still taken and released at the
+		# existing sites; only the pacing treats it as an interested consumer.
+		recorder = self._disk_recorder
+
+		if recorder is not None and recorder.is_recording:
+			return self.target_fps
+
 		return min(self.target_fps, self.background_target_fps)
 
 	def _capture_and_encode(self, camera: RawCamera) -> Optional[bytes]:
@@ -784,6 +799,12 @@ class ToolCameraStreamManager:
 		if self._disk_recorder is not None and self._disk_recorder.is_finalized is False:
 			raise ValueError("Camera is already recording")
 
+		# Known gap (low probability, masked while the crash recorder holds a
+		# permanent background lease): if a finalised recorder's lease has not
+		# been reaped yet, this pre-clear (and the equivalent overwrite in the
+		# CameraStreamManager.start_recording assignment below) orphans that
+		# lease instead of releasing it. Follow-up: raise here and let the
+		# caller's reap path clear it through _finalize_disk_recorder.
 		if self._disk_recorder is not None:
 			self._disk_recorder = None
 
@@ -825,11 +846,15 @@ class ToolCameraStreamManager:
 		if recorder is None:
 			return
 
+		# Claim before the first await: only one caller may transition the
+		# field to None. A concurrent stop_recording() that enters during
+		# the finalization below observes None and raises, so the
+		# background lease is released exactly once per recording.
+		self._disk_recorder = None
+
 		if recorder.is_finalized is False:
 			recorder.stop()
 			await asyncio.to_thread(recorder.wait_for_finalization, 10.0)
-
-		self._disk_recorder = None
 
 	def recording_status(self) -> Optional[dict]:
 		if self._disk_recorder is None:
