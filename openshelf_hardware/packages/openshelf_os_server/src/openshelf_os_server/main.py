@@ -1044,4 +1044,5 @@ def start() -> None:
 		reload_includes=reload_includes,
 		reload_excludes=reload_excludes,
 		log_config=log_config,
+		timeout_graceful_shutdown=5,
 	)
