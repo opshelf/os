@@ -713,6 +713,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	)
 	settings = get_settings()
 	is_mock = runtime_paths.mode == OperatingMode.mock
+	is_demo = runtime_paths.mode == OperatingMode.demo
 
 	_run_migrations()
 
@@ -804,7 +805,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 		except Exception as e:
 			logger.warning("iobox_sizer_startup_failed", error=str(e), error_type=type(e).__name__, exc_info=True)
 
-	if is_mock is False:
+	# Demo mode is a staged showcase: no crash capture is useful, and the
+	# recorder's 24/7 background lease would keep every camera stream
+	# (including the high-bandwidth recording stream) running constantly.
+	if is_mock is False and is_demo is False:
 		await start_crash_video_recorder()
 
 	if len(camera_ids) > 0:

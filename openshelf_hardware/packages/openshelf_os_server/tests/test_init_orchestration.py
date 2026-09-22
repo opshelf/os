@@ -687,3 +687,74 @@ async def test_robot_initialization_blocks_startup_scans_before_worker_exposure(
     ]
     assert worker.return_enqueued is False
     assert robot_module.robot_worker is worker
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("mode", "crash_recorder_started"),
+    [
+        (OperatingMode.production, True),
+        (OperatingMode.development, True),
+        (OperatingMode.demo, False),
+    ],
+)
+async def test_lifespan_crash_recorder_gate_by_mode(
+    monkeypatch, mode, crash_recorder_started
+) -> None:
+    @asynccontextmanager
+    async def schema_connection():
+        yield SimpleNamespace(run_sync=AsyncMock())
+
+    class Session:
+        async def __aenter__(self):
+            return MagicMock()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    bin_service = SimpleNamespace(
+        sync_config=AsyncMock(),
+        recover_interrupted_workflows=AsyncMock(),
+    )
+    runtime_paths = SimpleNamespace(
+        mode=mode,
+        config_path="config.json",
+        database_path="base.db",
+        calibration_dir="calibration",
+    )
+    monkeypatch.setattr(main_module.RuntimeStatePaths, "current", lambda: runtime_paths)
+    monkeypatch.setattr(
+        main_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            robot=SimpleNamespace(enabled=False),
+            auth=SimpleNamespace(dev_mode=False, dev_auto_user=None),
+        ),
+    )
+    monkeypatch.setattr(main_module, "_run_migrations", lambda: None)
+    monkeypatch.setattr(main_module, "engine", SimpleNamespace(begin=schema_connection))
+    monkeypatch.setattr(main_module, "AsyncSessionLocal", Session)
+    monkeypatch.setattr(main_module, "BinStorageService", lambda _session: bin_service)
+    monkeypatch.setattr(main_module, "_ensure_default_roles_and_access_levels", AsyncMock())
+    monkeypatch.setattr(main_module, "_ensure_default_role_permissions", AsyncMock())
+    monkeypatch.setattr(main_module, "_ensure_developer_user", AsyncMock())
+    monkeypatch.setattr(main_module, "_apply_mode_transition", AsyncMock())
+    monkeypatch.setattr(main_module.onboarding, "ensure_onboarding_state", AsyncMock())
+    monkeypatch.setattr(main_module, "_get_tool_camera_url", lambda _settings: None)
+    monkeypatch.setattr(main_module, "_get_overhead_camera_url", lambda _settings: None)
+    monkeypatch.setattr(main_module, "_get_overview_camera_urls", lambda _settings: {})
+    monkeypatch.setattr(main_module, "init_iobox_sizer", AsyncMock())
+    monkeypatch.setattr(main_module, "get_iobox_sizer_status", lambda: {"enabled": False})
+    monkeypatch.setattr(main_module, "stop_robot_worker", AsyncMock())
+    monkeypatch.setattr(main_module, "stop_iobox_sizer", AsyncMock())
+    monkeypatch.setattr(main_module.demo, "shutdown_demo_cycle", AsyncMock())
+    start_recorder = AsyncMock()
+    monkeypatch.setattr(main_module, "start_crash_video_recorder", start_recorder)
+    monkeypatch.setattr(main_module, "stop_crash_video_recorder", AsyncMock())
+    monkeypatch.setattr(main_module, "stop_all_camera_streams", AsyncMock())
+
+    async with main_module.lifespan(main_module.app):
+        if crash_recorder_started is True:
+            start_recorder.assert_awaited_once()
+        else:
+            start_recorder.assert_not_awaited()
