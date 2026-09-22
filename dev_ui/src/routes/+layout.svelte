@@ -187,10 +187,7 @@
 
 {#if apiState === 'down'}
 	<div class="connection-overlay">
-		<div class="connection-message">
-			API OFFLINE
-			<span class="connection-detail">the device or its API container is unreachable &mdash; retrying automatically</span>
-		</div>
+		<div class="connection-message">DEVICE OR API IS UNREACHABLE</div>
 	</div>
 {:else if authReady === false}
 	<div class="connection-overlay">
@@ -213,18 +210,6 @@
 </div>
 
 <style>
-	.connection-message {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.5em;
-		text-align: center;
-	}
-
-	.connection-detail {
-		font-size: 0.8em;
-	}
-
 	.logo-container {
 		position: fixed;
 		bottom: 1.5em;
