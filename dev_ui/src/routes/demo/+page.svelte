@@ -165,7 +165,6 @@
 								<button
 									type="button"
 									class="record-toggle"
-									class:active={isRecording}
 									disabled={pendingAction.has(camera.id)}
 									on:click={() => didToggleRecord(camera)}>
 									{isRecording ? 'STOP' : 'RECORD'}
@@ -178,12 +177,10 @@
 		{/if}
 	</section>
 
-	<div class="section-gap"></div>
+	{#if recordings.length > 0}
+		<div class="section-gap"></div>
 
-	<section>
-		{#if recordings.length === 0}
-			<p>no recorded files</p>
-		{:else}
+		<section>
 			<table>
 				<thead>
 					<tr>
@@ -213,18 +210,13 @@
 					{/each}
 				</tbody>
 			</table>
-		{/if}
-	</section>
+		</section>
+	{/if}
 {/if}
 
 <style>
 	.section-gap {
 		height: 1.5em;
-	}
-
-	.record-toggle.active {
-		background: #e05020;
-		color: white;
 	}
 
 	.button-cell {
