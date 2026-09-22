@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-from openshelf_os.exceptions import MotorError, MovementError
+from openshelf_os.exceptions import ConfigError, MotorError, MovementError
 
 
 def _mock_worker_for_move(stage_position: float = 0.0):
@@ -199,3 +199,39 @@ async def test_rotate_to_angle_marks_failed_safe_axis(client: AsyncClient) -> No
 	worker.set_needs_home.assert_called_once()
 	assert worker.set_needs_home.call_args.kwargs["axes"] == ["x_axis"]
 	assert response.json()["detail"]["needs_home_axes"] == ["x_axis"]
+
+
+@pytest.mark.anyio
+async def test_rotate_to_angle_clearance_blocked_returns_409(client: AsyncClient) -> None:
+	worker, tool = _mock_worker_for_rotation()
+	tool.ensure_safe_rotation_stage_extension.side_effect = MovementError(
+		"Unsafe tool clearance for rotation: z_axis=162.470mm exceeds maximum 5.000mm"
+	)
+
+	with patch("openshelf_os_server.routers.calibration.get_robot_worker", return_value=worker):
+		with patch("openshelf_os_server.routers.calibration.ensure_laser_auto_calibration_not_running", new=AsyncMock()):
+			response = await client.post("/api/calibration/rotation/rotate?angle=42")
+
+	assert response.status_code == 409
+	detail = response.json()["detail"]
+	assert detail["code"] == "rotation_blocked"
+	assert "z_axis=162.470mm exceeds maximum 5.000mm" in detail["message"]
+	assert "needs_home" not in detail
+	worker.set_needs_home.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_rotate_to_angle_config_error_returns_400(client: AsyncClient) -> None:
+	worker, tool = _mock_worker_for_rotation()
+	tool.ensure_safe_rotation_x_position.side_effect = ConfigError(
+		"X axis limit is too small for safe rotation margin (10.0 < 20.0)"
+	)
+
+	with patch("openshelf_os_server.routers.calibration.get_robot_worker", return_value=worker):
+		with patch("openshelf_os_server.routers.calibration.ensure_laser_auto_calibration_not_running", new=AsyncMock()):
+			response = await client.post("/api/calibration/rotation/rotate?angle=42")
+
+	assert response.status_code == 400
+	detail = response.json()["detail"]
+	assert detail["code"] == "config_error"
+	assert "(10.0 < 20.0)" in detail["message"]
