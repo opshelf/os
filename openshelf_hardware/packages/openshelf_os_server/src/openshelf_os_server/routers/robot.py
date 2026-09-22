@@ -73,6 +73,7 @@ from openshelf_os_server.core.bin_storage import (
     validate_direct_store_reservation,
 )
 from openshelf_os_server.routers.common import SuccessResponse
+from openshelf_os_server.errors import error_detail
 from openshelf_os_server.settings import get_settings, get_operating_mode
 from openshelf_os_server.database.session import get_db, AsyncSessionLocal
 from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation, StorageBinItem, User
@@ -171,14 +172,6 @@ _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 _SCALE_NOT_ENABLED_MESSAGE = "Scale is not enabled"
 
 
-def _error_detail(message: str, code: str) -> dict[str, str]:
-    return {"message": message, "code": code}
-
-
-
-
-
-
 
 
 def _is_scale_not_enabled(exc: Exception) -> bool:
@@ -188,7 +181,7 @@ def _is_scale_not_enabled(exc: Exception) -> bool:
 def _scale_not_enabled_exception() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail=_error_detail(_SCALE_NOT_ENABLED_MESSAGE, "scale_not_enabled"),
+        detail=error_detail(_SCALE_NOT_ENABLED_MESSAGE, "scale_not_enabled"),
     )
 
 
@@ -485,7 +478,7 @@ async def _validate_direct_store_reservation(item_data: dict[str, Any], db: Asyn
     except DirectStoreReservationError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail(str(exc), exc.code),
+            detail=error_detail(str(exc), exc.code),
         ) from exc
 
 
@@ -524,7 +517,7 @@ def _parse_requested_store_location(item_data: dict[str, Any]) -> StorageModuleC
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=_error_detail("location requires side, shelf_idx and cell_idx", "invalid_location"),
+            detail=error_detail("location requires side, shelf_idx and cell_idx", "invalid_location"),
         ) from None
 
 
@@ -546,12 +539,12 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
     if cell is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=_error_detail("Requested storage cell does not exist", "cell_not_found"),
+            detail=error_detail("Requested storage cell does not exist", "cell_not_found"),
         )
     if cell.status != CellStatus.AVAILABLE:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail(f"Requested storage cell is {cell.status.value}", "cell_unavailable"),
+            detail=error_detail(f"Requested storage cell is {cell.status.value}", "cell_unavailable"),
         )
 
     dimensions = item_data.get("dimensions")
@@ -570,7 +563,7 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
     if grid.cell_fits_item(cell, item) is False:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail("Item does not fit the requested storage cell", "cell_too_small"),
+            detail=error_detail("Item does not fit the requested storage cell", "cell_too_small"),
         )
 
 
@@ -593,7 +586,7 @@ async def _validate_mock_store_location(
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=_error_detail("Requested storage cell does not exist", "cell_not_found"),
+            detail=error_detail("Requested storage cell does not exist", "cell_not_found"),
         )
 
     occupied = (
@@ -608,7 +601,7 @@ async def _validate_mock_store_location(
     if occupied is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail("Requested storage cell is occupied", "cell_unavailable"),
+            detail=error_detail("Requested storage cell is occupied", "cell_unavailable"),
         )
 
     # A live bin home is unavailable for explicit stores, matching the maintenance status
@@ -616,13 +609,13 @@ async def _validate_mock_store_location(
     if await is_reserved_bin_location((side, shelf_idx, cell_idx), db):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail("Requested storage cell is reserved", "cell_unavailable"),
+            detail=error_detail("Requested storage cell is reserved", "cell_unavailable"),
         )
 
     if isinstance(dimensions, dict) and mock_cell_fits(dimensions) is False:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail("Item does not fit the requested storage cell", "cell_too_small"),
+            detail=error_detail("Item does not fit the requested storage cell", "cell_too_small"),
         )
 
 
@@ -1592,7 +1585,7 @@ async def clear_motor_alarm(
         logging.error("Motor alarm clear failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Motor alarm clear failed: {exc}", "motor_alarm_clear_failed"),
+            detail=error_detail(f"Motor alarm clear failed: {exc}", "motor_alarm_clear_failed"),
         ) from exc
 
 
@@ -1668,7 +1661,7 @@ async def home_motor(
         logging.error("Motor home failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
+            detail=error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
         ) from exc
 
 
@@ -1752,7 +1745,7 @@ async def power_cycle_rail(
         logging.error("Power cycle failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Power cycle failed: {exc}", "power_cycle_failed"),
+            detail=error_detail(f"Power cycle failed: {exc}", "power_cycle_failed"),
         ) from exc
 
 
@@ -1865,7 +1858,7 @@ async def move_motor(
         logging.warning("Motor move failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Motor move failed: {exc}", "motor_move_failed"),
+            detail=error_detail(f"Motor move failed: {exc}", "motor_move_failed"),
         ) from exc
 
 
@@ -1902,7 +1895,7 @@ async def control_door(
         logging.error("Door control failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Door {action} failed: {exc}", "door_control_failed"),
+            detail=error_detail(f"Door {action} failed: {exc}", "door_control_failed"),
         ) from exc
 
 
