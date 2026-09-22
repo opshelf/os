@@ -12,6 +12,7 @@ import pytest
 from openshelf_os.iobox_sizer.models import IOBoxSizerMeasurement
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.runtime_state import RuntimeStatePaths
+from hardware.exceptions import CameraConnectionError, ToFConnectionError
 from openshelf_os_server.core import iobox_sizer
 from openshelf_os_server.routers import iobox_sizer as iobox_sizer_router
 
@@ -74,18 +75,41 @@ class ImmediateService:
 
 
 class ReloadService:
-    def __init__(self, name: str, events: list[str]) -> None:
+    def __init__(
+        self,
+        name: str,
+        events: list[str],
+        tof_connect_error: Exception | None = None,
+    ) -> None:
         self.name = name
         self.events = events
         self.closed = False
-        self.camera = object()
+        self._tof_connect_error = tof_connect_error
+        self.camera = SimpleNamespace(start=self._start_camera)
+        self.tof_bus = SimpleNamespace(connect=self._connect_tof)
 
-    def start(self) -> None:
-        self.events.append(f"start:{self.name}")
+    def _start_camera(self) -> None:
+        self.events.append(f"camera:{self.name}")
+
+    def _connect_tof(self) -> None:
+        self.events.append(f"tof:{self.name}")
+        if self._tof_connect_error is not None:
+            raise self._tof_connect_error
 
     def close(self) -> None:
         self.closed = True
         self.events.append(f"close:{self.name}")
+
+
+def _state_paths(mode: OperatingMode, data_dir, config_path=None):
+    return RuntimeStatePaths(
+        mode=mode,
+        data_dir=data_dir,
+        config_path=config_path if config_path is not None else data_dir / "config.json",
+        database_path=data_dir / "base.db",
+        calibration_dir=data_dir / "calibration" / mode.value,
+        workspace_manifest_path=data_dir / f".workspace.{mode.value}.json",
+    )
 
 
 def _runtime(service: object) -> iobox_sizer.IOBoxSizerRuntime:
@@ -148,7 +172,7 @@ async def test_stop_iobox_sizer_waits_for_cancelled_measurement_thread(monkeypat
 
 @pytest.mark.asyncio
 async def test_reload_iobox_sizer_config_serializes_full_stop_and_init(monkeypatch: pytest.MonkeyPatch) -> None:
-    events = ["start:initial"]
+    events: list[str] = []
     created_services: list[ReloadService] = []
     config = SimpleNamespace(
         enabled=True,
@@ -181,11 +205,12 @@ async def test_reload_iobox_sizer_config_serializes_full_stop_and_init(monkeypat
     )
 
     assert events == [
-        "start:initial",
         "close:initial",
-        "start:reload-1",
+        "camera:reload-1",
+        "tof:reload-1",
         "close:reload-1",
-        "start:reload-2",
+        "camera:reload-2",
+        "tof:reload-2",
     ]
     assert created_services[0].closed is True
     assert created_services[1].closed is False
@@ -209,13 +234,10 @@ async def test_init_iobox_sizer_keeps_shared_config_blank_path_logical_across_mo
     shared_config_path = tmp_path / "shared-config.json"
 
     def make_paths(mode: OperatingMode) -> RuntimeStatePaths:
-        return RuntimeStatePaths(
-            mode=mode,
-            data_dir=tmp_path,
+        return _state_paths(
+            mode,
+            tmp_path,
             config_path=shared_config_path,
-            database_path=tmp_path / "base.db",
-            calibration_dir=tmp_path / "calibration" / mode.value,
-            workspace_manifest_path=tmp_path / f".workspace.{mode.value}.json",
         )
 
     def did_make_service(current_config: object) -> ReloadService:
@@ -250,6 +272,118 @@ async def test_init_iobox_sizer_keeps_shared_config_blank_path_logical_across_mo
         assert config.detection.blank_frame_path == "data/iobox_sizer/blank_frame.png"
     finally:
         await iobox_sizer.stop_iobox_sizer()
+
+
+@pytest.mark.asyncio
+async def test_init_iobox_sizer_degrades_to_camera_only_when_tof_connect_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    tof_error = ToFConnectionError("No USB device matches URL ftdi://ftdi:232h/1")
+    service = ReloadService("camera-only", [], tof_connect_error=tof_error)
+    config = SimpleNamespace(
+        enabled=True,
+        tof=SimpleNamespace(channels=[1, 2]),
+        camera=SimpleNamespace(),
+        detection=SimpleNamespace(blank_frame_path="data/iobox_sizer/blank_frame.png"),
+    )
+    register_camera_manager = AsyncMock()
+
+    monkeypatch.setattr(iobox_sizer, "_measure_lock", asyncio.Lock())
+    monkeypatch.setattr(iobox_sizer, "_reload_lock", asyncio.Lock())
+    monkeypatch.setattr(iobox_sizer, "_runtime", None)
+    monkeypatch.setattr(
+        iobox_sizer,
+        "get_root_config",
+        lambda: SimpleNamespace(robot=SimpleNamespace(io=SimpleNamespace(sizer=config))),
+    )
+    monkeypatch.setattr(iobox_sizer, "_make_service", lambda current_config: service)
+    monkeypatch.setattr(iobox_sizer, "init_sizer_camera_manager", register_camera_manager)
+    monkeypatch.setattr(iobox_sizer, "unregister_camera_manager", AsyncMock())
+    monkeypatch.setattr(
+        RuntimeStatePaths,
+        "current",
+        classmethod(lambda cls: _state_paths(OperatingMode.demo, tmp_path)),
+    )
+
+    await iobox_sizer.init_iobox_sizer()
+
+    assert iobox_sizer._runtime is not None
+    assert iobox_sizer._runtime.service is service
+    assert iobox_sizer._runtime.available is True
+    assert iobox_sizer._runtime.last_error == str(tof_error)
+    assert iobox_sizer._runtime.last_error_type == "ToFConnectionError"
+    register_camera_manager.assert_awaited_once_with(service.camera)
+    assert service.events == ["camera:camera-only", "tof:camera-only"]
+
+
+@pytest.mark.asyncio
+async def test_init_iobox_sizer_unavailable_when_camera_start_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    camera_error = CameraConnectionError("failed to open UVC camera '/dev/video0'")
+
+    class BrokenCameraService:
+        def __init__(self) -> None:
+            self.events: list[str] = []
+            self.camera = SimpleNamespace(
+                start=self._start_camera,
+                stop=lambda: self.events.append("camera_stop"),
+            )
+            self.tof_bus = SimpleNamespace(
+                connect=self._connect_tof,
+                close=lambda: self.events.append("tof_close"),
+            )
+
+        def _start_camera(self) -> None:
+            self.events.append("camera_start")
+            raise camera_error
+
+        def _connect_tof(self) -> None:
+            self.events.append("tof_connect")
+
+        def close(self) -> None:
+            self.camera.stop()
+            self.tof_bus.close()
+
+    service = BrokenCameraService()
+    config = SimpleNamespace(
+        enabled=True,
+        tof=SimpleNamespace(channels=[1, 2]),
+        camera=SimpleNamespace(),
+        detection=SimpleNamespace(blank_frame_path="data/iobox_sizer/blank_frame.png"),
+    )
+    register_camera_manager = AsyncMock()
+
+    monkeypatch.setattr(iobox_sizer, "_measure_lock", asyncio.Lock())
+    monkeypatch.setattr(iobox_sizer, "_reload_lock", asyncio.Lock())
+    monkeypatch.setattr(iobox_sizer, "_runtime", None)
+    monkeypatch.setattr(
+        iobox_sizer,
+        "get_root_config",
+        lambda: SimpleNamespace(robot=SimpleNamespace(io=SimpleNamespace(sizer=config))),
+    )
+    monkeypatch.setattr(iobox_sizer, "_make_service", lambda current_config: service)
+    monkeypatch.setattr(iobox_sizer, "init_sizer_camera_manager", register_camera_manager)
+    monkeypatch.setattr(iobox_sizer, "unregister_camera_manager", AsyncMock())
+    monkeypatch.setattr(
+        RuntimeStatePaths,
+        "current",
+        classmethod(lambda cls: _state_paths(OperatingMode.demo, tmp_path)),
+    )
+
+    await iobox_sizer.init_iobox_sizer()
+
+    assert iobox_sizer._runtime is not None
+    assert iobox_sizer._runtime.service is None
+    assert iobox_sizer._runtime.available is False
+    assert iobox_sizer._runtime.last_error == str(camera_error)
+    assert iobox_sizer._runtime.last_error_type == "CameraConnectionError"
+    register_camera_manager.assert_not_awaited()
+    assert "camera_stop" in service.events
+    assert "tof_close" in service.events
+    assert "tof_connect" not in service.events
 
 
 @pytest.mark.asyncio
