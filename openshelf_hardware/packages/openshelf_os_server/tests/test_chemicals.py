@@ -213,7 +213,7 @@ async def test_routes_authorization_and_availability(client, unauthenticated_cli
     try:
         response = await client.get("/api/chemicals/search?q=ethanol")
         assert response.status_code == 503
-        assert response.json() == {"detail": "CAS search unavailable"}
+        assert response.json() == {"detail": {"message": "CAS search unavailable", "code": "service_unavailable"}}
         assert (await client.get("/api/chemicals/64-17-4")).status_code == 422
         assert (await client.get("/api/chemicals/search?q=%20%20")).status_code == 422
         assert (await client.get("/api/chemicals/search?q=ethanol&offset=-1")).status_code == 422

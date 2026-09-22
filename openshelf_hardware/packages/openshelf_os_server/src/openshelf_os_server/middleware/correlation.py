@@ -18,6 +18,7 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 		if correlation_id is None:
 			correlation_id = str(uuid.uuid4())
 
+		request.state.correlation_id = correlation_id
 		set_correlation_id(correlation_id)
 
 		try:

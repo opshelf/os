@@ -235,7 +235,7 @@ async def test_move_motor_not_found(client: AsyncClient) -> None:
 			)
 
 	assert response.status_code == 404
-	assert "not found" in response.json()["detail"].lower()
+	assert "not found" in response.json()["detail"]["message"].lower()
 
 
 @pytest.mark.anyio
@@ -328,7 +328,7 @@ async def test_clear_motor_alarm_not_found(client: AsyncClient) -> None:
 			response = await client.post("/api/robot/debug/motors/nonexistent/clear")
 
 	assert response.status_code == 404
-	assert "not found" in response.json()["detail"].lower()
+	assert "not found" in response.json()["detail"]["message"].lower()
 
 
 @pytest.mark.anyio

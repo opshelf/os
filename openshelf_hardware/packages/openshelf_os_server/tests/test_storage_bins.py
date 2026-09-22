@@ -906,7 +906,7 @@ async def test_mock_checkout_close_and_barcode_return_simulates_placement(
         active_commands.return_value = True
         blocked = await client.post(store_url, json=selection)
         assert blocked.status_code == 409
-        assert blocked.json()["detail"] == "Robot has queued commands"
+        assert blocked.json()["detail"]["message"] == "Robot has queued commands"
         active_commands.return_value = False
         stored = await client.post(store_url, json=selection)
         assert stored.status_code == 200, stored.text
