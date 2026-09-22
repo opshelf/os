@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 from ..database.session import AsyncSessionLocal
 from ..database.models import AuditLog
@@ -112,6 +113,10 @@ def redact_sensitive_values(value: Any) -> Any:
 class AuditMiddleware(BaseHTTPMiddleware):
 	"""Middleware to log all API requests and responses."""
 
+	def __init__(self, app: ASGIApp, sentry_enabled: bool = False) -> None:
+		super().__init__(app)
+		self.sentry_enabled = sentry_enabled
+
 	async def dispatch(self, request: Request, call_next: Callable) -> Response:
 		"""Process and log each request."""
 		if should_skip_before_request(request):
@@ -147,7 +152,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 			error_message = str(e)
 			traceback.print_exc()
 			correlation_id = request_correlation_id(request)
-			capture_unhandled_exception(e, request.url.path, request.method, correlation_id)
+			capture_unhandled_exception(e, request.url.path, request.method, correlation_id, enabled=self.sentry_enabled)
 			code, message = internal_error_detail(e)
 			detail = error_detail(message, code)
 			if correlation_id:

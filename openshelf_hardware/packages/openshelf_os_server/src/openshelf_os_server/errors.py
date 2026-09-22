@@ -11,6 +11,7 @@ more specific mapping.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from typing import Any, cast
 
@@ -18,39 +19,60 @@ import sentry_sdk
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.exceptions import ConfigError as HardwareConfigError
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
 from openshelf_os_server.core.validation import CellOccupiedError, ValidationError
 
+logger = logging.getLogger(__name__)
+
 # Exception types that are not code bugs. In an unhandled 500 they get a
 # derived code and, when listed, a message that is safe to surface; everything
 # else stays generic. Full detail remains in the log and Sentry, tied to the
 # client by the correlation id.
-SAFE_500_TYPES: tuple[tuple[type[BaseException], str, str | None], ...] = (
-	# (exception type, code, message when str(exc) is empty; None = stay generic)
-	(TimeoutError, "timeout", "Operation timed out"),
-	(ConfigError, "config_error", "Invalid device configuration"),
-	(HardwareConfigError, "config_error", "Invalid device configuration"),
-	(SQLAlchemyError, "db_error", None),
+SAFE_500_TYPES: tuple[tuple[type[BaseException], str, str | None, bool], ...] = (
+	# (exception type, code, fallback message, surface str(exc)?)
+	# surface str=True -> str(exc), or the fallback when empty
+	# surface str=False -> the fallback text, or the generic message when None
+	# (str(exc) is not safe to surface: config loader
+	# messages embed absolute paths; SQLAlchemy messages
+	# embed the statement and bound parameters)
+	(TimeoutError, "timeout", "Operation timed out", True),
+	(ConfigError, "config_error", "Invalid device configuration", False),
+	(HardwareConfigError, "config_error", "Invalid device configuration", False),
+	(SQLAlchemyError, "db_error", None, False),
 )
 
 
 def internal_error_detail(exc: BaseException) -> tuple[str, str]:
 	"""Return the (code, message) for an unhandled exception's 500 body."""
-	for exc_type, code, fallback in SAFE_500_TYPES:
+	for exc_type, code, fallback, surface_str in SAFE_500_TYPES:
 		if isinstance(exc, exc_type):
-			message = str(exc) or (fallback or "Internal server error")
+			if surface_str:
+				message = str(exc) or (fallback or "Internal server error")
+			else:
+				message = fallback or "Internal server error"
 			return code, message
 	return "internal_error", "Internal server error"
 
 
 def capture_unhandled_exception(
-	exc: BaseException, path: str, method: str, correlation_id: str | None
+	exc: BaseException,
+	path: str,
+	method: str,
+	correlation_id: str | None,
+	*,
+	enabled: bool,
 ) -> None:
-	"""Report an unhandled request exception to Sentry when it is initialized."""
-	if sentry_sdk.is_initialized() is False:
+	"""Report an unhandled request exception to Sentry.
+
+	The caller supplies the API-side enable decision; the SDK can also be
+	initialized by the hardware side, so ``is_initialized`` alone is not a
+	valid gate.
+	"""
+	if enabled is False or sentry_sdk.is_initialized() is False:
 		return
 	with sentry_sdk.new_scope() as scope:
 		if correlation_id:
@@ -72,6 +94,7 @@ DEFAULT_STATUS_CODES: dict[int, str] = {
 	status.HTTP_401_UNAUTHORIZED: "unauthorized",
 	status.HTTP_403_FORBIDDEN: "forbidden",
 	status.HTTP_404_NOT_FOUND: "not_found",
+	status.HTTP_405_METHOD_NOT_ALLOWED: "method_not_allowed",
 	status.HTTP_409_CONFLICT: "conflict",
 	status.HTTP_422_UNPROCESSABLE_ENTITY: "validation_failed",
 	status.HTTP_429_TOO_MANY_REQUESTS: "queue_full",
@@ -94,7 +117,7 @@ def api_error(status_code: int, code: str, message: str, **extra: Any) -> HTTPEx
 	return HTTPException(status_code=status_code, detail=error_detail(message, code, **extra))
 
 
-def standardize_http_detail(exc: HTTPException) -> Any:
+def standardize_http_detail(exc: StarletteHTTPException) -> Any:
 	"""Wrap string details into the structured form; dict/list pass through."""
 	if isinstance(exc.detail, str):
 		return error_detail(exc.detail, DEFAULT_STATUS_CODES.get(exc.status_code, "error"))
@@ -104,7 +127,7 @@ def standardize_http_detail(exc: HTTPException) -> Any:
 async def http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
 	# Mirrors Starlette's default HTTPException handler, but standardizes
 	# string details into the structured {message, code} form.
-	http_exc = cast(HTTPException, exc)
+	http_exc = cast(StarletteHTTPException, exc)
 	return JSONResponse(
 		content={"detail": standardize_http_detail(http_exc)},
 		status_code=http_exc.status_code,
@@ -125,6 +148,10 @@ MAPPED_EXCEPTIONS: list[tuple[type[Exception], int, str]] = [
 	(OSError, status.HTTP_503_SERVICE_UNAVAILABLE, "hardware_io"),
 ]
 
+# Extra response headers per mapped code; the unavailable-chemical 503 keeps
+# the Retry-After hint clients relied on before this mapping.
+MAPPED_HEADERS: dict[str, dict[str, str]] = {"chemical_unavailable": {"Retry-After": "5"}}
+
 
 def _clean_message(exc: BaseException) -> str:
 	# SQLAlchemy DBAPIError messages carry a formatted [SQL: ...] tail. Prefer
@@ -137,8 +164,13 @@ def _clean_message(exc: BaseException) -> str:
 			first_line = str(exc).splitlines()[0] if str(exc) else ""
 			message = re.sub(r"^\(\S+\) ", "", first_line)
 		return message or "conflict"
-	# OSError str() prefixes the errno, e.g. "[Errno 5] short write to printer".
+	# OSError str() prefixes the errno, e.g. "[Errno 5] short write to printer",
+	# and appends the offending path, e.g. "...: '/dev/usb/lp0'". The path is a
+	# server-side detail, so a filename-bearing OSError surfaces only strerror.
 	if isinstance(exc, OSError):
+		if getattr(exc, "filename", None) is not None:
+			# strerror is None for raw-errno constructions like OSError(28, None, path).
+			return exc.strerror or "hardware_io"
 		message = re.sub(r"^\[Errno \d+\] ", "", str(exc))
 		return message or "error"
 	return str(exc) or "error"
@@ -146,9 +178,20 @@ def _clean_message(exc: BaseException) -> str:
 
 def _make_mapped_handler(status_code: int, code: str):
 	async def handler(request: Request, exc: BaseException) -> JSONResponse:
+		message = _clean_message(exc)
+		# These mapped types never reach the 500 fallback, so the server-side
+		# diagnostic they logged before the mapping has to be emitted here.
+		# Client-input and normal-lookup outcomes (422/404) stay unlogged.
+		if code in {"hardware_io", "timeout", "conflict"}:
+			logger.error(
+				f"{status_code} {code}: {message} "
+				f"(correlation_id={request_correlation_id(request)})",
+				exc_info=exc,
+			)
 		return JSONResponse(
 			status_code=status_code,
-			content={"detail": error_detail(_clean_message(exc), code)},
+			content={"detail": error_detail(message, code)},
+			headers=MAPPED_HEADERS.get(code, {}),
 		)
 
 	return handler
@@ -156,6 +199,8 @@ def _make_mapped_handler(status_code: int, code: str):
 
 def register_mapped_handlers(app: FastAPI) -> None:
 	"""Register the standardized HTTPException body and mapped exception handlers."""
-	app.add_exception_handler(HTTPException, http_exception_handler)
+	# Register on the Starlette base class: the router raises 404/405 as base
+	# instances, and the MRO lookup then also covers FastAPI-subclass raises.
+	app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 	for exc_type, status_code, code in MAPPED_EXCEPTIONS:
 		app.add_exception_handler(exc_type, _make_mapped_handler(status_code, code))

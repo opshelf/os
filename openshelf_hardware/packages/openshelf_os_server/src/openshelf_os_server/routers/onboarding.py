@@ -8,6 +8,7 @@ authenticate.
 from openshelf_os_server.documentation import response_docs
 from openshelf_os_server.errors import api_error
 import asyncio
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -27,6 +28,8 @@ from ..settings import get_settings
 from . import wifi
 from .auth_deps import require_permissions
 from .users import UserResponse, _build_user_response
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["onboarding"])
 
@@ -116,9 +119,10 @@ async def ensure_onboarding_state(db: AsyncSession) -> str:
 			state = ONBOARDING_COMPLETED if await _count_regular_users(db) > 0 else ONBOARDING_PENDING
 			_write_onboarding_state(state)
 			return state
-	except (RuntimeError, ValueError) as exc:
-		# A corrupt or unwritable state file is a device fault, not a client error.
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", str(exc)) from exc
+	except (RuntimeError, ValueError, OSError) as exc:
+		# A corrupt, unreadable, or unwritable state file is a device fault, not a client error.
+		logger.error(f"Onboarding state unavailable: {exc}")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "Onboarding state unavailable") from exc
 
 
 async def require_first_run(db: AsyncSession = Depends(get_db)) -> None:
@@ -268,5 +272,10 @@ async def complete_onboarding() -> OnboardingStatus:
 	Requires `users:write`. Marks onboarding complete, disabling the public first-run
 	mutation endpoints. Returns `needs_onboarding=false`.
 	"""
-	_write_onboarding_state(ONBOARDING_COMPLETED)
+	try:
+		_write_onboarding_state(ONBOARDING_COMPLETED)
+	except (RuntimeError, ValueError, OSError) as exc:
+		# A corrupt, unreadable, or unwritable state file is a device fault, not a client error.
+		logger.error(f"Onboarding state unavailable: {exc}")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "Onboarding state unavailable") from exc
 	return OnboardingStatus(needs_onboarding=False)

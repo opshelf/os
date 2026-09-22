@@ -473,12 +473,13 @@ def monitor_performance(func: Callable) -> Callable:
     "/bins",
     dependencies=[Depends(require_relay_or_permissions("storage:read"))],
     summary="List storage bins",
-    responses=response_docs(model=BinsResponse, errors=(401, 403)),
+    responses=response_docs(model=BinsResponse, errors=(401, 403, 409)),
 )
 async def get_bins(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     """List storage bins.
 
     Synchronizes configured bins into the database, then returns bin state and contents.
+    A configured bin barcode already assigned to an item returns `409`.
     Aggregate `gross_weight` includes the bin and all its contents; it is exposed only at
     home and is not an individual item mass.
     """
