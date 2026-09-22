@@ -68,7 +68,6 @@ Use the mechanically verified limit for other installations.
             "shelf_idx": 0,
             "cell_idx": 0
           },
-          "door_open_direction": "left",
           "stage_extension_mm": 95
         }
       ]
@@ -82,6 +81,13 @@ on the illustrative motor values. The three door positions must be distinct and
 within the fridge motor limits, with `closed` between the two open positions.
 Every fridge stage extension must be within the stage motor limit; increase the
 demo stage `lim` only to the mechanically verified reach.
+
+The door direction is derived from the cell and the installed X-axis travel:
+a cell left of the X-axis midpoint opens the door to the right and a cell right
+of the midpoint opens it to the left. The runtime opens the door once the gantry
+is positioned at the cell and before the tool rotates or extends; rotation may
+itself extend the stage to its rotation-safe extension. The door then closes
+after the tool retracts.
 
 For the same off-center rotation compensation used on lb2-1, enable the existing
 stage setting in the demo configuration:

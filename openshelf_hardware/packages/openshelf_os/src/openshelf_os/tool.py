@@ -419,7 +419,7 @@ class Tool:
         coordinate: c.AxisCoordinate,
         *,
         stage_extension_mm: float | None = None,
-        before_extend: Callable[[], Awaitable[None]] | None = None,
+        before_approach: Callable[[], Awaitable[None]] | None = None,
         after_retract: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         try:
@@ -427,9 +427,11 @@ class Tool:
 
             await self._gs.safe_open()
             await self.move(coordinate)
+            # Open any door gating the cell before rotating: rotation may extend
+            # the stage to its rotation-safe extension.
+            if before_approach is not None:
+                await before_approach()
             await self.rotate_to_position(target_position)
-            if before_extend is not None:
-                await before_extend()
             await self.extend_empty(coordinate, stage_extension_mm=stage_extension_mm)
             await self._gs.open()
             await self.retract()
@@ -484,16 +486,18 @@ class Tool:
         coordinate: c.AxisCoordinate,
         *,
         stage_extension_mm: float | None = None,
-        before_extend: Callable[[], Awaitable[None]] | None = None,
+        before_approach: Callable[[], Awaitable[None]] | None = None,
         after_retract: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
             await self.move(coordinate)
+            # Open any door gating the cell before rotating: rotation may extend
+            # the stage to its rotation-safe extension.
+            if before_approach is not None:
+                await before_approach()
             await self.rotate_to_position(target_position)
-            if before_extend is not None:
-                await before_extend()
             await self.extend(coordinate, stage_extension_mm=stage_extension_mm)
             await self._gs.close()
             await self.retract_empty()
@@ -727,6 +731,14 @@ class Tool:
             if hasattr(e, "fault_context"):
                 setattr(err, "fault_context", getattr(e, "fault_context"))
             raise err from e
+
+    def x_axis_travel_middle_mm(self) -> float:
+        """Return the midpoint of the configured X-axis travel."""
+        if self._mx is None:
+            raise ConfigError("X-axis motor is not configured")
+
+        lower_lim = float(getattr(self._mx._params, "lower_lim", 0.0))
+        return (lower_lim + float(self._mx._params.lim)) / 2.0
 
     async def gantry_wait(
         self,

@@ -23,6 +23,7 @@ class DemoFridge:
         *,
         is_rotated_back: Callable[[], Awaitable[bool]] | None = None,
         retract_tool: Callable[[], Awaitable[None]] | None = None,
+        x_axis_middle_mm: Callable[[], float] | None = None,
     ) -> None:
         if params.motor is None or params.motor.enabled is False:
             raise ConfigError("Demo fridge motor must be configured and enabled")
@@ -32,6 +33,7 @@ class DemoFridge:
         self._is_fully_retracted = is_fully_retracted
         self._is_rotated_back = is_rotated_back
         self._retract_tool = retract_tool
+        self._x_axis_middle_mm = x_axis_middle_mm
         self._logger = logging.getLogger(__name__).getChild("DemoFridge")
         self._motion_lock = asyncio.Lock()
         self._init_reporter: Optional[
@@ -175,14 +177,33 @@ class DemoFridge:
             self._emit_init("failed", detail="home", reason=str(exc))
             raise MotorError(f"Failed to home fridge door: {exc}") from exc
 
-    async def open_for_cell(self, location: StorageModuleCellLocation) -> None:
-        cell = self.cell_settings(location)
-        if cell is None:
+    async def open_for_cell(
+        self,
+        location: StorageModuleCellLocation,
+        *,
+        cell_x_mm: float,
+    ) -> None:
+        if self.cell_settings(location) is None:
             raise ConfigError(
                 "Location is not configured as a demo fridge cell: "
                 f"{location.side.value}:{location.shelf_idx}:{location.cell_idx}"
             )
-        await self.open_door(cell.door_open_direction)
+        await self.open_door(self.direction_for_cell_x(cell_x_mm))
+
+    def direction_for_cell_x(self, cell_x_mm: float) -> Literal["left", "right"]:
+        """Return the door direction that exposes a cell at the given X coordinate.
+
+        The door slides past the cell: cells left of the X-axis travel midpoint
+        open the door to the right and cells right of it open it to the left.
+        """
+        if self._x_axis_middle_mm is None:
+            raise ConfigError(
+                "Cannot select fridge door direction without the X-axis travel limits"
+            )
+
+        if float(cell_x_mm) < float(self._x_axis_middle_mm()):
+            return "right"
+        return "left"
 
     async def open_door(self, direction: Literal["left", "right"]) -> None:
         await self.move_door_to_named(direction)

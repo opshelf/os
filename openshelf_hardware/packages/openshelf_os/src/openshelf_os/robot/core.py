@@ -120,6 +120,7 @@ class Robot:
                 is_fully_retracted=self._tool.is_fully_retracted,
                 is_rotated_back=self._tool.is_rotated_back,
                 retract_tool=self._tool.retract_empty,
+                x_axis_middle_mm=self._tool.x_axis_travel_middle_mm,
             )
 
         self._grid_path = resolve_grid_path(self._config, CONFIG_PATH)
@@ -914,12 +915,13 @@ class Robot:
 
         async def open_door() -> None:
             nonlocal door_may_be_open
-            door_may_be_open = True
+            direction = fridge.direction_for_cell_x(coord.x)
             self.set_operation_context(
-                phase=f"fridge.{operation}.open_{cell_settings.door_open_direction}_door",
+                phase=f"fridge.{operation}.open_{direction}_door",
                 target_cell=location,
             )
-            await fridge.open_for_cell(location)
+            door_may_be_open = True
+            await fridge.open_for_cell(location, cell_x_mm=coord.x)
 
         async def close_door() -> None:
             nonlocal door_may_be_open
@@ -934,7 +936,7 @@ class Robot:
             await tool_operation(
                 coord,
                 stage_extension_mm=cell_settings.stage_extension_mm,
-                before_extend=open_door,
+                before_approach=open_door,
                 after_retract=close_door,
             )
         except Exception:

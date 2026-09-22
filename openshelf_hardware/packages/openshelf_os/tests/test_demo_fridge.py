@@ -9,7 +9,7 @@ import pytest
 import openshelf_os.fridge as fridge_module
 from openshelf_os.common import AxisCoordinate, RootConfig
 from openshelf_os.config.settings import DemoFridgeSettings
-from openshelf_os.exceptions import MotorError
+from openshelf_os.exceptions import ConfigError, MotorError
 from openshelf_os.fridge import DemoFridge, FridgeSafetyError
 from openshelf_os.robot.commands import HomeCommand
 from openshelf_os.robot.core import Robot
@@ -77,7 +77,6 @@ def config_dict() -> dict[str, object]:
                             "shelf_idx": 0,
                             "cell_idx": 1,
                         },
-                        "door_open_direction": "left",
                         "stage_extension_mm": 95,
                     }
                 ],
@@ -231,7 +230,52 @@ async def test_calibration_only_fridge_manual_home_moves_to_derived_center(monke
 
 
 @pytest.mark.asyncio
-async def test_fridge_opens_configured_side_for_cell(monkeypatch) -> None:
+async def test_fridge_opens_away_from_cell_side(monkeypatch) -> None:
+    door = AsyncMock()
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
+    fridge = DemoFridge(
+        AsyncMock(),
+        fridge_settings(),
+        is_fully_retracted=AsyncMock(return_value=True),
+        x_axis_middle_mm=lambda: 100.0,
+    )
+
+    await fridge.open_for_cell(fridge_location(), cell_x_mm=20.0)
+    door.move_to_position.assert_awaited_once_with(200, rpm=500)
+
+    door.move_to_position.reset_mock()
+    await fridge.open_for_cell(fridge_location(), cell_x_mm=180.0)
+    door.move_to_position.assert_awaited_once_with(0, rpm=500)
+
+
+def test_fridge_direction_uses_x_axis_middle(monkeypatch) -> None:
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: AsyncMock())
+    fridge = DemoFridge(
+        AsyncMock(),
+        fridge_settings(),
+        is_fully_retracted=AsyncMock(return_value=True),
+        x_axis_middle_mm=lambda: 475.0,
+    )
+
+    assert fridge.direction_for_cell_x(474.9) == "right"
+    assert fridge.direction_for_cell_x(475.0) == "left"
+    assert fridge.direction_for_cell_x(900.0) == "left"
+
+
+def test_fridge_direction_requires_x_axis_limits(monkeypatch) -> None:
+    monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: AsyncMock())
+    fridge = DemoFridge(
+        AsyncMock(),
+        fridge_settings(),
+        is_fully_retracted=AsyncMock(return_value=True),
+    )
+
+    with pytest.raises(ConfigError, match="X-axis travel limits"):
+        fridge.direction_for_cell_x(10.0)
+
+
+@pytest.mark.asyncio
+async def test_fridge_manual_open_uses_named_positions(monkeypatch) -> None:
     door = AsyncMock()
     monkeypatch.setattr(fridge_module, "Motor", lambda *_args, **_kwargs: door)
     fridge = DemoFridge(
@@ -240,12 +284,8 @@ async def test_fridge_opens_configured_side_for_cell(monkeypatch) -> None:
         is_fully_retracted=AsyncMock(return_value=True),
     )
 
-    await fridge.open_for_cell(fridge_location())
-
-    door.move_to_position.assert_awaited_once_with(0, rpm=500)
-
-    door.move_to_position.reset_mock()
     await fridge.open_door("right")
+
     door.move_to_position.assert_awaited_once_with(200, rpm=500)
 
 
@@ -483,12 +523,10 @@ async def test_isolated_fridge_configure_reports_guard_failure_without_door_moti
 
 def robot_with_fridge_access(*, retracted: bool = True):
     location = fridge_location()
-    cell = SimpleNamespace(
-        door_open_direction="left",
-        stage_extension_mm=95,
-    )
+    cell = SimpleNamespace(stage_extension_mm=95)
     fridge = SimpleNamespace(
         cell_settings=lambda candidate: cell if candidate == location else None,
+        direction_for_cell_x=lambda _x: "left",
         open_for_cell=AsyncMock(),
         close_door=AsyncMock(),
     )
@@ -506,24 +544,25 @@ def robot_with_fridge_access(*, retracted: bool = True):
 
 
 @pytest.mark.asyncio
-async def test_fridge_access_opens_after_positioning_and_closes_after_retraction() -> None:
+async def test_fridge_access_opens_before_approach_and_closes_after_retraction() -> None:
     robot, tool, fridge, location = robot_with_fridge_access()
     events: list[str] = []
 
     async def pick(_coord, **kwargs) -> None:
-        events.append("position_and_rotate")
-        await kwargs["before_extend"]()
+        events.append("approach")
+        await kwargs["before_approach"]()
         events.append(f"extend:{kwargs['stage_extension_mm']}")
         events.append("retract")
         await kwargs["after_retract"]()
 
     tool.pick.side_effect = pick
-    fridge.open_for_cell.side_effect = lambda _location: events.append("open")
+    fridge.open_for_cell.side_effect = lambda *_args, **_kwargs: events.append("open")
     fridge.close_door.side_effect = lambda: events.append("close")
 
     await robot._access_storage_cell("pick", AxisCoordinate(10, 20, 1), location)
 
-    assert events == ["position_and_rotate", "open", "extend:95", "retract", "close"]
+    assert events == ["approach", "open", "extend:95", "retract", "close"]
+    fridge.open_for_cell.assert_awaited_once_with(location, cell_x_mm=10)
 
 
 @pytest.mark.asyncio
@@ -531,7 +570,7 @@ async def test_fridge_access_closes_after_failure_only_when_tool_is_retracted() 
     robot, tool, fridge, location = robot_with_fridge_access(retracted=True)
 
     async def failed_pick(_coord, **kwargs) -> None:
-        await kwargs["before_extend"]()
+        await kwargs["before_approach"]()
         raise RuntimeError("transfer failed")
 
     tool.pick.side_effect = failed_pick
@@ -547,7 +586,7 @@ async def test_fridge_access_leaves_door_open_when_retraction_is_unknown() -> No
     robot, tool, fridge, location = robot_with_fridge_access(retracted=False)
 
     async def failed_pick(_coord, **kwargs) -> None:
-        await kwargs["before_extend"]()
+        await kwargs["before_approach"]()
         raise RuntimeError("transfer failed")
 
     tool.pick.side_effect = failed_pick
@@ -572,7 +611,7 @@ async def test_tool_pick_runs_access_callbacks_around_extension_and_retraction()
     tool.retract = AsyncMock(side_effect=lambda: events.append("retract"))
     tool._handle_fault = AsyncMock()
 
-    async def before_extend() -> None:
+    async def before_approach() -> None:
         events.append("open_door")
 
     async def after_retract() -> None:
@@ -581,15 +620,15 @@ async def test_tool_pick_runs_access_callbacks_around_extension_and_retraction()
     await tool.pick(
         AxisCoordinate(10, 20, 1),
         stage_extension_mm=95,
-        before_extend=before_extend,
+        before_approach=before_approach,
         after_retract=after_retract,
     )
 
     assert events == [
         "gripper_safe",
         "move",
-        "rotate",
         "open_door",
+        "rotate",
         "extend",
         "grip",
         "retract",
@@ -602,12 +641,64 @@ async def test_tool_pick_runs_access_callbacks_around_extension_and_retraction()
 
 
 @pytest.mark.asyncio
+async def test_tool_place_opens_door_before_rotation_and_extension() -> None:
+    events: list[str] = []
+    tool = Tool.__new__(Tool)
+    tool._gs = SimpleNamespace(
+        close=AsyncMock(side_effect=lambda: events.append("grip")),
+    )
+    tool.move = AsyncMock(side_effect=lambda _coord: events.append("move"))
+    tool.rotate_to_position = AsyncMock(side_effect=lambda _side: events.append("rotate"))
+    tool.extend = AsyncMock(side_effect=lambda *_args, **_kwargs: events.append("extend"))
+    tool.retract_empty = AsyncMock(side_effect=lambda: events.append("retract"))
+    tool._handle_fault = AsyncMock()
+
+    async def before_approach() -> None:
+        events.append("open_door")
+
+    async def after_retract() -> None:
+        events.append("close_door")
+
+    await tool.place(
+        AxisCoordinate(10, 20, 1),
+        stage_extension_mm=95,
+        before_approach=before_approach,
+        after_retract=after_retract,
+    )
+
+    assert events == [
+        "move",
+        "open_door",
+        "rotate",
+        "extend",
+        "grip",
+        "retract",
+        "close_door",
+    ]
+
+
+def test_tool_x_axis_travel_middle_uses_configured_limits() -> None:
+    tool = Tool.__new__(Tool)
+    tool._mx = SimpleNamespace(_params=SimpleNamespace(lower_lim=10.0, lim=910.0))
+
+    assert tool.x_axis_travel_middle_mm() == pytest.approx(460.0)
+
+
+def test_tool_x_axis_travel_middle_requires_x_axis() -> None:
+    tool = Tool.__new__(Tool)
+    tool._mx = None
+
+    with pytest.raises(ConfigError, match="X-axis motor"):
+        tool.x_axis_travel_middle_mm()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("operation", "callback_name"),
     [
-        ("pick", "before_extend"),
+        ("pick", "before_approach"),
         ("pick", "after_retract"),
-        ("place", "before_extend"),
+        ("place", "before_approach"),
         ("place", "after_retract"),
     ],
 )

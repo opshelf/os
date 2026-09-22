@@ -233,7 +233,7 @@ async def test_demo_cycle_fridge_safety_rejection_does_not_mark_hardware_fault()
         raise FridgeSafetyError("Tool must be fully retracted before moving fridge door")
 
     async def io_place(coord, **_kwargs) -> None:
-        await tool.place(coord, before_extend=reject_door_motion)
+        await tool.place(coord, before_approach=reject_door_motion)
 
     worker._robot = SimpleNamespace(
         io_place=AsyncMock(side_effect=io_place),

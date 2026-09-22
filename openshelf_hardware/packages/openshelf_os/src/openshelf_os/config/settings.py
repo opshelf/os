@@ -111,7 +111,6 @@ class DemoFridgeDoorPositionsSettings(BaseModel):
 
 class DemoFridgeCellSettings(BaseModel):
     location: StorageBinLocationSettings
-    door_open_direction: Literal["left", "right"]
     stage_extension_mm: float = Field(gt=0)
 
 
