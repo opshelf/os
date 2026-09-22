@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import sentry_sdk
 import pytest
 from fastapi import HTTPException
 from openshelf_os_server import main
+from openshelf_os_server.core.camera import CameraStreamManager, ToolCameraStreamManager
 from openshelf_os_server.routers import report
 from openshelf_os_server.settings import clear_config_cache
 
@@ -441,6 +442,7 @@ async def test_report_error_skips_sentry_in_development(tmp_path) -> None:
 		"device_id": "dev",
 		"hostname": "host",
 		"environment": "development",
+		"schema_version": 4,
 		"version": "1",
 	}
 	fake_user = SimpleNamespace(
@@ -461,12 +463,120 @@ async def test_report_error_skips_sentry_in_development(tmp_path) -> None:
 		patch.object(report, "_build_robot_context", new=AsyncMock(return_value={"status": "ok"})),
 		patch.object(report, "_build_system_context", return_value=system_context),
 		patch.object(report, "_capture_camera_images", new=AsyncMock(return_value={})),
-		patch.object(report.sentry_sdk, "push_scope") as push_scope_mock,
+		patch.object(report.sentry_sdk, "new_scope") as new_scope_mock,
 		patch.object(report.sentry_sdk, "capture_message") as capture_message_mock,
 	):
 		clear_config_cache()
 		created = await report.submit_error_report(report.ReportErrorRequest(message="boom"), current_user=fake_user)
 		assert created.status == "ok"
 
-		push_scope_mock.assert_not_called()
+		new_scope_mock.assert_not_called()
 		capture_message_mock.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_capture_camera_images_leases_idle_rtsp_camera() -> None:
+	# With no /camera consumer an RTSP manager runs on a background (crash-
+	# recorder) lease only: it is running, but consumer_count == 0 and the
+	# MJPEG decode worker (latest_frame) is stopped.
+	tool_manager = MagicMock(spec=ToolCameraStreamManager)
+	tool_manager.is_running = True
+	tool_manager.consumer_count = 0
+	tool_manager.latest_frame = None
+	tool_manager.first_frame_timeout = 15.0
+	tool_manager.wait_for_fresh_frame = AsyncMock(return_value=True)
+
+	dead_tool_manager = MagicMock(spec=ToolCameraStreamManager)
+	dead_tool_manager.is_running = True
+	dead_tool_manager.consumer_count = 0
+	dead_tool_manager.latest_frame = None
+	dead_tool_manager.first_frame_timeout = 15.0
+	dead_tool_manager.wait_for_fresh_frame = AsyncMock(return_value=False)
+
+	# Previously viewed RTSP camera whose last viewer left: the MJPEG decode
+	# worker stopped, but an old latest_frame is still in memory (stale path).
+	stale_tool_manager = MagicMock(spec=ToolCameraStreamManager)
+	stale_tool_manager.is_running = True
+	stale_tool_manager.consumer_count = 0
+	stale_tool_manager.latest_frame = b"stale_frame"
+	stale_tool_manager.first_frame_timeout = 15.0
+	stale_tool_manager.wait_for_fresh_frame = AsyncMock(return_value=True)
+	stale_tool_manager.mjpeg_path_stale = MagicMock(return_value=True)
+
+	# Previously viewed RTSP camera with a fresh MJPEG path (a viewer is
+	# open): attach its frame without taking a lease.
+	fresh_tool_manager = MagicMock(spec=ToolCameraStreamManager)
+	fresh_tool_manager.is_running = True
+	fresh_tool_manager.consumer_count = 0
+	fresh_tool_manager.latest_frame = b"fresh_frame"
+	fresh_tool_manager.first_frame_timeout = 15.0
+	fresh_tool_manager.wait_for_fresh_frame = AsyncMock(return_value=True)
+	fresh_tool_manager.mjpeg_path_stale = MagicMock(return_value=False)
+
+	sizer_manager = MagicMock(spec=CameraStreamManager)
+	sizer_manager.is_running = True
+	sizer_manager.latest_frame = b"sizer_frame"
+	sizer_manager.get_latest_frame = AsyncMock(return_value=b"sizer_frame")
+
+	frames: dict[str, bytes] = {"tool_stale": b"stale_frame", "tool_fresh": b"fresh_frame"}
+
+	def make_get_latest_frame(camera_id: str):
+		async def get_latest_frame() -> bytes | None:
+			return frames.get(camera_id)
+
+		return get_latest_frame
+
+	tool_manager.get_latest_frame = AsyncMock(side_effect=make_get_latest_frame("tool"))
+	dead_tool_manager.get_latest_frame = AsyncMock(side_effect=make_get_latest_frame("tool_dead"))
+	stale_tool_manager.get_latest_frame = AsyncMock(side_effect=make_get_latest_frame("tool_stale"))
+	fresh_tool_manager.get_latest_frame = AsyncMock(side_effect=make_get_latest_frame("tool_fresh"))
+
+	async def fake_start_camera_stream(camera_id: str) -> None:
+		frames[camera_id] = b"frame"
+
+	start_camera_stream_mock = AsyncMock(side_effect=fake_start_camera_stream)
+	stop_camera_stream_mock = AsyncMock()
+
+	with (
+		patch.dict(
+			report.camera_registry,
+			{
+				"tool": tool_manager,
+				"tool_dead": dead_tool_manager,
+				"tool_stale": stale_tool_manager,
+				"tool_fresh": fresh_tool_manager,
+				"iobox_sizer": sizer_manager,
+			},
+			clear=True,
+		),
+		patch.object(report, "start_camera_stream_by_id", start_camera_stream_mock),
+		patch.object(report, "stop_camera_stream_by_id", stop_camera_stream_mock),
+	):
+		images = await report._capture_camera_images()
+
+	# The idle and stale RTSP cameras each got a temporary MJPEG consumer
+	# lease and produced a fresh snapshot (the stale one replaced the hour-old
+	# in-memory frame); the fresh RTSP camera and the UVC camera kept their
+	# existing behavior with no lease.
+	assert images == {
+		"tool": b"frame",
+		"tool_stale": b"frame",
+		"tool_fresh": b"fresh_frame",
+		"iobox_sizer": b"sizer_frame",
+	}
+	assert start_camera_stream_mock.await_count == 3
+	start_camera_stream_mock.assert_any_await("tool")
+	start_camera_stream_mock.assert_any_await("tool_dead")
+	start_camera_stream_mock.assert_any_await("tool_stale")
+	leased_ids = [call.args[0] for call in start_camera_stream_mock.await_args_list]
+	assert "tool_fresh" not in leased_ids
+	assert "iobox_sizer" not in leased_ids
+	assert stop_camera_stream_mock.await_count == 3
+	tool_manager.wait_for_fresh_frame.assert_awaited_once_with(15.0)
+	stale_tool_manager.wait_for_fresh_frame.assert_awaited_once_with(15.0)
+	# The stale camera was re-read after the fresh frame arrived, not served
+	# the stale in-memory bytes.
+	assert stale_tool_manager.get_latest_frame.await_count == 2
+	fresh_tool_manager.wait_for_fresh_frame.assert_not_awaited()
+	fresh_tool_manager.get_latest_frame.assert_awaited_once()
+	sizer_manager.get_latest_frame.assert_awaited_once()

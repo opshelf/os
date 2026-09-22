@@ -8,6 +8,7 @@ import pytest
 
 import openshelf_os.fridge as fridge_module
 from openshelf_os.common import AxisCoordinate, RootConfig
+from openshelf_os.config.schema import CURRENT_SCHEMA_VERSION
 from openshelf_os.config.settings import DemoFridgeSettings
 from openshelf_os.exceptions import ConfigError, MotorError
 from openshelf_os.fridge import DemoFridge, FridgeSafetyError
@@ -34,6 +35,7 @@ def motor_config(name: str, motor_id: int, *, limit: float) -> dict[str, object]
 
 def config_dict() -> dict[str, object]:
     return {
+        "schema_version": CURRENT_SCHEMA_VERSION,
         "name": "fridge-test",
         "version": "0.1.0",
         "robot": {

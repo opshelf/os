@@ -48,6 +48,8 @@ def _create_motor_if_enabled(
     name: str,
     safety,
     logger: logging.Logger,
+    gpio=None,
+    home_limit_pin: Optional[str] = None,
 ) -> Optional[Motor]:
     try:
         cfg: MotorConfig = motors.by_name(name)
@@ -59,7 +61,25 @@ def _create_motor_if_enabled(
         logger.info("Motor '%s' disabled via config; skipping", name)
         return None
 
-    return Motor(controller, cfg, safety)
+    home_limit_input = None
+    if home_limit_pin is not None and cfg.limit_switches_enabled is False:
+        logger.info(
+            "Motor '%s' limit switches disabled via config; skipping home limit switch '%s'",
+            name,
+            home_limit_pin,
+        )
+    elif gpio is not None and home_limit_pin is not None and gpio.has_pin(home_limit_pin):
+        home_limit_input = gpio.input(home_limit_pin)
+
+    return Motor(controller, cfg, safety, home_limit_input=home_limit_input)
+
+
+def _limit_switches_enabled(motors: c.Motors, name: str) -> bool:
+    """Only false when this machine's config says the axis has no limit switches."""
+    try:
+        return motors.by_name(name).limit_switches_enabled is not False
+    except KeyError:
+        return True
 
 
 def derive_rotation_home_orientation(
@@ -94,6 +114,7 @@ class Tool:
         lasercontroller: Controller,
         params: c.Tool,
         safety=None,
+        gpio=None,
     ):
         self._motorcontroller = motorcontroller
         self._lasercontroller = lasercontroller
@@ -105,24 +126,42 @@ class Tool:
         motors = self._params.motors
 
         self._mx: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, motors, "x_axis", safety, self._logger
+            motorcontroller, motors, "x_axis", safety, self._logger, gpio, home_limit_pin="x_lim_min"
         )
 
         self._my: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, motors, "y_axis", safety, self._logger
+            motorcontroller, motors, "y_axis", safety, self._logger, gpio, home_limit_pin="y_lim_min"
         )
 
         self._mg: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, motors, "z_axis", safety, self._logger
+            motorcontroller, motors, "z_axis", safety, self._logger, gpio, home_limit_pin="z_lim_min"
         )
 
         self._ms: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, motors, "stage", safety, self._logger
+            motorcontroller, motors, "stage", safety, self._logger, gpio, home_limit_pin="s_lim_min"
         )
 
         self._mr: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, motors, "rotate", safety, self._logger
+            motorcontroller, motors, "rotate", safety, self._logger, gpio, home_limit_pin="r_lim_min"
         )
+
+        self._gpio = gpio
+        # Unfitted clearance inputs float, so reading them on a machine without
+        # the switches would report every rotation as unsafe.
+        if _limit_switches_enabled(motors, "x_axis") is False:
+            self._x_lim_minunsafe_input = None
+            self._x_lim_maxunsafe_input = None
+            self._logger.info(
+                "Motor 'x_axis' limit switches disabled via config; skipping rotation clearance "
+                "limit switches 'x_lim_minunsafe' and 'x_lim_maxunsafe'"
+            )
+        else:
+            self._x_lim_minunsafe_input = (
+                gpio.input("x_lim_minunsafe") if gpio is not None and gpio.has_pin("x_lim_minunsafe") else None
+            )
+            self._x_lim_maxunsafe_input = (
+                gpio.input("x_lim_maxunsafe") if gpio is not None and gpio.has_pin("x_lim_maxunsafe") else None
+            )
 
         self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
 
@@ -240,12 +279,6 @@ class Tool:
             await self._handle_fault(e)
 
             raise MotorError(f"Failed to stop tool: {str(e)}") from e
-
-    async def restore_y_brake_output(self) -> None:
-        if self._my is None:
-            return
-
-        await self._my.restore_brake_output()
 
     async def clear_alarms(self) -> None:
         try:
@@ -1124,6 +1157,14 @@ class Tool:
                     f"z_axis={z_position:.3f}mm exceeds maximum {maximum_z_mm:.3f}mm"
                 )
 
+        x_lim_minunsafe_input = getattr(self, "_x_lim_minunsafe_input", None)
+        if x_lim_minunsafe_input is not None and x_lim_minunsafe_input.read() is not True:
+            unsafe.append("x_lim_minunsafe is not engaged")
+
+        x_lim_maxunsafe_input = getattr(self, "_x_lim_maxunsafe_input", None)
+        if x_lim_maxunsafe_input is not None and x_lim_maxunsafe_input.read() is not True:
+            unsafe.append("x_lim_maxunsafe is not engaged")
+
         if unsafe:
             raise MovementError("Unsafe tool clearance for rotation: " + "; ".join(unsafe))
 
@@ -1638,7 +1679,6 @@ class Tool:
     ) -> None:
         if isolate is False:
             try:
-                await self.restore_y_brake_output()
                 await self._home_sequence(y_pre_home_clearance_mm=y_pre_home_clearance_mm)
             except Exception as e:
                 await self._handle_fault(e)
@@ -1647,11 +1687,6 @@ class Tool:
             return
 
         failed_config_motors = failed_config_motors or []
-
-        try:
-            await self.restore_y_brake_output()
-        except Exception as e:
-            self._logger.warning("init restore_y_brake_output failed: %s", e)
 
         await self._home_sequence(
             isolate=True,

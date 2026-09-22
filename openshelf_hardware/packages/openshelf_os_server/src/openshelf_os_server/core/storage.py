@@ -12,6 +12,7 @@ from openshelf_os.storage import StorageModuleSide
 from openshelf_os_server.core.storage_module import StorageModuleSideName, module_name_to_side
 
 from ..database.models import Item, ItemLocation, StorageBin, StorageCell
+from .mass import apply_mass
 from .validation import CellOccupiedError, LocationValidator, StorageCellValidator, StorageValidator, ValidationError
 
 
@@ -42,13 +43,14 @@ class StorageService:
         """Legacy JSON migration removed; database is the single source of truth."""
         return True
 
-    async def create_item(self, upca: str, name: str, dimensions: Optional[Dict[str, float]],
+    async def create_item(self, barcode: str, name: str, dimensions: Optional[Dict[str, float]],
                         weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
-                        access_level_id: Optional[int] = None) -> Item:
+                        access_level_id: Optional[int] = None, mass_values: Optional[Dict[str, Any]] = None,
+                        *, preserve_existing_weight: bool = False) -> Item:
         """Create or upsert an item in the database."""
         resolved_dimensions = dimensions or {"length": 1.0, "width": 1.0, "height": 1.0}
 
-        StorageValidator.validate_item_creation(upca, name, resolved_dimensions, weight, metadata)
+        StorageValidator.validate_item_creation(barcode, name, resolved_dimensions, weight, metadata)
 
         normalized_metadata = metadata or {}
         normalized_weight = float(weight) if weight is not None else None
@@ -56,13 +58,14 @@ class StorageService:
         async with self._lock:
             try:
                 result = await self.session.execute(
-                    select(Item).where(Item.upca == upca)
+                    select(Item).where(Item.barcode == barcode)
                 )
                 item = result.scalar_one_or_none()
 
+                new_item = item is None
                 if item is None:
                     item = Item(
-                        upca=upca,
+                        barcode=barcode,
                         name=name,
                         dimensions=resolved_dimensions,
                         weight=normalized_weight,
@@ -73,10 +76,12 @@ class StorageService:
                 else:
                     item.name = name
                     item.dimensions = resolved_dimensions
-                    item.weight = normalized_weight
+                    if not preserve_existing_weight:
+                        item.weight = normalized_weight
                     item.item_metadata = normalized_metadata
                     item.access_level_id = access_level_id  # type: ignore[assignment]
 
+                apply_mass(item, mass_values or {}, enrollment=new_item or not bool(item.enrollment_storage_completed))
                 await self.session.flush()
                 await self.session.commit()
                 await self.session.refresh(item)
@@ -86,10 +91,10 @@ class StorageService:
 
         return item
 
-    async def get_item(self, upca: str) -> Optional[Item]:
-        """Get an item by UPCA."""
+    async def get_item(self, barcode: str) -> Optional[Item]:
+        """Get an item by barcode."""
         result = await self.session.execute(
-            select(Item).where(Item.upca == upca)
+            select(Item).where(Item.barcode == barcode)
         )
         return result.scalar_one_or_none()
 
@@ -111,14 +116,14 @@ class StorageService:
         )
         return int(result.scalar_one())
 
-    async def update_item(self, upca: str, name: Optional[str] = None,
+    async def update_item(self, barcode: str, name: Optional[str] = None,
                         dimensions: Optional[Dict[str, float]] = None,
                         weight: Optional[float] = None,
                         metadata: Optional[Dict[str, Any]] = None,
-                        access_level_id: Optional[int] = None) -> Optional[Item]:
+                        access_level_id: Optional[int] = None, mass_values: Optional[Dict[str, Any]] = None) -> Optional[Item]:
         """Update an existing item."""
         result = await self.session.execute(
-            select(Item).where(Item.upca == upca)
+            select(Item).where(Item.barcode == barcode)
         )
         item = result.scalar_one_or_none()
 
@@ -141,6 +146,7 @@ class StorageService:
                 if access_level_id is not None:
                     item.access_level_id = access_level_id
 
+                apply_mass(item, mass_values or {}, enrollment=not bool(item.enrollment_storage_completed))
                 await self.session.commit()
                 await self.session.refresh(item)
                 return item
@@ -148,10 +154,10 @@ class StorageService:
                 await self.session.rollback()
                 raise
 
-    async def delete_item(self, upca: str) -> bool:
+    async def delete_item(self, barcode: str) -> bool:
         """Delete an item and its locations."""
         result = await self.session.execute(
-            select(Item).where(Item.upca == upca)
+            select(Item).where(Item.barcode == barcode)
         )
         item = result.scalar_one_or_none()
 
@@ -170,21 +176,21 @@ class StorageService:
                 await self.session.rollback()
                 raise
 
-    async def get_item_locations(self, upca: str) -> List[ItemLocation]:
+    async def get_item_locations(self, barcode: str) -> List[ItemLocation]:
         """Get all locations for a specific item."""
 
         result = await self.session.execute(
             select(ItemLocation)
             .join(Item)
-            .where(Item.upca == upca)
+            .where(Item.barcode == barcode)
             .order_by(ItemLocation.created_at)
         )
         return list(result.scalars().all())
 
-    async def add_item_location(self, upca: str, side: StorageModuleSideName | str | StorageModuleSide, shelf_idx: int, cell_idx: int) -> Optional[ItemLocation]:
+    async def add_item_location(self, barcode: str, side: StorageModuleSideName | str | StorageModuleSide, shelf_idx: int, cell_idx: int, *, commit: bool = True) -> Optional[ItemLocation]:
         """Add a location for an item."""
         result = await self.session.execute(
-            select(Item).where(Item.upca == upca)
+            select(Item).where(Item.barcode == barcode)
         )
         item = result.scalar_one_or_none()
 
@@ -216,7 +222,10 @@ class StorageService:
                     cell_idx=cell_idx,
                 )
                 self.session.add(location)
-                await self.session.commit()
+                if commit:
+                    await self.session.commit()
+                else:
+                    await self.session.flush()
                 await self.session.refresh(location)
                 return location
             except IntegrityError as exc:
@@ -228,14 +237,14 @@ class StorageService:
                 await self.session.rollback()
                 raise
 
-    async def remove_item_location(self, upca: str, side: StorageModuleSideName | str | StorageModuleSide, shelf_idx: int, cell_idx: int) -> bool:
+    async def remove_item_location(self, barcode: str, side: StorageModuleSideName | str | StorageModuleSide, shelf_idx: int, cell_idx: int, *, commit: bool = True) -> bool:
         """Remove a specific location for an item."""
         side_enum = module_name_to_side(side)
 
         result = await self.session.execute(
             select(ItemLocation)
             .join(Item)
-            .where(Item.upca == upca)
+            .where(Item.barcode == barcode)
             .where(ItemLocation.side == side_enum.value)
             .where(ItemLocation.shelf_idx == shelf_idx)
             .where(ItemLocation.cell_idx == cell_idx)
@@ -248,7 +257,10 @@ class StorageService:
         async with self._lock:
             try:
                 await self.session.delete(location)
-                await self.session.commit()
+                if commit:
+                    await self.session.commit()
+                else:
+                    await self.session.flush()
                 return True
             except Exception:
                 await self.session.rollback()
@@ -305,12 +317,12 @@ class StorageService:
                 raise
 
     async def get_all_occupied_cells(self) -> List[tuple]:
-        """Return list of (side, shelf_idx, cell_idx, upca) for all occupied cells."""
+        """Return list of (side, shelf_idx, cell_idx, barcode) for all occupied cells."""
         result = await self.session.execute(
-            select(ItemLocation.side, ItemLocation.shelf_idx, ItemLocation.cell_idx, Item.upca)
+            select(ItemLocation.side, ItemLocation.shelf_idx, ItemLocation.cell_idx, Item.barcode)
             .join(Item)
         )
-        occupied = [(row.side, row.shelf_idx, row.cell_idx, row.upca) for row in result.all()]
+        occupied = [(row.side, row.shelf_idx, row.cell_idx, row.barcode) for row in result.all()]
         bins = await self.session.execute(
             select(StorageBin.side, StorageBin.shelf_idx, StorageBin.cell_idx, StorageBin.barcode)
             .where(StorageBin.active.is_(True), StorageBin.status == "at_home")

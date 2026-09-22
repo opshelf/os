@@ -21,12 +21,14 @@
 
 	const links = [
 		{ href: '/', label: 'status' },
-		{ href: '/calibration', label: 'storage' },
+		{ href: '/storage', label: 'storage' },
 		{ href: '/camera', label: 'cameras' },
 		{ href: '/scale', label: 'scale' },
 		{ href: '/sizer', label: 'sizer' },
 		{ href: '/scanner', label: 'scanner' },
+		{ href: '/printer', label: 'printer' },
 		{ href: '/motors', label: 'motors' },
+		{ href: '/power', label: 'power' },
 		{ href: '/wifi', label: 'wifi' }
 	];
 

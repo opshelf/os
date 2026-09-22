@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from openshelf_os.config.models import Robot
+from openshelf_os.config.schema import require_current_schema
 from openshelf_os.config.settings import (
     AuthSettings,
     DemoSettings,
@@ -21,6 +22,7 @@ from openshelf_os.config.settings import (
 
 
 class RootConfig(BaseModel):
+    schema_version: int
     name: str
     version: str
     description: str | None = None
@@ -93,6 +95,13 @@ class RootConfig(BaseModel):
                 )
 
         return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_schema_version(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            require_current_schema(values)
+        return values
 
     def get(self, dotted_path: str, default: Any = ...) -> Any:
         cur: Any = self

@@ -40,6 +40,20 @@ export function buildAuthenticatedUrl(path: string): string {
 	return `${url}${separator}token=${encodeURIComponent(token)}`;
 }
 
+export function buildAuthenticatedWsUrl(path: string): string {
+	const url = buildApiUrl(path)
+		.replace(/^http:/, 'ws:')
+		.replace(/^https:/, 'wss:');
+	const token = getAccessToken();
+
+	if (token === null) {
+		return url;
+	}
+
+	const separator = url.includes('?') ? '&' : '?';
+	return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export type ApiErrorDetail = {
 	message?: string;
 	code?: string;
@@ -223,6 +237,20 @@ export async function getStorageGrid(): Promise<StorageGrid> {
 	return apiFetch<StorageGrid>(`/storage/grid?_t=${timestamp}`);
 }
 
+export async function addShelf(side: StorageModuleSide): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({ side });
+	return apiFetch<{ success: boolean }>(`/storage/grid/shelf?${params}`, {
+		method: 'POST'
+	});
+}
+
+export async function addCell(side: StorageModuleSide, shelfIdx: number): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx) });
+	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
+		method: 'POST'
+	});
+}
+
 export async function deleteShelf(side: StorageModuleSide, shelfIdx: number): Promise<{ success: boolean }> {
 	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/shelf?${params}`, {
@@ -233,6 +261,125 @@ export async function deleteShelf(side: StorageModuleSide, shelfIdx: number): Pr
 export async function deleteCell(side: StorageModuleSide, shelfIdx: number, cellIdx: number): Promise<{ success: boolean }> {
 	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
+		method: 'DELETE'
+	});
+}
+
+export interface GridCellUpdate {
+	x?: number;
+	y?: number;
+	z_offset?: number;
+	status?: string;
+	is_manual?: boolean;
+	dimensions?: Dimensions;
+}
+
+export interface GridCellBatchItem extends GridCellUpdate {
+	shelf_idx: number;
+	cell_idx: number;
+}
+
+export interface GridCellsBatch {
+	cells: GridCellBatchItem[];
+}
+
+export async function updateGridCell(
+	side: StorageModuleSide,
+	shelfIdx: number,
+	cellIdx: number,
+	payload: GridCellUpdate
+): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
+	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function updateGridCells(
+	side: StorageModuleSide,
+	payload: GridCellsBatch
+): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({ side });
+	return apiFetch<{ success: boolean }>(`/storage/grid/cells?${params}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+}
+
+export interface CompartmentLayout {
+	rows: number;
+	columns: number;
+}
+
+export interface StorageBin {
+	id: number;
+	barcode: string;
+	home_location: {
+		side: StorageModuleSide;
+		shelf_idx: number;
+		cell_idx: number;
+	};
+	max_items: number;
+	compartment_layout: CompartmentLayout | null;
+	status: string;
+	active: boolean;
+	item_count: number;
+}
+
+export async function getBins(): Promise<{ bins: StorageBin[] }> {
+	return apiFetch<{ bins: StorageBin[] }>('/storage/bins');
+}
+
+export async function updateTrayLayout(
+	side: StorageModuleSide,
+	shelfIdx: number,
+	cellIdx: number,
+	payload: CompartmentLayout
+): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({
+		side,
+		shelf_idx: String(shelfIdx),
+		cell_idx: String(cellIdx)
+	});
+	return apiFetch<{ success: boolean }>(`/storage/bins/tray-layout?${params}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function assignTray(
+	side: StorageModuleSide,
+	shelfIdx: number,
+	cellIdx: number,
+	payload: { barcode: string } & CompartmentLayout
+): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({
+		side,
+		shelf_idx: String(shelfIdx),
+		cell_idx: String(cellIdx)
+	});
+	return apiFetch<{ success: boolean }>(`/storage/bins/tray?${params}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function unassignTray(
+	side: StorageModuleSide,
+	shelfIdx: number,
+	cellIdx: number
+): Promise<{ success: boolean }> {
+	const params = new URLSearchParams({
+		side,
+		shelf_idx: String(shelfIdx),
+		cell_idx: String(cellIdx)
+	});
+	return apiFetch<{ success: boolean }>(`/storage/bins/tray?${params}`, {
 		method: 'DELETE'
 	});
 }
@@ -308,13 +455,19 @@ export async function runCalibrationCycleTest(
 	});
 }
 
+export type RobotCommandReceipt = {
+	message: string;
+	command_id: string;
+	status: string;
+};
+
 export async function storeItem(
 	side: StorageModuleSide,
 	shelfIdx: number,
 	cellIdx: number,
 	item: Record<string, unknown>
-): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>('/robot/commands', {
+): Promise<RobotCommandReceipt> {
+	return apiFetch<RobotCommandReceipt>('/robot/commands', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -331,8 +484,8 @@ export async function retrieveItem(
 	side: StorageModuleSide,
 	shelfIdx: number,
 	cellIdx: number
-): Promise<{ success: boolean }> {
-	return apiFetch<{ success: boolean }>('/robot/commands', {
+): Promise<RobotCommandReceipt> {
+	return apiFetch<RobotCommandReceipt>('/robot/commands', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
@@ -426,23 +579,78 @@ export interface LaserAutoCalibrationAngleResult {
 	updated_rotation_deg: number;
 }
 
-export interface LaserAutoCalibrationIOBoxResult {
-	pickup_low_x: number;
-	pickup_low_y: number;
-	pickup_high_x: number;
-	pickup_high_y: number;
-	z_extension: number;
-	stage_extension: number;
+export interface LaserAutoCalibrationReferenceOffsetSample {
+	shelf_idx: number;
+	cell_idx: number;
+	manual_x_mm: number;
+	manual_y_mm: number;
+	detected_x_mm: number;
+	detected_y_mm: number;
+	delta_x_mm: number;
+	delta_y_mm: number;
+	wall_depth_mm: number | null;
+	derived_intercept_mm: number | null;
+}
+
+export interface LaserAutoCalibrationReferenceOffset {
+	side: StorageModuleSide;
+	offset_x_mm: number;
+	offset_y_mm: number;
+	spread_x_mm: number;
+	spread_y_mm: number;
+	sample_count: number;
+	intercept_mm: number | null;
+	slope_per_mm: number;
+	configured_offset_x_mm: number | null;
+	configured_offset_y_mm: number | null;
+	applied: boolean;
+	persisted: boolean;
+	samples: LaserAutoCalibrationReferenceOffsetSample[];
+	skipped: string[];
+}
+
+export interface LaserAutoCalibrationZStallSample {
+	shelf_idx: number;
+	cell_idx: number;
+	probe_x_mm: number;
+	probe_y_mm: number;
+	wall_depth_mm: number;
+	z_contact_mm: number;
+	z_contact_repeat_mm: number | null;
+	delta_mm: number;
+}
+
+export interface LaserAutoCalibrationZStallResult {
+	side: StorageModuleSide;
+	intercept_mm: number;
+	slope_per_mm: number;
+	slope_source: string;
+	fit_source: string;
+	sample_count: number;
+	x_span_mm: number;
+	stage_extension_mm: number;
+	z_place_mm: number;
+	manual_intercept_mm: number | null;
+	manual_agreement_mm: number | null;
+	manual_agreement_tolerance_mm: number;
+	manual_captured_stage_mm: number | null;
+	manual_capture_unstamped: number;
+	applied: boolean;
+	persisted: boolean;
+	samples: LaserAutoCalibrationZStallSample[];
+	skipped: string[];
+	dropped_repeats: string[];
 }
 
 export interface LaserAutoCalibrationRequest {
-	mode: 'all' | 'both' | 'side' | 'shelf' | 'cell' | 'io_box';
+	mode: 'all' | 'both' | 'side' | 'shelf' | 'cell';
 	side?: StorageModuleSide;
 	shelf_idx?: number;
 	cell_idx?: number;
-	include_io_box?: boolean;
 	include_angle_calibration?: boolean;
 	include_extension_calibration?: boolean;
+	derive_offsets_from_manual_cells?: boolean;
+	derive_z_model_from_stall?: boolean;
 }
 
 export interface LaserAutoCalibrationSnapshot {
@@ -470,7 +678,8 @@ export interface LaserAutoCalibrationSnapshot {
 	shelf_candidates: LaserAutoCalibrationCandidate[];
 	detected_cells: LaserAutoCalibrationCell[];
 	angle_results: LaserAutoCalibrationAngleResult[];
-	io_box_result: LaserAutoCalibrationIOBoxResult | null;
+	reference_offset_results: LaserAutoCalibrationReferenceOffset[];
+	z_stall_results: LaserAutoCalibrationZStallResult[];
 	stage_detail: Record<string, unknown>;
 	error: string | null;
 }
@@ -478,7 +687,6 @@ export interface LaserAutoCalibrationSnapshot {
 export function buildLaserAutoCalibrationStreamUrl(
 	request: LaserAutoCalibrationRequest = {
 		mode: 'all',
-		include_io_box: true,
 		include_angle_calibration: true,
 		include_extension_calibration: true
 	},
@@ -489,21 +697,20 @@ export function buildLaserAutoCalibrationStreamUrl(
 		url.searchParams.set('subscribe_only', 'true');
 	}
 
-	if (request.mode === 'io_box') {
-		url.searchParams.set('mode', 'io_box');
-		return url.toString();
-	}
-
-	if (request.include_io_box !== undefined) {
-		url.searchParams.set('include_io_box', String(request.include_io_box));
-	}
-
 	if (request.include_angle_calibration !== undefined) {
 		url.searchParams.set('include_angle_calibration', String(request.include_angle_calibration));
 	}
 
 	if (request.include_extension_calibration !== undefined) {
 		url.searchParams.set('include_extension_calibration', String(request.include_extension_calibration));
+	}
+
+	if (request.derive_offsets_from_manual_cells === true) {
+		url.searchParams.set('derive_offsets_from_manual_cells', 'true');
+	}
+
+	if (request.derive_z_model_from_stall === true) {
+		url.searchParams.set('derive_z_model_from_stall', 'true');
 	}
 
 	if (request.mode === 'both') {
@@ -812,11 +1019,60 @@ export async function getScannerStatus(): Promise<ScannerStatus> {
 	return apiFetch<ScannerStatus>('/robot/debug/scanner/status');
 }
 
-export async function sendScannerScan(code: string): Promise<{ message: string }> {
+export async function sendScannerScan(barcode: string): Promise<{ message: string }> {
 	return apiFetch<{ message: string }>('/robot/debug/scanner/scan', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ code })
+		body: JSON.stringify({ barcode })
+	});
+}
+
+export interface PrinterConfig {
+	feed_dots: number;
+}
+
+export interface PrinterStatus {
+	enabled: boolean;
+	connected: boolean;
+	healthy: boolean;
+	simulated: boolean;
+	error: string | null;
+	paper_out: boolean;
+	paper_near_end: boolean;
+	cover_open: boolean;
+	cutter_error: boolean;
+	recoverable_error: boolean;
+	unrecoverable_error: boolean;
+	auto_recoverable_error: boolean;
+}
+
+export interface PrintLabelResult {
+	message: string;
+	barcode: string;
+	printed: boolean;
+}
+
+export async function getPrinterConfig(): Promise<PrinterConfig> {
+	return apiFetch<PrinterConfig>('/print/config');
+}
+
+export async function setPrinterConfig(config: PrinterConfig): Promise<PrinterConfig> {
+	return apiFetch<PrinterConfig>('/print/config', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(config)
+	});
+}
+
+export async function getPrinterStatus(): Promise<PrinterStatus> {
+	return apiFetch<PrinterStatus>('/print/status');
+}
+
+export async function printPrinterLabel(barcode: string): Promise<PrintLabelResult> {
+	return apiFetch<PrintLabelResult>('/print', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ barcode })
 	});
 }
 
@@ -1203,4 +1459,31 @@ export async function moveStage(
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ position })
 	});
+}
+
+export interface PowerRail {
+	rail: string;
+	supplies: string;
+	axes: string[];
+	gripper: boolean;
+	powered: boolean | null;
+}
+
+export interface PowerRailList {
+	hold_seconds: number;
+	rails: PowerRail[];
+}
+
+export async function getPowerRails(): Promise<PowerRailList> {
+	return apiFetch<PowerRailList>('/robot/debug/power');
+}
+
+export interface PowerCycleResult {
+	success: boolean;
+	rail: string;
+	axes_needing_home: string[];
+}
+
+export async function powerCycleRail(rail: string): Promise<PowerCycleResult> {
+	return apiFetch<PowerCycleResult>(`/robot/debug/power/${rail}/cycle`, { method: 'POST' });
 }

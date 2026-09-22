@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterator, List, Literal, Optional, Tuple, Union, overload
+from typing import Any, Iterable, Iterator, List, Literal, Optional, Tuple, Union, overload
 
 from pydantic import BaseModel, Field, RootModel, field_validator, model_validator
 
@@ -26,6 +26,12 @@ class Motor(BaseModel):
     motor_name: str = Field(..., min_length=1)
     motor_id: int = Field(..., ge=0)
     enabled: bool = Field(default=True)
+    # Machines are built with and without the axis limit switches. When false the
+    # GPIO limit inputs for this motor are never read: homing does not require the
+    # home switch to engage, and for x_axis rotation does not require the
+    # clearance switches. Left true, a missing switch reads not engaged and blocks
+    # initialization.
+    limit_switches_enabled: bool = Field(default=True)
     rotation_safe_stage_extension_enabled: bool = Field(default=False)
     rotation_safe_stage_extension_mm: float = Field(default=8.5, ge=0)
     Ip: int = Field(..., ge=0)
@@ -44,7 +50,7 @@ class Motor(BaseModel):
     status_reg: int = Field(default=0x1003)
     status_fault_bit: Optional[int] = Field(default=0)
     status_complete_bit: int = Field(default=5)
-    brake_output_function: Optional[Literal[0x24, 0xA4, 0xA1]] = Field(default=None)
+    brake_output_function: Optional[Literal[0x24, 0xA4]] = Field(default=None)
     brake_release_delay_ms: int = Field(default=250, ge=0, le=1500)
     brake_engagement_delay_ms: int = Field(default=250, ge=0, le=1500)
     brake_engagement_speed_threshold: int = Field(default=10, ge=0, le=500)
@@ -105,7 +111,7 @@ class Motor(BaseModel):
             "control_mode": 2,
             "ppr": 10000,
             "encoder_resolution_cpr": 4000,
-            "brake_output_function": 0xA1,
+            "brake_output_function": 0x24,
             "brake_release_delay_ms": 250,
             "brake_engagement_delay_ms": 250,
             "brake_engagement_speed_threshold": 10,
@@ -385,24 +391,29 @@ def _pca9535_output(
 def _default_gpio_pins() -> dict[str, GpioPinConfig]:
     return {
         # PCA9535_0 (0x20) - X/Y axis limits and tool limits
-        "x_limit_min": _pca9535_input("pca9535_0", 0),
-        "x_limit_max": _pca9535_input("pca9535_0", 1),
-        "x_1": _pca9535_input("pca9535_0", 2),
-        "x_2": _pca9535_input("pca9535_0", 3),
-        "y_limit_min": _pca9535_input("pca9535_0", 4),
-        "y_limit_max": _pca9535_input("pca9535_0", 5),
-        "y_1": _pca9535_input("pca9535_0", 6),
-        "y_2": _pca9535_input("pca9535_0", 7),
-        "tool_limit_r": _pca9535_input("pca9535_0", 8),
-        "tool_limit_s": _pca9535_input("pca9535_0", 9),
-        "tool_limit_z": _pca9535_input("pca9535_0", 10),
+        # X/Y end stops (x_lim_min/x_lim_max/y_lim_min/y_lim_max) read engaged
+        # on a high input, so they are not inverted; the tool-head limits
+        # (r_lim_min/s_lim_min/z_lim_min) and io_lim_min stay inverted. Both
+        # types are NPN switches and the difference is measured rather than
+        # explained. The post-home limit check reads these pins.
+        "x_lim_min": _pca9535_input("pca9535_0", 0, inverted=False),
+        "x_lim_max": _pca9535_input("pca9535_0", 1, inverted=False),
+        "x_lim_minunsafe": _pca9535_input("pca9535_0", 2),
+        "x_lim_maxunsafe": _pca9535_input("pca9535_0", 3),
+        "y_lim_min": _pca9535_input("pca9535_0", 4, inverted=False),
+        "y_lim_max": _pca9535_input("pca9535_0", 5, inverted=False),
+        "y_lim_minunsafe": _pca9535_input("pca9535_0", 6),
+        "y_lim_maxunsafe": _pca9535_input("pca9535_0", 7),
+        "r_lim_min": _pca9535_input("pca9535_0", 8),
+        "s_lim_min": _pca9535_input("pca9535_0", 9),
+        "z_lim_min": _pca9535_input("pca9535_0", 10),
         "tool_1": _pca9535_input("pca9535_0", 11),
         "tool_in1": _pca9535_input("pca9535_0", 12),
         "tool_out0": _pca9535_output("pca9535_0", 13),
         "tool_standby": _pca9535_output("pca9535_0", 14),
-        "io_limit_min": _pca9535_input("pca9535_0", 15),
+        "io_lim_min": _pca9535_input("pca9535_0", 15),
         # PCA9535_1 (0x21) - IO box, cabinet locks, estop, power
-        "io_limit_max": _pca9535_input("pca9535_1", 0),
+        "io_lim_max": _pca9535_input("pca9535_1", 0),
         "light_curtain": _pca9535_input("pca9535_1", 1, inverted=False, debounce_ms=50),
         "io_in0": _pca9535_input("pca9535_1", 2),
         "io_1": _pca9535_input("pca9535_1", 3),
@@ -416,7 +427,8 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
         "cabinet_bot_unlock": _pca9535_output("pca9535_1", 9, initial=False, shutdown=False),
         "estop": _pca9535_input("pca9535_1", 10, inverted=False, pull="off"),
         "sw_estop": _pca9535_output("pca9535_1", 11),
-        "power_control": _pca9535_output("pca9535_1", 12),
+        # X and Y drive power, cut together.
+        "pwr_out0": _pca9535_output("pca9535_1", 12),
         "pwr_out1": _pca9535_output("pca9535_1", 13),
         "pwr_out2": _pca9535_output("pca9535_1", 14),
         "pwr_out3": _pca9535_output("pca9535_1", 15),
@@ -426,9 +438,66 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
     }
 
 
+def compare_gpio_pins_to_defaults(configured: Iterable[str]) -> Tuple[List[str], List[str]]:
+    """Pin names the defaults define but a config omits, and ones it adds.
+
+    A config that declares robot.gpio.pins replaces the defaults outright, so a
+    renamed or newly added default is silently absent on that machine.
+    """
+    names = set(configured)
+    defaults = set(_default_gpio_pins())
+
+    return sorted(defaults - names), sorted(names - defaults)
+
+
+#: Pin names that existing config files still use. A config that declares
+#: robot.gpio.pins replaces the defaults wholesale, so renaming a default is
+#: invisible to those machines until the old key is translated here.
+GPIO_PIN_ALIASES = {
+    "power_control": "pwr_out0",
+    "x_limit_min": "x_lim_min",
+    "x_limit_max": "x_lim_max",
+    "x_1": "x_lim_minunsafe",
+    "x_2": "x_lim_maxunsafe",
+    "y_limit_min": "y_lim_min",
+    "y_limit_max": "y_lim_max",
+    "y_1": "y_lim_minunsafe",
+    "y_2": "y_lim_maxunsafe",
+    "tool_limit_r": "r_lim_min",
+    "tool_limit_s": "s_lim_min",
+    "tool_limit_z": "z_lim_min",
+    "io_limit_min": "io_lim_min",
+    "io_limit_max": "io_lim_max",
+}
+
+
 class GpioConfig(BaseModel):
     expanders: List[GpioExpanderConfig] = Field(default_factory=_default_gpio_expanders)
     pins: dict[str, GpioPinConfig] = Field(default_factory=_default_gpio_pins)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_pin_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict) is False:
+            return data
+
+        pins = data.get("pins")
+        if isinstance(pins, dict) is False:
+            return data
+
+        renamed: dict[str, Any] = {}
+        for name, spec in pins.items():
+            alias = GPIO_PIN_ALIASES.get(name)
+            # An explicit modern key always wins over its legacy alias.
+            if alias is not None and alias in pins:
+                continue
+
+            renamed[alias if alias is not None else name] = spec
+
+        if renamed == pins:
+            return data
+
+        return {**data, "pins": renamed}
 
 
 class EmergencyStopConfig(BaseModel):

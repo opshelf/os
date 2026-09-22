@@ -26,6 +26,7 @@ def _make_sizer_manager_mock(is_available: bool = True) -> MagicMock:
 	manager.background_consumer_count = 0
 	manager.latest_frame = b"fake_frame"
 	manager.camera_type = "IOBoxSizerCamera"
+	manager.has_frame = MagicMock(return_value=True)
 	manager.is_available = AsyncMock(return_value=is_available)
 	return manager
 
@@ -34,8 +35,10 @@ def _make_tool_manager_mock(is_available: bool = True) -> MagicMock:
 	manager = MagicMock(spec=ToolCameraStreamManager)
 	manager.is_running = False
 	manager.consumer_count = 0
+	manager.nalu_consumer_count = 0
 	manager.background_consumer_count = 0
 	manager.latest_frame = None
+	manager.has_frame = MagicMock(return_value=False)
 	manager.is_available = AsyncMock(return_value=is_available)
 	return manager
 
@@ -168,6 +171,7 @@ async def test_stream_camera_unavailable_when_no_frames_arrive(client: AsyncClie
 	manager = MagicMock(spec=ToolCameraStreamManager)
 	manager.is_running = True
 	manager.consumer_count = 0
+	manager.nalu_consumer_count = 0
 	manager.background_consumer_count = 0
 	manager.latest_frame = None
 	manager.first_frame_timeout = 0.2
@@ -293,12 +297,13 @@ def test_tool_stream_manager_keeps_small_frames_unchanged() -> None:
 
 def test_tool_stream_manager_skips_source_frames_for_target_fps() -> None:
 	manager = ToolCameraStreamManager(rtsp_url="rtsp://camera")
+	assert manager.target_fps == 15
 	cap = MagicMock()
-	cap.get.return_value = 30
+	cap.get.return_value = 60
 
 	frames_to_skip = manager._get_frames_to_skip(cap)
 
-	assert frames_to_skip == 5
+	assert frames_to_skip == 3
 
 
 def test_raw_camera_uses_lower_fps_for_background_recorder() -> None:
@@ -385,6 +390,7 @@ async def test_stop_camera_stream_by_id_stops_manager_when_last_consumer_disconn
 	manager = MagicMock(spec=ToolCameraStreamManager)
 	manager.is_running = True
 	manager.consumer_count = 0
+	manager.nalu_consumer_count = 0
 	manager.background_consumer_count = 0
 	manager.decrement_consumers = MagicMock(return_value=0)
 	manager.stop = AsyncMock()
@@ -400,6 +406,7 @@ async def test_stop_camera_stream_by_id_keeps_manager_running_with_remaining_con
 	manager = MagicMock(spec=ToolCameraStreamManager)
 	manager.is_running = True
 	manager.consumer_count = 1
+	manager.nalu_consumer_count = 0
 	manager.background_consumer_count = 0
 	manager.decrement_consumers = MagicMock(return_value=1)
 	manager.stop = AsyncMock()
@@ -415,6 +422,7 @@ async def test_stop_camera_stream_keeps_manager_running_for_background_recorder(
 	manager = MagicMock(spec=ToolCameraStreamManager)
 	manager.is_running = True
 	manager.consumer_count = 0
+	manager.nalu_consumer_count = 0
 	manager.background_consumer_count = 1
 	manager.decrement_consumers = MagicMock(return_value=0)
 	manager.stop = AsyncMock()

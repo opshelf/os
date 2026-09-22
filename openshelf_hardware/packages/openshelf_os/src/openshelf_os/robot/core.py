@@ -4,12 +4,14 @@ import logging
 import sentry_sdk
 
 from pathlib import Path as _Path
-from typing import Any, Callable, Dict, Iterable, Literal, Optional, List, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterable, Literal, NamedTuple, Optional, List, TYPE_CHECKING
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import MotionSafetyInterlock
+from hardware.motor import MotorStatus
 from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
+from openshelf_os.config.models import compare_gpio_pins_to_defaults
 from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORT,
     DEFAULT_MOTOR_PORT,
@@ -21,6 +23,7 @@ from openshelf_os.serial_ports import (
 from openshelf_os.exceptions import (
     ConfigError as CabinetConfigError,
     FridgeSafetyError,
+    GripperError,
     MotorError,
     MovementError,
     ToolError,
@@ -34,7 +37,7 @@ from openshelf_os.laser_calibration.scan import (
 from openshelf_os.operating_mode import should_enable_demo_features, should_enable_demo_fridge
 from openshelf_os.robot.commands import (
     RobotCommands, StopCommand, InitializeCommand, IdleCommand, HomeCommand,
-    MoveCommand, RetrieveItemCommand, StoreItemCommand,
+    MoveCommand, RetrieveItemCommand, StoreItemCommand, DeliverTrayCommand, ReturnTrayCommand,
 )
 from openshelf_os.robot.status import (
     RobotResponse, RobotCommandSuccessful, RobotCommandError,
@@ -71,6 +74,30 @@ _INIT_MOTOR_COMPONENTS = [
     "fridge_door",
 ]
 
+class PowerRail(NamedTuple):
+    supplies: str
+    #: Motors that lose their incremental encoder reference with the rail.
+    axes: tuple[str, ...]
+    #: Whether the gripper servo drops too, so it must reconfigure on next use.
+    gripper: bool = False
+
+
+# The four switched power rails. Asserting a pin CUTS that rail; clearing it --
+# the default state -- applies power.
+POWER_RAILS: Dict[str, PowerRail] = {
+    "pwr_out0": PowerRail(
+        "tool drives and gripper",
+        ("x_axis", "y_axis", "z_axis", "stage", "rotate"),
+        gripper=True,
+    ),
+    "pwr_out1": PowerRail("IO box", ("door",)),
+    "pwr_out2": PowerRail("peripherals", ()),
+    "pwr_out3": PowerRail("aux", ()),
+}
+POWER_CYCLE_HOLD_S = 3.0
+POWER_CYCLE_BOOT_TIMEOUT_S = 20.0
+POWER_CYCLE_BOOT_POLL_S = 0.25
+
 
 class Robot:
     # ------------------------------------------------------------------ #
@@ -90,6 +117,7 @@ class Robot:
         io_params = self._config.get("robot.io", {})
         gpio_config = getattr(self._config.robot, "gpio", None)
         self._gpio = _GpioManager.from_config(gpio_config) if _GpioManager is not None else None
+        self._warn_on_gpio_pin_drift(gpio_config)
 
         self._motion_safety = MotionSafetyInterlock()
         self._tool = Tool(
@@ -97,6 +125,7 @@ class Robot:
             lasercontroller=self._laserbus,
             params=tool_params,
             safety=self._motion_safety,
+            gpio=self._gpio,
         )
         self._io = IOBox(
             motorcontroller=self._motorbus,
@@ -147,6 +176,29 @@ class Robot:
         self._demo_nudge_map: dict[tuple[str, int, int], float] = {}
         if should_enable_demo_features() is True:
             self._demo_cell_map = self._load_demo_cell_map(self._config.demo.cell_map_path)
+
+    def _warn_on_gpio_pin_drift(self, gpio_config: Any) -> None:
+        """Flag pins the defaults define but this config lacks, and vice versa.
+
+        A config that declares robot.gpio.pins replaces the defaults outright,
+        so a renamed default goes missing here rather than failing loudly.
+        """
+        pins = getattr(gpio_config, "pins", None)
+        if pins is None:
+            return
+
+        missing, unrecognized = compare_gpio_pins_to_defaults(pins)
+
+        if missing:
+            self._logger.warning(
+                "config gpio pins are missing defaults; features using them are unavailable",
+                extra={"missing_pins": missing},
+            )
+        if unrecognized:
+            self._logger.warning(
+                "config gpio pins are not in the defaults; check for a stale or renamed key",
+                extra={"unrecognized_pins": unrecognized},
+            )
 
     def _emit_init(self, component: str, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
         reporter = getattr(self, "_init_reporter", None)
@@ -337,8 +389,146 @@ class Robot:
         if cabinet is not None:
             await cabinet.stop()
 
-    async def restore_y_brake_output(self) -> None:
-        await self._tool.restore_y_brake_output()
+    def get_power_rail_states(self) -> Dict[str, Optional[bool]]:
+        """Whether each rail is currently powered. None if the pin is unavailable.
+
+        The pin is asserted to CUT power, so powered is its inverse.
+        """
+        gpio = getattr(self, "_gpio", None)
+        states: Dict[str, Optional[bool]] = {}
+
+        for rail in POWER_RAILS:
+            if gpio is None or gpio.has_pin(rail) is False:
+                states[rail] = None
+                continue
+            try:
+                states[rail] = not gpio.read_output(rail)
+            except Exception:
+                states[rail] = None
+
+        return states
+
+    async def _wait_for_drive(self, motor: "Motor") -> bool:
+        """Poll a drive until it answers after a power cycle."""
+        deadline = asyncio.get_running_loop().time() + POWER_CYCLE_BOOT_TIMEOUT_S
+
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                await motor.get_param("Motion status")
+                return True
+            except Exception:
+                await asyncio.sleep(POWER_CYCLE_BOOT_POLL_S)
+
+        return False
+
+    async def _reconfigure_after_power_cycle(self, axes: tuple[str, ...]) -> None:
+        """Re-apply runtime parameters the drives lost with their power.
+
+        move_config() -- all that homing runs -- restores the path mode,
+        direction and velocity. Peak current, accel/decel, the position loop
+        gain, the stop time and the following-error limit come only from
+        configure(), so without this a home after a power cycle runs on EEPROM
+        values and faults.
+        """
+        failed_axes: list[str] = []
+
+        for name in axes:
+            motor = self._get_motor_by_name(name)
+            if motor is None:
+                continue
+
+            if await self._wait_for_drive(motor) is False:
+                self._logger.error(
+                    "drive did not answer after power cycle; parameters not restored",
+                    extra={"motor_name": name, "timeout_s": POWER_CYCLE_BOOT_TIMEOUT_S},
+                )
+                failed_axes.append(name)
+                continue
+
+            try:
+                await motor.configure()
+            except Exception as e:
+                self._logger.error(
+                    "failed to reconfigure after power cycle",
+                    extra={"motor_name": name, "error": str(e)},
+                )
+                failed_axes.append(name)
+
+        if failed_axes:
+            raise MotorError(f"Power cycle reconfigure failed for axes: {', '.join(failed_axes)}")
+
+    async def power_cycle_rail(
+        self,
+        rail: str,
+        *,
+        on_cut: Callable[[], None] | None = None,
+    ) -> tuple[str, ...]:
+        """Cut and restore one switched power rail. Returns the axes it dropped.
+
+        Drive settings that only latch at power-on need this: any DI/DO function
+        change is written, verified and saved, yet stays inert until the drive
+        restarts (CL57RS manual 4.3.2). Anything on the rail comes back with its
+        RAM parameters lost and, for a motor, an incremental encoder that no
+        longer knows where it is -- so those axes are marked unhomed and their
+        drives reconfigured once they answer again. The caller still has to home
+        them.
+
+        The optional ``on_cut`` callback runs synchronously after power is cut and
+        before the hold begins.
+        """
+        if rail not in POWER_RAILS:
+            raise ConfigError(f"Unknown power rail '{rail}'")
+
+        spec = POWER_RAILS[rail]
+
+        for name in spec.axes:
+            motor = self._get_motor_by_name(name)
+            if motor is not None and motor._status is MotorStatus.MOVING:
+                raise MotorError(f"Refusing to power cycle {rail} while {name} is moving")
+
+        gpio = getattr(self, "_gpio", None)
+        if gpio is None or gpio.has_pin(rail) is False:
+            raise ConfigError(f"GPIO pin {rail} is not configured")
+
+        for name in spec.axes:
+            motor = self._get_motor_by_name(name)
+            if motor is None:
+                continue
+            # Still booting; nothing may move on stale coordinates.
+            motor._is_homed = False
+            motor._hard_stopped = True
+            motor._cur_pos = None
+
+        if spec.gripper is True:
+            gripper = getattr(getattr(self, "_tool", None), "_gs", None)
+            if gripper is not None:
+                # _ensure_configured() reconfigures it on next use.
+                gripper._configured = False
+
+        output = gpio.output(rail)
+        self._logger.warning(
+            "Power cycling rail",
+            extra={"pin": rail, "supplies": spec.supplies, "hold_s": POWER_CYCLE_HOLD_S},
+        )
+
+        output.write(True)  # asserted cuts power
+        if on_cut is not None:
+            on_cut()
+        try:
+            await asyncio.sleep(POWER_CYCLE_HOLD_S)
+        finally:
+            output.write(False)  # cleared restores it
+            configure_error: MotorError | None = None
+            try:
+                await self._reconfigure_after_power_cycle(spec.axes)
+            except MotorError as exc:
+                # _reconfigure_after_power_cycle already logged per-axis failure reasons.
+                configure_error = exc
+
+        if configure_error is not None:
+            raise configure_error
+
+        return spec.axes
 
     async def idle(self) -> None:
         idle_position = await self._tool.get_param("IDLE_POSITION")
@@ -377,7 +567,7 @@ class Robot:
             "laser": {
                 "port": DEFAULT_LASER_PORT,
                 "fallback_ports": LASER_PORT_CANDIDATES,
-                "baudrate": 9600,
+                "baudrate": 115200,
                 "parity": "N",
                 "timeout": 2.0,
                 "retry_delay_s": 0.25,
@@ -1043,26 +1233,91 @@ class Robot:
         self.set_operation_context(phase="io_pick.clear_alarms")
         await self._tool.clear_alarms()
 
+    async def _set_tray_grip(self, *, engaged: bool) -> None:
+        """Route tray servo failures through the command hardware-fault interlock."""
+        try:
+            if engaged:
+                await self.grip()
+            else:
+                await self.release_gripper()
+        except Exception as exc:
+            action = "grip" if engaged else "release"
+            raise GripperError(f"Tray {action} failed: {exc}") from exc
+
+    async def deliver_tray(self, coord: AxisCoordinate) -> None:
+        """Leave the entire tray supported in the IO box, with the tool clear."""
+        position = await self._tool.get_param("PICKUP_POSITION_L")
+        if position is None:
+            raise ConfigError("Missing PICKUP_POSITION_L parameter")
+        self.set_operation_context(phase="deliver_tray.pick_from_shelf", target_coordinate=coord)
+        await self._tool.pick(coord)
+        self.set_operation_context(phase="deliver_tray.rotate_to_front")
+        await self._tool.rotate_to_position("front")
+        self.set_operation_context(phase="deliver_tray.move_to_io")
+        await self._tool.move(AxisCoordinate(position[0], position[1]))
+        self.set_operation_context(phase="deliver_tray.open_door")
+        await self._io.open_door()
+        self.set_operation_context(phase="deliver_tray.extend_into_io")
+        # Use the same supported pose for delivery and collection. No item-transfer
+        # Y motion: the tray itself stays here instead of lifting off its contents.
+        await self._tool.extend_IO(nudge_override=0.0)
+        self.set_operation_context(phase="deliver_tray.release")
+        await self._set_tray_grip(engaged=False)
+        self.set_operation_context(phase="deliver_tray.retract_empty")
+        await self._tool.retract_empty()
+        self.set_operation_context(phase="deliver_tray.close_door")
+        await self._io.close_door()
+        self.set_operation_context(phase="deliver_tray.home_door")
+        await self._io.home_door()
+        await self._tool.clear_alarms()
+
+    async def return_tray(self, coord: AxisCoordinate) -> None:
+        """Collect the released tray at the delivery pose, then replace it at home."""
+        position = await self._tool.get_param("PICKUP_POSITION_L")
+        if position is None:
+            raise ConfigError("Missing PICKUP_POSITION_L parameter")
+        self.set_operation_context(phase="return_tray.release")
+        await self._set_tray_grip(engaged=False)
+        self.set_operation_context(phase="return_tray.rotate_to_front")
+        await self._tool.rotate_to_position("front")
+        self.set_operation_context(phase="return_tray.move_to_io")
+        await self._tool.move(AxisCoordinate(position[0], position[1]))
+        self.set_operation_context(phase="return_tray.open_door")
+        await self._io.open_door()
+        self.set_operation_context(phase="return_tray.extend_into_io")
+        await self._tool.extend_IO(nudge_override=0.0)
+        self.set_operation_context(phase="return_tray.grip")
+        await self._set_tray_grip(engaged=True)
+        self.set_operation_context(phase="return_tray.retract")
+        await self._tool.retract()
+        self.set_operation_context(phase="return_tray.close_door")
+        await self._io.close_door()
+        self.set_operation_context(phase="return_tray.place_at_home", target_coordinate=coord)
+        await self._tool.place(coord)
+        self.set_operation_context(phase="return_tray.home_door")
+        await self._io.home_door()
+        await self._tool.clear_alarms()
+
     # ------------------------------------------------------------------ #
     #  Store / retrieve
     # ------------------------------------------------------------------ #
 
-    async def store(self, item_payload: Any) -> RobotResponse:
+    async def store(self, item_payload: Any, *, tray: bool = False) -> RobotResponse:
         command_name = "store_item"
 
         if not self._grid:
             return RobotCommandError(command=command_name, error="Storage grid not calibrated")
 
-        resolved_upca: str
+        resolved_barcode: str
         resolved_item_name: str
         if isinstance(item_payload, str):
-            resolved_upca = item_payload
+            resolved_barcode = item_payload
             resolved_item_name = item_payload
         elif isinstance(item_payload, dict):
-            resolved_upca = item_payload.get("upca") or item_payload.get("name") or "item"
-            resolved_item_name = item_payload.get("name") or resolved_upca
+            resolved_barcode = item_payload.get("barcode") or item_payload.get("name") or "item"
+            resolved_item_name = item_payload.get("name") or resolved_barcode
         else:
-            resolved_upca = "item"
+            resolved_barcode = "item"
             resolved_item_name = "item"
 
         provided_dimensions = None
@@ -1072,7 +1327,7 @@ class Robot:
         self.set_operation_context(
             command=command_name,
             phase="store.resolving_item_location",
-            item={"upca": resolved_upca, "name": resolved_item_name},
+            item={"barcode": resolved_barcode, "name": resolved_item_name},
         )
         if provided_dimensions is None:
             return RobotCommandError(command=command_name, error="Item dimensions required")
@@ -1095,39 +1350,61 @@ class Robot:
             ),
             weight=weight,
             data={"name": resolved_item_name},
-            upca=resolved_upca
+            barcode=resolved_barcode
         )
 
         provided_location = None
         if isinstance(item_payload, dict):
             provided_location = item_payload.get("location")
 
+        reserved_locations = getattr(self, "_reserved_cell_locations", set())
         location: StorageModuleCellLocation | None = None
         if provided_location is not None:
-            parsed_location = StorageModuleCellLocation(
-                side=provided_location.get("side", "L"),
-                shelf_idx=int(provided_location.get("shelf_idx", 0)),
-                cell_idx=int(provided_location.get("cell_idx", 0)),
-            )
-            if self._demo_cell_map is None or (
+            try:
+                parsed_location = StorageModuleCellLocation(
+                    side=provided_location.get("side"),
+                    shelf_idx=int(provided_location.get("shelf_idx", 0)),
+                    cell_idx=int(provided_location.get("cell_idx", 0)),
+                )
+            except (AttributeError, TypeError, ValueError):
+                return RobotCommandError(command=command_name, error="Invalid storage location provided")
+
+            is_reserved = (
                 parsed_location.side.value,
                 parsed_location.shelf_idx,
                 parsed_location.cell_idx,
-            ) in getattr(self, "_reserved_cell_locations", set()):
+            ) in reserved_locations
+
+            # Demo mode keeps its barcode-to-cell mapping for ordinary items. Reserved bin
+            # homes stay trusted explicit destinations for the bin workflow, and a tray
+            # return targets a workflow-chosen home rather than a client-requested cell, so
+            # the availability and fit checks apply only to ordinary explicit stores.
+            if self._demo_cell_map is None or is_reserved:
+                if is_reserved is False and tray is False:
+                    cell = self._grid.get_cell_if_present(parsed_location)
+                    if cell is None:
+                        return RobotCommandError(command=command_name, error="Requested storage cell does not exist")
+                    if cell.status != CellStatus.AVAILABLE:
+                        return RobotCommandError(
+                            command=command_name,
+                            error=f"Requested storage cell is {cell.status.value}",
+                        )
+                    if self._grid.cell_fits_item(cell, item) is False:
+                        return RobotCommandError(command=command_name, error="Item does not fit the requested storage cell")
                 location = parsed_location
 
         if location is None and self._demo_cell_map is not None:
-            demo_location = self._demo_cell_map.get(resolved_upca)
+            demo_location = self._demo_cell_map.get(resolved_barcode)
             if demo_location is None:
                 return RobotCommandError(
                     command=command_name,
-                    error=f"barcode {resolved_upca} not in demo mapping",
+                    error=f"barcode {resolved_barcode} not in demo mapping",
                 )
             if (
                 demo_location.side.value,
                 demo_location.shelf_idx,
                 demo_location.cell_idx,
-            ) in getattr(self, "_reserved_cell_locations", set()):
+            ) in reserved_locations:
                 return RobotCommandError(
                     command=command_name,
                     error="Demo storage location is reserved",
@@ -1136,7 +1413,7 @@ class Robot:
         elif location is None:
             location = self._grid.find_best_slot_for_item(
                 item,
-                excluded_locations=getattr(self, "_reserved_cell_locations", set()),
+                excluded_locations=reserved_locations,
             )
 
         if not location:
@@ -1147,14 +1424,16 @@ class Robot:
             command=command_name,
             phase="store.moving_from_shelf_to_io",
             target_cell=location,
-            item={"upca": resolved_upca, "name": resolved_item_name},
+            item={"barcode": resolved_barcode, "name": resolved_item_name},
         )
         try:
             coord = self._grid.get_cell_coordinate(location)
             self.set_operation_context(target_coordinate=coord.to_axis_coordinate())
             self._logger.info("Store: starting io_pick at %s", location)
             fridge = getattr(self, "_fridge", None)
-            if fridge is not None and fridge.is_fridge_cell(location):
+            if tray:
+                await self.return_tray(coord.to_axis_coordinate())
+            elif fridge is not None and fridge.is_fridge_cell(location):
                 await self.io_pick(coord.to_axis_coordinate(), location=location)
             else:
                 await self.io_pick(coord.to_axis_coordinate())
@@ -1162,7 +1441,7 @@ class Robot:
             self.set_operation_context(phase="store.grid_update_commit")
             self._grid.store_item(location, item)
             self._logger.info("Store: command successful for %s at %s", resolved_item_name, location)
-            return RobotCommandSuccessful(command=command_name, location=location, upca=resolved_upca, weight=weight)
+            return RobotCommandSuccessful(command=command_name, location=location, barcode=resolved_barcode, weight=weight)
         except (MotorError, MovementError, ToolError) as err:
             self._capture_fault_context(err)
             raise
@@ -1198,24 +1477,24 @@ class Robot:
 
         return await self.retrieve_by_location(location.model_dump())
 
-    async def _find_location_for_upca(self, upca: str) -> Optional[StorageModuleCellLocation]:
+    async def _find_location_for_barcode(self, barcode: str) -> Optional[StorageModuleCellLocation]:
         for entry in self._grid.get_all_cell_data():
             cell = entry.cell
 
             if cell is None:
                 continue
 
-            if cell.upca == upca:
+            if cell.barcode == barcode:
                 return entry.location
 
-            if isinstance(cell.data, dict) and cell.data.get("upca") == upca:
+            if isinstance(cell.data, dict) and cell.data.get("barcode") == barcode:
                 return entry.location
 
         return None
 
-    async def retrieve_by_upca(
+    async def retrieve_by_barcode(
         self,
-        upca: str,
+        barcode: str,
         *,
         location_payload: Optional[Dict[str, Any]] = None,
     ) -> RobotResponse:
@@ -1233,16 +1512,17 @@ class Robot:
                 return RobotCommandError(command=command_name, error="Invalid location payload")
 
         if resolved_location is None:
-            resolved_location = await self._find_location_for_upca(upca)
+            resolved_location = await self._find_location_for_barcode(barcode)
             if resolved_location is None:
-                return RobotCommandError(command=command_name, error=f"Item '{upca}' not found in storage")
+                return RobotCommandError(command=command_name, error=f"Item '{barcode}' not found in storage")
 
-        return await self.retrieve_by_location(resolved_location.model_dump(), upca_hint=upca)
+        return await self.retrieve_by_location(resolved_location.model_dump(), barcode_hint=barcode)
 
     async def retrieve_by_location(
         self,
         location_payload: Dict[str, Any],
-        upca_hint: Optional[str] = None,
+        barcode_hint: Optional[str] = None,
+        *, tray: bool = False,
     ) -> RobotResponse:
         command_name = "retrieve_item"
 
@@ -1261,7 +1541,7 @@ class Robot:
             return RobotCommandError(command=command_name, error="Location out of range")
 
         cached_item = cell.item
-        if cached_item is None and upca_hint is None:
+        if cached_item is None and barcode_hint is None:
             self._logger.info(
                 "No cached item for location %s/%s/%s; proceeding with retrieval based on command payload",
                 location.side,
@@ -1270,12 +1550,12 @@ class Robot:
             )
 
         self._state.current_cell = location
-        retrieved_upca: str | None = upca_hint
+        retrieved_barcode: str | None = barcode_hint
         if cached_item is not None:
-            upca_from_data = cached_item.data.get("upca") if cached_item.data else None
-            cached_upca = cached_item.upca or (str(upca_from_data) if upca_from_data is not None else None)
-            if cached_upca is not None:
-                retrieved_upca = cached_upca
+            barcode_from_data = cached_item.data.get("barcode") if cached_item.data else None
+            cached_barcode = cached_item.barcode or (str(barcode_from_data) if barcode_from_data is not None else None)
+            if cached_barcode is not None:
+                retrieved_barcode = cached_barcode
 
         self.set_operation_context(command=command_name, phase="retrieve.moving_from_io_to_shelf", target_cell=location)
         try:
@@ -1287,13 +1567,15 @@ class Robot:
                 self.set_operation_context(nudge_override=nudge_override)
 
             fridge = getattr(self, "_fridge", None)
-            if fridge is not None and fridge.is_fridge_cell(location):
+            if tray:
+                await self.deliver_tray(coord)
+            elif fridge is not None and fridge.is_fridge_cell(location):
                 await self.io_place(coord, nudge_override=nudge_override, location=location)
             else:
                 await self.io_place(coord, nudge_override=nudge_override)
             self.set_operation_context(phase="retrieve.grid_clear_commit")
             self._grid.clear_item(location)
-            return RobotCommandSuccessful(command=command_name, location=location, upca=retrieved_upca)
+            return RobotCommandSuccessful(command=command_name, location=location, barcode=retrieved_barcode)
         except (MotorError, MovementError, ToolError) as err:
             self._capture_fault_context(err)
             raise
@@ -1338,18 +1620,25 @@ class Robot:
                 self.set_operation_context(command=command_name, phase="move", target_coordinate=command.coordinate)
                 await self._tool.move(command.coordinate)
                 result = RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, ReturnTrayCommand):
+                result = await self.store(command.item, tray=True)
+            elif isinstance(command, DeliverTrayCommand):
+                if command.location is None:
+                    result = RobotCommandError(command=command_name, error="Tray home location required")
+                else:
+                    result = await self.retrieve_by_location(command.location, command.barcode, tray=True)
             elif isinstance(command, StoreItemCommand):
-                payload = getattr(command, "upca", None)
+                payload = getattr(command, "barcode", None)
                 if payload is None:
                     payload = getattr(command, "item", None)
                 result = await self.store(payload)
             elif isinstance(command, RetrieveItemCommand):
-                if command.upca:
-                    result = await self.retrieve_by_upca(command.upca, location_payload=command.location)
+                if command.barcode:
+                    result = await self.retrieve_by_barcode(command.barcode, location_payload=command.location)
                 elif command.location:
                     result = await self.retrieve_by_location(command.location)
                 else:
-                    result = RobotCommandError(command=command_name, error="Missing upca or location for retrieval")
+                    result = RobotCommandError(command=command_name, error="Missing barcode or location for retrieval")
             else:
                 result = RobotCommandError(command=command_name, error="Invalid Robot Command")
             self.clear_operation_context()

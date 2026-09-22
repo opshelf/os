@@ -1,6 +1,15 @@
 # ruff: noqa: F401, F403, F405
 from __future__ import annotations
 
+from openshelf_os.laser_calibration.defaults import (
+	EXPECTED_HOLE_HEIGHT_MM,
+	EXPECTED_HOLE_WIDTH_MM,
+	HOLE_HEIGHT_TOLERANCE_MM,
+	HOLE_WIDTH_TOLERANCE_MM,
+	MIN_HORIZONTAL_WALL_COVERAGE_MM,
+	MIN_VERTICAL_WALL_COVERAGE_MM,
+	WALL_DEPTH_TOLERANCE_MM,
+)
 from openshelf_os.storage import CellStatus
 
 from . import core as core_module
@@ -449,11 +458,11 @@ async def run_staged_scan(
 		samples_per_point=samples_per_point,
 		settle_ms=settle_ms,
 		wall_depth_mm=wall_depth_mm,
-		wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
-		expected_hole_width_mm=scan_config.expected_hole_width_mm,
-		expected_hole_height_mm=scan_config.expected_hole_height_mm,
-		min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
-		min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
+		wall_depth_tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
+		expected_hole_width_mm=EXPECTED_HOLE_WIDTH_MM,
+		expected_hole_height_mm=EXPECTED_HOLE_HEIGHT_MM,
+		min_vertical_wall_coverage_mm=MIN_VERTICAL_WALL_COVERAGE_MM,
+		min_horizontal_wall_coverage_mm=MIN_HORIZONTAL_WALL_COVERAGE_MM,
 		total_points=count_valid_points(coarse_scan.depth_rows) + sum(
 			count_valid_points(fine_scan.depth_rows)
 			for _, fine_scan, _ in fine_scan_results
@@ -530,13 +539,41 @@ def build_candidate_lookup_by_cell(
 	return candidate_lookup
 
 
+def wall_depths_by_cell(
+	*,
+	analysis: Any,
+	candidates: list[Any] | None = None,
+) -> dict[tuple[int, int], float]:
+	"""Wall depth per detected cell: the sweep candidate that measured it, or one the analysis carries.
+
+	A grid-built analysis (a rack that moved since the last scan) supplies its own depths, because
+	its positions come from stored calibration points rather than from a scan frame.
+	"""
+	lookup: dict[tuple[int, int], float] = {}
+
+	if candidates:
+		candidate_lookup = build_candidate_lookup_by_cell(analysis=analysis, candidates=candidates)
+
+		for key, candidate in candidate_lookup.items():
+			if candidate.wall_depth_mm is None:
+				continue
+
+			lookup[(int(key[0]), int(key[1]))] = float(candidate.wall_depth_mm)
+
+	for key, wall_depth_mm in getattr(analysis, "wall_depths_by_cell", {}).items():
+		if wall_depth_mm is not None and float(wall_depth_mm) > 0.0:
+			lookup[(int(key[0]), int(key[1]))] = float(wall_depth_mm)
+
+	return lookup
+
+
 def apply_xy_reference_offsets(
 	*,
 	scanned_shelves: list[Any],
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> None:
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
 	if xy_offset is None:
 		require_scan_xy_correction(scan_config=scan_config, side=side)
@@ -994,7 +1031,7 @@ def build_single_shelf_known_edge_y(
 		shelf_idx=shelf_idx,
 	)
 	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	candidate_center_y_values: list[float] = []
 
 	for cell in target_shelf.cells:
@@ -1065,9 +1102,18 @@ def apply_single_cell_rescan(
 		)
 
 	calibration_point = target_cell.calibration_point
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
-	if xy_offset is not None:
+	if getattr(target_cell, "is_manual", False) is True:
+		# A hand-calibrated cell is the datum every derive/probe run is judged against, and this
+		# rescan runs before the probe and saves the grid: rewriting its point from the configured
+		# offset would corrupt the very value the manual calibration exists to correct, even when
+		# the probe is subsequently refused.
+		print_status(
+			f"xy_offset_inference=skipped reason=single_cell_preserves_manual_datum "
+			f"cell={target.shelf_idx}:{target.cell_idx}"
+		)
+	elif xy_offset is not None:
 		print_status(
 			f"xy_offset_inference=fixed_offset offset_x_mm={xy_offset[0]:.3f} "
 			f"offset_y_mm={xy_offset[1]:.3f}"
@@ -1126,9 +1172,35 @@ def apply_single_shelf_analysis(
 
 	scanned_shelf = scanned_shelves[0]
 	scanned_shelf.divider_width = float(target_shelf.divider_width)
-	detected_output_keys = set(detected_cell_key_map.values()) if len(detected_cell_key_map) > 0 else None
+	# Manual cells keep the operator's point (see _build_scan_cell): leave them out of the x/y and
+	# z rewrites below, so the datum a later probe is judged against stays a hand-set value.
+	manual_cell_keys = {
+		(int(shelf.shelf_idx), int(cell.cell_idx))
+		for shelf in [target_shelf, remapped_existing_shelf]
+		for cell in shelf.cells
+		if getattr(cell, "is_manual", False) is True
+	}
+	manual_cell_keys |= {
+		(0, cell_idx) for shelf_idx, cell_idx in manual_cell_keys if shelf_idx == target_shelf_idx
+	}
 
-	xy_offset = get_scan_xy_offset(scan_config=scan_config, side=side)
+
+	def is_manual_key(key: tuple[int, int]) -> bool:
+		# Only ever called with an OUTPUT key: `detected_cell_key_map` is keyed by the detected
+		# indices while the rebuilt cells carry the stored ones, so testing the analysis key here
+		# would drop an unrelated opening's rewrite - silently, as a "preserved" manual cell.
+		return (int(key[0]), int(key[1])) in manual_cell_keys
+	detected_output_keys = (
+		{
+			output_key
+			for output_key in detected_cell_key_map.values()
+			if is_manual_key(output_key) is False
+		}
+		if len(detected_cell_key_map) > 0
+		else None
+	)
+
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 
 	if xy_offset is not None:
 		print_status(
@@ -1155,8 +1227,16 @@ def apply_single_shelf_analysis(
 		)
 	if z_delta_override_mm is not None:
 		z_apply_kwargs: dict[str, Any] = {}
+		z_apply_map = {
+			source_key: target_key
+			for source_key, target_key in detected_cell_key_map.items()
+			if is_manual_key(target_key) is False
+		}
+		# Keyed on the unfiltered map: passing an empty map is meaningful, because it tells
+		# `apply_wall_depth_z_offsets` that every cell it can see is preserved. Omitting it would
+		# fall back to analysis-keyed cells and rewrite the manual datum it is meant to leave alone.
 		if len(detected_cell_key_map) > 0:
-			z_apply_kwargs["detected_cell_key_map"] = detected_cell_key_map
+			z_apply_kwargs["detected_cell_key_map"] = z_apply_map
 
 		apply_wall_depth_z_offsets(
 			analysis=analysis,
@@ -1194,78 +1274,6 @@ def apply_single_shelf_analysis(
 		filename=grid.filename if grid.filename != "" else str(grid_path),
 	)
 	storage_grid.save()
-
-
-def apply_single_cell_shelf_analysis(
-	*,
-	analysis: Any,
-	grid: StorageGrid,
-	grid_path: Path,
-	scan_config: Any,
-	side: StorageModuleSide,
-	target: SingleCellRescanTarget,
-	) -> None:
-	if len(analysis.shelves) == 0:
-		raise ValueError("No tray openings detected from scan")
-
-	if len(analysis.shelves) != 1:
-		raise ValueError("Expected exactly one shelf from single-cell calibration")
-
-	target_shelf = resolve_target_shelf(
-		grid=grid,
-		side=side,
-		shelf_idx=target.shelf_idx,
-	)
-	target_cell = resolve_target_cell(
-		grid=grid,
-		side=side,
-		target=target,
-	)
-	remapped_existing_shelf = target_shelf.model_copy(
-		deep=True,
-		update={"shelf_idx": 0},
-	)
-	scanned_shelves = build_shelves_from_scan(
-		side=side,
-		analysis=analysis,
-		existing_shelves=[remapped_existing_shelf],
-	)
-
-	if len(scanned_shelves) != 1:
-		raise ValueError("Expected exactly one scanned shelf for single-cell calibration")
-
-	scanned_shelf = scanned_shelves[0]
-	scanned_shelf.shelf_idx = target.shelf_idx
-	delta_x_mm, delta_y_mm = get_existing_shelf_xy_delta(
-		scanned_shelf=scanned_shelf,
-		target_shelf=target_shelf,
-	)
-	apply_xy_reference_delta(
-		scanned_shelves=[scanned_shelf],
-		delta_x_mm=delta_x_mm,
-		delta_y_mm=delta_y_mm,
-	)
-
-	try:
-		scanned_target_cell = scanned_shelf.get_cell(target.cell_idx)
-	except IndexError as exc:
-		raise ValueError(
-			f"No detected cell matched the single-cell calibration target {target.shelf_idx}:{target.cell_idx}"
-		) from exc
-
-	if scanned_target_cell.calibration_point is None:
-		raise ValueError("Detected single-cell calibration target has no calibration point")
-
-	target_cell.calibration_point.x = float(scanned_target_cell.calibration_point.x)
-	target_cell.calibration_point.y = float(scanned_target_cell.calibration_point.y)
-	grid.save()
-	print_status(
-		f"single_cell_shelf_apply=updated side={side.value} "
-		f"cell={target.shelf_idx}:{target.cell_idx} "
-		f"x={float(target_cell.calibration_point.x):.3f} "
-		f"y={float(target_cell.calibration_point.y):.3f} "
-		f"z_offset={float(target_cell.calibration_point.z_offset):.3f}"
-	)
 
 
 def resolve_validation_coordinate(
@@ -1469,7 +1477,7 @@ def find_replay_gap_segment(
 		if has_wall_nearby(
 			values,
 			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=scan_config.wall_depth_tolerance_mm,
+			tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
 			start_idx=left_idx,
 			direction=-1,
 		) is False:
@@ -1479,7 +1487,7 @@ def find_replay_gap_segment(
 		if has_wall_nearby(
 			values,
 			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=scan_config.wall_depth_tolerance_mm,
+			tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
 			start_idx=right_idx,
 			direction=1,
 		) is False:
@@ -1521,8 +1529,8 @@ def build_detected_cell_from_saved_fine_scan(
 			positions=fine_scan.x_positions,
 			step_mm=fine_step_mm,
 			wall_depth_mm=wall_depth_mm,
-			expected_width_mm=scan_config.expected_hole_width_mm,
-			width_tolerance_mm=scan_config.hole_width_tolerance_mm + fine_step_mm,
+			expected_width_mm=EXPECTED_HOLE_WIDTH_MM,
+			width_tolerance_mm=HOLE_WIDTH_TOLERANCE_MM + fine_step_mm,
 			center_mm=candidate_center_x_mm,
 			scan_config=scan_config,
 		)
@@ -1550,8 +1558,8 @@ def build_detected_cell_from_saved_fine_scan(
 			positions=fine_scan.y_positions,
 			step_mm=fine_step_mm,
 			wall_depth_mm=wall_depth_mm,
-			expected_width_mm=scan_config.expected_hole_height_mm,
-			width_tolerance_mm=scan_config.hole_height_tolerance_mm + fine_step_mm,
+			expected_width_mm=EXPECTED_HOLE_HEIGHT_MM,
+			width_tolerance_mm=HOLE_HEIGHT_TOLERANCE_MM + fine_step_mm,
 			center_mm=candidate_center_y_mm,
 			scan_config=scan_config,
 		)
@@ -1714,11 +1722,11 @@ def load_staged_scan_analysis(
         samples_per_point=int(metadata["samples_per_point"]),
         settle_ms=int(metadata["settle_ms"]),
         wall_depth_mm=float(metadata.get("wall_depth_mm", 0.0)),
-        wall_depth_tolerance_mm=float(scan_config.wall_depth_tolerance_mm),
-        expected_hole_width_mm=float(scan_config.expected_hole_width_mm),
-        expected_hole_height_mm=float(scan_config.expected_hole_height_mm),
-        min_vertical_wall_coverage_mm=float(scan_config.min_vertical_wall_coverage_mm),
-        min_horizontal_wall_coverage_mm=float(scan_config.min_horizontal_wall_coverage_mm),
+        wall_depth_tolerance_mm=float(WALL_DEPTH_TOLERANCE_MM),
+        expected_hole_width_mm=float(EXPECTED_HOLE_WIDTH_MM),
+        expected_hole_height_mm=float(EXPECTED_HOLE_HEIGHT_MM),
+        min_vertical_wall_coverage_mm=float(MIN_VERTICAL_WALL_COVERAGE_MM),
+        min_horizontal_wall_coverage_mm=float(MIN_HORIZONTAL_WALL_COVERAGE_MM),
         total_points=total_points,
         valid_points=valid_points,
         raw_scan_path=raw_scan_path,
@@ -1748,13 +1756,13 @@ def analyze_depth_rows(
 		samples_per_point=samples_per_point,
 		laser_offset_x_mm=laser_offset_x_mm,
 		laser_offset_y_mm=laser_offset_y_mm,
-		wall_depth_tolerance_mm=scan_config.wall_depth_tolerance_mm,
-		expected_hole_width_mm=scan_config.expected_hole_width_mm,
-		expected_hole_height_mm=scan_config.expected_hole_height_mm,
-		hole_width_tolerance_mm=scan_config.hole_width_tolerance_mm,
-		hole_height_tolerance_mm=scan_config.hole_height_tolerance_mm,
-		min_vertical_wall_coverage_mm=scan_config.min_vertical_wall_coverage_mm,
-		min_horizontal_wall_coverage_mm=scan_config.min_horizontal_wall_coverage_mm,
+		wall_depth_tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
+		expected_hole_width_mm=EXPECTED_HOLE_WIDTH_MM,
+		expected_hole_height_mm=EXPECTED_HOLE_HEIGHT_MM,
+		hole_width_tolerance_mm=HOLE_WIDTH_TOLERANCE_MM,
+		hole_height_tolerance_mm=HOLE_HEIGHT_TOLERANCE_MM,
+		min_vertical_wall_coverage_mm=MIN_VERTICAL_WALL_COVERAGE_MM,
+		min_horizontal_wall_coverage_mm=MIN_HORIZONTAL_WALL_COVERAGE_MM,
 		depth_rows=depth_rows,
 	)
 

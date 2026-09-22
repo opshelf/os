@@ -1,9 +1,7 @@
 # AGENTS.md
 
 ## Repo shape
-- This is not a root workspace. The two real work areas are `dev_ui/` (SvelteKit/Vite UI) and `openshelf_hardware/` (Python `uv` workspace with `hardware`, `openshelf_os`, and `openshelf_os_server`). Run frontend commands from `dev_ui/` and backend commands from `openshelf_hardware/`.
-- The backend entrypoint is `openshelf_hardware/packages/openshelf_os_server/src/openshelf_os_server/main.py`. `uv run start` serves FastAPI on port `8000`, auto-runs Alembic migrations on startup, and reads runtime state from `openshelf_hardware/data/`.
-- The frontend default API base is `http://<current-hostname>:8000/api` (`dev_ui/src/lib/api.ts`), so UI work usually assumes the API is running on the same host.
+- Run frontend commands from `dev_ui/` and backend commands from `openshelf_hardware/`.
 
 ## Preferred commands
 - Full stack: `./scripts/start` and `./scripts/stop` from repo root.
@@ -18,33 +16,31 @@
 - The backend suite is order-dependent by default only because collection order is stable. Before landing test changes, run it shuffled at least once: `cd openshelf_hardware && uv run pytest --random-order`. Use `--random-order-bucket=global` to interleave modules and `--random-order-seed=<seed>` to replay a failing order.
 
 ## Runtime gotchas
-- `openshelf_hardware/data/` is the live source of truth for local state. Production keeps `base.db`, `config.json`, and `storage.json`; development/demo use persistent `*.development.*` / `*.demo.*` variants forked from production on first use. Mock may copy production configuration to `config.mock.json`, but it creates a fresh `base.mock.db` and never copies production database or inventory state. `scripts/start` tracks the requested mode in `data/.mode` and `data/.last_start_mode`; the API reports mode but cannot change it.
-- In development mode, `docker-compose.dev.yml` only bind-mounts Python source directories plus `dev_ui/src`. Devices run prebuilt images (`registry.opshelf.com/opshelf/*`) whose venv/node_modules the bind mounts overlay, so source-only changes need no rebuild; dependency or dockerfile changes need a new release (`../provision/release` plus a device sync) or an explicit `--build`.
-- The app seeds a developer login on startup: `developer@opshelf.com` with PIN `1111`. The UI auto-attempts this login in `dev_ui/src/routes/+layout.svelte`.
-- `README.md` still references `scripts/debug/*`, but that directory is not in this repo anymore.
-- Per-register Modbus reads log at DEBUG on the `hardware.controller.controller` logger and are silenced by default, otherwise they bury every other log line. Set `MODBUS_TRACE=true` to restore them for bus debugging.
-- Container logs are capped at `10m` x 5 files. `docker logs` stops at the first truncated JSON line, so after an unclean shutdown it can silently show a stale tail; read `/var/lib/docker/containers/<id>/<id>-json.log` directly to see past that point.
+- Never stamp the new config schema version onto unmigrated data or restore an old snapshot without migrating it first.
+- Keep released config migration steps immutable, register new steps in `runner.MIGRATIONS`, and bump `config.schema.CURRENT_SCHEMA_VERSION`.
+- Do not reintroduce digit-only or fixed-length barcode validation, keep grouped display formatting (`formattedNumberString` in `../ui`) display-only, and do not remove the `upca` → `barcode` read-time shim in `CellItem`.
+- Set `limit_switches_enabled` to `false` on the motors that have no switch, and keep the config decision in `openshelf_os` construction (`tool.py` / `iobox.py`) rather than gating inside `hardware.motor.Motor`, which also receives limit inputs from diagnostic scripts that want the read.
 
 ## Mock mode
-- Mock mode is the containerized integration environment for exercising the real FastAPI routes without robot, camera, scanner, sizer, printer, CUPS, or Sentry initialization. Do not add hardware fallbacks to it. `scripts/start` does not automatically add `docker-compose.hardware.yml` in mock mode, even if the copied config enables hardware; an explicit `--hardware` is unnecessary.
-- Mock has production authentication and audit behavior. Keep `JWT_SECRET` and `AUDIT_HMAC_KEY` stable and non-default when running it outside disposable local tests. Startup seeds the normal roles, users, and three access levels, while inventory starts empty and remains persistent in `base.mock.db`.
-- The mock cabinet is deterministic: left then right module, four shelves per side, ten cells per shelf. SQLite `items` and `item_locations` are the occupancy source of truth. Preserve that stable ordering when changing allocation behavior or tests.
-- The mock command lifecycle supports only `store_item` and `retrieve_item`. It uses one FIFO worker, a 30-second execution delay, a 32-command active limit, seven-day `request_id` idempotency, and persisted `queued|running|succeeded|failed` states. Startup converts interrupted queued/running commands to failed instead of replaying them.
-- Mock status and results use the normal `/api/robot/status` and `/api/robot/events` SSE endpoints. Poll individual commands at `/api/robot/commands/{command_id}`; that polling contract intentionally returns unavailable outside mock mode. Simulated printing accepts an 11- or 12-digit UPCA and returns `printed=true` without producing an artifact.
+- Do not add hardware fallbacks to mock mode; an explicit `--hardware` is unnecessary there.
+- Keep `JWT_SECRET` and `AUDIT_HMAC_KEY` stable and non-default when running mock outside disposable local tests.
+- Preserve the mock cabinet's stable ordering when changing allocation behavior or tests.
 - Keep item CRUD, access checks, audit records, correlation IDs, and response schemas active in mock mode. Hardware-oriented routes that are not part of the integration contract may remain disabled or unavailable.
-- Run the focused mock checks with `cd openshelf_hardware && uv run pytest packages/openshelf_os_server/tests/test_mock_robot.py packages/openshelf_os_server/tests/test_printer_endpoint.py`. Also run the full shuffled backend suite after runtime or fixture changes. Tests marked with `pytest.mark.anyio` must use AnyIO-owned async fixtures (`@pytest.fixture`) for background tasks; mixing them with `@pytest_asyncio.fixture` can attach the worker to a different event loop in the full suite.
+- Run the focused mock checks with `cd openshelf_hardware && uv run pytest packages/openshelf_os_server/tests/test_mock_robot.py packages/openshelf_os_server/tests/test_printer_endpoint.py`. Also run the full shuffled backend suite after runtime or fixture changes.
+- Tests marked with `pytest.mark.anyio` must use AnyIO-owned async fixtures (`@pytest.fixture`) for background tasks; mixing them with `@pytest_asyncio.fixture` can attach the worker to a different event loop in the full suite.
 
 ## Remote device inspection
 - If a user asks to inspect or debug something "on device", use the sibling `../provision/remote` helper instead of guessing SSH details or inspecting only local files.
-- `../provision/remote <device-id|alias>` resolves known aliases, derives the relay SSH port from the device id, and uses `../provision/keys/team_access` automatically.
 - Use it in three modes: plain shell access (`../provision/remote <id-or-alias>`), one-off remote commands (`../provision/remote <id-or-alias> -t "<command>"`), and local port forwards (`../provision/remote <id-or-alias> -f 8000 -f 8080`). Start with `../provision/remote list` if the device id or alias is unknown.
-- The helper also supports predefined maintenance commands with `-c`: `sync`, `sync:dev`, `reboot`, `ui:reload`, `api:restart`, `api:backup`, `api:restore`, and the `cameras*` set. There is no `api:enable`/`api:disable`; toggle a component in the active mode's config file and restart through the repo-managed scripts.
-- For on-device `scripts/laser.py` work, treat `development` mode as required and verify `openshelf_hardware/data/.mode` first. On current lab devices the checkout lives at `/opt/opshelf/repos/openshelf_os` and the API container is `openshelf_os-api-1`.
+- There is no `api:enable`/`api:disable`; toggle a component in the active mode's config file and restart through the repo-managed scripts.
+- For on-device `scripts/laser.py` work, treat `development` mode as required and verify `openshelf_hardware/data/.mode` first.
 - Do not use `../provision/remote <device> -c sync` for laser/dev work. That helper syncs `main`, which is wrong if the device should track a feature or development branch.
 - For laser/dev work, sync the device checkout with git on the branch already checked out there: inspect with `git status --short --branch`, confirm the branch is the intended one, then run `git pull` in `/opt/opshelf/repos/openshelf_os`. If the worktree is dirty, stop and reconcile that state before pulling instead of copying files into the container.
 - Keep remote device checkouts clean. Do not make persistent source edits directly on a device; make changes locally, run checks, commit, push, then pull on the device and restart with repo-managed scripts. On a development device, pull the matching prebuilt images with `../provision/remote <device> -c sync:dev`; use `./scripts/start --build` only when the change affects dependencies and no release has been published yet.
-- `scripts/laser.py` is intended to run while the long-running `api` container is stopped, otherwise the robot serial ports can stay locked by the app server.
-- The reliable device-side runtime is a one-off hardware-enabled compose container, not `docker exec` into the running API. Use `docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro api -lc 'cd /app/openshelf_hardware && uv run python /app/scripts/laser.py ... --config /app/openshelf_hardware/data/config.development.json'`.
+- The reliable device-side runtime for `scripts/laser.py` is a one-off hardware-enabled compose container, not `docker exec` into the running API.
 - Stop `api` before starting that one-off run, and always bring `api` back up afterward. Prefer wrapping the remote command with a shell `trap` so `docker compose ... up -d api` runs even if the scan fails.
-- The `scripts/` directory is not bind-mounted by `docker-compose.dev.yml`, so fresh one-off containers will not see `/app/scripts/laser.py` unless you add the explicit `-v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro` bind mount.
 - After pulling laser-related changes on device, restart the development stack from the device repo only if the running containers need to pick up updated mounted code or rebuilt dependencies. Use the repo-managed startup flow such as `./scripts/start --mode development --pull`, and add `--build` only when dependencies or build-boundary changes require an on-device rebuild.
+
+## Migrating existing devices onto per-device signing keys
+- Only the unanchored `data/` gitignore rule keeps the signing-key files out of git, so never `git add -f` one.
+- Never give a device a second key under an id that another key already used, and never let a locally generated key take the provisioned id `v2`: `verify_audit_chain` selects the key by the id recorded on each row, so a reused id turns a key change into a tampering report.

@@ -81,8 +81,8 @@ def reset_demo_cycle_state(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("reservation", ("configured", "active", "member", "quarantined"))
-async def test_demo_start_rejects_every_reserved_bin_home(
+@pytest.mark.parametrize("reservation", ("configured", "active", "member", "outside"))
+async def test_demo_start_allows_tray_home_cells(
     monkeypatch: pytest.MonkeyPatch,
     reservation: str,
 ) -> None:
@@ -99,7 +99,7 @@ async def test_demo_start_rejects_every_reserved_bin_home(
                 cell_idx=location.cell_idx,
                 inner_dimensions={"width": 30, "height": 30, "length": 30},
                 max_items=2,
-                status="quarantined" if reservation == "quarantined" else "at_home",
+                status="outside" if reservation == "outside" else "at_home",
                 active=reservation == "active",
             )
             session.add(bin_row)
@@ -113,31 +113,13 @@ async def test_demo_start_rejects_every_reserved_bin_home(
                 session.add(StorageBinItem(bin_id=bin_row.id, item_id=item.id))
             await session.commit()
 
-    with pytest.raises(HTTPException) as error:
-        await demo.start_demo_cycle()
+    monkeypatch.setattr(demo, "_run_demo_cycle", AsyncMock())
 
-    assert error.value.status_code == 409
-    assert error.value.detail == "Demo cell map includes a reserved storage bin home"
-    clear_motors.assert_not_awaited()
+    await demo.start_demo_cycle()
 
-
-@pytest.mark.anyio
-async def test_demo_start_defensively_checks_robot_runtime_reservations(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    location = _demo_location()
-    clear_motors = _prepare_demo_start(
-        monkeypatch,
-        location,
-        runtime_reserved={(location.side.value, location.shelf_idx, location.cell_idx)},
-    )
-    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _config())
-
-    with pytest.raises(HTTPException) as error:
-        await demo.start_demo_cycle()
-
-    assert error.value.status_code == 409
-    clear_motors.assert_not_awaited()
+    clear_motors.assert_awaited_once()
+    assert demo._is_running is True
+    await demo.shutdown_demo_cycle()
 
 
 @pytest.mark.anyio
@@ -247,42 +229,3 @@ async def test_demo_cycle_fridge_safety_rejection_does_not_mark_hardware_fault()
     worker.get_status_snapshot.assert_awaited_once_with(force_refresh=True)
     assert worker._demo_cycling is False
     assert demo._is_running is False
-
-
-@pytest.mark.anyio
-async def test_demo_start_serializes_reservation_check_with_bin_workflow_admission(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    location = _demo_location()
-    clear_motors = _prepare_demo_start(monkeypatch, location)
-    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _config())
-    monkeypatch.setattr(bin_storage, "_command_admission_lock", asyncio.Lock())
-    monkeypatch.setattr(demo, "_run_demo_cycle", AsyncMock())
-
-    reservation_read_started = asyncio.Event()
-    release_reservation_read = asyncio.Event()
-    original_reserved_bin_locations = bin_storage.reserved_bin_locations
-
-    async def delayed_reserved_bin_locations(session):
-        reservation_read_started.set()
-        await release_reservation_read.wait()
-        return await original_reserved_bin_locations(session)
-
-    monkeypatch.setattr(demo, "reserved_bin_locations", delayed_reserved_bin_locations)
-    demo_task = asyncio.create_task(demo.start_demo_cycle())
-    await reservation_read_started.wait()
-
-    async def competing_bin_admission() -> None:
-        async with bin_storage.bin_workflow_command_admission_guard():
-            return None
-
-    bin_task = asyncio.create_task(competing_bin_admission())
-    await asyncio.sleep(0)
-    assert bin_task.done() is False
-
-    release_reservation_read.set()
-    await demo_task
-    await bin_task
-
-    assert clear_motors.await_count == 1
-    await demo.shutdown_demo_cycle()

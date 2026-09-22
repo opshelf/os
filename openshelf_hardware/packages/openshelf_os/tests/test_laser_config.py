@@ -7,6 +7,7 @@ from openshelf_os.common import ConfigError, RootConfig, assert_config
 
 MINIMAL_CONFIG_DICT = {
     "name": "test",
+    "schema_version": 4,
     "version": "0.1.0",
     "robot": {
         "tool": {
@@ -123,13 +124,13 @@ def test_y_axis_accepts_exact_brake_profile():
         "accel": 1,
         "ret_rpm": 1,
         "lim": 10,
-        "brake_output_function": 0xA1,
+        "brake_output_function": 0x24,
     }]
 
     config = RootConfig.model_validate(data)
 
     y_axis = config.robot.tool.motors.by_name("y_axis")
-    assert y_axis.brake_output_function == 0xA1
+    assert y_axis.brake_output_function == 0x24
     assert y_axis.brake_release_delay_ms == 250
     assert y_axis.brake_engagement_delay_ms == 250
     assert y_axis.brake_engagement_speed_threshold == 10
@@ -180,7 +181,7 @@ def test_motor_rejects_out_of_range_brake_sequencing(field: str, value: int):
         "accel": 1,
         "ret_rpm": 1,
         "lim": 10,
-        "brake_output_function": 0xA1,
+        "brake_output_function": 0x24,
         field: value,
     }
     data["robot"]["tool"]["motors"] = [motor]
@@ -189,7 +190,9 @@ def test_motor_rejects_out_of_range_brake_sequencing(field: str, value: int):
         RootConfig.model_validate(data)
 
 
-def test_motor_rejects_unsupported_brake_output_function():
+@pytest.mark.parametrize("function", [0xA0, 0xA1, 0x21])
+def test_motor_rejects_unsupported_brake_output_function(function: int):
+    """0xA1 was inverted path-complete: a status signal, not a brake output."""
     data = copy.deepcopy(MINIMAL_CONFIG_DICT)
     data["robot"]["tool"]["motors"] = [{
         "motor_name": "y_axis",
@@ -201,7 +204,7 @@ def test_motor_rejects_unsupported_brake_output_function():
         "accel": 1,
         "ret_rpm": 1,
         "lim": 10,
-        "brake_output_function": 0xA0,
+        "brake_output_function": function,
     }]
 
     with pytest.raises(ValueError, match="brake_output_function"):
@@ -215,7 +218,7 @@ def test_motor_rejects_unsupported_brake_output_function():
         ("ppr", 4000),
         ("encoder_resolution_cpr", 1000),
         ("control_mode", 0),
-        ("brake_output_function", 0x24),
+        ("brake_output_function", 0xA4),
         ("brake_release_delay_ms", 249),
         ("brake_engagement_delay_ms", 249),
         ("brake_engagement_speed_threshold", 9),
@@ -233,7 +236,7 @@ def test_y_axis_rejects_controller_profile_mismatch(field: str, value: int):
         "accel": 1,
         "ret_rpm": 1,
         "lim": 10,
-        "brake_output_function": 0xA1,
+        "brake_output_function": 0x24,
         field: value,
     }
     data["robot"]["tool"]["motors"] = [motor]

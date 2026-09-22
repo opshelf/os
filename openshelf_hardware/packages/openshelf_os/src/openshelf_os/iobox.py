@@ -29,6 +29,8 @@ def _create_motor_if_enabled(
     name: str,
     safety,
     logger: logging.Logger,
+    gpio=None,
+    home_limit_pin: Optional[str] = None,
 ) -> Optional[Motor]:
     try:
         cfg = motors.by_name(name)
@@ -40,7 +42,17 @@ def _create_motor_if_enabled(
         logger.info("Motor '%s' disabled via config; skipping", name)
         return None
 
-    return Motor(controller, cfg, safety)
+    home_limit_input = None
+    if home_limit_pin is not None and cfg.limit_switches_enabled is False:
+        logger.info(
+            "Motor '%s' limit switches disabled via config; skipping home limit switch '%s'",
+            name,
+            home_limit_pin,
+        )
+    elif gpio is not None and home_limit_pin is not None and gpio.has_pin(home_limit_pin):
+        home_limit_input = gpio.input(home_limit_pin)
+
+    return Motor(controller, cfg, safety, home_limit_input=home_limit_input)
 
 
 class IOBoxStatus(Enum):
@@ -67,7 +79,8 @@ class IOBox:
         self._init_reporter: Optional[Callable[[str, str, str, Optional[str]], None]] = None
 
         self._md: Optional[Motor] = _create_motor_if_enabled(
-            motorcontroller, self._params.motors, "door", safety, self._logger
+            motorcontroller, self._params.motors, "door", safety, self._logger, self._gpio,
+            home_limit_pin="io_lim_min",
         )
         scale_cfg = getattr(self._params, "scale", None)
         self._scale_enabled = scale_cfg is None or getattr(scale_cfg, "enabled", True)

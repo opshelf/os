@@ -32,7 +32,7 @@ def test_robot_command_home_required_allows_stop_command() -> None:
 def test_robot_command_home_required_blocks_normal_command() -> None:
     with pytest.raises(HTTPException) as exc_info:
         _ensure_command_allowed_while_needs_home(
-            StoreItemCommand(item={"upca": "123"}),
+            StoreItemCommand(item={"barcode": "123"}),
             _Worker(True),
         )
 

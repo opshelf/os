@@ -33,16 +33,16 @@ SYMS = {
 logger = logging.getLogger(__name__).getChild("printer")
 
 
-def _calculate_upc_check_digit(digits: List[str]) -> int:
+def _calculate_check_digit(digits: List[str]) -> int:
     odd_sum = sum(int(digits[i]) for i in range(0, 11, 2))
     even_sum = sum(int(digits[i]) for i in range(1, 11, 2))
     total = odd_sum * 3 + even_sum
     return (10 - (total % 10)) % 10
 
 
-def generate_random_upca() -> str:
+def generate_random_barcode() -> str:
     digits = [str(random.randint(0, 9)) for _ in range(11)]
-    check_digit = _calculate_upc_check_digit(digits)
+    check_digit = _calculate_check_digit(digits)
     return "".join(digits) + str(check_digit)
 
 
@@ -268,7 +268,7 @@ class USBPrinter:
             },
         )
 
-    def print_random_upca(
+    def print_random_barcode(
         self,
         *,
         height: int = 72,
@@ -277,13 +277,13 @@ class USBPrinter:
         feed_after: int = 2,
         density: int = DEFAULT_PRINT_DENSITY,
     ) -> str:
-        upca = generate_random_upca()
+        barcode = generate_random_barcode()
 
-        logger.info("Generated random UPC-A", extra={"device": self.device, "upca": upca})
+        logger.info("Generated random barcode", extra={"device": self.device, "barcode": barcode})
 
         self.print_barcode(
             sym="UPC-A",
-            payload=upca,
+            payload=barcode,
             height=height,
             width=width,
             hri=hri,
@@ -291,4 +291,4 @@ class USBPrinter:
             density=density,
         )
 
-        return upca
+        return barcode

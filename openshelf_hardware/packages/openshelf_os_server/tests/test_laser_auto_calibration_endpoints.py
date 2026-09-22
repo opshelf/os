@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import copy
 import json
 from pathlib import Path
@@ -23,27 +24,96 @@ from openshelf_os_server.core.laser_auto_calibration import (
     _build_stage_stall_fine_rotation_positions,
     _build_stage_stall_rotation_positions,
     _build_stage_stall_rotation_center_deg,
-    _resolve_io_box_laser_offset_x_mm,
     _SideState,
     LaserAutoCalibrationAngleResult,
     LaserAutoCalibrationScope,
     LaserAutoCalibrationManager,
 )
+from openshelf_os_server.core.laser_auto_calibration import models as models_module
 from openshelf_os_server.core.laser_auto_calibration.angle_runner import (
     _build_stage_stall_validation_rotation_positions,
     _select_stage_stall_best_summary,
 )
+from openshelf_os_server.core.laser_auto_calibration import angle_runner as angle_runner_module
 from openshelf_os_server.core.laser_auto_calibration.apply_runner import (
     _preserve_manual_cells,
-    _select_z_stall_probes,
 )
-from openshelf_os.storage import Cell, CalibrationCoordinate, CellStatus, Dimensions, Shelf
+from openshelf_os.storage import (
+    CalibrationCoordinate,
+    Cell,
+    CellStatus,
+    Dimensions,
+    Shelf,
+    StorageGrid,
+)
 from openshelf_os_server.core.laser_auto_calibration.scope_runner import (
     _validate_laser_auto_calibration_config,
 )
 from openshelf_os_server.routers import robot as robot_router
 from openshelf_os_server.core.laser_auto_calibration import LaserAutoCalibrationSnapshot
 from openshelf_os_server.routers import calibration as calibration_router
+
+
+# Stage-stall tuning moved out of config and into laser_calibration.defaults. Tests that used
+# to shape a scan through the scan config pin the constants instead.
+_STAGE_STALL_KNOBS = {
+    "angle_calibration_stage_stall_rotation_min_deg": ("STAGE_STALL_COARSE_MIN_DEG", float),
+    "angle_calibration_stage_stall_rotation_max_deg": ("STAGE_STALL_COARSE_MAX_DEG", float),
+    "angle_calibration_rotation_step_deg": ("STAGE_STALL_COARSE_STEP_DEG", float),
+    "angle_calibration_stage_stall_coarse_min_deg": ("STAGE_STALL_COARSE_MIN_DEG", float),
+    "angle_calibration_stage_stall_coarse_max_deg": ("STAGE_STALL_COARSE_MAX_DEG", float),
+    "angle_calibration_stage_stall_coarse_step_deg": ("STAGE_STALL_COARSE_STEP_DEG", float),
+    "angle_calibration_stage_stall_coarse_start_deg": ("STAGE_STALL_COARSE_START_DEG", float),
+    "angle_calibration_stage_stall_fine_window_deg": ("STAGE_STALL_FINE_WINDOW_DEG", float),
+    "angle_calibration_stage_stall_fine_step_deg": ("STAGE_STALL_FINE_STEP_DEG", float),
+    "angle_calibration_stage_stall_fast_approach_mm": ("STAGE_STALL_FAST_APPROACH_MM", float),
+    "angle_calibration_stage_stall_validation_count": ("STAGE_STALL_VALIDATION_COUNT", int),
+    "angle_calibration_stage_stall_validation_repeats": ("STAGE_STALL_VALIDATION_REPEATS", int),
+    "angle_calibration_stage_stall_validation_retry_count": ("STAGE_STALL_VALIDATION_RETRY_COUNT", int),
+    "angle_calibration_stage_stall_coarse_retry_count": ("STAGE_STALL_COARSE_RETRY_COUNT", int),
+    "angle_calibration_stage_stall_min_valid_stage_position_mm": (
+        "STAGE_STALL_MIN_VALID_STAGE_POSITION_MM",
+        float,
+    ),
+    "angle_calibration_stage_stall_validation_plateau_tolerance_mm": (
+        "STAGE_STALL_VALIDATION_PLATEAU_TOLERANCE_MM",
+        float,
+    ),
+    "angle_calibration_stage_stall_coarse_validation_count": (
+        "STAGE_STALL_COARSE_VALIDATION_COUNT",
+        int,
+    ),
+    "angle_calibration_stage_stall_validation_high_side_window_deg": (
+        "STAGE_STALL_VALIDATION_HIGH_SIDE_WINDOW_DEG",
+        float,
+    ),
+    "angle_calibration_stage_stall_low_contact_retry_count": ("STAGE_STALL_LOW_CONTACT_RETRY_COUNT", int),
+    "angle_calibration_stage_stall_validation_min_valid_sample_count": (
+        "STAGE_STALL_VALIDATION_MIN_VALID_SAMPLE_COUNT",
+        int,
+    ),
+    "angle_calibration_stage_stall_probe_x_mm": ("STAGE_STALL_PROBE_X_MM", float),
+    "angle_calibration_stage_stall_start_mm": ("STAGE_STALL_START_MM", float),
+    "angle_calibration_stage_stall_target_mm": ("STAGE_STALL_TARGET_MM", float),
+    "angle_calibration_stage_stall_probe_step_mm": ("STAGE_STALL_PROBE_STEP_MM", float),
+    "angle_calibration_stage_stall_probe_rpm": ("STAGE_STALL_PROBE_RPM", int),
+    "angle_calibration_stage_stall_fast_approach_margin_mm": ("STAGE_STALL_FAST_APPROACH_MARGIN_MM", float),
+    "angle_calibration_stage_stall_fast_approach_rpm": ("STAGE_STALL_FAST_APPROACH_RPM", int),
+    "angle_calibration_stage_stall_timeout_s": ("STAGE_STALL_TIMEOUT_S", float),
+    "angle_calibration_stage_stall_backoff_mm": ("STAGE_STALL_BACKOFF_MM", float),
+}
+
+
+def pin_scan_tuning(monkeypatch: pytest.MonkeyPatch, scan_config: SimpleNamespace) -> None:
+    """Apply a test's scan-config tuning values to the code constants that replaced them."""
+    for config_name, (constant_name, cast) in _STAGE_STALL_KNOBS.items():
+        if not hasattr(scan_config, config_name):
+            continue
+        value = getattr(scan_config, config_name)
+        patched = None if value is None else cast(value)
+        for module in (models_module, angle_runner_module):
+            if hasattr(module, constant_name):
+                monkeypatch.setattr(module, constant_name, patched)
 
 
 class FakeLaserManager:
@@ -86,7 +156,7 @@ def _build_snapshot(state: str = "running") -> LaserAutoCalibrationSnapshot:
         state=state,
         session_id="laser-session",
         run_id="left-run",
-        requested_scope=LaserAutoCalibrationScope(include_io_box=True),
+        requested_scope=LaserAutoCalibrationScope(),
         current_side="left_module",
         current_stage="shelf-scout",
         bounds=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1250.0),
@@ -234,10 +304,7 @@ def test_select_stage_stall_best_summary_requires_valid_sample_count() -> None:
 
 def test_build_angle_x_positions_runs_from_high_x_to_low_x() -> None:
     scan_config = SimpleNamespace(
-        angle_calibration_x_min_mm=50.0,
         angle_calibration_x_max_mm=940.0,
-        angle_calibration_x_step_mm=100.0,
-        angle_calibration_x_count=5,
     )
 
     x_positions = _build_angle_x_positions(scan_config)
@@ -317,13 +384,62 @@ async def test_ensure_session_started_rejects_invalid_config_before_starting_bac
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
 
     with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
-        with pytest.raises(ValueError, match="left_xy_offset must be configured"):
+        with pytest.raises(ValueError, match="left_gripper_xy_correction_mm must be configured"):
             await manager.ensure_session_started(
                 SimpleNamespace(),
                 LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
             )
 
     assert manager._task is None
+
+
+@pytest.mark.asyncio
+async def test_z_stall_anchor_flag_without_manual_cell_rejects_before_motion() -> None:
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config(
+        left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+        z_stall_anchor_enabled=True,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    grid = StorageGrid()
+    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0)])]
+    worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+
+    with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+        with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
+            with pytest.raises(ValueError, match="marked manual"):
+                await manager.ensure_session_started(
+                    worker,
+                    LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+                )
+
+    run_session_mock.assert_not_awaited()
+    assert manager._task is None
+
+
+@pytest.mark.asyncio
+async def test_z_stall_anchor_flag_starts_when_a_manual_cell_is_in_scope() -> None:
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config(
+        left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+        z_stall_anchor_enabled=True,
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    grid = StorageGrid()
+    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
+    worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+
+    with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+        with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
+            snapshot = await manager.ensure_session_started(
+                worker,
+                LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+            )
+
+    assert snapshot.state == "starting"
+    assert manager._task is not None
+    await manager._task
+    run_session_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -415,6 +531,30 @@ async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("hold_y_enabled", [True, False])
+async def test_run_session_holds_y_enabled_only_when_requested(hold_y_enabled: bool) -> None:
+    manager = LaserAutoCalibrationManager()
+    held: list[bool] = []
+
+    @contextlib.asynccontextmanager
+    async def hold_enabled():
+        held.append(True)
+        yield
+
+    worker = SimpleNamespace(_robot=SimpleNamespace(_tool=SimpleNamespace(_my=SimpleNamespace(hold_enabled=hold_enabled))))
+    scope = LaserAutoCalibrationScope(hold_y_enabled=hold_y_enabled)
+
+    with patch.object(manager, '_get_current_calibration_params', AsyncMock(return_value={})):
+        with patch.object(manager, '_run_requested_scope', AsyncMock()) as run_mock:
+            with patch.object(manager, '_set_terminal_state', AsyncMock()) as terminal_mock:
+                await manager._run_session(worker, 'laser-session', scope)
+
+    run_mock.assert_awaited_once_with(worker, scope)
+    terminal_mock.assert_awaited_once_with('completed', None)
+    assert held == ([True] if hold_y_enabled else [])
+
+
+@pytest.mark.asyncio
 async def test_scan_status_callback_does_not_overwrite_terminal_state(tmp_path: Path) -> None:
     manager = LaserAutoCalibrationManager()
     await manager._set_terminal_state("completed", None)
@@ -435,7 +575,7 @@ async def test_scan_status_callback_does_not_overwrite_terminal_state(tmp_path: 
     assert snapshot.current_stage == "completed"
 
 @pytest.mark.asyncio
-async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -> None:
+async def test_run_angle_calibration_uses_stage_stall_method_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
     stage_motor = SimpleNamespace(
@@ -479,12 +619,11 @@ async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -
         angle_calibration_stage_stall_stop_after_fall_count=1,
         angle_calibration_stage_stall_fine_window_deg=0.0,
         angle_calibration_stage_stall_fine_step_deg=0.25,
-        laser_sample_settle_ms=0,
-        laser_samples_per_point=1,
-        laser_scan_z_offset_from_place_mm=0.0,
-        laser_scan_stage_extension_mm=60.0,
+        laser_scan_pose_z_delta_from_place_mm=0.0,
+        laser_scan_pose_stage_mm=60.0,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    pin_scan_tuning(monkeypatch, scan_config)
 
     with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
         with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1144.0)):
@@ -521,7 +660,7 @@ async def test_run_angle_calibration_uses_stage_stall_method_when_configured() -
 
 
 @pytest.mark.asyncio
-async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> None:
+async def test_run_angle_calibration_validates_top_fine_angles_by_median(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
     stage_motor = SimpleNamespace(
@@ -574,12 +713,11 @@ async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> No
         angle_calibration_stage_stall_validation_high_side_window_deg=0.0,
         angle_calibration_stage_stall_low_contact_retry_count=0,
         angle_calibration_stage_stall_validation_min_valid_sample_count=2,
-        laser_sample_settle_ms=0,
-        laser_samples_per_point=1,
-        laser_scan_z_offset_from_place_mm=0.0,
-        laser_scan_stage_extension_mm=60.0,
+        laser_scan_pose_z_delta_from_place_mm=0.0,
+        laser_scan_pose_stage_mm=60.0,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    pin_scan_tuning(monkeypatch, scan_config)
     probe_results = [
         (True, 20.0, 'no_progress', 0),
         (True, 25.0, 'no_progress', 0),
@@ -613,7 +751,7 @@ async def test_run_angle_calibration_validates_top_fine_angles_by_median() -> No
 
 
 @pytest.mark.asyncio
-async def test_run_angle_calibration_retries_low_validation_contacts() -> None:
+async def test_run_angle_calibration_retries_low_validation_contacts(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
     stage_motor = SimpleNamespace(
@@ -666,12 +804,11 @@ async def test_run_angle_calibration_retries_low_validation_contacts() -> None:
         angle_calibration_stage_stall_validation_high_side_window_deg=0.0,
         angle_calibration_stage_stall_low_contact_retry_count=0,
         angle_calibration_stage_stall_validation_min_valid_sample_count=2,
-        laser_sample_settle_ms=0,
-        laser_samples_per_point=1,
-        laser_scan_z_offset_from_place_mm=0.0,
-        laser_scan_stage_extension_mm=60.0,
+        laser_scan_pose_z_delta_from_place_mm=0.0,
+        laser_scan_pose_stage_mm=60.0,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    pin_scan_tuning(monkeypatch, scan_config)
     probe_results = [
         (True, 20.0, 'no_progress', 0),
         (True, 40.0, 'no_progress', 0),
@@ -723,14 +860,9 @@ async def test_run_angle_calibration_skips_final_retract_when_cancelled() -> Non
     )
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     scan_config = SimpleNamespace(
-        laser_sample_settle_ms=0,
-        laser_samples_per_point=1,
-        laser_scan_stage_extension_mm=None,
-        laser_scan_z_offset_from_place_mm=None,
-        angle_calibration_x_min_mm=50.0,
+        laser_scan_pose_stage_mm=None,
+        laser_scan_pose_z_delta_from_place_mm=None,
         angle_calibration_x_max_mm=940.0,
-        angle_calibration_x_step_mm=100.0,
-        angle_calibration_x_count=1,
         angle_calibration_z_offset_min_mm=0.0,
         angle_calibration_z_offset_max_mm=0.0,
         angle_calibration_z_offset_step_mm=1.0,
@@ -782,14 +914,9 @@ async def test_run_angle_calibration_raises_when_abort_requested_during_capture(
     )
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     scan_config = SimpleNamespace(
-        laser_sample_settle_ms=0,
-        laser_samples_per_point=1,
-        laser_scan_stage_extension_mm=None,
-        laser_scan_z_offset_from_place_mm=None,
-        angle_calibration_x_min_mm=50.0,
+        laser_scan_pose_stage_mm=None,
+        laser_scan_pose_z_delta_from_place_mm=None,
         angle_calibration_x_max_mm=940.0,
-        angle_calibration_x_step_mm=100.0,
-        angle_calibration_x_count=1,
         angle_calibration_z_offset_min_mm=0.0,
         angle_calibration_z_offset_max_mm=0.0,
         angle_calibration_z_offset_step_mm=1.0,
@@ -916,7 +1043,6 @@ async def test_run_requested_scope_both_runs_full_two_side_scan() -> None:
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=SimpleNamespace()))
     requested_scope = LaserAutoCalibrationScope(
         mode="both",
-        include_io_box=False,
         include_angle_calibration=False,
         include_extension_calibration=True,
     )
@@ -926,12 +1052,10 @@ async def test_run_requested_scope_both_runs_full_two_side_scan() -> None:
         return_value=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1210.0),
     ):
         with patch.object(manager, '_run_all_sides', AsyncMock()) as run_all_mock:
-            with patch.object(manager, '_run_io_box_calibration', AsyncMock()) as io_box_mock:
-                await manager._run_requested_scope(worker, requested_scope)
+            await manager._run_requested_scope(worker, requested_scope)
 
     run_all_mock.assert_awaited_once()
     assert run_all_mock.await_args.args[:3] == (worker, False, True)
-    io_box_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1154,7 +1278,6 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
         right_bounds_x_max_mm=950.0,
         right_bounds_y_min_mm=0.0,
         right_bounds_y_max_mm=1250.0,
-        expected_hole_height_mm=30.0,
         laser_offset_y_mm=0.0,
         shelf_hole_probe_y_offsets_mm=[32.25],
     )
@@ -1245,58 +1368,6 @@ async def test_run_single_cell_uses_seeded_cell_rescan() -> None:
     )
 
 
-def test_select_z_stall_probes_returns_x_extremes_middle_shelf_first() -> None:
-
-    analysis = SimpleNamespace(
-        shelves=[
-            SimpleNamespace(
-                center_y_mm=100.0,
-                cells=[
-                    SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=10.0),
-                    SimpleNamespace(shelf_idx=0, cell_idx=1, center_x_mm=20.0),
-                ],
-            ),
-            SimpleNamespace(
-                center_y_mm=300.0,
-                cells=[
-                    SimpleNamespace(shelf_idx=1, cell_idx=0, center_x_mm=10.0),
-                    SimpleNamespace(shelf_idx=1, cell_idx=1, center_x_mm=20.0),
-                    SimpleNamespace(shelf_idx=1, cell_idx=2, center_x_mm=30.0),
-                ],
-            ),
-        ]
-    )
-    candidate_lookup = {
-        (0, 0): SimpleNamespace(wall_depth_mm=10.5),
-        (1, 0): SimpleNamespace(wall_depth_mm=10.0),
-        (1, 1): SimpleNamespace(wall_depth_mm=9.9),
-    }
-
-    result = _select_z_stall_probes(analysis, candidate_lookup)
-
-    # Middle shelf (idx 1) first, then its lowest-X and highest-X cells that have a
-    # wall depth (cell_idx 2 is skipped as it has none), then shelf 0's single valid cell.
-    assert [(cell.shelf_idx, cell.cell_idx, wall_depth_mm) for cell, wall_depth_mm in result] == [
-        (1, 0, 10.0),
-        (1, 1, 9.9),
-        (0, 0, 10.5),
-    ]
-
-
-def test_select_z_stall_probes_returns_empty_without_wall_depths() -> None:
-
-    analysis = SimpleNamespace(
-        shelves=[
-            SimpleNamespace(
-                center_y_mm=100.0,
-                cells=[SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=10.0)],
-            )
-        ]
-    )
-
-    assert _select_z_stall_probes(analysis, {}) == []
-
-
 def _manual_cell(cell_idx: int, x: float, y: float, is_manual: bool = False) -> Cell:
     return Cell(
         cell_idx=cell_idx,
@@ -1335,75 +1406,6 @@ def test_preserve_manual_cells_noop_without_manual_cells() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_io_box_calibration_passes_configured_laser_offset_and_persists_axis_values() -> None:
-    manager = LaserAutoCalibrationManager()
-    manager._update_snapshot = AsyncMock()
-    params = Parameters.model_validate(
-        {
-            'IDLE_POSITION': [0, 0],
-            'PICKUP_POSITION_L': [0, 0],
-            'PICKUP_POSITION_H': [0, 0],
-            'SCAN_POSITION': [0, 0],
-            'STAGE_EXTENSION_IO_BOX': 0,
-            'STAGE_NUDGE': 0,
-            'STAGE_EXTENSION_SHELF_FRONT': 43,
-            'STAGE_EXTENSION_SHELF_BACK': 0,
-            'Z_EXTENSION_PICK': 0,
-            'Z_EXTENSION_PLACE': 0,
-            'Z_EXTENSION_IO': 0,
-            'Z_MOVE_RPM': 1,
-            'Z_MOVE_ACCEL': 1,
-            'ROTATION_FRONT': 0,
-            'ROTATION_BACK': 180,
-        }
-    )
-    scan_config = SimpleNamespace(
-        laser_sample_settle_ms=50,
-        laser_samples_per_point=3,
-        laser_offset_x_mm=51.0,
-        laser_offset_y_mm=0.0,
-    )
-    config = SimpleNamespace(
-        robot=SimpleNamespace(
-            tool=SimpleNamespace(parameters=params),
-            grid=SimpleNamespace(scan=scan_config),
-        )
-    )
-    config.model_copy = lambda deep=True: copy.deepcopy(config)
-    scout_result = SimpleNamespace(
-        calibration_low_x_mm=37.5,
-        calibration_low_y_mm=476.0,
-        calibration_high_x_mm=37.5,
-        calibration_high_y_mm=715.0,
-        z_extension_mm=163.5,
-        stage_extension_mm=48.0,
-    )
-    saved_configs: list[object] = []
-    worker = SimpleNamespace(_robot=SimpleNamespace(reload_parameters=MagicMock()))
-
-    with patch('openshelf_os_server.core.laser_auto_calibration.get_root_config', return_value=config):
-        with patch.object(laser_module, 'run_io_box_scout', AsyncMock(return_value=scout_result)) as scout_mock:
-            with patch('openshelf_os_server.core.laser_auto_calibration.save_root_config', side_effect=lambda next_config: saved_configs.append(next_config)):
-                with patch('openshelf_os_server.core.laser_auto_calibration.clear_config_cache'):
-                    await manager._run_io_box_calibration(worker)
-
-    assert scout_mock.await_args.kwargs['laser_offset_x_mm'] == pytest.approx(51.0)
-    assert scout_mock.await_args.kwargs['laser_offset_y_mm'] == pytest.approx(0.0)
-    assert saved_configs[0].robot.tool.parameters.PICKUP_POSITION_L == (37, 476)
-    assert saved_configs[0].robot.tool.parameters.PICKUP_POSITION_H == (37, 715)
-    assert saved_configs[0].robot.tool.parameters.Z_EXTENSION_IO == pytest.approx(163.5)
-    assert saved_configs[0].robot.tool.parameters.STAGE_EXTENSION_IO_BOX == pytest.approx(48.0)
-    worker._robot.reload_parameters.assert_called_once_with()
-
-
-def test_resolve_io_box_laser_offset_rejects_default_zero() -> None:
-    with pytest.raises(ValueError, match='laser_offset_x_mm must be configured'):
-        _resolve_io_box_laser_offset_x_mm(SimpleNamespace(laser_offset_x_mm=0.0))
-
-    assert _resolve_io_box_laser_offset_x_mm(SimpleNamespace(laser_offset_x_mm=51.0)) == pytest.approx(51.0)
-
-
-@pytest.mark.asyncio
 async def test_run_stage_extension_calibration_accepts_no_progress_terminal_state() -> None:
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
@@ -1425,8 +1427,7 @@ async def test_run_stage_extension_calibration_accepts_no_progress_terminal_stat
         robot=SimpleNamespace(
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
-                    laser_sample_settle_ms=0,
-                    laser_scan_z_offset_from_place_mm=None,
+                    laser_scan_pose_z_delta_from_place_mm=None,
                 )
             )
         )
@@ -1479,8 +1480,7 @@ async def test_run_stage_extension_calibration_rejects_timeout_terminal_state() 
         robot=SimpleNamespace(
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
-                    laser_sample_settle_ms=0,
-                    laser_scan_z_offset_from_place_mm=None,
+                    laser_scan_pose_z_delta_from_place_mm=None,
                 )
             )
         )
@@ -1527,8 +1527,7 @@ async def test_run_stage_extension_calibration_skips_final_retract_when_cancelle
         robot=SimpleNamespace(
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
-                    laser_sample_settle_ms=0,
-                    laser_scan_z_offset_from_place_mm=None,
+                    laser_scan_pose_z_delta_from_place_mm=None,
                 )
             )
         )
@@ -1582,8 +1581,7 @@ async def test_run_stage_extension_calibration_raises_when_abort_requested_durin
         robot=SimpleNamespace(
             grid=SimpleNamespace(
                 scan=SimpleNamespace(
-                    laser_sample_settle_ms=0,
-                    laser_scan_z_offset_from_place_mm=None,
+                    laser_scan_pose_z_delta_from_place_mm=None,
                 )
             )
         )
@@ -1620,14 +1618,9 @@ async def test_resolve_stage_extension_probe_y_uses_right_scout_and_offset() -> 
     )
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     scan_config = SimpleNamespace(
-        laser_sample_settle_ms=0,
-        laser_samples_per_point=1,
-        laser_scan_stage_extension_mm=None,
-        laser_scan_z_offset_from_place_mm=None,
-        angle_calibration_x_min_mm=50.0,
+        laser_scan_pose_stage_mm=None,
+        laser_scan_pose_z_delta_from_place_mm=None,
         angle_calibration_x_max_mm=940.0,
-        angle_calibration_x_step_mm=100.0,
-        angle_calibration_x_count=5,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
 
@@ -1865,6 +1858,35 @@ async def test_stream_laser_auto_calibration_starts_session_when_idle() -> None:
     assert manager.ensure_calls == 1
     assert manager.last_requested_scope is not None
     assert manager.last_requested_scope.mode == "all"
+    assert manager.last_requested_scope.hold_y_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_stream_laser_auto_calibration_passes_hold_y_enabled_false() -> None:
+    manager = FakeLaserManager(snapshot=_build_snapshot(), is_active=False)
+    worker = SimpleNamespace(
+        _current_command=None,
+        _demo_cycling=False,
+        needs_home=lambda: False,
+        needs_home_reason=lambda: None,
+        needs_home_axes=lambda: [],
+    )
+
+    with patch(
+        "openshelf_os_server.routers.calibration.get_laser_auto_calibration_manager",
+        return_value=manager,
+    ):
+        with patch(
+            "openshelf_os_server.routers.calibration.get_robot_worker",
+            AsyncMock(return_value=worker),
+        ):
+            request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+            response = await calibration_router.stream_laser_auto_calibration(request, hold_y_enabled=False)
+            await anext(response.body_iterator)
+            await response.body_iterator.aclose()
+
+    assert manager.last_requested_scope is not None
+    assert manager.last_requested_scope.hold_y_enabled is False
 
 
 @pytest.mark.asyncio
@@ -2064,59 +2086,6 @@ async def test_robot_commands_are_blocked_while_laser_auto_calibration_is_runnin
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == "laser auto calibration is running"
-
-
-def test_select_z_stall_probes_skips_cells_whose_probe_x_exceeds_the_axis_limit() -> None:
-    """Real lb4-3 jam: L:3:6 sits at tool_x=960; the probe adds a +20mm shift -> 980, past
-    the 950mm axis limit. The axis clamped, putting the gripper over the cell's tray hole
-    (947-973) instead of the divider; it drove down into the hole and jammed the tray."""
-
-    analysis = SimpleNamespace(
-        shelves=[
-            SimpleNamespace(
-                center_y_mm=995.0,
-                cells=[
-                    SimpleNamespace(shelf_idx=3, cell_idx=0, center_x_mm=279.0, tool_x_mm=330.0),
-                    SimpleNamespace(shelf_idx=3, cell_idx=3, center_x_mm=593.0, tool_x_mm=644.0),
-                    SimpleNamespace(shelf_idx=3, cell_idx=6, center_x_mm=909.0, tool_x_mm=960.0),
-                ],
-            )
-        ]
-    )
-    candidate_lookup = {
-        (3, 0): SimpleNamespace(wall_depth_mm=9.9),
-        (3, 3): SimpleNamespace(wall_depth_mm=9.9),
-        (3, 6): SimpleNamespace(wall_depth_mm=9.9),
-    }
-
-    # x axis limit 950, probe shift 20 -> a probe cell must satisfy tool_x <= 930
-    result = _select_z_stall_probes(analysis, candidate_lookup, 930.0)
-    probed = [(cell.shelf_idx, cell.cell_idx) for cell, _ in result]
-
-    assert (3, 6) not in probed
-    assert probed == [(3, 0), (3, 3)]
-
-
-def test_select_z_stall_probes_without_a_limit_keeps_every_cell() -> None:
-    analysis = SimpleNamespace(
-        shelves=[
-            SimpleNamespace(
-                center_y_mm=995.0,
-                cells=[
-                    SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=279.0, tool_x_mm=330.0),
-                    SimpleNamespace(shelf_idx=0, cell_idx=1, center_x_mm=909.0, tool_x_mm=960.0),
-                ],
-            )
-        ]
-    )
-    candidate_lookup = {
-        (0, 0): SimpleNamespace(wall_depth_mm=9.9),
-        (0, 1): SimpleNamespace(wall_depth_mm=9.9),
-    }
-
-    result = _select_z_stall_probes(analysis, candidate_lookup, None)
-
-    assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in result] == [(0, 0), (0, 1)]
 
 
 @pytest.mark.asyncio

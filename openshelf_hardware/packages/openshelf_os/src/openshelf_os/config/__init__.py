@@ -2,6 +2,7 @@ from openshelf_os.config.types import AxisCoordinate, TwoInt
 from openshelf_os.config.exceptions import ConfigError, ConfigValidationError, ConfigMissingError
 from openshelf_os.config.file_io import write_json_file_with_backup, create_timestamped_json_backup
 from openshelf_os.config.settings import (
+    BARCODE_MAX_LENGTH,
     StorageSettings,
     StorageBinSettings,
     StorageBinLocationSettings,
@@ -17,6 +18,7 @@ from openshelf_os.config.settings import (
     DemoFridgeCellSettings,
     DemoFridgeDoorPositionsSettings,
     DemoFridgeSettings,
+    INSECURE_PUBLISHED_SECRETS,
     DemoSettings,
     RobotAppSettings,
     ScaleAppSettings,
@@ -63,6 +65,7 @@ __all__ = [
     "ConfigMissingError",
     "write_json_file_with_backup",
     "create_timestamped_json_backup",
+    "BARCODE_MAX_LENGTH",
     "StorageSettings",
     "StorageBinSettings",
     "StorageBinLocationSettings",
@@ -78,6 +81,7 @@ __all__ = [
     "DemoFridgeCellSettings",
     "DemoFridgeDoorPositionsSettings",
     "DemoFridgeSettings",
+    "INSECURE_PUBLISHED_SECRETS",
     "DemoSettings",
     "RobotAppSettings",
     "ScaleAppSettings",

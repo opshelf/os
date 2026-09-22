@@ -9,9 +9,10 @@ _MODULE_NAMES = (
     "recording",
     "motion",
     "shelf_scan",
-    "io_box",
     "fine_scan",
     "staged_scan",
+    "reference_offsets",
+    "z_stall",
 )
 
 _PATCH_TARGET_NAMES = (
@@ -140,11 +141,6 @@ async def capture_shelf_candidates(*args: Any, **kwargs: Any) -> Any:
         return await implementation(*args, **kwargs)
 
 
-async def run_io_box_scout(*args: Any, **kwargs: Any) -> Any:
-    with _synced_patch_targets():
-        return await _load_module("io_box").run_io_box_scout(*args, **kwargs)
-
-
 async def run_staged_scan(*args: Any, **kwargs: Any) -> Any:
     with _synced_patch_targets():
         return await _load_module("staged_scan").run_staged_scan(*args, **kwargs)
@@ -155,8 +151,20 @@ def apply_single_shelf_analysis(*args: Any, **kwargs: Any) -> Any:
         return _load_module("staged_scan").apply_single_shelf_analysis(*args, **kwargs)
 
 
+def z_model_datum_agreement_mm(*args: Any, **kwargs: Any) -> Any:
+    with _synced_patch_targets():
+        return _load_module("reference_offsets").z_model_datum_agreement_mm(*args, **kwargs)
+
+
 _WRAPPER_EXPORTS["capture_shelf_candidates"] = capture_shelf_candidates
 
 
 def __getattr__(name: str) -> Any:
+    # A submodule name is loaded directly. Searching for it as an attribute walks every module in
+    # `_MODULE_NAMES`, and those modules import their siblings: `staged_scan` does `from . import
+    # core` on its first line, so a search for `core` used to load `z_stall` (and through it a
+    # half-initialised `staged_scan`) and raise ImportError when `staged_scan` was imported first.
+    if name in _MODULE_NAMES:
+        return _load_module(name)
+
     return _find_export(name)

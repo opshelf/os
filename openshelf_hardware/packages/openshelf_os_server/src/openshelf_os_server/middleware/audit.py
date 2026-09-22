@@ -21,6 +21,7 @@ from ..utils.audit_integrity import (
     get_hmac_key_id,
 )
 from ..utils.audit_constants import AUDIT_RETENTION_DAYS, LEGACY_COMMAND_RECORDS_FIELD
+from ..utils.cors_policy import response_allow_origin, resolve_allowed_origins
 from ..routers.auth_deps import get_current_user_optional
 
 command_records_context: ContextVar[List[Dict[str, Any]]] = ContextVar("command_records", default=[])
@@ -32,6 +33,11 @@ ALWAYS_EXCLUDED_ENDPOINTS = frozenset([
     "/api/calibration/laser/stream",
 ])
 SUCCESSFUL_READ_METHODS = frozenset(["GET", "HEAD"])
+# Reads that had to move to POST so the barcode can travel in the body; they stay unaudited
+# like their GET counterparts, and only failures are recorded.
+SUCCESSFUL_READ_POST_ENDPOINTS = frozenset([
+    "/api/storage/items/lookup",
+])
 SUCCESSFUL_READ_EXCLUDED_ENDPOINTS = frozenset([
     "/api/auth/me",
     "/api/auth/users",
@@ -85,6 +91,8 @@ def should_skip_before_request(request: Request) -> bool:
 def should_skip_after_response(request: Request, status_code: int) -> bool:
     if status_code >= 400:
         return False
+    if request.url.path in SUCCESSFUL_READ_POST_ENDPOINTS:
+        return True
     if request.method not in SUCCESSFUL_READ_METHODS:
         return False
     return is_successful_read_excluded_endpoint(request.url.path)
@@ -141,8 +149,13 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				status_code=500,
 				content={"detail": {"message": "Internal server error", "code": "internal_error"}}
 			)
-			if request.headers.get("origin") is not None:
-				response.headers["Access-Control-Allow-Origin"] = "*"
+			# This response never travels back through the CORS middleware, so it carries
+			# the origin header itself, under the same policy as every other response.
+			allow_origin = response_allow_origin(
+				resolve_allowed_origins(), request.headers.get("origin")
+			)
+			if allow_origin is not None:
+				response.headers["Access-Control-Allow-Origin"] = allow_origin
 
 		duration_ms = int((time.time() - start_time) * 1000)
 

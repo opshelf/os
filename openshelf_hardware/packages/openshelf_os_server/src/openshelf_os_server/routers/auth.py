@@ -1,11 +1,12 @@
 """Authentication API endpoints."""
+from openshelf_os_server.documentation import MessageResponse, response_docs
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from ..settings import get_settings
 from ..database.session import get_db
@@ -25,7 +26,7 @@ class TokenResponse(BaseModel):
 	access_token: str
 	refresh_token: str
 	token_type: str = "bearer"
-	expires_in: int
+	expires_in: int = Field(description="Access-token lifetime in seconds from issuance")
 
 class UserResponse(BaseModel):
 	"""User response model."""
@@ -50,13 +51,19 @@ class PublicUserResponse(BaseModel):
 	role: dict
 	accessLevel: dict | None = None
 
-@router.get("/users", response_model=List[PublicUserResponse])
+@router.get(
+    "/users",
+    response_model=List[PublicUserResponse],
+    summary="List users for login selection",
+    responses=response_docs(),
+)
 async def get_public_users(
 	db: AsyncSession = Depends(get_db)
 ) -> List[PublicUserResponse]:
-	"""
-	Get list of active users for lock screen selection.
-	Returns limited information (no sensitive data).
+	"""List users for login selection.
+
+	Public list of active non-system users for the lock screen. Returns names, email, role
+	name, and optional access-level name; no PIN hashes or tokens are returned.
 	"""
 	result = await db.execute(
 		select(User)
@@ -77,12 +84,23 @@ async def get_public_users(
 		for user in users
 	]
 
-@router.post("/login/json", response_model=TokenResponse)
+@router.post(
+    "/login/json",
+    response_model=TokenResponse,
+    summary="Log in with email and PIN",
+    responses=response_docs(errors=(401,)),
+)
 async def login_json(
 	request: LoginRequest,
 	db: AsyncSession = Depends(get_db)
 ) -> TokenResponse:
-	"""JSON login endpoint (alternative to form)."""
+	"""Log in with email and PIN.
+
+	Exchanges provisioned user credentials for an access token and refresh token. Send JSON,
+	not an OAuth form. Use the access token as `Authorization: Bearer <access_token>`.
+	`expires_in` is the configured access-token lifetime in seconds. Invalid credentials
+	return `401`.
+	"""
 	settings = get_settings()
 	auth_service = AuthService(
 		settings.auth.jwt_secret or "",
@@ -126,12 +144,22 @@ async def login_json(
 		expires_in=settings.auth.jwt_expire_minutes * 60
 	)
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    summary="Refresh a user access token",
+    responses=response_docs(errors=(401,)),
+)
 async def refresh_token(
 	request: RefreshRequest,
 	db: AsyncSession = Depends(get_db)
 ) -> TokenResponse:
-	"""Refresh access token using refresh token."""
+	"""Refresh a user access token.
+
+	Exchanges a valid refresh token for a new access token using the current user
+	role/access settings. Returns the same refresh token, not a rotated token. Expired
+	tokens and inactive or absent users return `401`.
+	"""
 	settings = get_settings()
 	auth_service = AuthService(
 		settings.auth.jwt_secret or "",
@@ -176,18 +204,36 @@ async def refresh_token(
 		expires_in=settings.auth.jwt_expire_minutes * 60
 	)
 
-@router.post("/logout")
+@router.post(
+    "/logout",
+    summary="Acknowledge user logout",
+    responses=response_docs(model=MessageResponse, errors=(401,)),
+)
 async def logout(
 	current_user: User = Depends(get_current_user)
 ) -> dict:
-	"""Logout current user (placeholder for token blacklisting)."""
+	"""Acknowledge user logout.
+
+	Returns a logout acknowledgment for the authenticated user. Tokens are not revoked or
+	blacklisted by this endpoint; the client must discard its access and refresh tokens.
+	"""
 	return {"message": "Logged out successfully"}
 
-@router.get("/me", response_model=UserResponse)
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    summary="Read the authenticated user",
+    responses=response_docs(errors=(401,)),
+)
 async def get_current_user_info(
 	current_user: User = Depends(get_current_user)
 ) -> UserResponse:
-	"""Get current user information."""
+	"""Read the authenticated user.
+
+	Returns the active user, current role permissions, and optional access level. This is
+	the account selected by authentication, including the configured development auto-user
+	when that fallback is active.
+	"""
 	return UserResponse(
 		id=int(current_user.id),
 		email=str(current_user.email),

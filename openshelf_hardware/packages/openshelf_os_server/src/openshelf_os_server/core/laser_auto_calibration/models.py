@@ -16,6 +16,18 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from openshelf_os.laser_calibration.defaults import (
+    ANGLE_SWEEP_X_COUNT,
+    ANGLE_SWEEP_X_MIN_MM,
+    ANGLE_SWEEP_X_STEP_MM,
+    STAGE_STALL_COARSE_MAX_DEG,
+    STAGE_STALL_COARSE_MIN_DEG,
+    STAGE_STALL_COARSE_START_DEG,
+    STAGE_STALL_COARSE_STEP_DEG,
+    STAGE_STALL_FINE_STEP_DEG,
+    STAGE_STALL_FINE_WINDOW_DEG,
+    STAGE_STALL_PROBE_X_MM,
+)
 from openshelf_os.laser_calibration import angle as angle_module
 from openshelf_os import laser_calibration as laser_module
 from openshelf_os.common import Parameters, resolve_grid_path
@@ -75,17 +87,6 @@ STAGE_EXTENSION_PROBE_STEP_MM = 0.5
 STAGE_EXTENSION_PROBE_TIMEOUT_S = 60.0
 STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S = 0.2
 STAGE_EXTENSION_STALL_BACKOFF_MM = 5.0
-ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM = 475.0
-IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM = 1.0
-
-
-def _resolve_io_box_laser_offset_x_mm(scan_config: Any) -> float:
-    laser_offset_x_mm = laser_module.require_scan_config_parameter(scan_config, "laser_offset_x_mm")
-
-    if abs(laser_offset_x_mm) < IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM:
-        raise ValueError("robot.grid.scan.laser_offset_x_mm must be configured before IO box calibration")
-
-    return laser_offset_x_mm
 
 
 def _should_skip_motion_cleanup_on_cancel() -> bool:
@@ -147,23 +148,83 @@ class LaserAutoCalibrationAngleResult(BaseModel):
     stage_position_mm: float | None = None
 
 
-class LaserAutoCalibrationIOBoxResult(BaseModel):
-    pickup_low_x: float
-    pickup_low_y: float
-    pickup_high_x: float
-    pickup_high_y: float
-    z_extension: float
-    stage_extension: float
+class LaserAutoCalibrationReferenceOffsetSample(BaseModel):
+    shelf_idx: int
+    cell_idx: int
+    manual_x_mm: float
+    manual_y_mm: float
+    detected_x_mm: float
+    detected_y_mm: float
+    delta_x_mm: float
+    delta_y_mm: float
+    wall_depth_mm: float | None = None
+    derived_intercept_mm: float | None = None
+
+
+class LaserAutoCalibrationReferenceOffset(BaseModel):
+    """Offset derived from the hand-calibrated cells a run used as its reference frame."""
+
+    side: StorageModuleSide
+    offset_x_mm: float
+    offset_y_mm: float
+    spread_x_mm: float
+    spread_y_mm: float
+    sample_count: int
+    intercept_mm: float | None = None
+    slope_per_mm: float = 0.0
+    configured_offset_x_mm: float | None = None
+    configured_offset_y_mm: float | None = None
+    applied: bool = False
+    persisted: bool = False
+    samples: list[LaserAutoCalibrationReferenceOffsetSample] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+
+
+class LaserAutoCalibrationZStallSample(BaseModel):
+    shelf_idx: int
+    cell_idx: int
+    probe_x_mm: float
+    probe_y_mm: float
+    wall_depth_mm: float
+    z_contact_mm: float
+    z_contact_repeat_mm: float | None
+    delta_mm: float
+
+
+class LaserAutoCalibrationZStallResult(BaseModel):
+    """A probed z model, and how it stood up to the hand-calibrated datum."""
+
+    side: StorageModuleSide
+    intercept_mm: float
+    slope_per_mm: float
+    slope_source: str = "probe"
+    fit_source: str
+    sample_count: int
+    x_span_mm: float
+    stage_extension_mm: float
+    z_place_mm: float
+    manual_intercept_mm: float | None = None
+    manual_agreement_mm: float | None = None
+    manual_agreement_tolerance_mm: float
+    manual_captured_stage_mm: float | None = None
+    manual_capture_unstamped: int = 0
+    applied: bool = False
+    persisted: bool = False
+    samples: list[LaserAutoCalibrationZStallSample] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+    dropped_repeats: list[str] = Field(default_factory=list)
 
 
 class LaserAutoCalibrationScope(BaseModel):
-    mode: Literal["all", "both", "side", "shelf", "cell", "io_box"] = "all"
+    mode: Literal["all", "both", "side", "shelf", "cell"] = "all"
     side: StorageModuleSide | None = None
     shelf_idx: int | None = None
     cell_idx: int | None = None
-    include_io_box: bool = False
     include_angle_calibration: bool = True
     include_extension_calibration: bool = True
+    hold_y_enabled: bool = True
+    derive_offsets_from_manual_cells: bool = False
+    derive_z_model_from_stall: bool = False
 
 class LaserAutoCalibrationError(BaseModel):
     error_type: str
@@ -200,7 +261,8 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     shelf_candidates: list[LaserAutoCalibrationCandidate] = Field(default_factory=list)
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
     angle_results: list[LaserAutoCalibrationAngleResult] = Field(default_factory=list)
-    io_box_result: LaserAutoCalibrationIOBoxResult | None = None
+    reference_offset_results: list[LaserAutoCalibrationReferenceOffset] = Field(default_factory=list)
+    z_stall_results: list[LaserAutoCalibrationZStallResult] = Field(default_factory=list)
     stage_detail: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     error_detail: LaserAutoCalibrationError | None = None
@@ -299,18 +361,12 @@ def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBou
 def _build_angle_x_positions(scan_config: Any) -> list[float]:
     x_positions = angle_module.build_axis_positions(
         float(scan_config.angle_calibration_x_max_mm),
-        float(scan_config.angle_calibration_x_min_mm),
-        float(scan_config.angle_calibration_x_step_mm),
+        ANGLE_SWEEP_X_MIN_MM,
+        ANGLE_SWEEP_X_STEP_MM,
     )
 
-    x_count = int(getattr(scan_config, "angle_calibration_x_count", 5))
+    return x_positions[:ANGLE_SWEEP_X_COUNT]
 
-    return x_positions[:x_count]
-
-
-
-def _get_scan_config_value(scan_config: Any, name: str, default: Any) -> Any:
-    return getattr(scan_config, name, default)
 
 
 def _build_stage_stall_rotation_center_deg(parameters: Any, side: StorageModuleSide) -> float:
@@ -323,33 +379,11 @@ def _build_stage_stall_rotation_positions(
     rotation_center_deg: float,
     rotation_limit_deg: float,
 ) -> list[float]:
-    coarse_start_deg = _get_scan_config_value(
-        scan_config,
-        "angle_calibration_stage_stall_coarse_start_deg",
-        4.5,
-    )
+    coarse_start_deg = STAGE_STALL_COARSE_START_DEG
     requested_positions = angle_module.build_axis_positions(
-        float(
-            _get_scan_config_value(
-                scan_config,
-                "angle_calibration_stage_stall_coarse_min_deg",
-                _get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_min_deg", 0.0),
-            )
-        ),
-        float(
-            _get_scan_config_value(
-                scan_config,
-                "angle_calibration_stage_stall_coarse_max_deg",
-                _get_scan_config_value(scan_config, "angle_calibration_stage_stall_rotation_max_deg", 5.5),
-            )
-        ),
-        float(
-            _get_scan_config_value(
-                scan_config,
-                "angle_calibration_stage_stall_coarse_step_deg",
-                _get_scan_config_value(scan_config, "angle_calibration_rotation_step_deg", 1.0),
-            )
-        ),
+        float(STAGE_STALL_COARSE_MIN_DEG),
+        float(STAGE_STALL_COARSE_MAX_DEG),
+        float(STAGE_STALL_COARSE_STEP_DEG),
     )
     valid_positions = _build_valid_stage_stall_rotation_positions(
         requested_positions,
@@ -378,9 +412,7 @@ def _build_stage_stall_fine_rotation_positions(
     rotation_center_deg: float,
     rotation_limit_deg: float,
 ) -> list[float]:
-    fine_window_deg = float(
-        _get_scan_config_value(scan_config, "angle_calibration_stage_stall_fine_window_deg", 1.5)
-    )
+    fine_window_deg = float(STAGE_STALL_FINE_WINDOW_DEG)
 
     if fine_window_deg <= 0.0:
         return []
@@ -388,7 +420,7 @@ def _build_stage_stall_fine_rotation_positions(
     requested_positions = angle_module.build_axis_positions(
         float(coarse_best_rotation_deg) - fine_window_deg,
         float(coarse_best_rotation_deg) + fine_window_deg,
-        float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_fine_step_deg", 0.25)),
+        float(STAGE_STALL_FINE_STEP_DEG),
     )
     valid_positions = _build_valid_stage_stall_rotation_positions(
         requested_positions,
@@ -428,7 +460,8 @@ def _build_valid_stage_stall_rotation_positions(
 
 
 def _resolve_stage_stall_probe_x_mm(scan_config: Any) -> float:
-    return float(_get_scan_config_value(scan_config, "angle_calibration_stage_stall_probe_x_mm", ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM))
+    del scan_config
+    return float(STAGE_STALL_PROBE_X_MM)
 
 
 
@@ -550,15 +583,15 @@ __all__ = [
     "STAGE_EXTENSION_PROBE_TIMEOUT_S",
     "STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S",
     "STAGE_EXTENSION_STALL_BACKOFF_MM",
-    "IO_BOX_MIN_CONFIGURED_LASER_OFFSET_X_MM",
-    "ANGLE_STAGE_STALL_DEFAULT_PROBE_X_MM",
-    "_resolve_io_box_laser_offset_x_mm",
     "_should_skip_motion_cleanup_on_cancel",
     "LaserAutoCalibrationShelfEdge",
     "LaserAutoCalibrationCandidate",
     "LaserAutoCalibrationCell",
     "LaserAutoCalibrationAngleResult",
-    "LaserAutoCalibrationIOBoxResult",
+    "LaserAutoCalibrationReferenceOffsetSample",
+    "LaserAutoCalibrationReferenceOffset",
+    "LaserAutoCalibrationZStallSample",
+    "LaserAutoCalibrationZStallResult",
     "LaserAutoCalibrationScope",
     "LaserAutoCalibrationSnapshot",
     "_SideState",

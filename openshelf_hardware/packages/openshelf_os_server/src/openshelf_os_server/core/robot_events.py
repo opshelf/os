@@ -8,6 +8,7 @@ from sqlalchemy import select
 import openshelf_os_server.core.robot as robot_core
 
 from openshelf_os.robot.worker import RobotWorker
+from openshelf_os_server.core.mass import apply_cycle_mass
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import BinStorageService, RobotEventPublisher
 from openshelf_os_server.database.models import Telemetry
@@ -15,6 +16,66 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 EVENT_DRAIN_TIMEOUT_S = 5.0
+EVENT_FORWARD_WAIT_TIMEOUT_S = 5.0
+
+
+class EventProcessingTracker:
+    """Track worker events whose side effects have finished.
+
+    The event listener commits DB state after the worker emits an event, so SSE
+    clients must not observe an event before that commit. The event stream waits
+    on this tracker before forwarding each payload; fan-out preserves order in
+    every subscriber queue, so a per-connection sequence number maps 1:1 onto
+    the monotonically growing processed count.
+    """
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Condition()
+        self._processed = 0
+        self._active = False
+
+    def activate(self) -> None:
+        self._active = True
+
+    def deactivate(self) -> None:
+        self._active = False
+
+    async def record_processed(self) -> None:
+        async with self._lock:
+            self._processed += 1
+            self._lock.notify_all()
+
+    async def wait_until_processed(self, target: int, timeout_s: float) -> bool:
+        async with self._lock:
+            if self._active is False or self._processed >= target:
+                return True
+            try:
+                while self._processed < target:
+                    await asyncio.wait_for(self._lock.wait(), timeout_s)
+            except asyncio.TimeoutError:
+                return False
+            return self._processed >= target
+
+
+event_processing_tracker = EventProcessingTracker()
+
+
+async def _refresh_status_after_commit(worker: Optional[RobotEventPublisher]) -> None:
+    """Push a fresh status snapshot so SSE overlays reflect committed DB state.
+
+    The status overlay re-reads item locations from the database on every push,
+    so a push issued after the commit corrects the stale occupancy published
+    alongside the pre-commit state change.
+    """
+    if worker is None:
+        return
+    snapshot = getattr(worker, "get_status_snapshot", None)
+    if snapshot is None:
+        return
+    try:
+        await snapshot(force_refresh=True)
+    except Exception as err:
+        logger.warning("Failed to refresh robot status after commit: %s", err)
 
 
 async def flush_telemetry(is_cycle: bool) -> None:
@@ -82,13 +143,13 @@ async def process_robot_event(
             return
 
         location = payload.get("location") or {}
-        upca = payload.get("upca")
+        barcode = payload.get("barcode")
 
         side = location.get("side")
         shelf_idx = location.get("shelf_idx")
         cell_idx = location.get("cell_idx")
 
-        if upca is None or side is None or shelf_idx is None or cell_idx is None:
+        if barcode is None or side is None or shelf_idx is None or cell_idx is None:
             logger.warning("Skipping retrieve_item event with incomplete data: %s", payload)
             return
 
@@ -99,6 +160,7 @@ async def process_robot_event(
             logger.warning("Skipping retrieve_item event with non-integer location: %s", payload)
             return
 
+        removed = False
         async with AsyncSessionLocal() as session:
             if await BinStorageService(session).targets_reserved_bin_identity(payload):
                 logger.warning(
@@ -107,35 +169,42 @@ async def process_robot_event(
                 return
             storage_service = StorageService(session)
             try:
-                removed = await storage_service.remove_item_location(upca, side, shelf_idx_int, cell_idx_int)
+                item = await storage_service.get_item(str(barcode))
+                if item is not None:
+                    if not apply_cycle_mass(item, payload.get("weight"), stored=False, command_id=payload.get("command_id")):
+                        return
+                removed = await storage_service.remove_item_location(barcode, side, shelf_idx_int, cell_idx_int, commit=False)
+                await session.commit()
                 if removed:
                     logger.info(
-                        "Removed location for retrieved item: upca=%s side=%s shelf=%s cell=%s",
-                        upca, side, shelf_idx_int, cell_idx_int,
+                        "Removed location for retrieved item: barcode=%s side=%s shelf=%s cell=%s",
+                        barcode, side, shelf_idx_int, cell_idx_int,
                     )
             except Exception as err:
-                logger.exception("Failed to process retrieve_item event for %s: %s", upca, err)
+                logger.exception("Failed to process retrieve_item event for %s: %s", barcode, err)
 
         await flush_telemetry(is_cycle=True)
+        if removed:
+            await _refresh_status_after_commit(active_worker)
 
     if command == "store_item":
         if message != "success":
             return
 
         location = payload.get("location") or {}
-        upca = payload.get("upca")
+        barcode = payload.get("barcode")
         weight = payload.get("weight")
 
         logger.info(
-            "Processing store_item event: upca=%s weight=%s location=%s",
-            upca, weight, location
+            "Processing store_item event: barcode=%s weight=%s location=%s",
+            barcode, weight, location
         )
 
         side = location.get("side")
         shelf_idx = location.get("shelf_idx")
         cell_idx = location.get("cell_idx")
 
-        if upca is None or side is None or shelf_idx is None or cell_idx is None:
+        if barcode is None or side is None or shelf_idx is None or cell_idx is None:
             logger.warning("Skipping store_item event with incomplete data: %s", payload)
             return
 
@@ -168,60 +237,47 @@ async def process_robot_event(
             weight, normalized_weight
         )
 
+        location_added = False
         async with AsyncSessionLocal() as session:
             if await BinStorageService(session).targets_reserved_bin_identity(payload):
                 logger.warning("Skipping legacy mutation for reserved bin store event: %s", payload)
                 return
             storage_service = StorageService(session)
             try:
-                existing_item = await storage_service.get_item(str(upca))
+                existing_item = await storage_service.get_item(str(barcode))
                 logger.info(
-                    "Existing item lookup: upca=%s found=%s existing_weight=%s",
-                    upca, existing_item is not None,
+                    "Existing item lookup: barcode=%s found=%s existing_weight=%s",
+                    barcode, existing_item is not None,
                     existing_item.weight if existing_item else None
                 )
                 if existing_item is None:
                     logger.info("Creating new item with weight=%s", normalized_weight)
-                    await storage_service.create_item(
-                        upca=str(upca),
-                        name=str(upca),
+                    existing_item = await storage_service.create_item(
+                        barcode=str(barcode),
+                        name=str(barcode),
                         dimensions=None,
                         weight=normalized_weight,
-                        metadata={"name": str(upca)},
+                        metadata={"name": str(barcode)},
                     )
-                elif normalized_weight is not None:
-                    weights_differ = existing_item.weight != normalized_weight
-                    logger.info(
-                        "Weight comparison: existing=%s new=%s differ=%s",
-                        existing_item.weight, normalized_weight, weights_differ
-                    )
-                    if weights_differ:
-                        logger.info(
-                            "Updating item weight: upca=%s old=%s new=%s",
-                            upca, existing_item.weight, normalized_weight
-                        )
-                        result = await storage_service.update_item(str(upca), weight=normalized_weight)
-                        logger.info(
-                            "Update result: success=%s new_weight=%s",
-                            result is not None, result.weight if result else None
-                        )
-                    else:
-                        logger.info("Weights equal, skipping update")
-                else:
-                    logger.info("Normalized weight is None, skipping update")
+                if not apply_cycle_mass(existing_item, payload.get("weight"), stored=True, command_id=payload.get("command_id")):
+                    return
 
-                existing_locations = await storage_service.get_item_locations(str(upca))
+                existing_locations = await storage_service.get_item_locations(str(barcode))
                 already_assigned = any(
                     loc.side == side and loc.shelf_idx == shelf_idx_int and loc.cell_idx == cell_idx_int
                     for loc in existing_locations
                 )
 
                 if already_assigned is False:
-                    await storage_service.add_item_location(str(upca), side, shelf_idx_int, cell_idx_int)
+                    await storage_service.add_item_location(str(barcode), side, shelf_idx_int, cell_idx_int, commit=False)
+                    location_added = True
+                await session.commit()
             except Exception as err:
-                logger.exception("Failed to process store_item event for %s: %s", upca, err)
+                logger.exception("Failed to process store_item event for %s: %s", barcode, err)
 
         await flush_telemetry(is_cycle=True)
+        if location_added:
+            await _refresh_status_after_commit(active_worker)
 
 
 class RobotEventListener:
@@ -240,6 +296,7 @@ class RobotEventListener:
         logger.info("Starting robot event listener")
         self._queue = await self._worker.subscribe_events()
         self._task = asyncio.create_task(self._consume_events(), name="robot-event-listener")
+        event_processing_tracker.activate()
 
     async def stop(self) -> None:
         if self._queue is not None:
@@ -260,6 +317,8 @@ class RobotEventListener:
                 logger.warning("Failed to stop robot event listener task: %s", err)
 
             self._task = None
+
+        event_processing_tracker.deactivate()
 
     async def drain(self) -> None:
         """Wait briefly for events already emitted by the worker to be persisted."""
@@ -294,3 +353,4 @@ class RobotEventListener:
                 await process_robot_event(payload, self._worker)
             finally:
                 queue.task_done()
+                await event_processing_tracker.record_processed()

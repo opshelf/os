@@ -183,7 +183,6 @@ async def test_save_fridge_calibration_persists_and_refreshes_runtime(monkeypatc
     monkeypatch.setattr(calibration, "should_enable_demo_fridge", lambda: True)
     monkeypatch.setattr(calibration, "get_root_config", lambda: config)
     monkeypatch.setattr(calibration, "save_root_config", save_config)
-    monkeypatch.setattr(calibration, "ensure_no_active_bin_workflow_for_motion", AsyncMock())
     monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
 
     response = await calibration.save_fridge_door_calibration(

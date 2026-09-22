@@ -4,6 +4,7 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 from datetime import datetime, timezone
 from .base import Base
 from pydantic import ConfigDict
+from openshelf_os.config.settings import BARCODE_MAX_LENGTH
 from ..utils.audit_constants import LEGACY_COMMAND_RECORDS_FIELD
 
 
@@ -144,10 +145,22 @@ class Item(Base):
 		super().__init__(**kwargs)
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
-	upca: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+	barcode: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
 	name: Mapped[str] = mapped_column(String(255), nullable=False)
 	dimensions: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
 	weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+	tare_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+	full_net_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+	enrollment_storage_completed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="1")
+	enrollment_weight_pending: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+	processed_mass_commands: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+
+	@property
+	def net_weight(self) -> Optional[float]:
+		if self.weight is None or self.tare_weight is None or self.weight < self.tare_weight:
+			return None
+		return self.weight - self.tare_weight
+
 	item_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, default=dict)
 	access_level_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("access_levels.id"), nullable=True)
 	created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -166,7 +179,7 @@ class ItemSizerMeasurement(Base):
 	__tablename__ = "item_sizer_measurements"
 	__table_args__ = (
 		Index("ix_item_sizer_measurements_item_id", "item_id"),
-		Index("ix_item_sizer_measurements_upca", "upca"),
+		Index("ix_item_sizer_measurements_barcode", "barcode"),
 		Index("ix_item_sizer_measurements_request_correlation_id", "request_correlation_id"),
 		Index("ix_item_sizer_measurements_created_at", "created_at"),
 	)
@@ -175,7 +188,7 @@ class ItemSizerMeasurement(Base):
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
 	item_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
-	upca: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+	barcode: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 	item_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 	user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 	request_correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -227,12 +240,13 @@ class StorageBin(Base):
 	)
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
-	barcode: Mapped[str] = mapped_column(String(12), unique=True, nullable=False, index=True)
+	barcode: Mapped[str] = mapped_column(String(BARCODE_MAX_LENGTH), unique=True, nullable=False, index=True)
 	side: Mapped[str] = mapped_column(String(20), nullable=False)
 	shelf_idx: Mapped[int] = mapped_column(Integer, nullable=False)
 	cell_idx: Mapped[int] = mapped_column(Integer, nullable=False)
 	inner_dimensions: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
 	max_item_dimensions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+	compartment_layout: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 	max_items: Mapped[int] = mapped_column(Integer, nullable=False)
 	status: Mapped[str] = mapped_column(String(24), nullable=False, default="at_home")
 	gross_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -246,17 +260,19 @@ class StorageBinItem(Base):
 	__tablename__ = "storage_bin_items"
 	__table_args__ = (
 		UniqueConstraint("item_id", name="uq_storage_bin_items_item"),
+		UniqueConstraint("bin_id", "compartment", name="uq_storage_bin_items_compartment"),
 		Index("ix_storage_bin_items_bin_id", "bin_id"),
 	)
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
 	bin_id: Mapped[int] = mapped_column(Integer, ForeignKey("storage_bins.id", ondelete="CASCADE"), nullable=False)
 	item_id: Mapped[int] = mapped_column(Integer, ForeignKey("items.id", ondelete="CASCADE"), nullable=False)
+	compartment: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 	created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class StorageBinWorkflow(Base):
-	"""Durable, globally exclusive bin retrieval/store workflow."""
+	"""Durable tray checkout or barcode return interaction."""
 	__tablename__ = "storage_bin_workflows"
 	__table_args__ = (
 		Index("ix_storage_bin_workflows_state", "state"),
@@ -264,12 +280,11 @@ class StorageBinWorkflow(Base):
 	)
 
 	id: Mapped[str] = mapped_column(String(36), primary_key=True)
+	compartment: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 	operation: Mapped[str] = mapped_column(String(12), nullable=False)
 	state: Mapped[str] = mapped_column(String(32), nullable=False)
-	lock_key: Mapped[Optional[str]] = mapped_column(String(16), unique=True, nullable=True)
-	recovery_claim: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
 	bin_id: Mapped[int] = mapped_column(Integer, ForeignKey("storage_bins.id"), nullable=False)
-	item_id: Mapped[int] = mapped_column(Integer, ForeignKey("items.id"), nullable=False)
+	item_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("items.id"), nullable=True)
 	user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 	history: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
 	error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

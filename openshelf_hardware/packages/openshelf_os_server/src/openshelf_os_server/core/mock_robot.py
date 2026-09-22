@@ -1,4 +1,5 @@
 from __future__ import annotations
+from openshelf_os_server.core.mass import apply_mass, apply_cycle_mass
 
 import asyncio
 import hashlib
@@ -60,12 +61,12 @@ def _command_response(row: MockRobotCommand) -> dict[str, Any]:
 	}
 
 
-def _deterministic_weight(upca: str) -> float:
-	digest = hashlib.sha256(upca.encode("utf-8")).digest()
+def _deterministic_weight(barcode: str) -> float:
+	digest = hashlib.sha256(barcode.encode("utf-8")).digest()
 	return float(100 + int.from_bytes(digest[:2], "big") % 4901)
 
 
-def _fits(dimensions: dict[str, Any]) -> bool:
+def mock_cell_fits(dimensions: dict[str, Any]) -> bool:
 	try:
 		return all(
 			0 < float(dimensions[key]) <= MOCK_CELL_DIMENSIONS[key]
@@ -73,6 +74,27 @@ def _fits(dimensions: dict[str, Any]) -> bool:
 		)
 	except (KeyError, TypeError, ValueError):
 		return False
+
+
+def _parse_requested_location(raw: Any) -> tuple[str, int, int] | None:
+	if not isinstance(raw, dict):
+		return None
+
+	side = raw.get("side")
+	shelf_idx = raw.get("shelf_idx")
+	cell_idx = raw.get("cell_idx")
+	if (
+		side not in MOCK_SIDES
+		or isinstance(shelf_idx, bool)
+		or isinstance(cell_idx, bool)
+		or not isinstance(shelf_idx, int)
+		or not isinstance(cell_idx, int)
+	):
+		return None
+	if not 0 <= shelf_idx < MOCK_SHELVES_PER_SIDE or not 0 <= cell_idx < MOCK_CELLS_PER_SHELF:
+		return None
+
+	return side, shelf_idx, cell_idx
 
 
 class MockRobotRuntime:
@@ -86,6 +108,9 @@ class MockRobotRuntime:
 		self._status_subscribers: list[asyncio.Queue[str]] = []
 		self._event_subscribers: list[asyncio.Queue[str]] = []
 		self._bin_io_box_occupied_override: bool | None = None
+
+	def is_bin_io_box_occupied(self) -> bool:
+		return self._bin_io_box_occupied_override is True
 
 	def set_bin_io_box_occupied(self, occupied: bool) -> None:
 		self._bin_io_box_occupied_override = occupied
@@ -177,6 +202,26 @@ class MockRobotRuntime:
 				)
 				if int(active_count or 0) >= MOCK_COMMAND_LIMIT:
 					raise MockQueueFullError
+
+				# Persist enrollment with admission so failures and restarts retain
+				# the editable baseline without changing it on replay or rejection.
+				if payload.get("command") == "store_item":
+					item_payload = payload["item"]
+					barcode = str(item_payload["barcode"])
+					item = (
+						await session.execute(select(Item).where(Item.barcode == barcode))
+					).scalar_one_or_none()
+					if item is None:
+						item = Item(
+							barcode=barcode,
+							name=str(item_payload.get("name") or barcode),
+							dimensions=item_payload.get("dimensions"),
+							weight=item_payload.get("weight"),
+							item_metadata=item_payload.get("metadata") or {},
+							access_level_id=item_payload.get("access_level_id"),
+						)
+						apply_mass(item, item_payload, enrollment=True)
+						session.add(item)
 
 				row = MockRobotCommand(
 					command_id=str(uuid.uuid4()),
@@ -306,13 +351,13 @@ class MockRobotRuntime:
 		item_payload = payload.get("item")
 		if not isinstance(item_payload, dict):
 			raise MockCommandExecutionError("item is required")
-		upca = str(item_payload.get("upca") or "")
-		if upca == "":
-			raise MockCommandExecutionError("item.upca is required")
+		barcode = str(item_payload.get("barcode") or "")
+		if barcode == "":
+			raise MockCommandExecutionError("item.barcode is required")
 
 		async with AsyncSessionLocal() as session:
 			item = (
-				await session.execute(select(Item).where(Item.upca == upca))
+				await session.execute(select(Item).where(Item.barcode == barcode))
 			).scalar_one_or_none()
 			dimensions: Any
 			if item is not None:
@@ -327,7 +372,7 @@ class MockRobotRuntime:
 			else:
 				dimensions = item_payload.get("dimensions")
 
-			if not isinstance(dimensions, dict) or not _fits(dimensions):
+			if not isinstance(dimensions, dict) or not mock_cell_fits(dimensions):
 				raise MockCommandExecutionError("No suitable storage location found")
 
 			occupied_result = await session.execute(
@@ -336,35 +381,46 @@ class MockRobotRuntime:
 			occupied = {(row.side, row.shelf_idx, row.cell_idx) for row in occupied_result}
 			occupied.update(await reserved_bin_locations(session))
 			location: tuple[str, int, int] | None = None
-			for side in MOCK_SIDES:
-				for shelf_idx in range(MOCK_SHELVES_PER_SIDE):
-					for cell_idx in range(MOCK_CELLS_PER_SHELF):
-						if (side, shelf_idx, cell_idx) not in occupied:
-							location = (side, shelf_idx, cell_idx)
+			requested_location = item_payload.get("location")
+			if requested_location is not None:
+				parsed_location = _parse_requested_location(requested_location)
+				if parsed_location is None:
+					raise MockCommandExecutionError("Invalid location")
+				if parsed_location in occupied:
+					raise MockCommandExecutionError("Requested storage cell is occupied")
+				location = parsed_location
+			else:
+				for side in MOCK_SIDES:
+					for shelf_idx in range(MOCK_SHELVES_PER_SIDE):
+						for cell_idx in range(MOCK_CELLS_PER_SHELF):
+							if (side, shelf_idx, cell_idx) not in occupied:
+								location = (side, shelf_idx, cell_idx)
+								break
+						if location is not None:
 							break
 					if location is not None:
 						break
-				if location is not None:
-					break
 			if location is None:
 				raise MockCommandExecutionError("No suitable storage location found")
 
 			weight = item.weight if item is not None else item_payload.get("weight")
+			if (item is not None and item.tare_weight is not None) or (item is None and item_payload.get("tare_weight") is not None):
+				weight = 350.0
 			if weight is None:
-				weight = _deterministic_weight(upca)
+				weight = _deterministic_weight(barcode)
 			if item is None:
 				item = Item(
-					upca=upca,
-					name=str(item_payload.get("name") or upca),
+					barcode=barcode,
+					name=str(item_payload.get("name") or barcode),
 					dimensions=dimensions,
 					weight=float(weight),
 					item_metadata=item_payload.get("metadata") or {},
 					access_level_id=item_payload.get("access_level_id"),
 				)
+				apply_mass(item, item_payload, enrollment=True)
 				session.add(item)
 				await session.flush()
-			elif item.weight is None:
-				item.weight = float(weight)
+			apply_cycle_mass(item, weight, stored=True)
 
 			side, shelf_idx, cell_idx = location
 			session.add(
@@ -381,7 +437,7 @@ class MockRobotRuntime:
 			"message": "success",
 			"command": "store_item",
 			"command_id": command_id,
-			"upca": upca,
+			"barcode": barcode,
 			"location": {"side": side, "shelf_idx": shelf_idx, "cell_idx": cell_idx},
 			"weight": float(weight),
 		}
@@ -411,10 +467,11 @@ class MockRobotRuntime:
 			weight = (
 				float(item.weight)
 				if item.weight is not None
-				else _deterministic_weight(str(item.upca))
+				else _deterministic_weight(str(item.barcode))
 			)
-			if item.weight is None:
-				item.weight = weight
+			if item.tare_weight is not None:
+				weight = 350.0
+			apply_cycle_mass(item, weight, stored=False)
 			await session.delete(item_location)
 			await session.commit()
 
@@ -422,7 +479,7 @@ class MockRobotRuntime:
 			"message": "success",
 			"command": "retrieve_item",
 			"command_id": command_id,
-			"upca": item.upca,
+			"barcode": item.barcode,
 			"location": {"side": side, "shelf_idx": shelf_idx, "cell_idx": cell_idx},
 			"weight": weight,
 		}
@@ -447,7 +504,7 @@ class MockRobotRuntime:
 				await session.execute(
 					select(StorageBinWorkflow.state)
 					.where(
-						StorageBinWorkflow.state.notin_(("completed", "reconciled"))
+						StorageBinWorkflow.state.in_(("retrieving_bin", "awaiting_operator", "returning_bin"))
 					)
 					.order_by(StorageBinWorkflow.created_at.desc())
 					.limit(1)
@@ -456,7 +513,7 @@ class MockRobotRuntime:
 			io_box_occupied = (
 				self._bin_io_box_occupied_override
 				if self._bin_io_box_occupied_override is not None
-				else active_bin_state in {"awaiting_item_scan", "awaiting_bin_scan"}
+				else active_bin_state in {"awaiting_operator"}
 			)
 
 		running = next((row for row in commands if row.status == "running"), None)

@@ -92,39 +92,10 @@ async def test_home_moves_rotate_to_back_after_homing_for_right_facing_device() 
 
 
 @pytest.mark.asyncio
-async def test_home_restores_y_brake_before_homing_y_axis() -> None:
-    events: list[str] = []
-
-    class FakeYMotor:
-        async def restore_brake_output(self) -> None:
-            events.append("restore")
-
-        async def home(self) -> None:
-            events.append("home")
-
-    y_motor = FakeYMotor()
-
-    tool = Tool.__new__(Tool)
-    tool._ms = None
-    tool._mg = None
-    tool._mr = None
-    tool._mx = None
-    tool._my = y_motor
-    tool._handle_fault = AsyncMock()
-
-    await tool.home()
-
-    assert events == ["restore", "home"]
-
-
-@pytest.mark.asyncio
 async def test_startup_home_moves_y_away_before_direct_home() -> None:
     events: list[str] = []
 
     class FakeYMotor:
-        async def restore_brake_output(self) -> None:
-            events.append("restore")
-
         async def home(
             self,
             pre_home_clearance_mm: float | None = None,
@@ -147,7 +118,7 @@ async def test_startup_home_moves_y_away_before_direct_home() -> None:
 
     await tool.home(y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM)
 
-    assert events == ["restore", "home:10.0:skip=True:current=30"]
+    assert events == ["home:10.0:skip=True:current=30"]
     assert Y_STARTUP_HOME_PEAK_CURRENT == 30
 
 
@@ -425,6 +396,77 @@ async def test_rotate_to_position_refuses_unsafe_z_clearance() -> None:
 
     rotate_motor.move_to_position.assert_not_awaited()
     tool._handle_fault.assert_awaited_once()
+
+
+def _tool_for_x_lim_safe_check(
+    *, x_lim_minunsafe: bool | None = True, x_lim_maxunsafe: bool | None = True
+) -> tuple[Tool, AsyncMock]:
+    rotate_motor = AsyncMock()
+    rotate_motor.get_position = AsyncMock(return_value=2.0)
+    rotate_motor.move_to_position = AsyncMock()
+
+    tool = Tool.__new__(Tool)
+    tool._params = SimpleNamespace(parameters=SimpleNamespace(
+        ROTATION_STAGE_MAX_EXTENSION_MM=0.5,
+        ROTATION_Z_MAX_EXTENSION_MM=0.5,
+    ))
+    tool._ms = None
+    tool._mg = None
+    tool._mr = rotate_motor
+    tool._mx = None
+    tool._handle_fault = AsyncMock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 182.25,
+        'ROTATION_BACK': 2.0,
+    }[name])
+    tool._x_lim_minunsafe_input = (
+        None if x_lim_minunsafe is None else SimpleNamespace(read=lambda: x_lim_minunsafe)
+    )
+    tool._x_lim_maxunsafe_input = (
+        None if x_lim_maxunsafe is None else SimpleNamespace(read=lambda: x_lim_maxunsafe)
+    )
+
+    return tool, rotate_motor
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_refuses_when_x_lim_minunsafe_not_engaged() -> None:
+    tool, rotate_motor = _tool_for_x_lim_safe_check(x_lim_minunsafe=False)
+
+    with pytest.raises(MovementError, match="x_lim_minunsafe is not engaged"):
+        await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_not_awaited()
+    tool._handle_fault.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_refuses_when_x_lim_maxunsafe_not_engaged() -> None:
+    tool, rotate_motor = _tool_for_x_lim_safe_check(x_lim_maxunsafe=False)
+
+    with pytest.raises(MovementError, match="x_lim_maxunsafe is not engaged"):
+        await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_not_awaited()
+    tool._handle_fault.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_proceeds_when_x_lim_safe_inputs_are_high() -> None:
+    tool, rotate_motor = _tool_for_x_lim_safe_check(x_lim_minunsafe=True, x_lim_maxunsafe=True)
+
+    await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_awaited_once_with(182.25)
+
+
+@pytest.mark.asyncio
+async def test_rotate_to_position_skips_x_lim_safe_check_when_not_configured() -> None:
+    tool, rotate_motor = _tool_for_x_lim_safe_check(x_lim_minunsafe=None, x_lim_maxunsafe=None)
+
+    await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_awaited_once_with(182.25)
 
 
 @pytest.mark.asyncio

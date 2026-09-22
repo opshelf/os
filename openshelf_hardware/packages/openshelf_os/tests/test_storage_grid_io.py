@@ -11,6 +11,7 @@ from openshelf_os.storage import StorageGrid, StorageValidationError
 
 MINIMAL_CONFIG_DICT = {
 	"name": "test",
+	"schema_version": 4,
 	"version": "0.1.0",
 	"robot": {
 		"tool": {
@@ -183,6 +184,90 @@ class TestLoadFromFile:
 		path_param = sig.parameters["path"]
 
 		assert path_param.default is inspect.Parameter.empty
+
+
+LEGACY_ITEM = {
+	"dimensions": {"length": 80.0, "width": 40.0, "height": 100.0},
+	"weight": 350.0,
+	"data": {"name": "Bottle"},
+	"upca": "880000000001",
+}
+
+
+class TestLegacyUpcaItem:
+	"""Grid files written before the upca -> barcode rename kept the item code under "upca"."""
+
+	def _grid_with_item(self, item: dict) -> dict:
+		return {
+			"left_module": [],
+			"right_module": [
+				{
+					"shelf_height": 200.0,
+					"shelf_width": 400.0,
+					"cells": [
+						{
+							"status": "occupied",
+						"item": item,
+						"calibration_point": {"x": 30.0, "y": 40.0, "s": 1, "z_offset": 0.0},
+						"dimensions": {"length": 100.0, "width": 50.0, "height": 150.0},
+					}
+				],
+			}
+		],
+		}
+
+	def _load(self, tmp_path, name: str, item: dict):
+		f = tmp_path / name
+		f.write_text(json.dumps(self._grid_with_item(item)))
+
+		return StorageGrid.load_from_file(str(f)), f
+
+	def _load_item(self, tmp_path, name: str, item: dict):
+		grid, _ = self._load(tmp_path, name, item)
+		cell_item = grid.right_module[0].cells[0].item
+
+		assert cell_item is not None
+
+		return cell_item
+
+	def test_legacy_upca_key_maps_to_barcode_on_load(self, tmp_path):
+		cell_item = self._load_item(tmp_path, "legacy.json", LEGACY_ITEM)
+
+		assert cell_item.barcode == "880000000001"
+
+	def test_modern_barcode_file_unaffected(self, tmp_path):
+		item = dict(LEGACY_ITEM)
+		del item["upca"]
+		item["barcode"] = "880000000001"
+
+		cell_item = self._load_item(tmp_path, "modern.json", item)
+
+		assert cell_item.barcode == "880000000001"
+
+	def test_barcode_key_not_clobbered_when_both_present(self, tmp_path):
+		item = dict(LEGACY_ITEM)
+		item["barcode"] = "880000000002"
+
+		cell_item = self._load_item(tmp_path, "both.json", item)
+
+		# The modern key is present, so its value is what loads, not the legacy one.
+		assert cell_item.barcode == "880000000002"
+
+	def test_legacy_grid_roundtrip_keeps_barcode(self, tmp_path):
+		grid, _ = self._load(tmp_path, "legacy.json", LEGACY_ITEM)
+		saved_file = tmp_path / "saved.json"
+
+		grid.save_to_file(str(saved_file))
+		reloaded = StorageGrid.load_from_file(str(saved_file))
+		reloaded_item = reloaded.right_module[0].cells[0].item
+
+		assert reloaded_item is not None
+		assert reloaded_item.barcode == "880000000001"
+
+		saved_item = json.loads(saved_file.read_text())["right_module"][0]["cells"][0]["item"]
+
+		assert saved_item["barcode"] == "880000000001"
+		assert "upca" not in saved_item
 
 
 class TestFilenameField:

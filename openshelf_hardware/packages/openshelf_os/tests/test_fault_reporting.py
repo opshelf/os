@@ -314,7 +314,7 @@ def test_error_report_adds_crash_video_attachments_to_sentry_scope(
     scope = MagicMock()
     scope_context = MagicMock()
     scope_context.__enter__.return_value = scope
-    monkeypatch.setattr(robot_worker.sentry_sdk, "push_scope", lambda: scope_context)
+    monkeypatch.setattr(robot_worker.sentry_sdk, "new_scope", lambda: scope_context)
     monkeypatch.setattr(robot_worker.sentry_sdk, "capture_message", lambda *args, **kwargs: None)
 
     worker._report_error(
@@ -357,7 +357,7 @@ async def test_store_fault_preserves_resolved_cell_and_coordinate_context() -> N
     robot.io_pick = did_fail_io_pick
 
     with pytest.raises(MovementError):
-        await robot.store({"upca": "123", "name": "test", "dimensions": {"width": 1, "height": 2, "length": 3}})
+        await robot.store({"barcode": "123", "name": "test", "dimensions": {"width": 1, "height": 2, "length": 3}})
 
     fault_context = robot.get_last_fault_context()
     assert fault_context is not None

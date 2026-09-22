@@ -44,7 +44,7 @@ def test_mock_workspace_never_copies_production_inventory(tmp_path: Path) -> Non
     )
     (data_dir / "storage.json").write_text('{"production": true}', encoding="utf-8")
     with sqlite3.connect(data_dir / "base.db") as connection:
-        connection.execute("CREATE TABLE items (upca TEXT)")
+        connection.execute("CREATE TABLE items (barcode TEXT)")
         connection.execute("INSERT INTO items VALUES ('production-item')")
 
     mock = RuntimeStatePaths.for_mode(OperatingMode.mock, data_dir)

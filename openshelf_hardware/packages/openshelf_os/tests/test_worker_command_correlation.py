@@ -27,7 +27,7 @@ async def test_worker_success_event_and_lifecycle_include_command_id() -> None:
 	worker, events, callback = _bare_worker()
 	command = StoreItemCommand(
 		request_id="partner-request",
-		item={"upca": "123456789012", "dimensions": {"width": 1, "height": 1, "length": 1}},
+		item={"barcode": "123456789012", "dimensions": {"width": 1, "height": 1, "length": 1}},
 	)
 	operation = QueuedOperation(
 		command=command,
@@ -36,7 +36,7 @@ async def test_worker_success_event_and_lifecycle_include_command_id() -> None:
 	)
 
 	async def completed():
-		return RobotCommandSuccessful(command="store_item", upca="123456789012")
+		return RobotCommandSuccessful(command="store_item", barcode="123456789012")
 
 	task = asyncio.create_task(completed())
 	await task
@@ -78,7 +78,7 @@ async def test_worker_internal_failure_is_normalized_and_marked_internal() -> No
 		"error": "Motor stopped",
 		"code": "execution_failed",
 		"request_id": "bin-workflow-id",
-		"upca": None,
+		"barcode": None,
 		"location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
 		"visibility": "internal",
 	}
@@ -101,7 +101,7 @@ def test_status_normalization_preserves_command_and_request_ids() -> None:
 				"command": {
 					"command": "store_item",
 					"request_id": "request-public",
-					"item": {"upca": "123456789013"},
+					"item": {"barcode": "123456789013"},
 				},
 			},
 			{
@@ -111,7 +111,7 @@ def test_status_normalization_preserves_command_and_request_ids() -> None:
 				"command": {
 					"command": "store_item",
 					"request_id": "request-queued",
-					"item": {"upca": "123456789012"},
+					"item": {"barcode": "123456789012"},
 				},
 			}
 		],
@@ -140,7 +140,7 @@ async def test_enqueue_keeps_operation_queued_when_status_publication_fails() ->
 	worker._publish_status = AsyncMock(side_effect=RuntimeError("status transport unavailable"))
 	command = StoreItemCommand(
 		request_id="partner-request",
-		item={"upca": "123456789012", "dimensions": {"width": 1, "height": 1, "length": 1}},
+		item={"barcode": "123456789012", "dimensions": {"width": 1, "height": 1, "length": 1}},
 	)
 
 	await worker.enqueue_command(command, command_id="10000000-0000-0000-0000-000000000003")

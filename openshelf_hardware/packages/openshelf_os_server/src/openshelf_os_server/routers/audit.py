@@ -1,4 +1,5 @@
 """Audit log query API endpoints."""
+from openshelf_os_server.documentation import response_docs
 from datetime import datetime
 from typing import Optional, List, Any, cast
 
@@ -12,7 +13,7 @@ from ..database.session import get_db
 from ..database.models import AuditLog, User
 from .auth_deps import get_current_user, require_permissions
 from ..utils.audit_constants import LEGACY_COMMAND_RECORDS_FIELD
-from ..utils.audit_integrity import canonicalize_payload, sha256_hex, hmac_sha256_hex, build_binding_message
+from ..utils.audit_integrity import canonicalize_payload, sha256_hex, build_binding_message, verify_binding_hmac
 
 router = APIRouter(
 	prefix="/api/audit",
@@ -52,7 +53,12 @@ class AuditVerifyResponse(BaseModel):
 	first_error_seq: Optional[int]
 	message: Optional[str]
 
-@router.get("/logs", response_model=AuditLogListResponse)
+@router.get(
+    "/logs",
+    response_model=AuditLogListResponse,
+    summary="Query request audit records",
+    responses=response_docs(errors=(401, 403)),
+)
 async def list_audit_logs(
 	user_id: Optional[int] = Query(None, description="Filter by user ID"),
 	date_from: Optional[datetime] = Query(None, description="Start date (ISO format)"),
@@ -66,7 +72,13 @@ async def list_audit_logs(
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> AuditLogListResponse:
-	"""Query audit logs with filters."""
+	"""Query request audit records.
+
+	Requires `audit:read`. Returns an offset page filtered by inclusive date bounds, user,
+	endpoint substring, HTTP method, response status, or exact correlation ID. Use
+	correlation IDs to relate requests to command activity; audit records are not a
+	replacement for command polling.
+	"""
 	query = select(AuditLog)
 	
 	filters = []
@@ -136,13 +148,22 @@ async def list_audit_logs(
 		limit=limit
 	)
 
-@router.get("/logs/{log_id}", response_model=AuditLogResponse)
+@router.get(
+    "/logs/{log_id}",
+    response_model=AuditLogResponse,
+    summary="Read one audit record",
+    responses=response_docs(errors=(401, 403, 404)),
+)
 async def get_audit_log(
 	log_id: int,
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user)
 ) -> AuditLogResponse:
-	"""Get a specific audit log entry."""
+	"""Read one audit record.
+
+	Requires `audit:read`. Returns captured request/response context and related command
+	records. An absent log ID returns `404`.
+	"""
 	log_result = await db.execute(
 		select(AuditLog)
 		.options(selectinload(AuditLog.user))
@@ -175,16 +196,24 @@ async def get_audit_log(
 	)
 
 
-@router.get("/verify", response_model=AuditVerifyResponse)
+@router.get(
+    "/verify",
+    response_model=AuditVerifyResponse,
+    summary="Verify protected audit records",
+    responses=response_docs(errors=(401, 403)),
+)
 async def verify_audit_chain(
 	from_seq: Optional[int] = Query(None, ge=1, description="Start seq_no (inclusive)"),
 	to_seq: Optional[int] = Query(None, ge=1, description="End seq_no (inclusive)"),
 	db: AsyncSession = Depends(get_db),
 	current_user: User = Depends(get_current_user),
 ) -> AuditVerifyResponse:
-	"""Verify linkage, hashes, and HMACs over protected audit entries.
+	"""Verify protected audit records.
 
-	Existing queries remain unchanged; this is an additive, lightweight check.
+	Requires `audit:read`. Checks stored linkage, hashes, and HMACs for protected entries in
+	the inclusive sequence range. The `ok` field reports integrity; verification failure is
+	returned in the body rather than as an HTTP error. Unprotected legacy entries are
+	excluded.
 	"""
 	# Build base query over protected entries only
 	query = select(AuditLog).where(AuditLog.entry_hash.isnot(None))
@@ -242,10 +271,10 @@ async def verify_audit_chain(
 
 		# Check HMAC over binding
 		binding = build_binding_message(int(log.seq_no) if log.seq_no is not None else 0, str(log.prev_hash), str(log.entry_hash))
-		expected_hmac = hmac_sha256_hex(binding)
-		if log.hmac != expected_hmac:
+		hmac_error = verify_binding_hmac(log.hmac, binding, log.hmac_key_id)
+		if hmac_error is not None:
 			first_error_seq = log.seq_no
-			error_message = "HMAC mismatch"
+			error_message = hmac_error
 			break
 
 		prev_hash = log.entry_hash

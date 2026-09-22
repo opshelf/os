@@ -1,4 +1,5 @@
 from __future__ import annotations
+from openshelf_os_server.documentation import HealthResponse, SystemInfoResponse, response_docs
 
 import asyncio
 import fcntl
@@ -20,6 +21,7 @@ from alembic import command
 from alembic.config import Config
 from argon2 import PasswordHasher
 from fastapi import FastAPI, Request
+from openshelf_os_server.documentation import DESCRIPTION, TAGS, configure_security_documentation
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sentry_sdk.integrations.fastapi import FastApiIntegration
@@ -63,8 +65,9 @@ from openshelf_os_server.database.models import AccessLevel, Role, User
 from openshelf_os_server.launcher import bootstrap_runtime_state
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
-from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, demo, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
-from openshelf_os_server.settings import get_settings, get_operating_mode
+from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, chemicals, demo, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
+from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings, get_operating_mode
+from openshelf_os_server.utils.cors_policy import allows_credentials, resolve_allowed_origins
 
 configure_logging()
 logger = get_logger(__name__)
@@ -477,6 +480,18 @@ def _get_overview_camera_urls(settings: Settings) -> dict[str, str]:
 	}
 
 
+def _get_overview_camera_recording_urls(settings: Settings) -> dict[str, str]:
+	cameras = {
+		"overview_one": settings.overview_one_camera,
+		"overview_two": settings.overview_two_camera,
+	}
+	return {
+		camera_id: camera.recording_url
+		for camera_id, camera in cameras.items()
+		if camera.enabled is True and camera.rtsp_url != ""
+	}
+
+
 DEFAULT_ACCESS_LEVELS = ["Level 1", "Level 2", "Level 3"]
 
 DEFAULT_ROLES: dict[str, list[str]] = {
@@ -503,7 +518,7 @@ async def _ensure_developer_user() -> None:
 	database wipe, so the device can never end up fully locked out."""
 	async with AsyncSessionLocal() as db:
 		result = await db.execute(
-			select(User).filter(User.email == "developer@opshelf.com")
+			select(User).filter(User.email == DEVELOPER_SYSTEM_USER_EMAIL)
 		)
 		existing_user = result.scalar_one_or_none()
 
@@ -511,8 +526,8 @@ async def _ensure_developer_user() -> None:
 			if existing_user.is_system is False:
 				existing_user.is_system = True
 				await db.commit()
-				logger.info("developer_user_marked_system", email="developer@opshelf.com")
-			logger.info("developer_user_exists", email="developer@opshelf.com")
+				logger.info("developer_user_marked_system", email=DEVELOPER_SYSTEM_USER_EMAIL)
+			logger.info("developer_user_exists", email=DEVELOPER_SYSTEM_USER_EMAIL)
 			return
 
 		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
@@ -526,7 +541,7 @@ async def _ensure_developer_user() -> None:
 		pin_hash = ph.hash("1111")
 
 		developer_user = User(
-			email="developer@opshelf.com",
+			email=DEVELOPER_SYSTEM_USER_EMAIL,
 			first_name="Developer",
 			last_name="System",
 			pin_hash=pin_hash,
@@ -537,7 +552,65 @@ async def _ensure_developer_user() -> None:
 
 		db.add(developer_user)
 		await db.commit()
-		logger.info("developer_user_created", email="developer@opshelf.com")
+		logger.info("developer_user_created", email=DEVELOPER_SYSTEM_USER_EMAIL)
+
+
+async def _dev_auto_user_is_resolvable(email: str) -> bool:
+	"""Report whether the dev-mode fallback identity resolves to an active user.
+
+	A miss is not fatal at startup, but every unauthenticated request then
+	answers 503 with "Dev auto-user not found in database".
+	"""
+	async with AsyncSessionLocal() as db:
+		result = await db.execute(
+			select(User).filter(User.email == email, User.is_active.is_(True))
+		)
+		return result.scalar_one_or_none() is not None
+
+
+async def _ensure_dev_auto_user(email: str) -> None:
+	"""Create the configured dev auto user so the unauthenticated fallback
+	resolves on any database (e.g. a fresh one created on first start in this
+	mode). Mirrors _ensure_developer_user: admin role, PIN 1111, is_system.
+	An existing inactive user is activated instead of duplicated."""
+	if await _dev_auto_user_is_resolvable(email) is True:
+		return
+
+	async with AsyncSessionLocal() as db:
+		result = await db.execute(select(User).filter(User.email == email))
+		existing_user = result.scalar_one_or_none()
+
+		if existing_user is not None:
+			if existing_user.is_active is False:
+				existing_user.is_active = True
+				await db.commit()
+				logger.info("dev_auto_user_activated", email=email)
+			return
+
+		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
+		admin_role = role_result.scalar_one_or_none()
+
+		if admin_role is None:
+			logger.warning("admin_role_not_found", action="skipping_dev_auto_user_creation")
+			return
+
+		ph = PasswordHasher()
+		pin_hash = ph.hash("1111")
+		local_part = email.partition("@")[0]
+
+		db.add(
+			User(
+				email=email,
+				first_name=local_part.capitalize(),
+				last_name="User",
+				pin_hash=pin_hash,
+				role_id=admin_role.id,
+				is_active=True,
+				is_system=True,
+			)
+		)
+		await db.commit()
+		logger.info("dev_auto_user_created", email=email)
 
 
 async def _ensure_default_roles_and_access_levels() -> None:
@@ -650,6 +723,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	await _ensure_default_roles_and_access_levels()
 	await _ensure_default_role_permissions()
 	await _ensure_developer_user()
+	if settings.auth.dev_mode and settings.auth.dev_auto_user:
+		await _ensure_dev_auto_user(settings.auth.dev_auto_user)
+		if await _dev_auto_user_is_resolvable(settings.auth.dev_auto_user) is False:
+			logger.warning(
+				"dev_auto_user_unresolvable",
+				email=settings.auth.dev_auto_user,
+				impact="unauthenticated requests answer 503 Dev auto-user not found in database",
+				expected=DEVELOPER_SYSTEM_USER_EMAIL,
+			)
 	async with AsyncSessionLocal() as db:
 		await onboarding.ensure_onboarding_state(db)
 	await _apply_mode_transition()
@@ -686,8 +768,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	tool_camera_url = None if is_mock else _get_tool_camera_url(settings)
 	if tool_camera_url is not None and tool_camera_url != "":
+		tool_recording_url = settings.tool_camera.recording_url
 		try:
-			await init_tool_camera_manager(tool_camera_url)
+			await init_tool_camera_manager(tool_camera_url, tool_recording_url)
 			camera_ids.append("tool")
 			logger.info("tool_camera_initialized", rtsp_url=tool_camera_url)
 		except Exception as e:
@@ -695,8 +778,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	overhead_camera_url = None if is_mock else _get_overhead_camera_url(settings)
 	if overhead_camera_url is not None and overhead_camera_url != "":
+		overhead_recording_url = settings.overhead_camera.recording_url
 		try:
-			await init_overhead_camera_manager(overhead_camera_url)
+			await init_overhead_camera_manager(overhead_camera_url, overhead_recording_url)
 			camera_ids.append("overhead")
 			logger.info("overhead_camera_initialized", rtsp_url=overhead_camera_url)
 		except Exception as e:
@@ -704,8 +788,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 	overview_camera_urls = {} if is_mock else _get_overview_camera_urls(settings)
 	for camera_id, rtsp_url in overview_camera_urls.items():
+		overview_recording_url = _get_overview_camera_recording_urls(settings)[camera_id]
 		try:
-			await init_overview_camera_manager(camera_id, rtsp_url)
+			await init_overview_camera_manager(camera_id, rtsp_url, overview_recording_url)
 			camera_ids.append(camera_id)
 			logger.info("overview_camera_initialized", camera_id=camera_id, rtsp_url=rtsp_url)
 		except Exception as e:
@@ -777,18 +862,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     lifespan=lifespan,
-    title="OpenShelf OS Server API",
-    description="API for controlling OpenShelf OS robotic automation system",
-    version="0.1.0",
+    title="Openshelf LB Local API",
+    description=DESCRIPTION,
+    openapi_tags=TAGS,
+    version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
 
+# The UI is served from its own port, so any origin may call the API, but the API
+# authenticates with bearer tokens and query tokens rather than cookies. A wildcard
+# origin therefore never advertises credentialed access; operators who pin the origin
+# list with OPENSHELF_CORS_ORIGINS get credentialed handling for those origins.
+CORS_ALLOWED_ORIGINS = resolve_allowed_origins()
+
 app.add_middleware(
 	CORSMiddleware,
-	allow_origins=["*"],
-	allow_credentials=True,
+	allow_origins=CORS_ALLOWED_ORIGINS,
+	allow_credentials=allows_credentials(CORS_ALLOWED_ORIGINS),
 	allow_methods=["*"],
 	allow_headers=["*"],
 )
@@ -801,7 +893,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 	correlation_id = getattr(request.state, "correlation_id", None)
 
 	if sentry_enabled is True and sentry_sdk.is_initialized() is True:
-		with sentry_sdk.push_scope() as scope:
+		with sentry_sdk.new_scope() as scope:
 			if correlation_id:
 				scope.set_tag("correlation_id", correlation_id)
 			scope.set_tag("path", request.url.path)
@@ -824,8 +916,28 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 	return JSONResponse(status_code=500, content={"detail": detail})
 
 
-@app.get("/api/health")
+@app.get(
+    "/api/health",
+    tags=["system"],
+    summary="Check OS and robot initialization",
+    responses=response_docs(
+        model=HealthResponse,
+        existing={
+            503: {
+                "model": HealthResponse,
+                "description": "Robot initialization failed or mock runtime unavailable",
+            }
+        },
+    ),
+)
 async def health() -> JSONResponse:
+	"""Check OS and robot initialization.
+
+	Public health check. Reports the operating mode and robot initialization state. Returns
+	`503` with a degraded body when initialization has failed, including when the mock
+	runtime is unavailable. A healthy process may report a disabled robot; inspect
+	`robot_status` and `robot_phase` before requesting motion.
+	"""
 	body: dict[str, str] = {"status": "ok", "mode": get_operating_mode().value}
 	if get_operating_mode() == OperatingMode.mock:
 		try:
@@ -852,8 +964,18 @@ async def health() -> JSONResponse:
 	return JSONResponse(content=body)
 
 
-@app.get("/api/system/info")
+@app.get(
+    "/api/system/info",
+    tags=["system"],
+    summary="Read device identity and network address",
+    responses=response_docs(model=SystemInfoResponse),
+)
 async def system_info() -> dict[str, str | None]:
+	"""Read device identity and network address.
+
+	Public device discovery information. `lan_ip` is the IPv4 address of `wlan0`, or null
+	when that interface cannot be read. This endpoint does not establish robot readiness.
+	"""
 	lan_ip: str | None = None
 	try:
 		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -877,6 +999,7 @@ app.include_router(iobox_sizer.router, prefix="/api/iobox/sizer")
 app.include_router(cabinet.router, prefix="/api/cabinet")
 app.include_router(robot.router, prefix="/api/robot")
 app.include_router(storage.router, prefix="/api/storage")
+app.include_router(chemicals.router, prefix="/api/chemicals")
 app.include_router(printer.router, prefix="/api/print")
 app.include_router(calibration.router)
 app.include_router(demo.router)
@@ -886,6 +1009,8 @@ app.include_router(onboarding.router, prefix="/api/onboarding")
 app.include_router(report.router, prefix="/api")
 app.include_router(telemetry.router, prefix="/api")
 
+
+configure_security_documentation(app)
 
 def start() -> None:
 	# Entry paths that call this directly, such as the development compose

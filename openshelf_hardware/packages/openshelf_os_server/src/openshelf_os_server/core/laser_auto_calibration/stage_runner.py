@@ -81,8 +81,8 @@ class StageRunnerMixin:
             raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
 
         probe_x_mm = float((bounds.x_min + bounds.x_max) / 2.0)
-        laser_scan_z_offset_from_place_mm = laser_module.get_laser_scan_z_offset_from_place_mm(scan_config)
-        base_z_mm = float(z_extension_place) + laser_scan_z_offset_from_place_mm
+        laser_scan_pose_z_delta_from_place_mm = laser_module.get_laser_scan_pose_z_delta_from_place_mm(scan_config)
+        base_z_mm = float(z_extension_place) + laser_scan_pose_z_delta_from_place_mm
         stage_limit_mm = float(tool._ms._params.lim)
         probe_rpm = min(int(tool._ms._params.rpm), 100)
 
@@ -142,7 +142,7 @@ class StageRunnerMixin:
                 tool,
                 target_stage_mm=stage_limit_mm,
                 retract_stage_mm=STAGE_EXTENSION_PROBE_START_MM,
-                settle_ms=int(laser_module.get_laser_sample_settle_ms(scan_config)),
+                settle_ms=int(laser_module.get_laser_sample_settle_ms()),
                 timeout_s=STAGE_EXTENSION_PROBE_TIMEOUT_S,
                 probe_rpm=probe_rpm,
                 no_progress_s=STAGE_EXTENSION_NO_PROGRESS_TIMEOUT_S,
@@ -241,14 +241,14 @@ class StageRunnerMixin:
                 raise ValueError("Z_EXTENSION_PLACE, Z_MOVE_RPM, and Z_MOVE_ACCEL are required")
 
             x_positions = _build_angle_x_positions(scan_config)
-            laser_scan_stage_extension_mm = laser_module.get_laser_scan_stage_extension_mm(scan_config)
-            laser_scan_z_offset_from_place_mm = laser_module.get_laser_scan_z_offset_from_place_mm(scan_config)
+            laser_scan_pose_stage_mm = laser_module.get_laser_scan_pose_stage_mm(scan_config)
+            laser_scan_pose_z_delta_from_place_mm = laser_module.get_laser_scan_pose_z_delta_from_place_mm(scan_config)
             absolute_rotation_value = await tool.get_param(_side_to_rotation_param_name(side))
             if absolute_rotation_value is None:
                 raise ValueError(f"{_side_to_rotation_param_name(side)} is required")
 
             absolute_rotation_deg = float(absolute_rotation_value)
-            base_z_mm = float(z_extension_place) + laser_scan_z_offset_from_place_mm
+            base_z_mm = float(z_extension_place) + laser_scan_pose_z_delta_from_place_mm
             angle_args = argparse.Namespace(
                 y_mm=None,
                 y_range=(bounds.y_min, bounds.y_max),
@@ -277,12 +277,12 @@ class StageRunnerMixin:
                     side_number=side_number,
                     x_positions=x_positions,
                     rotation_center_deg=absolute_rotation_deg,
-                    stage_extension_mm=laser_scan_stage_extension_mm,
+                    stage_extension_mm=laser_scan_pose_stage_mm,
                     base_z_mm=base_z_mm,
                     z_move_rpm=float(z_move_rpm),
                     z_move_accel=float(z_move_accel),
-                    settle_ms=int(laser_module.get_laser_sample_settle_ms(scan_config)),
-                    samples_per_point=int(laser_module.get_laser_samples_per_point(scan_config)),
+                    settle_ms=int(laser_module.get_laser_sample_settle_ms()),
+                    samples_per_point=int(laser_module.get_laser_samples_per_point()),
                     should_abort=self._should_abort_work,
                 )
             except angle_module.ShelfScoutError as exc:
@@ -316,77 +316,6 @@ class StageRunnerMixin:
             },
         )
         return probe_y_mm
-
-    async def _run_io_box_calibration(self, worker: RobotWorker) -> None:
-        config = get_root_config()
-        scan_config = config.robot.grid.scan
-        laser_offset_x_mm = _resolve_io_box_laser_offset_x_mm(scan_config)
-        laser_offset_y_mm = laser_module.require_scan_config_parameter(scan_config, "laser_offset_y_mm")
-
-        await self._update_snapshot(
-            current_side=None,
-            current_stage="io-box-calibration",
-            state="running",
-            stage_detail={
-                "phase": "io-box-calibration",
-                "subphase": "scan",
-                "laser_offset_x_mm": laser_offset_x_mm,
-                "laser_offset_y_mm": laser_offset_y_mm,
-            },
-        )
-
-        result = await laser_module.run_io_box_scout(
-            robot=worker._robot,
-            scan_config=scan_config,
-            io_box_interior_width_mm=laser_module.IO_BOX_INTERIOR_WIDTH_MM,
-            settle_ms=laser_module.get_fine_settle_ms(
-                laser_module.get_laser_sample_settle_ms(scan_config)
-            ),
-            samples_per_point=laser_module.get_fine_samples_per_point(
-                laser_module.get_laser_samples_per_point(scan_config)
-            ),
-            laser_offset_x_mm=laser_offset_x_mm,
-            laser_offset_y_mm=laser_offset_y_mm,
-            should_abort=self._should_abort_work,
-        )
-
-        io_box_result = LaserAutoCalibrationIOBoxResult(
-            pickup_low_x=float(result.calibration_low_x_mm),
-            pickup_low_y=float(result.calibration_low_y_mm),
-            pickup_high_x=float(result.calibration_high_x_mm),
-            pickup_high_y=float(result.calibration_high_y_mm),
-            z_extension=float(result.z_extension_mm),
-            stage_extension=float(result.stage_extension_mm),
-        )
-
-        await self._update_snapshot(
-            current_side=None,
-            current_stage="io-box-calibration",
-            state="running",
-            io_box_result=io_box_result,
-            stage_detail={
-                "phase": "io-box-calibration",
-                "subphase": "apply",
-                "pickup_low_x": io_box_result.pickup_low_x,
-                "pickup_low_y": io_box_result.pickup_low_y,
-                "pickup_high_x": io_box_result.pickup_high_x,
-                "pickup_high_y": io_box_result.pickup_high_y,
-                "z_extension": io_box_result.z_extension,
-                "stage_extension": io_box_result.stage_extension,
-            },
-        )
-
-        next_config = config.model_copy(deep=True)
-        params_dict = next_config.robot.tool.parameters.model_dump()
-        params_dict["PICKUP_POSITION_L"] = (int(io_box_result.pickup_low_x), int(io_box_result.pickup_low_y))
-        params_dict["PICKUP_POSITION_H"] = (int(io_box_result.pickup_high_x), int(io_box_result.pickup_high_y))
-        params_dict["Z_EXTENSION_IO"] = io_box_result.z_extension
-        params_dict["STAGE_EXTENSION_IO_BOX"] = io_box_result.stage_extension
-        next_config.robot.tool.parameters = Parameters.model_validate(params_dict)
-
-        save_root_config(next_config)
-        clear_config_cache()
-        worker._robot.reload_parameters()
 
     async def _apply_stage_extension_calibration(
         self,

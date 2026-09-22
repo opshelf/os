@@ -1,7 +1,7 @@
 import json
 import os
 
-from dataclasses import replace as dataclass_replace
+from dataclasses import dataclass, replace as dataclass_replace
 from enum import Enum
 from typing import Dict, Iterable, List, Mapping, Optional, Self, Tuple, Union
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -15,12 +15,24 @@ class StorageValidationError(Exception):
 	pass
 
 
+DEFAULT_SHELF_HEIGHT_MM = 200.0
+DEFAULT_SHELF_WIDTH_MM = 480.0
+DEFAULT_DIVIDER_WIDTH_MM = 12.0
+DEFAULT_CELL_LENGTH_MM = 400.0
+
+
 class StorageModuleSide(str, Enum):
 	RIGHT = "right_module"
 	LEFT = "left_module"
 
 
+@dataclass
 class CalibrationCoordinate(AxisCoordinate):
+	# The z offset is only comparable when the stage was extended the way the z model is pinned,
+	# so the capture conditions travel with the datum instead of being remembered by whoever
+	# saved it. Absent on coordinates written before this was recorded.
+	z_captured_at_stage_mm: Optional[float] = None
+
 	def __add__(self, rhs: "CalibrationCoordinate") -> "CalibrationCoordinate":  # type: ignore[override]
 		self._assert_same_side(rhs, "add")
 
@@ -62,7 +74,19 @@ class CellItem(BaseModel):
 	weight: Optional[float] = None
 	dimensions: Dimensions
 	data: Optional[Json] = None
-	upca: Optional[str] = None
+	barcode: Optional[str] = None
+
+	# Grid files written before the upca -> barcode rename stored the item code under
+	# "upca"; map it back at read time so a device upgrading from the previous
+	# release keeps its barcodes. Read-time normalization only: saves always write
+	# "barcode", the model itself never writes the legacy key back.
+	@model_validator(mode="before")
+	@classmethod
+	def migrate_legacy_upca(cls, data: object) -> object:
+		if isinstance(data, dict) and "upca" in data and "barcode" not in data:
+			data = {**data, "barcode": data["upca"]}
+
+		return data
 
 
 class Cell(BaseModel):
@@ -97,7 +121,7 @@ class Shelf(BaseModel):
 		if all(self.shelf_height >= cell.dimensions.height for cell in self.cells):
 			return self
 
-		raise ValidationError("All Trays must be less than the height of the containing shelf")
+		raise ValueError("All Trays must be less than the height of the containing shelf")
 
 	@model_validator(mode="after")
 	def sort_cells(self) -> Self:
@@ -251,7 +275,14 @@ class StorageGrid(BaseModel):
 	def remove_shelf(self, side: StorageModuleSide, shelf_idx: int) -> None:
 		self.get_shelf(side, shelf_idx)
 		side_list = self.get_side(side)
-		self._set_side(side, [s for s in side_list if s.shelf_idx != shelf_idx])
+		remaining = sorted(
+			(shelf for shelf in side_list if shelf.shelf_idx != shelf_idx),
+			key=lambda shelf: shelf.shelf_idx
+		)
+		# Reindex so the side stays contiguous: deleting shelf 0 makes shelf 1 the new 0.
+		for new_idx, shelf in enumerate(remaining):
+			shelf.shelf_idx = new_idx
+		self._set_side(side, remaining)
 		self.save()
 
 	def remove_cell(self, side: StorageModuleSide, shelf_idx: int, cell_idx: int) -> None:
@@ -263,6 +294,94 @@ class StorageGrid(BaseModel):
 			raise IndexError(f"Invalid cell_idx: {cell_idx}")
 
 		self.save()
+
+	def add_shelf(self, side: StorageModuleSide) -> Shelf:
+		shelves = self.get_side(side)
+		shelf_idx = max((shelf.shelf_idx for shelf in shelves), default=-1) + 1
+
+		template = self._get_shelf_template(side)
+		new_shelf = Shelf(
+			shelf_idx=shelf_idx,
+			shelf_height=template.shelf_height,
+			shelf_width=template.shelf_width,
+			cells=[],
+			divider_width=template.divider_width,
+		)
+		new_shelf.cells.append(self._build_new_cell(side, new_shelf))
+		shelves.append(new_shelf)
+		self.save()
+
+		return new_shelf
+
+	def add_cell(self, side: StorageModuleSide, shelf_idx: int) -> Cell:
+		shelf = self.get_shelf(side, shelf_idx)
+		new_cell = self._build_new_cell(side, shelf)
+		shelf.cells.append(new_cell)
+		self.save()
+
+		return new_cell
+
+	def _get_shelf_template(self, side: StorageModuleSide) -> Shelf:
+		shelves = self.get_side(side)
+
+		if len(shelves) > 0:
+			return shelves[-1]
+
+		other_side = StorageModuleSide.RIGHT if side == StorageModuleSide.LEFT else StorageModuleSide.LEFT
+		other_shelves = self.get_side(other_side)
+
+		if len(other_shelves) > 0:
+			return other_shelves[-1]
+
+		return Shelf(
+			shelf_idx=0,
+			shelf_height=DEFAULT_SHELF_HEIGHT_MM,
+			shelf_width=DEFAULT_SHELF_WIDTH_MM,
+			cells=[],
+			divider_width=DEFAULT_DIVIDER_WIDTH_MM,
+		)
+
+	def _get_cell_template(self, side: StorageModuleSide, shelf: Shelf) -> Cell:
+		if len(shelf.cells) > 0:
+			return shelf.cells[-1]
+
+		for candidate_shelf in reversed(self.get_side(side)):
+			if len(candidate_shelf.cells) > 0:
+				return candidate_shelf.cells[-1]
+
+		other_side = StorageModuleSide.RIGHT if side == StorageModuleSide.LEFT else StorageModuleSide.LEFT
+
+		for candidate_shelf in reversed(self.get_side(other_side)):
+			if len(candidate_shelf.cells) > 0:
+				return candidate_shelf.cells[-1]
+
+		return Cell(
+			cell_idx=0,
+			status=CellStatus.AVAILABLE,
+			item=None,
+			calibration_point=None,
+			dimensions=Dimensions(
+				width=max(float(shelf.shelf_width), 1.0),
+				height=max(float(shelf.shelf_height), 1.0),
+				length=DEFAULT_CELL_LENGTH_MM,
+			),
+		)
+
+	def _build_new_cell(self, side: StorageModuleSide, shelf: Shelf, cell_idx: Optional[int] = None) -> Cell:
+		if cell_idx is None:
+			cell_idx = max((cell.cell_idx for cell in shelf.cells), default=-1) + 1
+
+		template = self._get_cell_template(side, shelf)
+		dimensions = template.dimensions.model_copy(deep=True)
+		dimensions.height = min(dimensions.height, max(float(shelf.shelf_height), 1.0))
+
+		return Cell(
+			cell_idx=cell_idx,
+			status=CellStatus.AVAILABLE,
+			item=None,
+			calibration_point=None,
+			dimensions=dimensions,
+		)
 
 	def get_shelf(self, side: StorageModuleSide, shelf_idx: int) -> Shelf:
 		for shelf in self.get_side(side):
@@ -280,6 +399,20 @@ class StorageGrid(BaseModel):
 		shelf = self.get_shelf(location.side, location.shelf_idx)
 
 		return shelf.get_cell_location(location.cell_idx)
+
+	def get_cell_if_present(self, location: StorageModuleCellLocation) -> Optional[Cell]:
+		try:
+			return self.get_cell(location)
+		except IndexError:
+			return None
+
+	@staticmethod
+	def cell_fits_item(cell: Cell, item: CellItem) -> bool:
+		return (
+			cell.dimensions.width >= item.dimensions.width
+			and cell.dimensions.length >= item.dimensions.length
+			and cell.dimensions.height >= item.dimensions.height
+		)
 
 	def store_item(self, location: StorageModuleCellLocation, item: Optional[CellItem]) -> None:
 		cell = self.get_cell(location)
@@ -375,11 +508,7 @@ class StorageGrid(BaseModel):
 			for cell in shelf.cells:
 				if (StorageModuleSide.LEFT.value, shelf.shelf_idx, cell.cell_idx) in excluded_locations:
 					continue
-				if cell.status == CellStatus.AVAILABLE and (
-					cell.dimensions.width >= item.dimensions.width
-					and cell.dimensions.length >= item.dimensions.length
-					and cell.dimensions.height >= item.dimensions.height
-				):
+				if cell.status == CellStatus.AVAILABLE and self.cell_fits_item(cell, item):
 					unused_volume = (
 						cell.dimensions.width * cell.dimensions.length * cell.dimensions.height
 						- item.dimensions.width * item.dimensions.length * item.dimensions.height
@@ -408,11 +537,7 @@ class StorageGrid(BaseModel):
 			for cell in shelf.cells:
 				if (StorageModuleSide.RIGHT.value, shelf.shelf_idx, cell.cell_idx) in excluded_locations:
 					continue
-				if cell.status == CellStatus.AVAILABLE and (
-					cell.dimensions.width >= item.dimensions.width
-					and cell.dimensions.length >= item.dimensions.length
-					and cell.dimensions.height >= item.dimensions.height
-				):
+				if cell.status == CellStatus.AVAILABLE and self.cell_fits_item(cell, item):
 					unused_volume = (
 						cell.dimensions.width * cell.dimensions.length * cell.dimensions.height
 						- item.dimensions.width * item.dimensions.length * item.dimensions.height

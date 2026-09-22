@@ -40,7 +40,7 @@ sys.modules.setdefault("sentry_sdk", types.SimpleNamespace(
     init=lambda **kwargs: None,
     capture_exception=lambda e: None,
     capture_message=lambda m, **kw: None,
-    push_scope=lambda: types.SimpleNamespace(__enter__=lambda s: types.SimpleNamespace(set_tag=lambda *a: None, set_context=lambda *a: None, set_extra=lambda *a: None), __exit__=lambda *a: None),
+    new_scope=lambda: types.SimpleNamespace(__enter__=lambda s: types.SimpleNamespace(set_tag=lambda *a: None, set_context=lambda *a: None, set_extra=lambda *a: None), __exit__=lambda *a: None),
     flush=lambda **kw: None,
 ))
 
@@ -206,7 +206,6 @@ except Exception:
 class MockRobot:
     def __init__(self):
         self.safety_paused = False
-        self.restore_y_brake_output_calls = 0
         self.handled_commands = []
         self.shutdown_calls = 0
         self.lifecycle_events = []
@@ -222,9 +221,6 @@ class MockRobot:
         if self.shutdown_calls > 0:
             raise RuntimeError("GPIO is closed")
         return None
-
-    async def restore_y_brake_output(self):
-        self.restore_y_brake_output_calls += 1
 
     async def handle_command(self, command):
         self.handled_commands.append(command)
@@ -453,21 +449,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         RobotWorker._instance = None
 
-    async def test_emergency_stop_cleanup_restores_y_brake_output(self):
-        from openshelf_os.robot.worker import RobotWorker
-
-        robot = MockRobot()
-        RobotWorker._instance = None
-        worker = RobotWorker(robot)
-
-        await worker.emergency_stop("test")
-        await asyncio.sleep(0.1)
-
-        self.assertEqual(robot.restore_y_brake_output_calls, 1)
-
-        RobotWorker._instance = None
-
-    async def test_emergency_cleanup_preserves_command_admitted_during_brake_restore(self):
+    async def test_emergency_cleanup_preserves_command_admitted_during_cleanup(self):
         from openshelf_os.robot.commands import RetrieveItemCommand
         from openshelf_os.robot.status import RobotCommandSuccessful
         from openshelf_os.robot.worker import RobotWorker
@@ -476,19 +458,17 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         RobotWorker._instance = None
         worker = RobotWorker(robot)
         events = await worker.subscribe_events()
-        brake_restore_started = asyncio.Event()
-        release_brake_restore = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
         cleanup_complete = asyncio.Event()
         process_task = None
-
-        async def gated_brake_restore():
-            robot.restore_y_brake_output_calls += 1
-            brake_restore_started.set()
-            await release_brake_restore.wait()
 
         original_discard_queued_commands = worker._discard_queued_commands
 
         async def track_cleanup_discard(reason, *, interruption_boundary=None):
+            # Hold the cleanup open so a command can be admitted mid-window.
+            cleanup_started.set()
+            await release_cleanup.wait()
             await original_discard_queued_commands(
                 reason,
                 interruption_boundary=interruption_boundary,
@@ -500,30 +480,29 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         async def successful_handler(command):
             robot.handled_commands.append(command)
-            return RobotCommandSuccessful(command=command.command, upca=command.upca)
+            return RobotCommandSuccessful(command=command.command, barcode=command.barcode)
 
         queued_before_stop = RetrieveItemCommand(
             request_id="bin-workflow-before-emergency-boundary",
-            upca="900000000013",
+            barcode="900000000013",
             location={"side": "left_module", "shelf_idx": 2, "cell_idx": 4},
         )
         recovered_command = RetrieveItemCommand(
             request_id="bin-workflow-after-emergency-boundary",
-            upca="900000000014",
+            barcode="900000000014",
             location={"side": "right_module", "shelf_idx": 1, "cell_idx": 3},
         )
-        robot.restore_y_brake_output = gated_brake_restore
         robot.handle_command = successful_handler
         worker._discard_queued_commands = track_cleanup_discard
         worker._evaluate_safety_guard = no_safety_change
         await worker.enqueue_command(queued_before_stop)
 
         try:
-            await worker.emergency_stop("brake restore boundary")
-            await asyncio.wait_for(brake_restore_started.wait(), timeout=1)
+            await worker.emergency_stop("cleanup boundary")
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
 
             await worker.enqueue_command(recovered_command)
-            release_brake_restore.set()
+            release_cleanup.set()
             await asyncio.wait_for(cleanup_complete.wait(), timeout=1)
 
             failed_event = {}
@@ -534,9 +513,9 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             assert_correlated_failure(self, failed_event, {
                 "command": "retrieve_item",
                 "message": "error",
-                "error": "Emergency stop: brake restore boundary",
+                "error": "Emergency stop: cleanup boundary",
                 "request_id": "bin-workflow-before-emergency-boundary",
-                "upca": "900000000013",
+                "barcode": "900000000013",
                 "location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 4},
             })
             remaining_events = []
@@ -564,21 +543,21 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "command": "retrieve_item",
                 "message": "success",
                 "location": None,
-                "upca": "900000000014",
+                "barcode": "900000000014",
                 "weight": None,
                 "request_id": "bin-workflow-after-emergency-boundary",
             })
             self.assertEqual(robot.handled_commands, [recovered_command])
         finally:
             worker._running = False
-            release_brake_restore.set()
+            release_cleanup.set()
             if process_task is not None and process_task.done() is False:
                 process_task.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await process_task
             RobotWorker._instance = None
 
-    async def test_emergency_stop_cleanup_restores_y_brake_output_when_cancelled_task_fails(self):
+    async def test_emergency_stop_cleanup_completes_when_cancelled_task_fails(self):
         from openshelf_os.robot.worker import RobotWorker
 
         robot = MockRobot()
@@ -600,7 +579,6 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.1)
 
         self.assertTrue(task_cancelled.is_set())
-        self.assertEqual(robot.restore_y_brake_output_calls, 1)
         self.assertIsNone(worker._current_task)
 
         RobotWorker._instance = None
@@ -618,13 +596,13 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         async def completed_command():
             return RobotCommandSuccessful(
                 command="retrieve_item",
-                upca="900000000005",
+                barcode="900000000005",
                 weight=123.0,
             )
 
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-completed-stop",
-            upca="900000000005",
+            barcode="900000000005",
             location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
@@ -651,7 +629,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "command": "retrieve_item",
                 "message": "success",
                 "location": None,
-                "upca": "900000000005",
+                "barcode": "900000000005",
                 "weight": 123.0,
                 "request_id": "bin-workflow-completed-stop",
             })
@@ -676,13 +654,13 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         events = await worker.subscribe_events()
         retrieve = RetrieveItemCommand(
             request_id="bin-workflow-queued-retrieve",
-            upca="900000000006",
+            barcode="900000000006",
             location={"side": "right_module", "shelf_idx": 2, "cell_idx": 3},
         )
         store = StoreItemCommand(
             request_id="bin-workflow-queued-store",
             item={
-                "upca": "900000000007",
+                "barcode": "900000000007",
                 "location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 5},
             },
         )
@@ -704,7 +682,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "message": "error",
                 "error": "Emergency stop: test",
                 "request_id": "bin-workflow-queued-retrieve",
-                "upca": "900000000006",
+                "barcode": "900000000006",
                 "location": {"side": "right_module", "shelf_idx": 2, "cell_idx": 3},
             },
             "bin-workflow-queued-store": {
@@ -712,7 +690,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "message": "error",
                 "error": "Emergency stop: test",
                 "request_id": "bin-workflow-queued-store",
-                "upca": "900000000007",
+                "barcode": "900000000007",
                 "location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 5},
             },
         }
@@ -737,7 +715,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-1",
-            upca="900000000001",
+            barcode="900000000001",
             location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
@@ -755,7 +733,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             "message": "error",
             "error": "Emergency stop: test",
             "request_id": "bin-workflow-1",
-            "upca": "900000000001",
+            "barcode": "900000000001",
             "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
         })
 
@@ -782,7 +760,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-2",
-            upca="900000000002",
+            barcode="900000000002",
             location={"side": "right_module", "shelf_idx": 3, "cell_idx": 4},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
@@ -799,7 +777,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "message": "error",
                 "error": "motor fault",
                 "request_id": "bin-workflow-2",
-                "upca": "900000000002",
+                "barcode": "900000000002",
                 "location": {"side": "right_module", "shelf_idx": 3, "cell_idx": 4},
             }, code="execution_error")
         finally:
@@ -822,7 +800,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         async def successful_command():
             return RobotCommandSuccessful(
                 command="retrieve_item",
-                upca="900000000003",
+                barcode="900000000003",
                 weight=123.0,
             )
 
@@ -834,7 +812,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-3",
-            upca="900000000003",
+            barcode="900000000003",
             location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
@@ -850,7 +828,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "command": "retrieve_item",
                 "message": "success",
                 "location": None,
-                "upca": "900000000003",
+                "barcode": "900000000003",
                 "weight": 123.0,
                 "request_id": "bin-workflow-3",
             })
@@ -924,7 +902,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         command = RetrieveItemCommand(
             request_id="bin-workflow-dequeued-estop",
-            upca="900000000009",
+            barcode="900000000009",
             location={"side": "right_module", "shelf_idx": 2, "cell_idx": 4},
         )
         await worker.enqueue_command(command)
@@ -947,7 +925,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "message": "error",
                 "error": "Emergency stop: dequeue window",
                 "request_id": "bin-workflow-dequeued-estop",
-                "upca": "900000000009",
+                "barcode": "900000000009",
                 "location": {"side": "right_module", "shelf_idx": 2, "cell_idx": 4},
             })
             await asyncio.sleep(0)
@@ -1013,7 +991,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         command = RetrieveItemCommand(
             request_id="bin-workflow-dequeued-clear",
-            upca="900000000011",
+            barcode="900000000011",
             location={"side": "right_module", "shelf_idx": 4, "cell_idx": 1},
         )
         worker._publish_status = no_status_publish
@@ -1040,7 +1018,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "message": "error",
                 "error": "Commands cleared",
                 "request_id": "bin-workflow-dequeued-clear",
-                "upca": "900000000011",
+                "barcode": "900000000011",
                 "location": {"side": "right_module", "shelf_idx": 4, "cell_idx": 1},
             })
             await asyncio.sleep(0.05)
@@ -1093,7 +1071,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         async def successful_handler(command):
             robot.handled_commands.append(command)
-            return RobotCommandSuccessful(command=command.command, upca=command.upca)
+            return RobotCommandSuccessful(command=command.command, barcode=command.barcode)
 
         worker._publish_status = no_status_publish
         worker._evaluate_safety_guard = no_safety_change
@@ -1107,7 +1085,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
             command = RetrieveItemCommand(
                 request_id="bin-workflow-after-idle-clear",
-                upca="900000000012",
+                barcode="900000000012",
                 location={"side": "left_module", "shelf_idx": 2, "cell_idx": 3},
             )
             await worker.enqueue_command(command)
@@ -1117,7 +1095,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "command": "retrieve_item",
                 "message": "success",
                 "location": None,
-                "upca": "900000000012",
+                "barcode": "900000000012",
                 "weight": None,
                 "request_id": "bin-workflow-after-idle-clear",
             })
@@ -1152,7 +1130,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         command = RetrieveItemCommand(
             request_id="bin-workflow-dequeued-shutdown",
-            upca="900000000010",
+            barcode="900000000010",
             location={"side": "left_module", "shelf_idx": 3, "cell_idx": 1},
         )
         await worker.enqueue_command(command)
@@ -1176,7 +1154,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "message": "error",
                 "error": "Robot stopped during shutdown",
                 "request_id": "bin-workflow-dequeued-shutdown",
-                "upca": "900000000010",
+                "barcode": "900000000010",
                 "location": {"side": "left_module", "shelf_idx": 3, "cell_idx": 1},
             })
             remaining_events = []
@@ -1217,7 +1195,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker._running = True
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-shutdown",
-            upca="900000000004",
+            barcode="900000000004",
             location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
@@ -1234,7 +1212,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             "message": "error",
             "error": "Robot stopped during shutdown",
             "request_id": "bin-workflow-shutdown",
-            "upca": "900000000004",
+            "barcode": "900000000004",
             "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
         })
         self.assertEqual(robot.shutdown_calls, 1)
@@ -1256,13 +1234,13 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         async def completed_command():
             return RobotCommandSuccessful(
                 command="retrieve_item",
-                upca="900000000008",
+                barcode="900000000008",
                 weight=456.0,
             )
 
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-completed-shutdown",
-            upca="900000000008",
+            barcode="900000000008",
             location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
@@ -1277,7 +1255,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             "command": "retrieve_item",
             "message": "success",
             "location": None,
-            "upca": "900000000008",
+            "barcode": "900000000008",
             "weight": 456.0,
             "request_id": "bin-workflow-completed-shutdown",
         })
