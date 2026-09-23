@@ -416,7 +416,7 @@ async def test_scale_endpoint_service_unavailable(client: AsyncClient) -> None:
 
 	assert response.status_code == 503
 	data = response.json()
-	assert "Scale not connected" in data["detail"]
+	assert "Scale not connected" in data["detail"]["message"]
 
 
 @pytest.mark.anyio

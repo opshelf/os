@@ -31,7 +31,7 @@ async def test_relay_service_token_is_limited_to_relay_routes(
         "/api/robot/commands/nonexistent", headers=headers
     )
     assert command.status_code == 404
-    assert command.json()["detail"] == "Robot command not found"
+    assert command.json()["detail"]["message"] == "Robot command not found"
 
     printed = await unauthenticated_client.post(
         "/api/print", json={"barcode": "036000291452"}, headers=headers

@@ -253,3 +253,34 @@ async def test_wifi_passthrough_on_fresh_device(
     )
     assert connect_resp.status_code == 200
     assert connect_resp.json() == {"success": True, "ssid": "Lab", "message": "connected to Lab"}
+
+
+@pytest.mark.anyio
+async def test_state_failure_returns_fixed_503_without_filesystem_details(
+    client: AsyncClient,
+    unauthenticated_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken_read() -> None:
+        raise RuntimeError("Could not read onboarding state from /app/data/.onboarding_state")
+
+    monkeypatch.setattr(onboarding, "_read_onboarding_state", broken_read)
+
+    status_resp = await unauthenticated_client.get("/api/onboarding/status")
+    assert status_resp.status_code == 503
+    detail = status_resp.json()["detail"]
+    assert detail["code"] == "onboarding_state_unavailable"
+    assert detail["message"] == "Onboarding state unavailable"
+    assert "/app/data" not in detail["message"]
+
+    def broken_write(_value: str) -> None:
+        raise OSError(13, "Permission denied", "/app/data/.onboarding_state.tmp")
+
+    monkeypatch.setattr(onboarding, "_write_onboarding_state", broken_write)
+
+    complete_resp = await client.post("/api/onboarding/complete")
+    assert complete_resp.status_code == 503
+    detail = complete_resp.json()["detail"]
+    assert detail["code"] == "onboarding_state_unavailable"
+    assert detail["message"] == "Onboarding state unavailable"
+    assert "/app/data" not in detail["message"]

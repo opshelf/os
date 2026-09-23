@@ -16,6 +16,7 @@ from openshelf_os_server.core.iobox_sizer import (
 	reload_iobox_sizer_config,
 )
 from openshelf_os_server.settings import get_root_config, save_root_config
+from openshelf_os_server.errors import api_error
 from .auth_deps import get_current_user, require_permissions
 
 from openshelf_os.iobox_sizer.models import IOBoxSizerMeasurement
@@ -62,10 +63,7 @@ class TofBlankCalibrationRequest(BaseModel):
 
 
 def _unavailable_error(exc: Exception) -> HTTPException:
-	return HTTPException(
-		status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-		detail={"message": str(exc), "code": "iobox_sizer_unavailable"},
-	)
+	return api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "iobox_sizer_unavailable", str(exc))
 
 
 @router.get(

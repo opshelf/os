@@ -334,7 +334,7 @@ async def test_debug_scanner_requires_hardware_enabled_outside_mock(
     )
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Robot is not enabled or configured"
+    assert response.json()["detail"]["message"] == "Robot is not enabled or configured"
 
 
 async def _seed_active_bin_workflow(state: str) -> tuple[str, str]:
