@@ -237,7 +237,7 @@ def _print_payload(payload: str) -> bool:
     response_model=PrintLabelResponse,
     dependencies=[Depends(require_relay_or_permissions("printer:print"))],
     summary="Print a barcode label",
-    responses=response_docs(errors=(401, 403, 422)),
+    responses=response_docs(errors=(401, 403, 422, 503)),
 )
 async def print_label(request: PrintLabelRequest) -> PrintLabelResponse:
     """Print a barcode label.
@@ -245,7 +245,8 @@ async def print_label(request: PrintLabelRequest) -> PrintLabelResponse:
     Requires `printer:print` or the relay service credential. Takes the barcode in the
     request body, so every customer barcode is printable. The device renders it as a Code
     128 label; mock mode simulates printing without a physical artifact. This operation has
-    no idempotency key; a retry may print another label.
+    no idempotency key; a retry may print another label. A printer write failure returns
+    `503`.
     """
     return PrintLabelResponse(
         message="success",

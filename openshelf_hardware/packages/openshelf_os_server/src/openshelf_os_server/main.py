@@ -35,7 +35,7 @@ from openshelf_os.device import get_device_id
 from openshelf_os.common import CONFIG_PATH, OperatingMode
 from openshelf_os.operating_mode import should_enable_sentry
 from openshelf_os.runtime_state import RuntimeStatePaths
-from openshelf_os_server.core.logging_config import configure_logging, get_logger
+from openshelf_os_server.core.logging_config import configure_logging, get_logger, get_correlation_id
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, stop_robot_worker
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
@@ -58,6 +58,13 @@ from openshelf_os_server.core.mock_robot import (
 	stop_mock_robot_runtime,
 )
 from openshelf_os_server.core.command_lifecycle import recover_interrupted_commands
+from openshelf_os_server.errors import (
+	capture_unhandled_exception,
+	error_detail,
+	internal_error_detail,
+	register_mapped_handlers,
+	request_correlation_id,
+)
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal, get_db
@@ -885,20 +892,15 @@ app.add_middleware(
 	allow_headers=["*"],
 )
 app.add_middleware(CorrelationIdMiddleware)
-app.add_middleware(AuditMiddleware)
+app.add_middleware(AuditMiddleware, sentry_enabled=sentry_enabled)
+register_mapped_handlers(app)
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-	correlation_id = getattr(request.state, "correlation_id", None)
+	correlation_id = get_correlation_id() or request_correlation_id(request)
 
-	if sentry_enabled is True and sentry_sdk.is_initialized() is True:
-		with sentry_sdk.new_scope() as scope:
-			if correlation_id:
-				scope.set_tag("correlation_id", correlation_id)
-			scope.set_tag("path", request.url.path)
-			scope.set_tag("method", request.method)
-			sentry_sdk.capture_exception(exc)
+	capture_unhandled_exception(exc, request.url.path, request.method, correlation_id, enabled=sentry_enabled)
 
 	logger.error(
 		"unhandled_exception",
@@ -909,10 +911,10 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 		correlation_id=correlation_id,
 		exc_info=True,
 	)
-	detail: dict[str, str] = {"message": "Internal server error", "code": "internal_error"}
+	code, message = internal_error_detail(exc)
+	detail: dict[str, str] = error_detail(message, code)
 	if correlation_id:
 		detail["correlation_id"] = correlation_id
-		detail["reason"] = f"correlation_id={correlation_id}"
 	return JSONResponse(status_code=500, content={"detail": detail})
 
 

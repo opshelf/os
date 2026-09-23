@@ -37,6 +37,7 @@ from openshelf_os_server.core.laser_auto_calibration import (
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.bin_storage import reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.errors import error_detail
 from openshelf_os_server.routers.auth_deps import get_current_user
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
@@ -328,7 +329,7 @@ def _build_error_detail(
 	needs_home_axes: Optional[list[str]] = None,
 	reason: Optional[str] = None,
 ) -> dict[str, object]:
-	detail: dict[str, object] = {"message": message, "code": code}
+	detail: dict[str, object] = error_detail(message, code)
 	if needs_home:
 		detail["needs_home"] = True
 		if needs_home_axes is not None:

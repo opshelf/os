@@ -138,7 +138,7 @@ async def test_upstream_errors_are_recoverable(status, payload):
     service = CommonChemistry("fixture-key", httpx.MockTransport(upstream))
     with pytest.raises(ChemicalUnavailable) as error:
         await service.search("ethanol")
-    assert str(error.value) == ""
+    assert str(error.value) == "CAS search unavailable"
     if status in {429, 500}:
         with pytest.raises(ChemicalUnavailable):
             await service.search("water")
@@ -192,7 +192,7 @@ async def test_timeout_and_missing_key():
     for service in [CommonChemistry(""), CommonChemistry("fixture-key", httpx.MockTransport(timeout))]:
         with pytest.raises(ChemicalUnavailable) as error:
             await service.search("ethanol")
-        assert str(error.value) == ""
+        assert str(error.value) == "CAS search unavailable"
 
 
 @pytest.mark.anyio
@@ -213,7 +213,8 @@ async def test_routes_authorization_and_availability(client, unauthenticated_cli
     try:
         response = await client.get("/api/chemicals/search?q=ethanol")
         assert response.status_code == 503
-        assert response.json() == {"detail": "CAS search unavailable"}
+        assert response.json() == {"detail": {"message": "CAS search unavailable", "code": "chemical_unavailable"}}
+        assert response.headers.get("Retry-After") == "5"
         assert (await client.get("/api/chemicals/64-17-4")).status_code == 422
         assert (await client.get("/api/chemicals/search?q=%20%20")).status_code == 422
         assert (await client.get("/api/chemicals/search?q=ethanol&offset=-1")).status_code == 422

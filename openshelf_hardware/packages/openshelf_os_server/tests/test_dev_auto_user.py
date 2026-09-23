@@ -92,7 +92,7 @@ async def test_missing_dev_auto_user_answers_503_naming_the_email(
     response = await unauthenticated_client.get("/api/system/home-on-init")
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Dev auto-user nobody@opshelf.com not found in database"
+    assert response.json()["detail"]["message"] == "Dev auto-user nobody@opshelf.com not found in database"
 
 @pytest.mark.anyio
 async def test_ensure_dev_auto_user_creates_missing_user(seeded_db: AsyncGenerator[None, None]) -> None:

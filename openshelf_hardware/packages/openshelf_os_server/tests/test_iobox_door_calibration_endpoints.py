@@ -119,4 +119,4 @@ async def test_iobox_door_position_rejects_close_at_or_above_open(client) -> Non
 	)
 
 	assert response.status_code == 400
-	assert response.json()["detail"] == "IO door close position must be less than open position"
+	assert response.json()["detail"]["message"] == "IO door close position must be less than open position"
