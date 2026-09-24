@@ -1031,6 +1031,11 @@ async def get_items(
 
     items = await storage_service.get_all_items(skip=skip, limit=limit)
     total = await storage_service.get_items_count()
+    # Resolve every page row's tray in one batch: per-item lookups re-read the same tray once
+    # per member, which made this endpoint issue two queries per row.
+    bin_payloads = await BinStorageService(session).item_bin_payloads(
+        [int(item.id) for item in items]
+    )
 
     if response is not None:
         response.headers["X-Total-Count"] = str(total)
@@ -1038,7 +1043,9 @@ async def get_items(
         response.headers["X-Skip"] = str(skip)
 
     item_payloads = [
-        await _build_item_payload_with_bin(item, list(item.locations), current_user, session)
+        _build_item_payload(
+            item, list(item.locations), current_user, bin_payloads.get(int(item.id))
+        )
         for item in items
     ]
 
