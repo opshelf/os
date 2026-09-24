@@ -4,7 +4,6 @@ from typing import Any, Callable
 
 from openshelf_os.laser_calibration.shelf_scout import (
 	build_shelf_scout_x_positions as build_shared_shelf_scout_x_positions,
-	filter_shelf_edges as filter_shared_shelf_edges,
 	scan_shelf_scout_line as scan_shared_shelf_scout_line,
 	SHELF_SCOUT_POST_EDGE_SKIP_MM,
 )
@@ -93,18 +92,4 @@ async def scan_shelf_scout_line(
 		progress_every=progress_every,
 		post_edge_skip_mm=post_edge_skip_mm,
 		should_abort=should_abort,
-	)
-
-
-def filter_shelf_edges(
-	*,
-	edges: list[ShelfSurfaceEdge],
-	y_min_mm: float,
-	y_max_mm: float,
-	side_name: str,
-	scout_x_positions: list[float],
-) -> list[ShelfSurfaceEdge]:
-	return filter_shared_shelf_edges(
-		edges=edges,
-		y_max_mm=y_max_mm,
 	)
