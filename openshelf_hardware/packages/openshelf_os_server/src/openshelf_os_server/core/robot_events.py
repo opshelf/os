@@ -63,9 +63,10 @@ event_processing_tracker = EventProcessingTracker()
 async def _refresh_status_after_commit(worker: Optional[RobotEventPublisher]) -> None:
     """Push a fresh status snapshot so SSE overlays reflect committed DB state.
 
-    The status overlay re-reads item locations from the database on every push,
-    so a push issued after the commit corrects the stale occupancy published
-    alongside the pre-commit state change.
+    The status overlay re-reads item locations from the database on the first
+    push after a commit (`core.occupancy_cache` serves the last snapshot until a
+    commit bumps its generation), so a push issued after the commit corrects the
+    stale occupancy published alongside the pre-commit state change.
     """
     if worker is None:
         return
