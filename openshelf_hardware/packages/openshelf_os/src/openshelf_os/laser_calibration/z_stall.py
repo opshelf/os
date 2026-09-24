@@ -484,7 +484,7 @@ async def run_z_stall_anchor(
 
 	# A grid-built analysis has no run metadata: its wall depths arrive with the analysis.
 	if len(loaded_candidates) == 0 and getattr(analysis, "metadata_path", None) is not None:
-		metadata = load_json_file(Path(str(analysis.metadata_path)))
+		metadata = load_json_file(analysis.metadata_path)
 		loaded_candidates = load_candidates_from_metadata(metadata)
 
 	probe_wall_depths = wall_depths_by_cell(analysis=analysis, candidates=loaded_candidates)
