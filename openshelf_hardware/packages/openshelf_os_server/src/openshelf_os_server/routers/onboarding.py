@@ -69,6 +69,16 @@ async def _count_regular_users(db: AsyncSession) -> int:
 	return int(result.scalar() or 0)
 
 
+async def _list_regular_users(db: AsyncSession) -> list[User]:
+	result = await db.execute(
+		select(User)
+		.options(selectinload(User.role), selectinload(User.access_level))
+		.filter(~User.is_system)
+		.order_by(User.id)
+	)
+	return list(result.scalars().all())
+
+
 def _onboarding_state_path() -> Path:
 	override = os.getenv(ONBOARDING_STATE_PATH_ENV)
 	if override:
@@ -209,21 +219,18 @@ async def create_admin_user(
 ) -> UserResponse:
 	"""Create the first administrator.
 
-	Public only while onboarding is pending and no non-system administrator exists. Creates
-	the initial administrator using the provisioned admin role. Returns `409` when already
-	created and `403` after onboarding is complete.
+	Public only while onboarding is pending. Creates the initial administrator using the
+	provisioned admin role. When the pending installation already holds exactly the
+	requested administrator - the wizard created it and never reached /complete - the
+	retry resets that account's PIN instead of failing, so an interrupted setup can be
+	finished. Returns `409` when a different regular user exists and `403` after
+	onboarding is complete.
 	"""
 	async with _admin_user_lock:
 		if await ensure_onboarding_state(db) == ONBOARDING_COMPLETED:
 			raise HTTPException(
 				status_code=status.HTTP_403_FORBIDDEN,
 				detail="Onboarding is already completed"
-			)
-
-		if await _count_regular_users(db) > 0:
-			raise HTTPException(
-				status_code=status.HTTP_409_CONFLICT,
-				detail="Administrator account is already created"
 			)
 
 		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
@@ -234,11 +241,39 @@ async def create_admin_user(
 				detail="Admin role is not available yet"
 			)
 
+		regular_users = await _list_regular_users(db)
+		if len(regular_users) > 1:
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail="Administrator account is already created"
+			)
+
 		settings = get_settings()
 		auth_service = AuthService(
 			settings.auth.jwt_secret or "",
 			settings.auth.jwt_algorithm
 		)
+
+		if len(regular_users) == 1:
+			existing_user = regular_users[0]
+			if existing_user.email != request.email or existing_user.role_id != admin_role.id:
+				raise HTTPException(
+					status_code=status.HTTP_409_CONFLICT,
+					detail="Administrator account is already created"
+				)
+
+			# The wizard created this administrator but onboarding never completed, for
+			# example because the client was reloaded before it posted /complete. Take
+			# over the interrupted setup instead of stranding the device on a 409 the
+			# wizard cannot get past.
+			existing_user.pin_hash = str(auth_service.hash_pin(request.pin))
+			existing_user.first_name = request.first_name
+			existing_user.last_name = request.last_name
+			existing_user.is_active = True
+			await db.commit()
+			await db.refresh(existing_user)
+			logger.info("Onboarding admin PIN reset for %s", existing_user.email)
+			return _build_user_response(existing_user)
 
 		user = User(
 			email=request.email,

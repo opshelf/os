@@ -6,9 +6,11 @@ from httpx import AsyncClient
 from sqlalchemy import delete, select, update
 
 from openshelf_os_server.main import _ensure_developer_user
+from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.database.models import AuditLog, Role, User
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import onboarding, wifi
+from openshelf_os_server.settings import get_settings
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +73,29 @@ async def _add_system_user() -> None:
         else:
             user.is_system = True
         await db.commit()
+
+
+async def _add_regular_user(email: str, pin: str = "1111", role_name: str = "operator") -> int:
+    async with AsyncSessionLocal() as db:
+        role_result = await db.execute(select(Role).filter(Role.name == role_name))
+        role = role_result.scalar_one()
+        settings = get_settings()
+        auth_service = AuthService(
+            settings.auth.jwt_secret or "",
+            settings.auth.jwt_algorithm,
+        )
+        user = User(
+            email=email,
+            first_name="Second",
+            last_name="User",
+            pin_hash=auth_service.hash_pin(pin),
+            role_id=role.id,
+            is_active=True,
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        return user.id
 
 
 @pytest.mark.anyio
@@ -204,6 +229,88 @@ async def test_pending_state_is_not_inferred_again_after_admin_creation(
 
     status_resp = await unauthenticated_client.get("/api/onboarding/status")
     assert status_resp.json() == {"needs_onboarding": True}
+
+
+@pytest.mark.anyio
+async def test_pending_admin_user_retry_resets_the_interrupted_admin_pin(
+    unauthenticated_client: AsyncClient, fresh_device: None
+) -> None:
+    first_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "owner@example.com", "pin": "4321"},
+    )
+    assert first_resp.status_code == 200, first_resp.text
+
+    # The wizard created this admin and was reloaded before /complete, so its PIN step
+    # runs again. The retry must take the account over, not strand the device on 409.
+    retry_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "owner@example.com", "pin": "9876"},
+    )
+    assert retry_resp.status_code == 200, retry_resp.text
+    assert retry_resp.json()["id"] == first_resp.json()["id"]
+    assert retry_resp.json()["role_name"] == "admin"
+
+    status_resp = await unauthenticated_client.get("/api/onboarding/status")
+    assert status_resp.json() == {"needs_onboarding": True}
+
+    stale_login = await unauthenticated_client.post(
+        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
+    )
+    assert stale_login.status_code == 401
+
+    new_login = await unauthenticated_client.post(
+        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "9876"}
+    )
+    assert new_login.status_code == 200, new_login.text
+
+
+@pytest.mark.anyio
+async def test_pending_admin_user_retry_rejects_a_different_email(
+    unauthenticated_client: AsyncClient, fresh_device: None
+) -> None:
+    create_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "owner@example.com", "pin": "4321"},
+    )
+    assert create_resp.status_code == 200, create_resp.text
+
+    # The reset is scoped to the account the pending installation already holds.
+    other_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "intruder@example.com", "pin": "0000"},
+    )
+    assert other_resp.status_code == 409
+
+    owner_login = await unauthenticated_client.post(
+        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
+    )
+    assert owner_login.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_pending_admin_user_retry_rejects_a_second_regular_user(
+    unauthenticated_client: AsyncClient, fresh_device: None
+) -> None:
+    create_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "owner@example.com", "pin": "4321"},
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    await _add_regular_user("second@example.com", pin="1111")
+
+    # A pending device that already holds another regular user is not a first run:
+    # keep 409 rather than let an unauthenticated caller reset the admin PIN.
+    retry_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "owner@example.com", "pin": "9876"},
+    )
+    assert retry_resp.status_code == 409
+
+    owner_login = await unauthenticated_client.post(
+        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
+    )
+    assert owner_login.status_code == 200
 
 
 @pytest.mark.anyio
