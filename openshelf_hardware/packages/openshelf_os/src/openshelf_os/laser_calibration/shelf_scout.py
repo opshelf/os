@@ -190,6 +190,46 @@ def detect_shelf_edges_from_line(
 	return detected_edges
 
 
+def build_shelf_edge_stop_predicate(
+	*,
+	min_positive_run_length: int = SHELF_EDGE_CONFIRMATION_COUNT,
+) -> Callable[[list[Any]], bool]:
+	"""Streaming twin of the confirmation rule in detect_shelf_edges_from_line.
+
+	Returns True on the first sample that closes a confirmed positive run, so a moving pass can
+	stop at the edge instead of flying the whole window. Run length and the reset on an
+	unconfirmed run are intentionally identical to the post-pass detector.
+	"""
+	run_start_idx: int | None = None
+	run_end_idx: int | None = None
+
+	def didReachConfirmedEdge(samples: list[Any]) -> bool:
+		nonlocal run_start_idx, run_end_idx
+
+		if len(samples) == 0:
+			return False
+
+		depth_mm = samples[-1].depth_mm
+
+		if is_positive_depth(depth_mm) is True:
+			if run_start_idx is None:
+				run_start_idx = len(samples) - 1
+
+			run_end_idx = len(samples) - 1
+			return False
+
+		if run_start_idx is None or run_end_idx is None:
+			return False
+
+		is_confirmed = (run_end_idx - run_start_idx + 1) >= min_positive_run_length
+		run_start_idx = None
+		run_end_idx = None
+
+		return is_confirmed
+
+	return didReachConfirmedEdge
+
+
 async def scan_shelf_scout_line(
 	tool: Any,
 	*,

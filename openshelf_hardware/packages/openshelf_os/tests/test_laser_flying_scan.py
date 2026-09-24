@@ -15,6 +15,7 @@ from openshelf_os.laser_calibration import (
 	FLYING_COARSE_SCAN_RPM,
 	FlyingScanLine,
 	FlyingScanSample,
+	GapCandidateRegion,
 	ShelfSurfaceEdge,
 	StorageModuleSide,
 	bin_samples_to_positions,
@@ -912,3 +913,181 @@ async def test_find_hole_interior_idx_from_seed_flying_matches_stepped(monkeypat
 	assert stepped_idx == 5
 	assert flying_idx == stepped_idx
 	assert recorded_lines == ["flying_seek_flying"]
+
+
+def test_build_shelf_edge_stop_predicate_needs_a_confirmed_run() -> None:
+	from openshelf_os.laser_calibration.shelf_scout import build_shelf_edge_stop_predicate
+
+	predicate = build_shelf_edge_stop_predicate(min_positive_run_length=3)
+
+	def sample(depth_mm):
+		return FlyingScanSample(position_mm=0.0, depth_mm=depth_mm, elapsed_s=0.0)
+
+	assert predicate([sample(None)]) is False
+	assert predicate([sample(None), sample(9.5)]) is False
+	assert predicate([sample(None), sample(9.5), sample(9.5)]) is False
+	assert predicate([sample(None), sample(9.5), sample(9.5), sample(9.5)]) is False
+	# the first non-positive sample after three positives closes the edge
+	assert predicate([
+		sample(None), sample(9.5), sample(9.5), sample(9.5), sample(0.0),
+	]) is True
+
+	# an unconfirmed run resets, so a later short run cannot confirm either
+	short_run = build_shelf_edge_stop_predicate(min_positive_run_length=3)
+	assert short_run([sample(9.5), sample(0.0)]) is False
+	assert short_run([sample(9.5), sample(0.0), sample(9.5), sample(9.5), sample(0.0)]) is False
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_stops_early_when_asked() -> None:
+	tool = FakeFlyingTool(depth_mm=9.5)
+	seen_samples: list[list] = []
+
+	def didRequestStop(samples: list) -> bool:
+		seen_samples.append(list(samples))
+		return len(samples) >= 3
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=100.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_stop_when",
+		stop_when=didRequestStop,
+	)
+
+	positions = [sample.position_mm for sample in line.samples]
+
+	assert len(seen_samples) > 0
+	assert positions[-1] < 100.0
+	assert len(line.samples) < 10
+	assert tool._my.is_moving is False
+
+
+@pytest.mark.asyncio
+async def test_angle_shelf_scout_uses_the_flying_line_when_configured(monkeypatch) -> None:
+	import openshelf_os.laser_calibration.angle.shelf_scout as angle_scout_module
+
+	y_positions = [100.0, 98.0, 96.0]
+	flying_requests: list[dict] = []
+
+	async def didScanFlying(tool, **kwargs):
+		flying_requests.append(kwargs)
+		return (
+			[9.5, 9.5, None],
+			[ShelfSurfaceEdge(x_mm=25.0, y_mm=93.0)],
+			FlyingScanLine(
+				axis="y",
+				fixed_mm=25.0,
+				start_mm=100.0,
+				end_mm=96.0,
+				rpm=30,
+				samples=[],
+				duration_s=1.0,
+			),
+		)
+
+	async def didFailToStep(*args, **kwargs):
+		raise AssertionError("stepped scout used while flying")
+
+	monkeypatch.setattr(angle_scout_module, "scan_shelf_scout_line_flying", didScanFlying)
+	monkeypatch.setattr(angle_scout_module, "scan_shared_shelf_scout_line", didFailToStep)
+
+	depth_values, edges = await angle_scout_module.scan_shelf_scout_line(
+		SimpleNamespace(_my=SimpleNamespace(_params=SimpleNamespace(mpr=40.0))),
+		x_mm=25.0,
+		y_positions=y_positions,
+		settle_ms=0,
+		samples_per_point=1,
+		progress_label="shelf_scout_1",
+		stop_after_first_edge=True,
+		scan_config=SimpleNamespace(coarse_scan_style="flying", coarse_scan_rpm=30),
+	)
+
+	assert depth_values == [9.5, 9.5, None]
+	assert edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=93.0)]
+	assert len(flying_requests) == 1
+	assert flying_requests[0]["rpm"] == 30
+	assert flying_requests[0]["stop_after_first_edge"] is True
+	assert flying_requests[0]["stop_when"] is not None
+
+	# The streaming predicate confirms the same run length as the post-pass detector.
+	predicate = flying_requests[0]["stop_when"]
+	assert predicate([FlyingScanSample(position_mm=100.0, depth_mm=9.5, elapsed_s=0.0)]) is False
+	assert predicate([
+		FlyingScanSample(position_mm=100.0, depth_mm=9.5, elapsed_s=0.0),
+		FlyingScanSample(position_mm=98.0, depth_mm=9.5, elapsed_s=0.1),
+		FlyingScanSample(position_mm=96.0, depth_mm=9.5, elapsed_s=0.2),
+	]) is False
+	assert predicate([
+		FlyingScanSample(position_mm=100.0, depth_mm=9.5, elapsed_s=0.0),
+		FlyingScanSample(position_mm=98.0, depth_mm=9.5, elapsed_s=0.1),
+		FlyingScanSample(position_mm=96.0, depth_mm=9.5, elapsed_s=0.2),
+		FlyingScanSample(position_mm=94.0, depth_mm=0.0, elapsed_s=0.3),
+	]) is True
+
+
+@pytest.mark.asyncio
+async def test_estimate_seeded_candidate_wall_depths_flies_when_configured(monkeypatch) -> None:
+	import openshelf_os.laser_calibration.staged_scan as staged_scan_module
+
+	bounds = ScanBounds(x_min=0.0, x_max=60.0, y_min=0.0, y_max=100.0)
+	x_positions = build_axis_positions(0.0, 60.0, 4.0)
+	depth_values = [9.5 if position <= 16.0 or position >= 48.0 else 0.0 for position in x_positions]
+	recorded_lines: list[str] = []
+	flying_requests: list[dict] = []
+
+	async def didScanFlying(tool, **kwargs):
+		flying_requests.append(kwargs)
+		return (
+			list(depth_values),
+			FlyingScanLine(
+				axis="x",
+				fixed_mm=50.0,
+				start_mm=0.0,
+				end_mm=60.0,
+				rpm=30,
+				samples=[],
+				duration_s=1.0,
+			),
+		)
+
+	async def didFailToStep(*args, **kwargs):
+		raise AssertionError("stepped wall-depth line used while flying")
+
+	monkeypatch.setattr(staged_scan_module, "scan_line_positions_flying", didScanFlying)
+	monkeypatch.setattr(staged_scan_module, "scan_line_positions", didFailToStep)
+
+	candidate = GapCandidateRegion(
+		x_min=18.0,
+		x_max=46.0,
+		y_min=44.0,
+		y_max=56.0,
+		wall_depth_mm=None,
+	)
+	coarse_scan = GridScanResult(x_positions=[], y_positions=[], depth_rows=[])
+
+	await staged_scan_module.estimate_seeded_candidate_wall_depths(
+		SimpleNamespace(),
+		bounds=bounds,
+		candidates=[candidate],
+		settle_ms=0,
+		samples_per_point=1,
+		scan_config=SimpleNamespace(
+			coarse_scan_style="flying",
+			coarse_scan_rpm=30,
+			coarse_scan_bin_mode="nearest",
+		),
+		coarse_scan=coarse_scan,
+		on_flying_line=lambda label, line: recorded_lines.append(label),
+	)
+
+	assert candidate.wall_depth_mm == pytest.approx(9.5)
+	assert candidate.wall_sample_count >= 1
+	assert flying_requests[0]["rpm"] == 30
+	assert recorded_lines == ["seeded_wall_depth_1_flying"]
+	assert any(
+		value is not None for row in coarse_scan.depth_rows for value in row
+	)
