@@ -102,6 +102,13 @@ ANYIO_STREAM_CONTEXT_ERRORS = (
 	"BrokenResourceError",
 )
 DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
+# The log line uvicorn writes when the drain window given to it in start()
+# (`timeout_graceful_shutdown`) expires. uvicorn.Server.shutdown logs it through its own
+# "uvicorn.error" logger at ERROR level, with the number of requests still running as the only
+# parameter, and then cancels those requests and exits. Stored as the two parts around that number so
+# the unformatted record ("Cancel %s running task(s), ...") matches as well as the formatted one.
+UVICORN_SHUTDOWN_DRAIN_PREFIX = "Cancel "
+UVICORN_SHUTDOWN_DRAIN_SUFFIX = " running task(s), timeout graceful shutdown exceeded"
 ROBOT_UNAVAILABLE_REQUEST_PATH_PREFIXES = (
 	"/api/robot",
 	"/api/calibration",
@@ -156,6 +163,16 @@ def _is_suppressed_pymodbus_log_message(message: Any) -> bool:
 	)
 
 
+def _is_uvicorn_shutdown_drain_message(message: Any) -> bool:
+	if isinstance(message, str) is False:
+		return False
+
+	if message.startswith(UVICORN_SHUTDOWN_DRAIN_PREFIX) is False:
+		return False
+
+	return message.endswith(UVICORN_SHUTDOWN_DRAIN_SUFFIX) is True
+
+
 def _sentry_log_is_suppressed_pymodbus_message(log: dict[str, Any]) -> bool:
 	for key in ("body", "message"):
 		if _is_suppressed_pymodbus_log_message(log.get(key)) is True:
@@ -167,6 +184,19 @@ def _sentry_log_is_suppressed_pymodbus_message(log: dict[str, Any]) -> bool:
 
 	attributes = cast(dict[str, Any], attributes_value)
 	return any(_is_suppressed_pymodbus_log_message(value) is True for value in attributes.values())
+
+
+def _sentry_log_is_uvicorn_shutdown_drain(log: dict[str, Any]) -> bool:
+	for key in ("body", "message"):
+		if _is_uvicorn_shutdown_drain_message(log.get(key)) is True:
+			return True
+
+	attributes_value = log.get("attributes")
+	if isinstance(attributes_value, dict) is False:
+		return False
+
+	attributes = cast(dict[str, Any], attributes_value)
+	return any(_is_uvicorn_shutdown_drain_message(value) is True for value in attributes.values())
 
 
 def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
@@ -243,6 +273,43 @@ def _sentry_event_has_suppressed_pymodbus_message(event: dict[str, Any]) -> bool
 			continue
 
 		if any(_is_suppressed_pymodbus_log_message(data.get(key)) is True for key in ("message", "formatted")):
+			return True
+
+	return False
+
+
+def _sentry_event_is_uvicorn_shutdown_drain(event: dict[str, Any]) -> bool:
+	"""Drop the notice uvicorn logs when its shutdown drain window expires.
+
+	Long-lived requests - an SSE status or event stream, an MJPEG camera stream - never finish on
+	their own, so the window start() gives uvicorn expires on every restart with a live client and
+	uvicorn.Server.shutdown logs the drain message at ERROR level before cancelling those requests and
+	exiting. The LoggingIntegration turns any ERROR record into an issue, so each planned restart filed
+	a stackless log-only event here next to the CancelledError the cancellation raises in the request.
+	Cancelling the requests that outlived the window is the configured outcome of a restart, not a
+	fault, and the record carries no stack, no request and no device state, so it is dropped. Both the
+	formatted message and the "%s" template uvicorn passed to the logger are matched.
+	"""
+	if _is_uvicorn_shutdown_drain_message(event.get("message")) is True:
+		return True
+
+	logentry_value = event.get("logentry")
+	if isinstance(logentry_value, dict) is True:
+		logentry = cast(dict[str, Any], logentry_value)
+		if any(_is_uvicorn_shutdown_drain_message(logentry.get(key)) is True for key in ("message", "formatted")):
+			return True
+
+	entries_value = event.get("entries", [])
+	entries = cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
+	for entry in entries:
+		if isinstance(entry, dict) is False:
+			continue
+
+		data = entry.get("data")
+		if isinstance(data, dict) is False:
+			continue
+
+		if any(_is_uvicorn_shutdown_drain_message(data.get(key)) is True for key in ("message", "formatted")):
 			return True
 
 	return False
@@ -389,6 +456,9 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 	if _sentry_event_has_suppressed_pymodbus_message(event) is True:
 		return None
 
+	if _sentry_event_is_uvicorn_shutdown_drain(event) is True:
+		return None
+
 	if _sentry_event_has_message(event, DOOR_MOTOR_RECOVERY_EVENT) is True:
 		return None
 
@@ -410,6 +480,9 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _sentry_log_is_suppressed_pymodbus_message(log) is True:
+		return None
+
+	if _sentry_log_is_uvicorn_shutdown_drain(log) is True:
 		return None
 
 	# The startup path already captures the underlying exception separately with a stacktrace.
