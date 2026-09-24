@@ -66,7 +66,7 @@ from openshelf_os_server.core.command_lifecycle import (
     replay as replay_robot_command,
     serialize_command,
 )
-from openshelf_os_server.core.storage import StorageService
+from openshelf_os_server.core import occupancy_cache
 from openshelf_os_server.core.bin_storage import (
     DirectStoreReservationError,
     is_reserved_bin_location,
@@ -75,7 +75,7 @@ from openshelf_os_server.core.bin_storage import (
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.errors import error_detail
 from openshelf_os_server.settings import get_settings, get_operating_mode
-from openshelf_os_server.database.session import get_db, AsyncSessionLocal
+from openshelf_os_server.database.session import get_db
 from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation, StorageBinItem, User
 from .auth_deps import (
     get_current_user,
@@ -1900,11 +1900,14 @@ async def control_door(
 
 
 
-async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
-    async with AsyncSessionLocal() as session:
-        service = StorageService(session)
-        rows = await service.get_all_occupied_cells()
-        return {(row[0], row[1], row[2]) for row in rows}
+async def get_occupied_cells_for_overlay() -> set[tuple[str, int, int]]:
+    """Return occupied cells for the status overlay.
+
+    Reads are cached per commit generation (see `core.occupancy_cache`): frame
+    generation reuses the last snapshot, so a stream no longer issues the same
+    query pair once per status push inside its long-lived transaction.
+    """
+    return await occupancy_cache.get_occupied_cells()
 
 
 @router.get(
@@ -1982,7 +1985,7 @@ async def stream_sse() -> EventSourceResponse:
                         status_queue, _ = await worker.subscribe_status()
                         raw_payload = await worker.get_status_snapshot(force_refresh=True)
                         if raw_payload is not None:
-                            occupied_cells = await get_occupied_cells_from_db()
+                            occupied_cells = await get_occupied_cells_for_overlay()
                             yield {"data": inject_mode_field(overlay_db_occupancy(raw_payload, occupied_cells))}
 
                 waiters = {
@@ -2010,7 +2013,7 @@ async def stream_sse() -> EventSourceResponse:
                     if kind == "init":
                         yield {"event": "init_progress", "data": data}
                     else:
-                        occupied_cells = await get_occupied_cells_from_db()
+                        occupied_cells = await get_occupied_cells_for_overlay()
                         yield {"data": inject_mode_field(overlay_db_occupancy(data, occupied_cells))}
                 waiters = {}
         finally:
