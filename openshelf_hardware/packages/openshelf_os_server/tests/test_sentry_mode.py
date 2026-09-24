@@ -223,6 +223,48 @@ def test_before_send_sentry_event_drops_door_motor_recovery_message() -> None:
 	assert main._before_send_sentry_event(event, {}) is None
 
 
+def test_before_send_sentry_event_drops_uvicorn_shutdown_drain_logentry() -> None:
+	# A restart while SSE/MJPEG streams are open: the drain window given to uvicorn in start()
+	# expires and uvicorn.Server.shutdown logs this at ERROR level before cancelling those requests.
+	# The LoggingIntegration sends that record as a stackless event, so both the template the logger
+	# was called with and the formatted line have to match.
+	template = "Cancel %s running task(s), timeout graceful shutdown exceeded"
+	formatted = "Cancel 2 running task(s), timeout graceful shutdown exceeded"
+	assert f"{main.UVICORN_SHUTDOWN_DRAIN_PREFIX}2{main.UVICORN_SHUTDOWN_DRAIN_SUFFIX}" == formatted
+
+	for event in (
+		{
+			"level": "error",
+			"logger": "uvicorn.error",
+			"logentry": {"message": template, "formatted": formatted, "params": (2,)},
+		},
+		{"logger": "uvicorn.error", "logentry": {"message": formatted}},
+		{"message": formatted},
+		{"entries": [{"type": "message", "data": {"message": template, "formatted": formatted}}]},
+	):
+		assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_keeps_other_uvicorn_error_log() -> None:
+	# Only the drain notice is noise: an ASGI failure logged by the same logger stays reportable.
+	event = {
+		"level": "error",
+		"logger": "uvicorn.error",
+		"logentry": {"message": "Exception in ASGI application\n"},
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
+def test_before_send_sentry_event_keeps_partial_shutdown_drain_wording() -> None:
+	event = {
+		"logger": "uvicorn.error",
+		"logentry": {"message": "Cancel 2 running task(s) during graceful shutdown"},
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
 def test_before_send_sentry_log_drops_pymodbus_request_id_mismatch() -> None:
 	log = {
 		"body": "ERROR: request ask for id=2 but got id=3, Skipping.",
@@ -304,6 +346,38 @@ def test_before_send_sentry_log_drops_door_motor_recovery_log() -> None:
 	}
 
 	assert main._before_send_sentry_log(log, {}) is None
+
+
+def test_before_send_sentry_log_drops_uvicorn_shutdown_drain() -> None:
+	log = {
+		"body": "Cancel 2 running task(s), timeout graceful shutdown exceeded",
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
+def test_before_send_sentry_log_drops_uvicorn_shutdown_drain_attribute() -> None:
+	# The stdlib logging handler puts the formatted line in the body and the "%s" template in the
+	# attributes, so both shapes arrive here.
+	log = {
+		"body": "",
+		"attributes": {
+			"sentry.message.template": "Cancel %s running task(s), timeout graceful shutdown exceeded",
+			"sentry.message.parameter.0": 2,
+			"logger.name": "uvicorn.error",
+		},
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
+def test_before_send_sentry_log_keeps_other_uvicorn_error_log() -> None:
+	log = {
+		"body": "Exception in ASGI application",
+		"attributes": {"logger.name": "uvicorn.error"},
+	}
+
+	assert main._before_send_sentry_log(log, {}) == log
 
 
 def test_before_send_sentry_event_redacts_headers() -> None:
