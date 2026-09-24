@@ -297,6 +297,7 @@ async def resolve_capture_y_mm(
 				samples_per_point=samples_per_point,
 				progress_label=f'shelf_scout_{scout_idx}',
 				stop_after_first_edge=True,
+				scan_config=scan_config,
 				should_abort=should_abort,
 			)
 			scout_lines.append(

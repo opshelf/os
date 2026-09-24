@@ -153,6 +153,13 @@ async def run_staged_scan(
 
 
 				if wall_depth_mm <= 0.0:
+					def didRecordSeededFlyingLine(probe_label: str, flying_line: Any) -> None:
+						write_flying_line_samples(
+							run_dir=recorder.run_dir,
+							label=probe_label,
+							line=flying_line,
+						)
+
 					await estimate_seeded_candidate_wall_depths(
 						tool,
 						bounds=bounds,
@@ -162,6 +169,7 @@ async def run_staged_scan(
 						scan_config=scan_config,
 						coarse_scan=coarse_scan,
 						should_abort=should_abort,
+						on_flying_line=didRecordSeededFlyingLine,
 					)
 				if wall_depth_mm <= 0.0:
 					seeded_wall_depth_values = [
@@ -679,6 +687,7 @@ async def estimate_seeded_candidate_wall_depths(
 	scan_config: Any,
 	coarse_scan: GridScanResult,
 	should_abort: Callable[[], bool] | None = None,
+	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 ) -> None:
 	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
 
@@ -694,16 +703,33 @@ async def estimate_seeded_candidate_wall_depths(
 
 		raise_if_cancelled(should_abort)
 		scan_y_mm = float((candidate.y_min + candidate.y_max) / 2.0)
-		depth_values = await scan_line_positions(
-			tool,
-			axis="x",
-			positions=x_positions,
-			fixed_mm=scan_y_mm,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			progress_label=f"seeded_wall_depth_{candidate_idx}",
-			should_abort=should_abort,
-		)
+		progress_label = f"seeded_wall_depth_{candidate_idx}"
+
+		if get_coarse_scan_style(scan_config) == COARSE_SCAN_STYLE_FLYING:
+			depth_values, seeded_flying_line = await scan_line_positions_flying(
+				tool,
+				axis="x",
+				positions=x_positions,
+				fixed_mm=scan_y_mm,
+				rpm=get_coarse_scan_rpm(scan_config),
+				progress_label=progress_label,
+				should_abort=should_abort,
+				bin_mode=get_coarse_scan_bin_mode(scan_config),
+			)
+
+			if on_flying_line is not None:
+				on_flying_line(f"{progress_label}_flying", seeded_flying_line)
+		else:
+			depth_values = await scan_line_positions(
+				tool,
+				axis="x",
+				positions=x_positions,
+				fixed_mm=scan_y_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				progress_label=progress_label,
+				should_abort=should_abort,
+			)
 		merge_line_scan_into_sparse_scan(
 			coarse_scan,
 			axis="x",

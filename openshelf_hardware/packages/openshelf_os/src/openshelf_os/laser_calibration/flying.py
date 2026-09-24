@@ -463,6 +463,7 @@ async def scan_axis_flying(
 	progress_printer: Optional[Callable[[str], None]] = None,
 	should_abort: Optional[Callable[[], bool]] = None,
 	capture_latency_s: Optional[float] = None,
+	stop_when: Optional[Callable[[list[FlyingScanSample]], bool]] = None,
 ) -> FlyingScanLine:
 	if axis not in ("x", "y"):
 		raise ValueError("flying scan axis must be 'x' or 'y'")
@@ -580,6 +581,9 @@ async def scan_axis_flying(
 						f"position={position_mm:.2f} depth={depth_to_label(depth_mm)}"
 					)
 
+			if stop_when is not None and stop_when(samples) is True:
+				break
+
 			if direction * (position_mm - float(end_mm)) >= 0.0:
 				break
 
@@ -633,6 +637,7 @@ async def scan_line_positions_flying(
 	progress_every: int = FLYING_SCAN_PROGRESS_EVERY,
 	progress_printer: Optional[Callable[[str], None]] = None,
 	capture_latency_s: Optional[float] = None,
+	stop_when: Optional[Callable[[list[FlyingScanSample]], bool]] = None,
 ) -> tuple[list[Optional[float]], FlyingScanLine]:
 	if len(positions) == 0:
 		return [], FlyingScanLine(
@@ -656,6 +661,7 @@ async def scan_line_positions_flying(
 		progress_printer=progress_printer,
 		should_abort=should_abort,
 		capture_latency_s=capture_latency_s,
+		stop_when=stop_when,
 	)
 	max_distance_mm = abs(positions[1] - positions[0]) if len(positions) > 1 else None
 	depth_values = bin_samples_to_positions(
@@ -724,6 +730,8 @@ async def scan_shelf_scout_line_flying(
 	progress_every: int = FLYING_SCAN_PROGRESS_EVERY,
 	progress_printer: Optional[Callable[[str], None]] = None,
 	capture_latency_s: Optional[float] = None,
+	stop_after_first_edge: bool = False,
+	stop_when: Optional[Callable[[list[FlyingScanSample]], bool]] = None,
 ) -> tuple[list[Optional[float]], list[ShelfSurfaceEdge], FlyingScanLine]:
 	depth_values, line = await scan_line_positions_flying(
 		tool,
@@ -737,6 +745,7 @@ async def scan_shelf_scout_line_flying(
 		progress_every=progress_every,
 		progress_printer=progress_printer,
 		capture_latency_s=capture_latency_s,
+		stop_when=stop_when,
 	)
 	brim_height_kwargs: dict[str, float] = {}
 
@@ -749,6 +758,7 @@ async def scan_shelf_scout_line_flying(
 		depth_values=depth_values,
 		post_edge_skip_mm=post_edge_skip_mm,
 		min_positive_run_length=min_positive_run_length,
+		stop_after_first_edge=stop_after_first_edge,
 		**brim_height_kwargs,
 	)
 
