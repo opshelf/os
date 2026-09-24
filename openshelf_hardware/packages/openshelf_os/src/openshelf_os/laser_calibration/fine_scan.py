@@ -12,6 +12,49 @@ from .core import *
 from .recording import *
 from .motion import *
 from .shelf_scan import *
+from .flying import resolve_axis_rpm_for_feed
+
+
+async def prefetch_fine_line_depth_values(
+	tool: Any,
+	*,
+	scan_config: Any,
+	axis: str,
+	positions: list[float],
+	fixed_mm: float,
+	progress_label: str,
+	should_abort: Callable[[], bool] | None = None,
+) -> Optional[tuple[list[Optional[float]], Any]]:
+	"""Fly a fine line when configured for it; None means the caller must step the line.
+
+	The probe still replays its own decision walk over the returned grid values, so its adaptive
+	order, progress output, retries and persisted grid stay identical to the stepped scan.
+	"""
+	if get_fine_scan_style(scan_config) != COARSE_SCAN_STYLE_FLYING:
+		return None
+
+	scan_motor = getattr(tool, "_mx" if axis == "x" else "_my", None)
+
+	if scan_motor is None:
+		return None
+
+	rpm = resolve_axis_rpm_for_feed(scan_motor, get_fine_scan_feed_mm_s(scan_config))
+
+	if rpm is None:
+		return None
+
+	depth_values, line = await scan_line_positions_flying(
+		tool,
+		axis=axis,
+		positions=positions,
+		fixed_mm=fixed_mm,
+		rpm=rpm,
+		progress_label=progress_label,
+		should_abort=should_abort,
+	)
+
+	return depth_values, line
+
 
 async def probe_line_from_center(
 	tool: Any,
@@ -30,7 +73,28 @@ async def probe_line_from_center(
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
 	should_abort: Callable[[], bool] | None = None,
 	should_infer_far_edge: bool = False,
+	scan_config: Any = None,
+	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 ) -> Optional[LineGapSegment]:
+	prefetched_depth_values: Optional[list[Optional[float]]] = None
+
+	if scan_config is not None:
+		prefetched = await prefetch_fine_line_depth_values(
+			tool,
+			scan_config=scan_config,
+			axis=axis,
+			positions=positions,
+			fixed_mm=fixed_mm,
+			progress_label=f"{progress_prefix}_flying",
+			should_abort=should_abort,
+		)
+
+		if prefetched is not None:
+			prefetched_depth_values, flying_line = prefetched
+
+			if on_flying_line is not None:
+				on_flying_line(f"{progress_prefix}_flying", flying_line)
+
 	left_gap_idx: Optional[int] = None
 	right_gap_idx: Optional[int] = None
 	left_wall_found = False
@@ -52,14 +116,18 @@ async def probe_line_from_center(
 			x_mm = fixed_mm
 			y_mm = position_mm
 
-		depth_mm = await sample_scan_point(
-			tool,
-			x_mm=x_mm,
-			y_mm=y_mm,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			should_abort=should_abort,
-		)
+		if prefetched_depth_values is None:
+			depth_mm = await sample_scan_point(
+				tool,
+				x_mm=x_mm,
+				y_mm=y_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				should_abort=should_abort,
+			)
+		else:
+			depth_mm = prefetched_depth_values[position_idx]
+
 		set_scan_point(
 			base_scan,
 			x_mm=x_mm,
@@ -214,6 +282,8 @@ async def refine_horizontal_segment(
 	expected_span_mm: float,
 	progress_prefix: str,
 	should_abort: Callable[[], bool] | None = None,
+	scan_config: Any = None,
+	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 	) -> Optional[LineGapSegment]:
 	refined_x_min_mm = max(
 		float(bounds.x_min),
@@ -259,6 +329,8 @@ async def refine_horizontal_segment(
 		wall_depth_mm=wall_depth_mm,
 		expected_span_mm=expected_span_mm,
 		should_abort=should_abort,
+		scan_config=scan_config,
+		on_flying_line=on_flying_line,
 	)
 
 	if refined_segment is None:
@@ -305,6 +377,8 @@ async def refine_horizontal_segment_across_rows(
 	width_tolerance_mm: float,
 	progress_prefix: str,
 	should_abort: Callable[[], bool] | None = None,
+	scan_config: Any = None,
+	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 	) -> Optional[LineGapSegment]:
 	row_offsets_mm = [0.0, -2.0, 2.0, -4.0, 4.0]
 	valid_segments: list[LineGapSegment] = []
@@ -331,6 +405,8 @@ async def refine_horizontal_segment_across_rows(
 			expected_span_mm=expected_span_mm,
 			progress_prefix=f"{progress_prefix}_r{row_idx}",
 			should_abort=should_abort,
+			scan_config=scan_config,
+			on_flying_line=on_flying_line,
 		)
 
 		if refined_segment is None:
@@ -608,6 +684,7 @@ async def capture_cross_scan(
 	progress_prefix: str,
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
 	should_abort: Callable[[], bool] | None = None,
+	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 ) -> tuple[GridScanResult, list[ScanDetectedCell]]:
 	validate_scan_plan(
 		bounds=bounds,
@@ -665,6 +742,8 @@ async def capture_cross_scan(
 			expected_span_mm=EXPECTED_HOLE_WIDTH_MM,
 			on_update=on_update,
 			should_abort=should_abort,
+			scan_config=scan_config,
+			on_flying_line=on_flying_line,
 		)
 
 		if horizontal_segment is None:
@@ -711,6 +790,8 @@ async def capture_cross_scan(
 		on_update=on_update,
 		should_abort=should_abort,
 		should_infer_far_edge=True,
+		scan_config=scan_config,
+		on_flying_line=on_flying_line,
 	)
 
 	if vertical_segment is None:
@@ -733,6 +814,8 @@ async def capture_cross_scan(
 		expected_span_mm=EXPECTED_HOLE_WIDTH_MM,
 		on_update=on_update,
 		should_abort=should_abort,
+		scan_config=scan_config,
+		on_flying_line=on_flying_line,
 	)
 
 	if refined_horizontal_segment is not None:
@@ -750,6 +833,8 @@ async def capture_cross_scan(
 		width_tolerance_mm=HOLE_WIDTH_TOLERANCE_MM + FINE_X_REFINEMENT_STEP_MM,
 		progress_prefix=f"{progress_prefix}_h_precision",
 		should_abort=should_abort,
+		scan_config=scan_config,
+		on_flying_line=on_flying_line,
 	)
 
 	if precision_horizontal_segment is not None:

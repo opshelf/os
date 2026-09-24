@@ -73,6 +73,11 @@ class LaserScanConfig(BaseModel):
     shelf_hole_probe_y_offsets_mm: Optional[List[float]] = None
     fine_cell_scan_y_margin_mm: Optional[float] = Field(default=None, gt=0)
     fine_scan_step_mm: float = Field(1.0, gt=0)
+    # Fine probes are the final measurement, so flying stays opt-in until a machine's capture
+    # latency and edge response have been measured. Feed is mm/s and converted per axis, because
+    # the same rpm is a different speed on x and y.
+    fine_scan_style: Literal["stepped", "flying"] = "stepped"
+    fine_scan_feed_mm_s: float = Field(40.0, gt=0)
     left_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     right_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     shelf_scout_post_edge_skip_mm: float = Field(40.0, ge=0)

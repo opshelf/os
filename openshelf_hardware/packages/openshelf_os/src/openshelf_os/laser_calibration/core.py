@@ -58,6 +58,9 @@ COARSE_SCAN_BIN_MEDIAN = "median"
 # (mpr 80mm). Sample spacing is set by the bus loop time, not by this value, so raise it only
 # after the sample cadence logged in flying_samples.jsonl shows the grid is still covered.
 FLYING_COARSE_SCAN_RPM = 30
+# Fine line probes are short, so their speed is set in mm/s (converted to rpm per axis). 40mm/s
+# keeps the delay correction sub-0.5mm while halving the per-line travel time.
+FINE_SCAN_FEED_MM_S = 40.0
 RIGHT_MODULE_ROTATION_SAFE_X_MM = 475.0
 SHELF_SWEEP_X_STEP_MM = 4.0
 # Coarse sweep widths quantize to the 4mm step. Across two full hardware runs (43 confirmed
@@ -366,19 +369,44 @@ def get_shelf_scout_post_edge_skip_mm(scan_config: Any) -> float:
 	return validated_skip_mm
 
 
-def get_coarse_scan_style(scan_config: Any) -> str:
-	configured_style = getattr(scan_config, "coarse_scan_style", None)
+def _get_scan_style(scan_config: Any, parameter_name: str) -> str:
+	configured_style = getattr(scan_config, parameter_name, None)
 
 	if configured_style is None:
 		return COARSE_SCAN_STYLE_STEPPED
 
 	if configured_style not in (COARSE_SCAN_STYLE_STEPPED, COARSE_SCAN_STYLE_FLYING):
 		raise ValueError(
-			"robot.grid.scan.coarse_scan_style must be "
+			f"robot.grid.scan.{parameter_name} must be "
 			f"'{COARSE_SCAN_STYLE_STEPPED}' or '{COARSE_SCAN_STYLE_FLYING}'"
 		)
 
 	return str(configured_style)
+
+
+def get_coarse_scan_style(scan_config: Any) -> str:
+	return _get_scan_style(scan_config, "coarse_scan_style")
+
+
+def get_fine_scan_style(scan_config: Any) -> str:
+	return _get_scan_style(scan_config, "fine_scan_style")
+
+
+def get_fine_scan_feed_mm_s(scan_config: Any) -> float:
+	configured_feed = getattr(scan_config, "fine_scan_feed_mm_s", None)
+
+	if configured_feed is None:
+		return float(FINE_SCAN_FEED_MM_S)
+
+	validated_feed = validate_finite_value(
+		configured_feed,
+		"robot.grid.scan.fine_scan_feed_mm_s",
+	)
+
+	if validated_feed <= 0.0:
+		raise ValueError("robot.grid.scan.fine_scan_feed_mm_s must be greater than zero")
+
+	return validated_feed
 
 
 def get_coarse_scan_rpm(scan_config: Any) -> int:
