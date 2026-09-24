@@ -964,6 +964,9 @@ async def test_scan_axis_flying_stops_early_when_asked() -> None:
 	assert positions[-1] < 100.0
 	assert len(line.samples) < 10
 	assert tool._my.is_moving is False
+	assert tool._my.stop_count == 1
+	# Only the pre-position wait: a line stopped by its own predicate is not waited on.
+	assert tool.gantry_wait_calls == 1
 
 
 @pytest.mark.asyncio
