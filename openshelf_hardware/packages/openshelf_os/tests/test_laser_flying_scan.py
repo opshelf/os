@@ -924,17 +924,18 @@ def test_flying_scan_line_metrics_use_travelled_distance() -> None:
 		rpm=30,
 		duration_s=5.0,
 		samples=[
-			FlyingScanSample(position_mm=1250.0, depth_mm=None, elapsed_s=0.0),
+			FlyingScanSample(position_mm=1165.0, depth_mm=None, elapsed_s=0.0),
 			FlyingScanSample(
-				position_mm=1050.0,
+				position_mm=1065.0,
 				depth_mm=9.5,
 				elapsed_s=4.9,
-				depth_position_mm=1050.0,
+				depth_position_mm=1065.0,
 			),
 		],
 	)
 
-	assert "feed_mm_s=40.00" in line.metrics_text()
+	# 100mm travelled over 5s, not the commanded 1250mm or a start clamped to the axis limit.
+	assert "feed_mm_s=20.00" in line.metrics_text()
 
 
 def test_build_shelf_edge_stop_predicate_needs_a_confirmed_run() -> None:
