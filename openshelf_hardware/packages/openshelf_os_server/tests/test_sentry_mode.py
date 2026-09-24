@@ -350,6 +350,59 @@ def test_before_send_sentry_event_drops_door_motor_recovery_message() -> None:
 	assert main._before_send_sentry_event(event, {}) is None
 
 
+def test_before_send_sentry_event_drops_door_motor_recovery_failure_logentry() -> None:
+	event = {
+		"logentry": {
+			"message": "Door motor recovery failed: %s",
+			"formatted": (
+				"Door motor recovery failed: Failed during pre-home approach: "
+				"Movement failed for motor 31 (status=FAULT)"
+			),
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_keeps_unrelated_door_recovery_message() -> None:
+	event = {
+		"logentry": {
+			"message": "Door position recovered before homing; skipping recovery home",
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
+def test_before_send_sentry_event_drops_door_motor_recovery_failure_entry() -> None:
+	event = {
+		"entries": [
+			{
+				"data": {
+					"formatted": (
+						"Door motor recovery failed: Failed during pre-home approach: "
+						"Movement failed for motor 31 (status=FAULT)"
+					),
+				}
+			}
+		]
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_log_drops_door_motor_recovery_failure() -> None:
+	log = {
+		"body": (
+			"Door motor recovery failed: Failed during pre-home approach: "
+			"Movement failed for motor 31 (status=FAULT)"
+		),
+		"attributes": {"motor_id": 31},
+	}
+
+	assert main._before_send_sentry_log(log, {}) is None
+
+
 def test_before_send_sentry_event_drops_uvicorn_shutdown_drain_logentry() -> None:
 	# A restart while SSE/MJPEG streams are open: the drain window given to uvicorn in start()
 	# expires and uvicorn.Server.shutdown logs this at ERROR level before cancelling those requests.

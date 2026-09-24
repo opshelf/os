@@ -62,6 +62,7 @@ PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
 # ">>>>> Repeating....".
 PYMODBUS_FRAME_DUMP_LINE_PREFIX = ">>>>> "
 DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
+DOOR_MOTOR_RECOVERY_FAILED_PREFIX = "Door motor recovery failed:"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -135,6 +136,10 @@ def _is_suppressed_pymodbus_log_message(message: Any) -> bool:
 	)
 
 
+def _is_door_motor_recovery_failure(message: Any) -> bool:
+	return isinstance(message, str) is True and message.startswith(DOOR_MOTOR_RECOVERY_FAILED_PREFIX)
+
+
 def _sentry_log_is_suppressed_pymodbus_message(log: dict[str, Any]) -> bool:
 	for key in ("body", "message"):
 		if _is_suppressed_pymodbus_log_message(log.get(key)) is True:
@@ -161,6 +166,22 @@ def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
 	return any(value == target for value in attributes.values())
 
 
+def _sentry_log_has_door_motor_recovery_failure(log: dict[str, Any]) -> bool:
+	# Drop the whole recovery-failure class: the IO-box door recovery is a
+	# best-effort self-healing path, and its failure message is logged without a
+	# stacktrace, so it would only create log-only Sentry issues.
+	for key in ("body", "message"):
+		if _is_door_motor_recovery_failure(log.get(key)) is True:
+			return True
+
+	attributes_value = log.get("attributes")
+	if isinstance(attributes_value, dict) is False:
+		return False
+
+	attributes = cast(dict[str, Any], attributes_value)
+	return any(_is_door_motor_recovery_failure(value) is True for value in attributes.values())
+
+
 def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
 	if event.get("message") == target:
 		return True
@@ -180,6 +201,30 @@ def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
 			continue
 
 		if any(data.get(key) == target for key in ("message", "formatted")) is True:
+			return True
+
+	return False
+
+
+def _sentry_event_has_door_motor_recovery_failure(event: dict[str, Any]) -> bool:
+	if _is_door_motor_recovery_failure(event.get("message")) is True:
+		return True
+
+	logentry_value = event.get("logentry")
+	if isinstance(logentry_value, dict) is True:
+		logentry = cast(dict[str, Any], logentry_value)
+		if any(_is_door_motor_recovery_failure(logentry.get(key)) is True for key in ("message", "formatted")):
+			return True
+
+	for entry in event.get("entries", []):
+		if isinstance(entry, dict) is False:
+			continue
+
+		data = entry.get("data")
+		if isinstance(data, dict) is False:
+			continue
+
+		if any(_is_door_motor_recovery_failure(data.get(key)) is True for key in ("message", "formatted")):
 			return True
 
 	return False
@@ -216,6 +261,14 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 	if _sentry_event_has_message(event, DOOR_MOTOR_RECOVERY_EVENT) is True:
 		return None
 
+	# A recovery home that fails on a faulted drive is still the expected
+	# self-healing path: the door keeps its cached state and the motor fault is
+	# still reported separately as the motor's "Fault detected - stopping motor"
+	# warning or an ERROR-level motion-timeout event. The recovery message is a
+	# stackless log-only issue, so drop the whole recovery-failure class.
+	if _sentry_event_has_door_motor_recovery_failure(event) is True:
+		return None
+
 	request_value = event.get("request")
 	if isinstance(request_value, dict) is True:
 		request = cast(dict[str, Any], request_value)
@@ -233,6 +286,9 @@ def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[
 	# Door position recovery is an expected hardware self-healing path. Keep it in
 	# local logs without creating a log-only Sentry issue.
 	if _sentry_log_has_message(log, DOOR_MOTOR_RECOVERY_EVENT) is True:
+		return None
+
+	if _sentry_log_has_door_motor_recovery_failure(log) is True:
 		return None
 
 	attributes = log.get("attributes")
