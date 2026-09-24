@@ -118,6 +118,23 @@ def _build_single_shelf_scan_config(scan_config: Any) -> Any:
     copied_scan_config.shelf_hole_probe_y_offsets_mm = [opening_center_offset_mm]
     return copied_scan_config
 
+def _scope_derives_from_the_datum(requested_scope: LaserAutoCalibrationScope) -> bool:
+    """Whether this run's scan holds the bottom-left datum it would re-frame from.
+
+    Delegates to the package so the validation and apply steps share one rule: a full-module or
+    side scan derives (from all manual cells), a shelf-0 or cell-0:0 rescan derives from that
+    opening, and a rescan of any other opening has no datum to work from.
+    """
+    return (
+        laser_module.select_datum_derivation_scope(
+            mode=requested_scope.mode,
+            shelf_idx=requested_scope.shelf_idx,
+            cell_idx=requested_scope.cell_idx,
+        )
+        is not None
+    )
+
+
 def _validate_laser_auto_calibration_config(
     *,
     scan_config: Any,
@@ -158,12 +175,25 @@ def _validate_laser_auto_calibration_config(
                 scan_config=scan_config,
                 side=StorageModuleSide.LEFT,
             )
+        elif _scope_derives_from_the_datum(requested_scope):
+            # A shelf/cell rescan that re-frames from the datum predicts its matches from the
+            # configured offset exactly like a full-side run, so a request with none configured
+            # can never succeed and is refused here rather than after the scan.
+            laser_module.require_scan_xy_correction(
+                scan_config=scan_config,
+                side=StorageModuleSide.LEFT,
+            )
         return
 
     if requested_scope.side == StorageModuleSide.RIGHT:
         laser_module.validate_scan_bounds(right_bounds, "right scan bounds")
         if requested_scope.mode == "side":
             laser_module.validate_laser_structure_parameters(
+                scan_config=scan_config,
+                side=StorageModuleSide.RIGHT,
+            )
+        elif _scope_derives_from_the_datum(requested_scope):
+            laser_module.require_scan_xy_correction(
                 scan_config=scan_config,
                 side=StorageModuleSide.RIGHT,
             )
@@ -185,25 +215,24 @@ class ScopeRunnerMixin:
             right_bounds=right_bounds,
         )
 
-        if (
-            requested_scope.derive_offsets_from_manual_cells is True
-            or requested_scope.derive_z_model_from_stall is True
-            or getattr(scan_config, "z_stall_anchor_enabled", False) is True
-        ):
-            self._validate_manual_reference_cells(requested_scope, worker)
+        self._validate_reference_datum_cells(requested_scope, worker)
 
-    def _validate_manual_reference_cells(
+    def _validate_reference_datum_cells(
         self,
         requested_scope: LaserAutoCalibrationScope,
         worker: RobotWorker | None,
     ) -> None:
-        """Fail before any motion when a requested reference frame has no reference cells."""
+        """Fail before any motion unless every side in scope carries the hand-calibrated datum.
+
+        The bottom-left cell of each side is the frame every derived offset is measured from, so
+        a run that cannot use it has nothing to calibrate against and must not start.
+        """
         grid = _get_worker_grid(worker)
 
         if grid is None:
             raise ValueError(
-                "a reference-frame or z-probe run needs the storage grid to find the manually "
-                "calibrated reference cells, and the robot has none loaded"
+                "auto calibration needs the storage grid to check the hand-calibrated bottom-left "
+                "reference cells, and the robot has none loaded"
             )
 
         sides: list[StorageModuleSide] = (
@@ -214,20 +243,21 @@ class ScopeRunnerMixin:
         missing: list[str] = []
 
         for side in sides:
-            cells = laser_module.select_manual_reference_cells(
-                grid=grid,
-                side=side,
-                shelf_idx=requested_scope.shelf_idx,
-                cell_idx=requested_scope.cell_idx if requested_scope.mode == "cell" else None,
-            )
+            if laser_module.select_reference_datum_cell(grid=grid, side=side) is not None:
+                continue
 
-            if len(cells) == 0:
-                missing.append(side.value)
+            side_name = "left" if side == StorageModuleSide.LEFT else "right"
+            missing.append(
+                f"the {side_name} module's bottom-left cell ("
+                f"{laser_module.REFERENCE_DATUM_SHELF_IDX}:{laser_module.REFERENCE_DATUM_CELL_IDX})"
+            )
 
         if len(missing) > 0:
             raise ValueError(
-                "a reference-frame or z-probe run needs at least one cell marked manual in scope "
-                f"on {', '.join(missing)}; tick 'keep manual' when saving the reference cell"
+                "auto calibration frames every offset from the hand-calibrated bottom-left cell "
+                f"of each side, and these are missing or not marked manual: {', '.join(missing)}; "
+                "precalibrate each one in cell calibration and tick 'keep manual' when saving it, "
+                "then re-run"
             )
 
     async def _run_requested_scope(

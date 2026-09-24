@@ -364,17 +364,19 @@ def _build_reference_bounds_scan_config(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
-def test_validate_laser_auto_calibration_config_allows_local_shelf_scope_without_xy_offset() -> None:
+def test_validate_laser_auto_calibration_config_refuses_datum_shelf_scope_without_xy_offset() -> None:
+    """A shelf-0 rescan re-frames from the datum, which needs an offset to predict matches from."""
     scan_config = _build_reference_bounds_scan_config()
 
-    _validate_laser_auto_calibration_config(
-        scan_config=scan_config,
-        requested_scope=LaserAutoCalibrationScope(
-            mode="shelf",
-            side=StorageModuleSide.RIGHT,
-            shelf_idx=0,
-        ),
-    )
+    with pytest.raises(ValueError, match="right_gripper_xy_correction_mm must be configured"):
+        _validate_laser_auto_calibration_config(
+            scan_config=scan_config,
+            requested_scope=LaserAutoCalibrationScope(
+                mode="shelf",
+                side=StorageModuleSide.RIGHT,
+                shelf_idx=0,
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -391,6 +393,113 @@ async def test_ensure_session_started_rejects_invalid_config_before_starting_bac
             )
 
     assert manager._task is None
+
+
+@pytest.mark.asyncio
+async def test_datum_shelf_rescan_without_xy_offset_rejects_before_motion() -> None:
+    """A shelf-0 rescan re-frames from the datum, so it predicts from the configured offset too."""
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config()
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    grid = StorageGrid()
+    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
+    worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+
+    with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+        with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
+            with pytest.raises(ValueError, match="must be configured"):
+                await manager.ensure_session_started(
+                    worker,
+                    LaserAutoCalibrationScope(
+                        mode="shelf",
+                        side=StorageModuleSide.LEFT,
+                        shelf_idx=0,
+                    ),
+                )
+
+    run_session_mock.assert_not_awaited()
+    assert manager._task is None
+
+
+def test_out_of_datum_shelf_rescan_needs_no_xy_offset() -> None:
+    """The datum exists but sits outside the scanned shelf, so the rescan keeps the configured frame."""
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config()
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    grid = StorageGrid()
+    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
+    worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+
+    with patch(
+        "openshelf_os_server.core.laser_auto_calibration.scope_runner.get_root_config",
+        return_value=config,
+    ):
+        manager._validate_requested_scope_config(
+            LaserAutoCalibrationScope(
+                mode="shelf",
+                side=StorageModuleSide.LEFT,
+                shelf_idx=3,
+            ),
+            worker,
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_refuses_when_the_datum_cell_is_not_marked_manual() -> None:
+    """A hand-calibrated cell elsewhere on the side is not the frame the run needs."""
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config(
+        left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    grid = StorageGrid()
+    grid.left_module = [
+        _manual_shelf(
+            0,
+            [
+                _manual_cell(0, 354.0, 41.0),
+                _manual_cell(1, 519.0, 41.0, is_manual=True),
+            ],
+        )
+    ]
+    worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+
+    with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+        with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
+            with pytest.raises(ValueError, match="left module's bottom-left cell"):
+                await manager.ensure_session_started(
+                    worker,
+                    LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+                )
+
+    run_session_mock.assert_not_awaited()
+    assert manager._task is None
+
+
+@pytest.mark.asyncio
+async def test_narrow_rescan_still_needs_the_datum_on_its_side() -> None:
+    """A manual cell on the scanned shelf does not stand in for the bottom-left datum."""
+    manager = LaserAutoCalibrationManager()
+    scan_config = _build_reference_bounds_scan_config(
+        left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+    )
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
+    grid = StorageGrid()
+    grid.left_module = [
+        _manual_shelf(0, [_manual_cell(0, 354.0, 41.0)]),
+        _manual_shelf(3, [_manual_cell(0, 354.0, 641.0, is_manual=True)]),
+    ]
+    worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+
+    with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+        with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
+            with pytest.raises(ValueError, match="left module's bottom-left cell"):
+                await manager.ensure_session_started(
+                    worker,
+                    LaserAutoCalibrationScope(mode="shelf", side=StorageModuleSide.LEFT, shelf_idx=3),
+                )
+
+    run_session_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1253,7 +1362,10 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
                                         side_effect=lambda next_config, *, version_id=None: saved_configs.append((next_config, version_id)),
                                     ):
                                         with patch('openshelf_os_server.core.laser_auto_calibration.clear_config_cache'):
-                                            await manager._persist_completed_results(worker, completed_results)
+                                            # The stage-extension assertions below are what this test is about;
+                                            # the reference-frame derivation needs a real grid and a matched opening.
+                                            with patch.object(manager, '_derive_reference_offset', AsyncMock(return_value=None)):
+                                                await manager._persist_completed_results(worker, completed_results)
 
     assert len(saved_storage_grids) == 1
     assert len(saved_configs) == 1

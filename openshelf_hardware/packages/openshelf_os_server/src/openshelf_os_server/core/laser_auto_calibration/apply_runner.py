@@ -17,12 +17,32 @@ _MANUAL_SHELF_MATCH_TOLERANCE_MM = 60.0
 _MANUAL_CELL_MATCH_TOLERANCE_MM = 40.0
 
 
-def _z_stall_requested(scan_config: Any, requested_scope: Any = None) -> bool:
-    """`z_stall_anchor_enabled` is the machine's setting; the scope flag is this run's request."""
-    if getattr(scan_config, "z_stall_anchor_enabled", False) is True:
-        return True
+def _z_stall_requested(scan_config: Any) -> bool:
+    """`z_stall_anchor_enabled` is the machine's setting: a probed model is only valid for the
+    machine it was probed on, so fitting one is an explicit per-machine choice, not a per-run one."""
+    return getattr(scan_config, "z_stall_anchor_enabled", False) is True
 
-    return getattr(requested_scope, "derive_z_model_from_stall", False) is True
+
+def _reference_derivation_scope(
+    requested_scope: Any,
+) -> tuple[int | None, int | None] | None:
+    """Shelf and cell the datum is derived from in this run's scan, or None when it cannot be seen.
+
+    Thin adapter over `select_datum_derivation_scope`: the rule lives in the package so the
+    scope-validation and apply paths cannot drift apart. A full-module scan sees every opening,
+    so it frames the side from all of its manual cells (None, None). A shelf or cell rescan sees
+    only its own part of the side: when that part *is* the datum the run re-frames from it, and
+    otherwise the scan holds nothing to measure the frame against, so the run keeps the frame the
+    datum already established rather than failing a routine rescan.
+    """
+    if requested_scope is None:
+        return (None, None)
+
+    return laser_module.select_datum_derivation_scope(
+        mode=getattr(requested_scope, "mode", None),
+        shelf_idx=getattr(requested_scope, "shelf_idx", None),
+        cell_idx=getattr(requested_scope, "cell_idx", None),
+    )
 
 
 def _reference_offset_scan_config(
@@ -549,28 +569,29 @@ class ApplyRunnerMixin:
     async def _derive_reference_offset(
         self,
         *,
-        worker: RobotWorker,
         side: StorageModuleSide,
         analysis: Any,
         source_grid: Any,
-        shelf_idx: int | None = None,
-        cell_idx: int | None = None,
-        force: bool = False,
     ) -> laser_module.ReferenceOffsetResult | None:
-        """Derive this side's xy offset from the manually calibrated cells it references.
+        """Derive this side's xy offset from the hand-calibrated datum its scan can see.
 
-        Returns None when the run was not asked to derive one. The result is published before
-        the apply touches anything, so a failure later still shows what the reference frame
-        implied. The derived value is used and persisted by the caller, not here.
-
-        `force` covers the z probe, which needs the same hand-calibrated datum to validate its
-        fit even when the run is not re-framing xy.
+        Returns None when the run's scope does not hold the bottom-left datum cell: the frame is
+        anchored on that cell, and a scan of some other opening holds nothing to re-derive it
+        from. The result is published before the apply touches anything, so a failure later still
+        shows what the reference frame implied. The derived value is used and persisted by the
+        caller, not here.
         """
-        requested_scope = self._snapshot.requested_scope
+        side_name = _side_to_module_name(side)
+        derivation_scope = _reference_derivation_scope(self._snapshot.requested_scope)
 
-        if force is not True and requested_scope.derive_offsets_from_manual_cells is not True:
+        if derivation_scope is None:
+            laser_module.print_status(
+                f"reference_offset=skipped side={side_name} reason=datum_out_of_scan "
+                f"datum={laser_module.REFERENCE_DATUM_SHELF_IDX}:{laser_module.REFERENCE_DATUM_CELL_IDX}"
+            )
             return None
 
+        shelf_idx, cell_idx = derivation_scope
         result = laser_module.derive_reference_offsets(
             grid=source_grid,
             analysis=analysis,
@@ -580,7 +601,7 @@ class ApplyRunnerMixin:
             cell_idx=cell_idx,
         )
         laser_module.print_status(
-            f"reference_offset_derivation side={_side_to_module_name(side)} "
+            f"reference_offset_derivation side={side_name} "
             f"samples={result.sample_count} offset_x_mm={result.offset_x_mm:.3f} "
             f"offset_y_mm={result.offset_y_mm:.3f} spread_x_mm={result.spread_x_mm:.3f} "
             f"spread_y_mm={result.spread_y_mm:.3f} "
@@ -624,15 +645,18 @@ class ApplyRunnerMixin:
         allow_missing: bool = False,
         source_grid: Any = None,
         manual_reference: laser_module.ReferenceOffsetResult | None = None,
+        allow_probe: bool = True,
     ) -> tuple[float, float] | None:
         """Resolve (intercept, slope) for z_offset = wall_depth + intercept + slope * grab_x.
 
         `z_stall_anchor_enabled` re-derives the model by probing the plate and replaces the
         configured one: a probed model is only valid for the machine it was probed on, which is
         the point of asking for it. Otherwise the configured model is used as-is once its pin
-        still matches the live tool geometry.
+        still matches the live tool geometry. `allow_probe` is False for a scan whose scope does
+        not hold the datum the probed model is judged against, so a partial rescan keeps the
+        model the machine already has.
         """
-        if _z_stall_requested(scan_config, self._snapshot.requested_scope) is True:
+        if allow_probe is True and _z_stall_requested(scan_config) is True:
             return await self._derive_z_model_from_stall(
                 worker,
                 side,
@@ -700,7 +724,6 @@ class ApplyRunnerMixin:
         config = get_root_config()
         next_config = config.model_copy(deep=True)
         params_dict = next_config.robot.tool.parameters.model_dump()
-        requested_scope = self._snapshot.requested_scope
         reference_results: dict[StorageModuleSide, laser_module.ReferenceOffsetResult] = {}
         reference_persisted: dict[StorageModuleSide, bool] = {}
 
@@ -728,21 +751,10 @@ class ApplyRunnerMixin:
                 raise ValueError("No tray openings detected from scan")
 
             reference_result = await self._derive_reference_offset(
-                worker=worker,
                 side=completed_result.side,
                 analysis=completed_result.analysis,
                 source_grid=source_grid,
             )
-            z_manual_reference = reference_result
-
-            if z_manual_reference is None and _z_stall_requested(scan_config, requested_scope) is True:
-                z_manual_reference = await self._derive_reference_offset(
-                    worker=worker,
-                    side=completed_result.side,
-                    analysis=completed_result.analysis,
-                    source_grid=source_grid,
-                    force=True,
-                )
 
             if reference_result is not None:
                 _reference_offset_scan_config(scan_config, completed_result.side, reference_result)
@@ -765,7 +777,7 @@ class ApplyRunnerMixin:
                 completed_result.analysis,
                 scan_config,
                 source_grid=source_grid,
-                manual_reference=z_manual_reference,
+                manual_reference=reference_result,
             )
 
             if z_delta_model is None:
@@ -859,26 +871,14 @@ class ApplyRunnerMixin:
         grid_path = Path(resolve_grid_path(config))
         grid = laser_module.load_grid(grid_path)
         reference_result = await self._derive_reference_offset(
-            worker=worker,
             side=side,
             analysis=analysis,
             source_grid=grid,
-            shelf_idx=shelf_idx,
         )
-        z_stall_requested = _z_stall_requested(
-            config.robot.grid.scan, self._snapshot.requested_scope
-        )
-        z_manual_reference = reference_result
-
-        if z_manual_reference is None and z_stall_requested is True:
-            z_manual_reference = await self._derive_reference_offset(
-                worker=worker,
-                side=side,
-                analysis=analysis,
-                source_grid=grid,
-                shelf_idx=shelf_idx,
-                force=True,
-            )
+        # The probe's model is judged against the datum, so a rescan whose scope does not hold the
+        # datum cannot fit one: it keeps whatever model the machine already has.
+        datum_in_scan = _reference_derivation_scope(self._snapshot.requested_scope) is not None
+        z_stall_requested = _z_stall_requested(config.robot.grid.scan) and datum_in_scan
 
         # Both derivations write to the config copy, and that copy is what gets saved: editing the
         # live config in place would leave the probe's model unpersisted if the apply then failed.
@@ -899,7 +899,8 @@ class ApplyRunnerMixin:
             apply_config.robot.grid.scan,
             allow_missing=True,
             source_grid=grid,
-            manual_reference=z_manual_reference,
+            manual_reference=reference_result,
+            allow_probe=datum_in_scan,
         )
 
         laser_module.apply_single_shelf_analysis(
@@ -955,28 +956,15 @@ class ApplyRunnerMixin:
             raise ValueError("No detected cell matched the single-cell calibration target")
 
         reference_result = await self._derive_reference_offset(
-            worker=worker,
             side=side,
             analysis=analysis,
             source_grid=grid,
-            shelf_idx=int(target.shelf_idx),
-            cell_idx=int(target.cell_idx),
         )
-        requested_scope = self._snapshot.requested_scope
-        z_stall_requested = _z_stall_requested(scan_config, requested_scope)
+        # A run scoped to some other opening cannot see the datum, so neither the frame nor a
+        # probed model can be re-derived from it.
+        datum_in_scan = _reference_derivation_scope(self._snapshot.requested_scope) is not None
+        z_stall_requested = _z_stall_requested(scan_config) and datum_in_scan
         next_config = config
-        z_manual_reference = reference_result
-
-        if z_manual_reference is None and z_stall_requested is True:
-            z_manual_reference = await self._derive_reference_offset(
-                worker=worker,
-                side=side,
-                analysis=analysis,
-                source_grid=grid,
-                shelf_idx=int(target.shelf_idx),
-                cell_idx=int(target.cell_idx),
-                force=True,
-            )
 
         if reference_result is not None or z_stall_requested is True:
             next_config = config.model_copy(deep=True)
@@ -1007,7 +995,7 @@ class ApplyRunnerMixin:
                 analysis,
                 next_config.robot.grid.scan,
                 source_grid=grid,
-                manual_reference=z_manual_reference,
+                manual_reference=reference_result,
             )
 
         if next_config is not config:

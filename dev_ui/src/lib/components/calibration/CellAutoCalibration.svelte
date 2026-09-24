@@ -8,12 +8,9 @@
 		getLaserAutoCalibrationStreamError,
 		getStorageGrid,
 		type LaserAutoCalibrationAngleResult,
-		type LaserAutoCalibrationReferenceOffset,
 		type LaserAutoCalibrationRequest,
 		type LaserAutoCalibrationSnapshot,
-		type LaserAutoCalibrationZStallResult,
-		type StorageGrid,
-		type StorageModuleSide
+		type StorageGrid
 	} from '$lib/api';
 	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -30,8 +27,6 @@
 	let isAllSelected = $state<boolean>(true);
 	let isAngleCalibrationSelected = $state<boolean>(true);
 	let isExtensionCalibrationSelected = $state<boolean>(true);
-	let isManualReferenceSelected = $state<boolean>(false);
-	let isZProbeSelected = $state<boolean>(false);
 	let preferredAngleCalibration = $state<boolean>(true);
 	let preferredExtensionCalibration = $state<boolean>(true);
 	let selectedSide = $state<'' | 'left_module' | 'right_module'>('');
@@ -79,83 +74,6 @@
 	const isExtensionCalibrationDisabled = $derived.by(() => {
 		return selectedShelf !== '' || isSelectionDisabled === true;
 	});
-
-	/** Cells marked "keep manual" in the selected scope, named the way the operator sees them. */
-	const manualReferenceCells = $derived.by(() => {
-		if (storageGrid === null) {
-			return [];
-		}
-
-		const sides: StorageModuleSide[] =
-			selectedSide === '' ? ['left_module', 'right_module'] : [selectedSide];
-		const labels: string[] = [];
-
-		for (const side of sides) {
-			for (const shelf of storageGrid[side] ?? []) {
-				if (selectedShelf !== '' && shelf.shelf_idx !== Number(selectedShelf)) {
-					continue;
-				}
-
-				for (const cell of shelf.cells) {
-					if (selectedCell !== '' && cell.cell_idx !== Number(selectedCell)) {
-						continue;
-					}
-
-					if (cell.is_manual !== true || cell.calibration_point == null) {
-						continue;
-					}
-
-					labels.push(
-						`${side === 'left_module' ? 'L' : 'R'}:${shelf.shelf_idx}:${cell.cell_idx}`
-					);
-				}
-			}
-		}
-
-		return labels;
-	});
-
-	/**
-	 * The sides the selected scope covers: `all` and `both` cover both modules, a side scope
-	 * covers its one side. The backend needs a usable manual reference cell on every one.
-	 */
-	const scopedSides = $derived.by<StorageModuleSide[]>(() => {
-		if (isAllSelected === true || selectedSide === '') {
-			return ['left_module', 'right_module'];
-		}
-
-		return [selectedSide];
-	});
-
-	/**
-	 * Covered sides whose scope holds no cell marked manual with a stored calibration
-	 * point. `manualReferenceCells` is already restricted to the selected side/shelf/cell,
-	 * so a side is covered only when one of its labels is in the list.
-	 */
-	const missingManualReferenceSides = $derived.by<StorageModuleSide[]>(() => {
-		const missing: StorageModuleSide[] = [];
-
-		for (const side of scopedSides) {
-			const prefix = side === 'left_module' ? 'L:' : 'R:';
-			const hasReferenceCell = manualReferenceCells.some(
-				(label) => label.startsWith(prefix)
-			);
-
-			if (hasReferenceCell === false) {
-				missing.push(side);
-			}
-		}
-
-		return missing;
-	});
-
-	const isManualReferenceActive = $derived(
-		isManualReferenceSelected === true && missingManualReferenceSides.length === 0
-	);
-	const isZProbeActive = $derived(isZProbeSelected === true && isManualReferenceActive === true);
-	const isManualReferenceDisabled = $derived(
-		isSelectionDisabled === true || missingManualReferenceSides.length > 0
-	);
 
 	const isStartDisabled = $derived.by(() => {
 		if (isConnecting === true || isStreamOpen === true || isStreamReconnecting === true) {
@@ -332,8 +250,6 @@
 	function syncScopeSelection(requestedScope: LaserAutoCalibrationRequest): void {
 		isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
 		isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
-		isManualReferenceSelected = requestedScope.derive_offsets_from_manual_cells === true;
-		isZProbeSelected = requestedScope.derive_z_model_from_stall === true;
 
 		// Shelf and cell scopes always drop both options, so only a scope that honours them
 		// may replace the remembered user choice.
@@ -376,27 +292,6 @@
 	}
 
 	/**
-	 * The derivation rides on whatever scope is selected. It is only sent once the scope holds
-	 * a manual cell on every side it covers, so a stale tick cannot start a run the backend
-	 * would reject.
-	 */
-	function withManualReference(
-		request: LaserAutoCalibrationRequest
-	): LaserAutoCalibrationRequest {
-		if (isManualReferenceActive === false) {
-			return request;
-		}
-
-		const withReference = { ...request, derive_offsets_from_manual_cells: true };
-
-		if (isZProbeActive === false) {
-			return withReference;
-		}
-
-		return { ...withReference, derive_z_model_from_stall: true };
-	}
-
-	/**
 	 * Angle and extension calibration only apply to all-, both- and side-scoped runs, so a
 	 * shelf or cell selection forces both off and remembering the last user choice keeps a
 	 * later scope change from silently re-enabling what was just unchecked.
@@ -414,48 +309,48 @@
 
 	function getRequestedScope(): LaserAutoCalibrationRequest {
 		if (isAllSelected === true) {
-			return withManualReference({
+			return {
 				mode: 'all',
 				include_angle_calibration: isAngleCalibrationSelected,
 				include_extension_calibration: isExtensionCalibrationSelected
-			});
+			};
 		}
 
 		if (selectedSide === '') {
-			return withManualReference({
+			return {
 				mode: 'both',
 				include_angle_calibration: isAngleCalibrationSelected,
 				include_extension_calibration: isExtensionCalibrationSelected
-			});
+			};
 		}
 
 		if (selectedShelf === '') {
-			return withManualReference({
+			return {
 				mode: 'side',
 				side: selectedSide,
 				include_angle_calibration: isAngleCalibrationSelected,
 				include_extension_calibration: isExtensionCalibrationSelected
-			});
+			};
 		}
 
 		if (selectedCell === '') {
-			return withManualReference({
+			return {
 				mode: 'shelf',
 				side: selectedSide,
 				shelf_idx: Number(selectedShelf),
 				include_angle_calibration: false,
 				include_extension_calibration: false
-			});
+			};
 		}
 
-		return withManualReference({
+		return {
 			mode: 'cell',
 			side: selectedSide,
 			shelf_idx: Number(selectedShelf),
 			cell_idx: Number(selectedCell),
 			include_angle_calibration: false,
 			include_extension_calibration: false
-		});
+		};
 	}
 
 	function didCloseStream(): void {
@@ -608,22 +503,6 @@
 		message = '';
 	}
 
-	function didChangeManualReference(event: Event): void {
-		const target = event.target as HTMLInputElement;
-
-		isManualReferenceSelected = target.checked;
-		error = '';
-		message = '';
-	}
-
-	function didChangeZProbe(event: Event): void {
-		const target = event.target as HTMLInputElement;
-
-		isZProbeSelected = target.checked;
-		error = '';
-		message = '';
-	}
-
 	async function didClickStart(): Promise<void> {
 		if (browser === false) {
 			return;
@@ -696,14 +575,6 @@
 
 	function getAngleResults(): LaserAutoCalibrationAngleResult[] {
 		return snapshot?.angle_results ?? [];
-	}
-
-	function getReferenceOffsetResults(): LaserAutoCalibrationReferenceOffset[] {
-		return snapshot?.reference_offset_results ?? [];
-	}
-
-	function getZStallResults(): LaserAutoCalibrationZStallResult[] {
-		return snapshot?.z_stall_results ?? [];
 	}
 
 	function getRotationValue(side: 'left_module' | 'right_module'): string {
@@ -857,45 +728,11 @@
 			</tr>
 			<tr>
 				<td colspan="3">
-					<label class="all-toggle">
-						<input
-							type="checkbox"
-							checked={isManualReferenceSelected}
-							onchange={didChangeManualReference}
-							disabled={isManualReferenceDisabled}
-						/>
-						<span>referenced cell is calibrated manually</span>
-					</label>
-					{#if isManualReferenceSelected === true && missingManualReferenceSides.length === 0}
-						<p class="selection-hint">
-							deriving offsets from {manualReferenceCells.join(', ')}; the configured xy offset is
-							ignored for this run and replaced by what these cells imply
-						</p>
-					{:else if missingManualReferenceSides.length === 1}
-						<p class="selection-hint">
-							no cell in this scope is marked manual on the
-							{missingManualReferenceSides[0] === 'left_module' ? 'left' : 'right'} module, so
-						the run uses the configured xy offset
-						</p>
-					{:else if manualReferenceCells.length === 0}
-						<p class="selection-hint">
-							no cell in this scope is marked manual, so the run uses the configured xy offset
-						</p>
-					{/if}
-					<label class="all-toggle">
-						<input
-							type="checkbox"
-							checked={isZProbeSelected}
-							onchange={didChangeZProbe}
-							disabled={isManualReferenceActive === false || isSelectionDisabled === true}
-						/>
-						<span>also probe those cells for the z model (touches the shelf)</span>
-					</label>
-					{#if isZProbeSelected === true && isManualReferenceActive === false}
-						<p class="selection-hint">
-							the z probe needs a manual reference cell above; it will not run without one
-						</p>
-					{/if}
+					<p class="selection-hint">
+						every run frames its offsets from the hand-calibrated bottom-left cell of each side it
+						covers; calibration fails before moving when one of those cells is missing or not marked
+						manual
+					</p>
 				</td>
 			</tr>
 			<tr>
@@ -968,127 +805,6 @@
 		</table>
 	{/if}
 
-	{#if snapshot && snapshot.session_id !== null && getReferenceOffsetResults().length > 0}
-		<table style="margin-top: 1.5em">
-			<thead>
-				<tr>
-					<th colspan="2">derived from manual cells</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each getReferenceOffsetResults() as result}
-					<tr>
-						<td>{result.side === 'left_module' ? 'left' : 'right'} xy offset</td>
-						<td>
-							x {formatNumber(result.offset_x_mm, 3)} / y {formatNumber(result.offset_y_mm, 3)}
-							{#if result.configured_offset_x_mm !== null && result.configured_offset_y_mm !== null}
-								(was {formatNumber(result.configured_offset_x_mm, 3)} /
-								{formatNumber(result.configured_offset_y_mm, 3)})
-							{/if}
-						</td>
-					</tr>
-					<tr>
-						<td>{result.side === 'left_module' ? 'left' : 'right'} spread</td>
-						<td>
-							x {formatNumber(result.spread_x_mm, 3)} / y {formatNumber(result.spread_y_mm, 3)}
-							over {result.sample_count} cell{result.sample_count === 1 ? '' : 's'}
-							{result.persisted === true ? '(saved to config)' : '(not saved)'}
-							{#if result.sample_count === 1}(single cell: only as precise as its manual placement){/if}
-						</td>
-					</tr>
-					{#if result.intercept_mm !== null}
-						<tr>
-							<td>{result.side === 'left_module' ? 'left' : 'right'} z intercept</td>
-							<td>
-								{formatNumber(result.intercept_mm, 3)} — derived, not applied; set
-								robot.grid.scan.{result.side === 'left_module' ? 'left' : 'right'}_z_offset_model to
-								use it
-							</td>
-						</tr>
-					{/if}
-					<tr>
-						<td>{result.side === 'left_module' ? 'left' : 'right'} reference cells</td>
-						<td>
-							{#each result.samples as sample}
-								<div>
-									{sample.shelf_idx}:{sample.cell_idx} manual
-									{formatNumber(sample.manual_x_mm, 2)}/{formatNumber(sample.manual_y_mm, 2)} vs detected
-									{formatNumber(sample.detected_x_mm, 2)}/{formatNumber(sample.detected_y_mm, 2)}
-									(delta {formatNumber(sample.delta_x_mm, 2)}/{formatNumber(sample.delta_y_mm, 2)})
-								</div>
-							{/each}
-							{#each result.skipped as skipped}
-								<div class="reference-warning">{skipped}</div>
-							{/each}
-						</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	{/if}
-
-	{#if snapshot && snapshot.session_id !== null && getZStallResults().length > 0}
-		<table style="margin-top: 1.5em">
-			<thead>
-				<tr>
-					<th colspan="2">probed z model</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each getZStallResults() as result}
-					<tr>
-						<td>{result.side === 'left_module' ? 'left' : 'right'} intercept / slope</td>
-						<td>
-							{formatNumber(result.intercept_mm, 3)} / {formatNumber(result.slope_per_mm, 5)}
-							({result.slope_source === 'probe' ? 'slope probed' : `slope ${result.slope_source}`})
-							{result.persisted === true ? '(saved to config)' : '(not saved)'}
-						</td>
-					</tr>
-					<tr>
-						<td>{result.side === 'left_module' ? 'left' : 'right'} reference check</td>
-						<td>
-							manual {formatNumber(result.manual_intercept_mm, 3)}, agreement
-							{formatNumber(result.manual_agreement_mm, 3)} (tolerance
-							{formatNumber(result.manual_agreement_tolerance_mm, 2)})
-							{#if result.manual_captured_stage_mm !== null}
-								· datum saved at stage {formatNumber(result.manual_captured_stage_mm, 2)}
-							{/if}
-							{#if result.manual_capture_unstamped > 0}
-								· {result.manual_capture_unstamped} reference cell(s) saved before the capture stage
-								was recorded
-							{/if}
-						</td>
-					</tr>
-					<tr>
-						<td>{result.side === 'left_module' ? 'left' : 'right'} probes</td>
-						<td>
-							{result.sample_count} probes, {result.fit_source}, over
-							{formatNumber(result.x_span_mm, 1)}mm at stage
-							{formatNumber(result.stage_extension_mm, 2)}
-							{#each result.samples as sample}
-								<div>
-									{sample.shelf_idx}:{sample.cell_idx} x {formatNumber(sample.probe_x_mm, 1)} wall
-									{formatNumber(sample.wall_depth_mm, 2)} → contact
-									{formatNumber(sample.z_contact_mm, 3)} (delta
-									{formatNumber(sample.delta_mm, 3)})
-									{#if sample.z_contact_repeat_mm !== null}
-										repeat {formatNumber(sample.z_contact_repeat_mm, 3)}
-									{/if}
-								</div>
-							{/each}
-							{#each result.dropped_repeats as dropped}
-								<div class="reference-warning">repeat moved: {dropped}</div>
-							{/each}
-							{#each result.skipped as skipped}
-								<div class="reference-warning">skipped: {skipped}</div>
-							{/each}
-						</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	{/if}
-
 	{#if snapshot && snapshot.session_id !== null}
 		<table style="margin-top: 1.5em">
 			<thead>
@@ -1145,9 +861,5 @@
 	.selection-hint {
 		margin: 0.25rem 0 0 1.5rem;
 		opacity: 0.8;
-	}
-
-	.reference-warning {
-		color: var(--warning-color, #b45309);
 	}
 </style>
