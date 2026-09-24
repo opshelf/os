@@ -4,9 +4,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import numpy as np
 import pytest
 
-from openshelf_os.laser_calibration import GapCandidateRegion
+from openshelf_os.laser_calibration import GapCandidateRegion, load_partial_grid_scan
 from openshelf_os.laser_calibration.scan import ScanBounds
 from openshelf_os.storage import StorageModuleSide
 
@@ -323,3 +324,40 @@ def test_from_run_apply_uses_single_cell_rescan(
 	assert call_kwargs['target'].cell_idx == 2
 	assert call_kwargs['side'] == StorageModuleSide.LEFT
 	assert call_kwargs['detected_cell'] is detected_cell
+
+
+def test_load_partial_grid_scan_loads_saved_array(tmp_path: Path) -> None:
+    npy_path = tmp_path / "coarse_depth.npy"
+    np.save(npy_path, np.array([[10.0, np.nan, 22.0, 33.0], [20.0, 21.0, np.nan, 34.0]]))
+
+    result = load_partial_grid_scan(
+        npy_path=npy_path,
+        bounds=ScanBounds(x_min=0.0, x_max=15.0, y_min=0.0, y_max=15.0, step_mm=5.0),
+        step_mm=5.0,
+    )
+
+    assert result.x_positions == [0.0, 5.0, 10.0, 15.0]
+    assert result.y_positions == [0.0, 5.0]
+    assert result.depth_rows == [[10.0, None, 22.0, 33.0], [20.0, 21.0, None, 34.0]]
+
+
+@pytest.mark.parametrize(
+    "saved, error",
+    [
+        pytest.param(np.array([1.0, 2.0]), "Expected 2D array", id="not_2d"),
+        pytest.param(np.array([[1.0, 2.0]]), "does not match bounds", id="width_mismatch"),
+        pytest.param(np.zeros((6, 4)), "exceeds bounds", id="height_overflow"),
+    ],
+)
+def test_load_partial_grid_scan_rejects_malformed_array(
+    tmp_path: Path, saved, error: str
+) -> None:
+    npy_path = tmp_path / "saved.npy"
+    np.save(npy_path, saved)
+
+    with pytest.raises(ValueError, match=error):
+        load_partial_grid_scan(
+            npy_path=npy_path,
+            bounds=ScanBounds(x_min=0.0, x_max=15.0, y_min=0.0, y_max=15.0, step_mm=5.0),
+            step_mm=5.0,
+        )
