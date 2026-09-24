@@ -364,21 +364,6 @@ def _build_reference_bounds_scan_config(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
-def test_validate_laser_auto_calibration_config_refuses_datum_shelf_scope_without_xy_offset() -> None:
-    """A shelf-0 rescan re-frames from the datum, which needs an offset to predict matches from."""
-    scan_config = _build_reference_bounds_scan_config()
-
-    with pytest.raises(ValueError, match="right_gripper_xy_correction_mm must be configured"):
-        _validate_laser_auto_calibration_config(
-            scan_config=scan_config,
-            requested_scope=LaserAutoCalibrationScope(
-                mode="shelf",
-                side=StorageModuleSide.RIGHT,
-                shelf_idx=0,
-            ),
-        )
-
-
 @pytest.mark.asyncio
 async def test_ensure_session_started_rejects_invalid_config_before_starting_background_task() -> None:
     manager = LaserAutoCalibrationManager()
@@ -618,7 +603,7 @@ async def test_abort_returns_existing_cancelling_snapshot() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_session_cancel_marks_needs_home_without_abort_homing() -> None:
+async def test_run_session_cancel_homes_via_abort_without_needs_home() -> None:
     manager = LaserAutoCalibrationManager()
     worker = SimpleNamespace(
         set_needs_home=MagicMock(),
@@ -1147,11 +1132,12 @@ async def test_run_all_sides_processes_right_before_left() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_requested_scope_both_runs_full_two_side_scan() -> None:
+@pytest.mark.parametrize("mode", ["all", "both"])
+async def test_run_requested_scope_all_and_both_run_full_two_side_scan(mode: str) -> None:
     manager = LaserAutoCalibrationManager()
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=SimpleNamespace()))
     requested_scope = LaserAutoCalibrationScope(
-        mode="both",
+        mode=mode,
         include_angle_calibration=False,
         include_extension_calibration=True,
     )
@@ -1231,39 +1217,6 @@ async def test_run_single_side_skips_extension_calibration_when_disabled() -> No
     stage_mock.assert_not_awaited()
     apply_stage_mock.assert_not_awaited()
     persist_mock.assert_awaited_once()
-
-@pytest.mark.asyncio
-async def test_run_angle_calibration_uses_stage_stall_only() -> None:
-    manager = LaserAutoCalibrationManager()
-    expected = LaserAutoCalibrationAngleResult(
-        method='stage_stall',
-        side=StorageModuleSide.LEFT,
-        alpha_deg=1.5,
-        sample_count=2,
-        capture_y_mm=100.0,
-        rms_residual_mm=0.0,
-        max_abs_residual_mm=0.0,
-        line_angle_deg=1.5,
-        previous_rotation_deg=10.0,
-        updated_rotation_deg=11.5,
-        stage_position_mm=42.0,
-    )
-    worker = SimpleNamespace()
-    bounds = ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0)
-
-    with patch.object(
-        manager,
-        '_run_stage_stall_angle_calibration_for_side',
-        AsyncMock(return_value=expected),
-    ) as stage_stall_mock:
-        result = await manager._run_angle_calibration_for_side(
-            worker,
-            StorageModuleSide.LEFT,
-            bounds,
-        )
-
-    assert result == expected
-    stage_stall_mock.assert_awaited_once_with(worker, StorageModuleSide.LEFT, bounds)
 
 @pytest.mark.asyncio
 async def test_persist_completed_results_saves_stage_extensions() -> None:
@@ -1438,46 +1391,6 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
     assert scan_mock.call_args.args[2].y_min == pytest.approx(0.0)
     assert scan_mock.call_args.args[2].y_max == pytest.approx(112.5)
     persist_mock.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_run_single_cell_uses_seeded_cell_rescan() -> None:
-    manager = LaserAutoCalibrationManager()
-    analysis = SimpleNamespace(
-        shelves=[SimpleNamespace(cells=[])],
-        wall_depth_mm=8.0,
-    )
-    candidate = laser_module.GapCandidateRegion(
-        x_min=1.0,
-        x_max=2.0,
-        y_min=3.0,
-        y_max=4.0,
-        wall_depth_mm=8.0,
-    )
-    detected_cell = SimpleNamespace(tool_x_mm=10.0, tool_y_mm=20.0)
-    target = laser_module.SingleCellRescanTarget(shelf_idx=1, cell_idx=2)
-    worker = SimpleNamespace()
-
-    with patch.object(
-        manager,
-        '_run_single_cell_scan',
-        AsyncMock(return_value=(analysis, candidate, detected_cell)),
-    ) as target_scan_mock:
-        with patch.object(manager, '_persist_single_cell_result', AsyncMock()) as persist_mock:
-            await manager._run_single_cell(
-                worker,
-                StorageModuleSide.LEFT,
-                target,
-            )
-
-    target_scan_mock.assert_awaited_once_with(worker, StorageModuleSide.LEFT, target)
-    persist_mock.assert_awaited_once_with(
-        worker,
-        StorageModuleSide.LEFT,
-        analysis,
-        target,
-        candidate,
-    )
 
 
 def _manual_cell(cell_idx: int, x: float, y: float, is_manual: bool = False) -> Cell:

@@ -269,18 +269,7 @@ class ScopeRunnerMixin:
         left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
         right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
 
-        if requested_scope.mode == "all":
-            await self._run_all_sides(
-                worker,
-                requested_scope.include_angle_calibration,
-                requested_scope.include_extension_calibration,
-                left_bounds=left_bounds,
-                right_bounds=right_bounds,
-            )
-
-            return
-
-        if requested_scope.mode == "both":
+        if requested_scope.mode in ("all", "both"):
             await self._run_all_sides(
                 worker,
                 requested_scope.include_angle_calibration,
