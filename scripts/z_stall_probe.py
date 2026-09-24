@@ -35,6 +35,7 @@ for import_path in reversed(PYTHON_PATHS):
 
 import openshelf_os.laser_calibration as laser_module
 from openshelf_os.common import CONFIG_PATH, load_config_file
+from openshelf_os.laser_calibration.defaults import Z_OFFSET_MODEL_PARAM_TOLERANCE_MM
 from openshelf_os.runtime_state import RuntimeStatePaths, paths_for_config_file
 from openshelf_os.storage import StorageModuleSide
 
@@ -178,7 +179,7 @@ def resolve_probe_reach(
 	Planning and candidate selection only: `run_z_stall_anchor` applies the xy offset and the
 	probe shift itself, so the run hands it the raw axis limits.
 	"""
-	xy_offset = laser_module.get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side)
 	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
 	shift_mm = float(scan_config.z_stall_probe_x_shift_mm)
 	upper_mm, lower_mm = resolve_motor_limits(config, "x_axis")
@@ -347,7 +348,7 @@ def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side:
 
 	if manual_reference.z_captured_stage_mm is not None:
 		stage_delta_mm = abs(float(manual_reference.z_captured_stage_mm) - float(result.stage_extension_mm))
-		pin_tolerance_mm = float(scan_config.z_offset_model_param_tolerance_mm)
+		pin_tolerance_mm = float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM)
 		stage_ok = stage_delta_mm <= pin_tolerance_mm
 		print(
 			f"           datum captured at stage {float(manual_reference.z_captured_stage_mm):.2f}mm vs probe "
@@ -476,7 +477,7 @@ async def main() -> int:
 			side=side,
 			scan_config=scan_config,
 			excluded_cells=excluded_cells,
-			xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
+			xy_offset=laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side),
 		)
 		return 0
 
@@ -490,7 +491,7 @@ async def main() -> int:
 			x_axis_limit_mm=x_axis_limit_mm,
 			x_axis_lower_limit_mm=x_axis_lower_limit_mm,
 			z_axis_limit_mm=z_axis_limit_mm,
-			xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
+			xy_offset=laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side),
 			should_abort=None,
 		)
 
