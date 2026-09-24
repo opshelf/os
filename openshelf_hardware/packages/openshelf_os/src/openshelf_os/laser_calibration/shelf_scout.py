@@ -115,6 +115,81 @@ def filter_shelf_edges(
 	return filtered_edges
 
 
+def detect_shelf_edges_from_line(
+	*,
+	x_mm: float,
+	y_positions: list[float],
+	depth_values: list[float | None],
+	brim_height_mm: float = SHELF_BRIM_HEIGHT_MM,
+	min_positive_run_length: int = SHELF_EDGE_CONFIRMATION_COUNT,
+	post_edge_skip_mm: float = 0.0,
+	stop_after_first_edge: bool = False,
+) -> list[ShelfSurfaceEdge]:
+	"""Find shelf top edges in a complete line, with the stepped scanner's rules.
+
+	The run of positive-depth samples has to confirm the edge before it is accepted, and a
+	confirmed edge discards everything within `post_edge_skip_mm` after it, so a flying pass
+	reproduces what the stepped pass would have probed (the stepped pass skips those positions
+	rather than sampling them).
+	"""
+	if len(depth_values) != len(y_positions):
+		raise ValueError("depth_values length does not match y_positions")
+
+	descending = len(y_positions) < 2 or y_positions[-1] <= y_positions[0]
+	detected_edges: list[ShelfSurfaceEdge] = []
+	position_idx = 0
+	run_start_idx: int | None = None
+	run_end_idx: int | None = None
+
+	while position_idx < len(y_positions):
+		y_mm = y_positions[position_idx]
+
+		if is_positive_depth(depth_values[position_idx]) is True:
+			if run_start_idx is None:
+				run_start_idx = position_idx
+
+			run_end_idx = position_idx
+			position_idx += 1
+			continue
+
+		if run_start_idx is None or run_end_idx is None:
+			position_idx += 1
+			continue
+
+		edge = build_shelf_edge_for_transition(
+			x_mm=x_mm,
+			transition_y_mm=y_mm,
+			positive_run_length=run_end_idx - run_start_idx + 1,
+			brim_height_mm=brim_height_mm,
+			min_positive_run_length=min_positive_run_length,
+		)
+
+		if edge is None:
+			run_start_idx = None
+			run_end_idx = None
+			position_idx += 1
+			continue
+
+		detected_edges.append(edge)
+
+		if stop_after_first_edge is True:
+			break
+
+		skip_target_y_mm = y_mm - post_edge_skip_mm if descending is True else y_mm + post_edge_skip_mm
+
+		while position_idx < len(y_positions) and (
+			(y_positions[position_idx] > skip_target_y_mm)
+			if descending is True
+			else (y_positions[position_idx] < skip_target_y_mm)
+		):
+			position_idx += 1
+
+		run_start_idx = None
+		run_end_idx = None
+
+	return detected_edges
+
+
 async def scan_shelf_scout_line(
 	tool: Any,
 	*,
