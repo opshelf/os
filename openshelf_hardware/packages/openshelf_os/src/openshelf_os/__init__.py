@@ -182,6 +182,11 @@ def _sentry_log_has_door_motor_recovery_failure(log: dict[str, Any]) -> bool:
 	return any(_is_door_motor_recovery_failure(value) is True for value in attributes.values())
 
 
+def _event_entries(event: dict[str, Any]) -> list[Any]:
+	entries_value = event.get("entries", [])
+	return cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
+
+
 def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
 	if event.get("message") == target:
 		return True
@@ -192,7 +197,7 @@ def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
 		if any(logentry.get(key) == target for key in ("message", "formatted")) is True:
 			return True
 
-	for entry in event.get("entries", []):
+	for entry in _event_entries(event):
 		if isinstance(entry, dict) is False:
 			continue
 
@@ -216,7 +221,7 @@ def _sentry_event_has_door_motor_recovery_failure(event: dict[str, Any]) -> bool
 		if any(_is_door_motor_recovery_failure(logentry.get(key)) is True for key in ("message", "formatted")):
 			return True
 
-	for entry in event.get("entries", []):
+	for entry in _event_entries(event):
 		if isinstance(entry, dict) is False:
 			continue
 
@@ -240,7 +245,7 @@ def _sentry_event_has_suppressed_pymodbus_message(event: dict[str, Any]) -> bool
 		if any(_is_suppressed_pymodbus_log_message(logentry.get(key)) is True for key in ("message", "formatted")):
 			return True
 
-	for entry in event.get("entries", []):
+	for entry in _event_entries(event):
 		if isinstance(entry, dict) is False:
 			continue
 

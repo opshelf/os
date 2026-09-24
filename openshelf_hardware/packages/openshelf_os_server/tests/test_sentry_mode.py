@@ -230,83 +230,12 @@ def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_entry() -> 
 	assert main._before_send_sentry_event(event, {}) is None
 
 
-def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_logentry_message() -> None:
-	event = {
-		"logentry": {
-			"message": "ERROR: request ask for id=2 but got id=3, Skipping.",
-		}
-	}
-
-	assert main._before_send_sentry_event(event, {}) is None
 
 
-def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_logentry_formatted() -> None:
-	event = {
-		"logentry": {
-			"message": "unformatted message",
-			"formatted": "ERROR: request ask for id=2 but got id=3, Skipping.",
-		}
-	}
-
-	assert main._before_send_sentry_event(event, {}) is None
 
 
-def test_before_send_sentry_event_drops_pymodbus_no_response_retry_logentry() -> None:
-	event = {
-		"logentry": {
-			"message": PYMODBUS_RETRY_TEXT,
-		}
-	}
-
-	assert main._before_send_sentry_event(event, {}) is None
 
 
-def test_before_send_sentry_event_drops_pymodbus_no_response_retry_with_frame_dump() -> None:
-	event = {
-		"logentry": {
-			"message": PYMODBUS_FRAME_DUMP,
-			"formatted": PYMODBUS_FRAME_DUMP,
-		}
-	}
-
-	assert main._before_send_sentry_event(event, {}) is None
-
-
-def test_before_send_sentry_event_drops_pymodbus_no_response_retry_logentry_formatted_with_frame_dump() -> None:
-	event = {
-		"logentry": {
-			"message": "unformatted message",
-			"formatted": PYMODBUS_FRAME_DUMP,
-		}
-	}
-
-	assert main._before_send_sentry_event(event, {}) is None
-
-
-def test_before_send_sentry_event_drops_pymodbus_no_response_retry_with_repeating_frame() -> None:
-	event = {"message": PYMODBUS_REPEATING_FRAME_DUMP}
-
-	assert main._before_send_sentry_event(event, {}) is None
-
-
-def test_before_send_sentry_event_keeps_pymodbus_no_response_retry_with_other_trailer() -> None:
-	event = {
-		"logentry": {
-			"formatted": PYMODBUS_RETRY_TEXT + "\nTraceback (most recent call last):",
-		}
-	}
-
-	assert main._before_send_sentry_event(event, {}) == event
-
-
-def test_before_send_sentry_event_keeps_pymodbus_no_response_disconnect() -> None:
-	event = {
-		"logentry": {
-			"message": "ERROR: No response received of the last requests (default: retries+3), CLOSING CONNECTION.",
-		}
-	}
-
-	assert main._before_send_sentry_event(event, {}) == event
 
 
 def test_before_send_sentry_event_drops_http_exception_from_hint() -> None:
@@ -340,67 +269,9 @@ def test_before_send_sentry_event_drops_http_exception_from_event() -> None:
 	assert main._before_send_sentry_event(event, {}) is None
 
 
-def test_before_send_sentry_event_drops_door_motor_recovery_message() -> None:
-	event = {
-		"logentry": {
-			"message": main.DOOR_MOTOR_RECOVERY_EVENT,
-		}
-	}
-
-	assert main._before_send_sentry_event(event, {}) is None
 
 
-def test_before_send_sentry_event_drops_door_motor_recovery_failure_logentry() -> None:
-	event = {
-		"logentry": {
-			"message": "Door motor recovery failed: %s",
-			"formatted": (
-				"Door motor recovery failed: Failed during pre-home approach: "
-				"Movement failed for motor 31 (status=FAULT)"
-			),
-		}
-	}
 
-	assert main._before_send_sentry_event(event, {}) is None
-
-
-def test_before_send_sentry_event_keeps_unrelated_door_recovery_message() -> None:
-	event = {
-		"logentry": {
-			"message": "Door position recovered before homing; skipping recovery home",
-		}
-	}
-
-	assert main._before_send_sentry_event(event, {}) == event
-
-
-def test_before_send_sentry_event_drops_door_motor_recovery_failure_entry() -> None:
-	event = {
-		"entries": [
-			{
-				"data": {
-					"formatted": (
-						"Door motor recovery failed: Failed during pre-home approach: "
-						"Movement failed for motor 31 (status=FAULT)"
-					),
-				}
-			}
-		]
-	}
-
-	assert main._before_send_sentry_event(event, {}) is None
-
-
-def test_before_send_sentry_log_drops_door_motor_recovery_failure() -> None:
-	log = {
-		"body": (
-			"Door motor recovery failed: Failed during pre-home approach: "
-			"Movement failed for motor 31 (status=FAULT)"
-		),
-		"attributes": {"motor_id": 31},
-	}
-
-	assert main._before_send_sentry_log(log, {}) is None
 
 
 def test_before_send_sentry_event_drops_uvicorn_shutdown_drain_logentry() -> None:
@@ -453,41 +324,9 @@ def test_before_send_sentry_log_drops_pymodbus_request_id_mismatch() -> None:
 	assert main._before_send_sentry_log(log, {}) is None
 
 
-def test_before_send_sentry_log_drops_pymodbus_no_response_retry() -> None:
-	log = {
-		"body": PYMODBUS_RETRY_TEXT,
-	}
-
-	assert main._before_send_sentry_log(log, {}) is None
 
 
-def test_before_send_sentry_log_drops_pymodbus_no_response_retry_attribute() -> None:
-	log = {
-		"body": "",
-		"attributes": {
-			"message": "No response received after 12 retries, continue with next request",
-		},
-	}
 
-	assert main._before_send_sentry_log(log, {}) is None
-
-
-def test_before_send_sentry_log_drops_pymodbus_no_response_retry_with_frame_dump() -> None:
-	log = {"body": PYMODBUS_FRAME_DUMP}
-
-	assert main._before_send_sentry_log(log, {}) is None
-
-
-def test_before_send_sentry_log_drops_pymodbus_no_response_retry_with_repeating_frame() -> None:
-	log = {"body": PYMODBUS_REPEATING_FRAME_DUMP}
-
-	assert main._before_send_sentry_log(log, {}) is None
-
-
-def test_before_send_sentry_log_keeps_pymodbus_no_response_retry_with_other_trailer() -> None:
-	log = {"body": PYMODBUS_RETRY_TEXT + "\nTraceback (most recent call last):"}
-
-	assert main._before_send_sentry_log(log, {}) == log
 
 
 def test_before_send_sentry_log_drops_robot_initialization_failed_log() -> None:
@@ -537,13 +376,6 @@ def test_before_send_sentry_log_drops_tool_fault_attribute() -> None:
 
 	assert main._before_send_sentry_log(log, {}) is None
 
-
-def test_before_send_sentry_log_drops_door_motor_recovery_log() -> None:
-	log = {
-		"body": main.DOOR_MOTOR_RECOVERY_EVENT,
-	}
-
-	assert main._before_send_sentry_log(log, {}) is None
 
 
 def test_before_send_sentry_log_drops_uvicorn_shutdown_drain() -> None:

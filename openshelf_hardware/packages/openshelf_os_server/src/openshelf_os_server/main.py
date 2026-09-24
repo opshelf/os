@@ -34,6 +34,17 @@ from sqlalchemy.pool import NullPool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.device import get_device_id
+from openshelf_os import (
+    DOOR_MOTOR_RECOVERY_EVENT,
+    _redact_sensitive_mapping,
+    _sentry_event_has_door_motor_recovery_failure,
+    _sentry_event_has_message,
+    _sentry_event_has_suppressed_pymodbus_message,
+    _sentry_log_has_door_motor_recovery_failure,
+    _sentry_log_has_message,
+    _sentry_log_is_suppressed_pymodbus_message,
+    _strip_pymodbus_frame_dump,
+)
 from openshelf_os.common import CONFIG_PATH, OperatingMode
 from openshelf_os.operating_mode import should_enable_sentry
 from openshelf_os.runtime_state import RuntimeStatePaths
@@ -81,7 +92,6 @@ from openshelf_os_server.utils.cors_policy import allows_credentials, resolve_al
 configure_logging()
 logger = get_logger(__name__)
 
-SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
 PYMODBUS_NO_RESPONSE_RETRY_PREFIX = "No response received after "
 PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
@@ -90,7 +100,6 @@ PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
 # no-response retry is the log text plus that trailer. Every appended line
 # carries the marker prefix; a deduplicated frame shows up as
 # ">>>>> Repeating....".
-PYMODBUS_FRAME_DUMP_LINE_PREFIX = ">>>>> "
 ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 TOOL_FAULT_LOG_EVENT = "Tool fault detected - manual intervention required"
 # The message uvicorn hands to Task.cancel() for every request task that is still running when
@@ -107,7 +116,6 @@ ANYIO_STREAM_CONTEXT_ERRORS = (
 	"ClosedResourceError",
 	"BrokenResourceError",
 )
-DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
 DOOR_MOTOR_RECOVERY_FAILED_PREFIX = "Door motor recovery failed:"
 # The log line uvicorn writes when the drain window given to it in start()
 # (`timeout_graceful_shutdown`) expires. uvicorn.Server.shutdown logs it through its own
@@ -124,50 +132,10 @@ ROBOT_UNAVAILABLE_REQUEST_PATH_PREFIXES = (
 )
 
 
-def _redact_sensitive_mapping(value: Any) -> Any:
-	if isinstance(value, dict) is True:
-		redacted: dict[str, Any] = {}
-
-		for key, item in value.items():
-			if isinstance(key, str) is True and key.lower() in SENSITIVE_HEADER_NAMES:
-				redacted[key] = "[Filtered]"
-				continue
-
-			redacted[key] = _redact_sensitive_mapping(item)
-
-		return redacted
-
-	if isinstance(value, list) is True:
-		return [_redact_sensitive_mapping(item) for item in value]
-
-	return value
-
 
 def _is_pymodbus_request_id_mismatch(message: Any) -> bool:
 	return isinstance(message, str) is True and message.startswith(PYMODBUS_REQUEST_ID_MISMATCH_PREFIX)
 
-
-def _strip_pymodbus_frame_dump(message: str) -> str:
-	"""Drop the frame dump pymodbus appends to its error messages.
-
-	``Log.error``/``Log.critical`` add the last frames as ``>>>>> send:`` /
-	``>>>>> recv:`` lines when DEBUG logging is off, so only the first line
-	carries the log text. Anything else after a newline is left untouched.
-	"""
-	log_text, separator, trailer = message.partition("\n")
-	if separator == "":
-		return message
-
-	trailer_lines = [line for line in trailer.split("\n") if line.strip() != ""]
-	if trailer_lines == []:
-		return message
-
-	if any(
-		line.startswith(PYMODBUS_FRAME_DUMP_LINE_PREFIX) is False for line in trailer_lines
-	):
-		return message
-
-	return log_text
 
 
 def _is_pymodbus_no_response_retry(message: Any) -> bool:
@@ -209,18 +177,6 @@ def _is_door_motor_recovery_failure(message: Any) -> bool:
 	return isinstance(message, str) is True and message.startswith(DOOR_MOTOR_RECOVERY_FAILED_PREFIX)
 
 
-def _sentry_log_is_suppressed_pymodbus_message(log: dict[str, Any]) -> bool:
-	for key in ("body", "message"):
-		if _is_suppressed_pymodbus_log_message(log.get(key)) is True:
-			return True
-
-	attributes_value = log.get("attributes")
-	if isinstance(attributes_value, dict) is False:
-		return False
-
-	attributes = cast(dict[str, Any], attributes_value)
-	return any(_is_suppressed_pymodbus_log_message(value) is True for value in attributes.values())
-
 
 def _sentry_log_is_uvicorn_shutdown_drain(log: dict[str, Any]) -> bool:
 	for key in ("body", "message"):
@@ -235,33 +191,6 @@ def _sentry_log_is_uvicorn_shutdown_drain(log: dict[str, Any]) -> bool:
 	return any(_is_uvicorn_shutdown_drain_message(value) is True for value in attributes.values())
 
 
-def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
-	for key in ("body", "message"):
-		if log.get(key) == target:
-			return True
-
-	attributes_value = log.get("attributes")
-	if isinstance(attributes_value, dict) is False:
-		return False
-
-	attributes = cast(dict[str, Any], attributes_value)
-	return any(value == target for value in attributes.values())
-
-
-def _sentry_log_has_door_motor_recovery_failure(log: dict[str, Any]) -> bool:
-	# Drop the whole recovery-failure class: the IO-box door recovery is a
-	# best-effort self-healing path, and its failure message is logged without a
-	# stacktrace, so it would only create log-only Sentry issues.
-	for key in ("body", "message"):
-		if _is_door_motor_recovery_failure(log.get(key)) is True:
-			return True
-
-	attributes_value = log.get("attributes")
-	if isinstance(attributes_value, dict) is False:
-		return False
-
-	attributes = cast(dict[str, Any], attributes_value)
-	return any(_is_door_motor_recovery_failure(value) is True for value in attributes.values())
 
 
 def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:
@@ -278,82 +207,7 @@ def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]
 	return [value for value in values_list if isinstance(value, dict) is True]
 
 
-def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
-	if event.get("message") == target:
-		return True
 
-	logentry_value = event.get("logentry")
-	if isinstance(logentry_value, dict) is True:
-		logentry = cast(dict[str, Any], logentry_value)
-		if any(logentry.get(key) == target for key in ("message", "formatted")) is True:
-			return True
-
-	entries_value = event.get("entries", [])
-	entries = cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
-	for entry in entries:
-		if isinstance(entry, dict) is False:
-			continue
-
-		data = entry.get("data")
-		if isinstance(data, dict) is False:
-			continue
-
-		if any(data.get(key) == target for key in ("message", "formatted")) is True:
-			return True
-
-	return False
-
-
-def _sentry_event_has_door_motor_recovery_failure(event: dict[str, Any]) -> bool:
-	if _is_door_motor_recovery_failure(event.get("message")) is True:
-		return True
-
-	logentry_value = event.get("logentry")
-	if isinstance(logentry_value, dict) is True:
-		logentry = cast(dict[str, Any], logentry_value)
-		if any(_is_door_motor_recovery_failure(logentry.get(key)) is True for key in ("message", "formatted")):
-			return True
-
-	entries_value = event.get("entries", [])
-	entries = cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
-	for entry in entries:
-		if isinstance(entry, dict) is False:
-			continue
-
-		data = entry.get("data")
-		if isinstance(data, dict) is False:
-			continue
-
-		if any(_is_door_motor_recovery_failure(data.get(key)) is True for key in ("message", "formatted")):
-			return True
-
-	return False
-
-
-def _sentry_event_has_suppressed_pymodbus_message(event: dict[str, Any]) -> bool:
-	if _is_suppressed_pymodbus_log_message(event.get("message")) is True:
-		return True
-
-	logentry_value = event.get("logentry")
-	if isinstance(logentry_value, dict) is True:
-		logentry = cast(dict[str, Any], logentry_value)
-		if any(_is_suppressed_pymodbus_log_message(logentry.get(key)) is True for key in ("message", "formatted")):
-			return True
-
-	entries_value = event.get("entries", [])
-	entries = cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
-	for entry in entries:
-		if isinstance(entry, dict) is False:
-			continue
-
-		data = entry.get("data")
-		if isinstance(data, dict) is False:
-			continue
-
-		if any(_is_suppressed_pymodbus_log_message(data.get(key)) is True for key in ("message", "formatted")):
-			return True
-
-	return False
 
 
 def _sentry_event_is_uvicorn_shutdown_drain(event: dict[str, Any]) -> bool:
