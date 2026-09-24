@@ -65,7 +65,7 @@ def _prepare_demo_start(
         lambda _robot: [(location, MagicMock(), None)],
     )
     monkeypatch.setattr(demo, "_clear_motors_for_move", clear_motors)
-    return clear_motors
+    return clear_motors, worker
 
 
 @pytest.fixture(autouse=True)
@@ -84,7 +84,7 @@ async def test_demo_start_allows_tray_home_cells(
     reservation: str,
 ) -> None:
     location = _demo_location()
-    clear_motors = _prepare_demo_start(monkeypatch, location)
+    clear_motors, worker = _prepare_demo_start(monkeypatch, location)
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config(location) if reservation == "configured" else _config())
 
     if reservation != "configured":
@@ -124,7 +124,7 @@ async def test_demo_start_leaves_nonreserved_mapping_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     location = _demo_location()
-    clear_motors = _prepare_demo_start(monkeypatch, location)
+    clear_motors, worker = _prepare_demo_start(monkeypatch, location)
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _config())
     monkeypatch.setattr(demo, "_run_demo_cycle", AsyncMock())
 
@@ -133,4 +133,5 @@ async def test_demo_start_leaves_nonreserved_mapping_unchanged(
 
     clear_motors.assert_awaited_once()
     assert demo._is_running is True
+    assert worker._robot._demo_cell_map == {"demo-item": location}
     await demo.shutdown_demo_cycle()

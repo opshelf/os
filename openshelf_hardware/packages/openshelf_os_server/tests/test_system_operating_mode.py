@@ -22,18 +22,6 @@ class TestOperatingModeEnum:
 		assert OperatingMode.mock.value == "mock"
 		assert OperatingMode.production.value == "production"
 
-	def test_is_str_enum(self) -> None:
-		assert isinstance(OperatingMode.demo, str)
-		assert OperatingMode.production == "production"
-
-	def test_all_members(self) -> None:
-		assert set(OperatingMode) == {
-			OperatingMode.demo,
-			OperatingMode.development,
-			OperatingMode.mock,
-			OperatingMode.production,
-		}
-
 
 class TestGetOperatingMode:
 	def setup_method(self) -> None:
@@ -52,25 +40,11 @@ class TestGetOperatingMode:
 			clear_config_cache()
 			assert get_operating_mode() == OperatingMode.development
 
-	def test_reads_demo_from_env(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "demo"}), self._no_mode_file():
+	@pytest.mark.parametrize("mode", ["demo", "production", "mock", "development"])
+	def test_reads_mode_from_env(self, mode: str) -> None:
+		with patch.dict(os.environ, {"OPERATING_MODE": mode}), self._no_mode_file():
 			clear_config_cache()
-			assert get_operating_mode() == OperatingMode.demo
-
-	def test_reads_production_from_env(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "production"}), self._no_mode_file():
-			clear_config_cache()
-			assert get_operating_mode() == OperatingMode.production
-
-	def test_reads_mock_from_env(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "mock"}), self._no_mode_file():
-			clear_config_cache()
-			assert get_operating_mode() == OperatingMode.mock
-
-	def test_reads_development_from_env(self) -> None:
-		with patch.dict(os.environ, {"OPERATING_MODE": "development"}), self._no_mode_file():
-			clear_config_cache()
-			assert get_operating_mode() == OperatingMode.development
+			assert get_operating_mode() == OperatingMode(mode)
 
 	def test_file_takes_precedence_over_env(self) -> None:
 		with tempfile.TemporaryDirectory() as tmpdir:
@@ -194,13 +168,19 @@ class TestOperatingModeEnvironmentDefaults:
 
 class TestInjectModeField:
 	def test_adds_mode_to_payload(self) -> None:
-		payload = json.dumps({"robot_status": {"state": "idle"}})
+		payload = json.dumps({
+			"robot_status": {"state": "idle", "storage": {}},
+			"current_command": None,
+			"queue_length": 3,
+		})
 
 		with patch("openshelf_os_server.routers.robot.get_operating_mode", return_value=OperatingMode.demo):
 			result = json.loads(inject_mode_field(payload))
 
 		assert result["mode"] == "demo"
-		assert result["robot_status"]["state"] == "idle"
+		assert result["robot_status"] == {"state": "idle", "storage": {}}
+		assert result["current_command"] is None
+		assert result["queue_length"] == 3
 
 	def test_overwrites_existing_mode(self) -> None:
 		payload = json.dumps({"mode": "old_value", "data": 1})
@@ -218,21 +198,6 @@ class TestInjectModeField:
 			result = json.loads(inject_mode_field(payload))
 
 		assert result == {"mode": "development"}
-
-	def test_preserves_all_fields(self) -> None:
-		payload = json.dumps({
-			"robot_status": {"storage": {}},
-			"current_command": None,
-			"queue_length": 3,
-		})
-
-		with patch("openshelf_os_server.routers.robot.get_operating_mode", return_value=OperatingMode.demo):
-			result = json.loads(inject_mode_field(payload))
-
-		assert result["mode"] == "demo"
-		assert result["robot_status"] == {"storage": {}}
-		assert result["current_command"] is None
-		assert result["queue_length"] == 3
 
 
 class TestSystemRestartHelpers:

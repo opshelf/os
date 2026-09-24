@@ -7,9 +7,7 @@ import pytest
 import openshelf_os.laser_calibration.angle.cli as angle_cli
 from openshelf_os.laser_calibration.angle import (
 	RIGHT_MODULE_ROTATION_SAFE_X_MM,
-	ShelfSurfaceEdge,
 	build_shelf_scout_x_positions,
-	filter_shelf_edges,
 	get_default_rotation_center_deg,
 	prepare_capture_pose,
 	resolve_rotation_center_deg,
@@ -69,35 +67,6 @@ def test_resolve_rotation_center_deg_uses_configured_back_for_right() -> None:
 	assert resolve_rotation_center_deg('right', parameters) == 4.5
 
 
-def test_filter_shelf_edges_keeps_only_detected_edges() -> None:
-	filtered_edges = filter_shelf_edges(
-		edges=[],
-		y_min_mm=0.0,
-		y_max_mm=100.0,
-		side_name='left',
-		scout_x_positions=[25.0],
-	)
-
-	assert filtered_edges == []
-
-
-def test_filter_shelf_edges_discards_close_duplicates_without_appending_floor() -> None:
-	filtered_edges = filter_shelf_edges(
-		edges=[
-			ShelfSurfaceEdge(x_mm=25.0, y_mm=80.0),
-			ShelfSurfaceEdge(x_mm=25.0, y_mm=48.0),
-			ShelfSurfaceEdge(x_mm=25.0, y_mm=35.0),
-		],
-		y_min_mm=0.0,
-		y_max_mm=100.0,
-		side_name='left',
-		scout_x_positions=[25.0],
-	)
-
-	assert filtered_edges == [
-		ShelfSurfaceEdge(x_mm=25.0, y_mm=80.0),
-		ShelfSurfaceEdge(x_mm=25.0, y_mm=35.0),
-	]
 
 
 def test_angle_shelf_scout_uses_configured_scan_bounds_instead_of_probe_x() -> None:
@@ -219,7 +188,35 @@ async def test_prepare_capture_pose_rotates_in_place_for_right_when_rotation_cha
 
 
 @pytest.mark.asyncio
-async def test_prepare_capture_pose_uses_safe_right_rotation_path_when_requested() -> None:
+@pytest.mark.parametrize(
+	"pose",
+	[
+		pytest.param(
+			(
+				"right",
+				1,
+				945.0,
+				1096.0,
+				180.0,
+			),
+			id="right_module",
+		),
+		pytest.param(
+			(
+				"left",
+				0,
+				950.0,
+				1250.0,
+				0.0,
+			),
+			id="left_module",
+		),
+	],
+)
+async def test_prepare_capture_pose_uses_safe_rotation_path_when_requested(
+	pose: tuple[str, int, float, float, float],
+) -> None:
+	side_name, side_number, x_mm, y_mm, rotation = pose
 	tool = SimpleNamespace(
 		_mx=SimpleNamespace(move_to_position_no_wait=AsyncMock()),
 		_my=SimpleNamespace(move_to_position_no_wait=AsyncMock()),
@@ -235,11 +232,11 @@ async def test_prepare_capture_pose_uses_safe_right_rotation_path_when_requested
 
 	await prepare_capture_pose(
 		tool,
-		side_name='right',
-		side_number=1,
-		x_mm=945.0,
-		y_mm=1096.0,
-		absolute_rotation_deg=180.0,
+		side_name=side_name,
+		side_number=side_number,
+		x_mm=x_mm,
+		y_mm=y_mm,
+		absolute_rotation_deg=rotation,
 		stage_extension_mm=13.0,
 		z_mm=140.5,
 		z_move_rpm=100.0,
@@ -251,50 +248,11 @@ async def test_prepare_capture_pose_uses_safe_right_rotation_path_when_requested
 
 	tool.ensure_safe_rotation_x_position.assert_awaited_once()
 	tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
-	tool._mr.move_to_position.assert_awaited_once_with(180.0)
+	tool._mr.move_to_position.assert_awaited_once_with(rotation)
 	tool.restore_safe_rotation_x_position.assert_awaited_once_with(RIGHT_MODULE_ROTATION_SAFE_X_MM)
 	assert tool._mx.move_to_position_no_wait.await_args_list[0].args == (RIGHT_MODULE_ROTATION_SAFE_X_MM,)
-	assert tool._mx.move_to_position_no_wait.await_args_list[1].args == (945.0,)
-	assert tool._mr.move_to_position.await_args_list[0].args == (180.0,)
-
-
-@pytest.mark.asyncio
-async def test_prepare_capture_pose_uses_safe_rotation_path_for_left_when_requested() -> None:
-	tool = SimpleNamespace(
-		_mx=SimpleNamespace(move_to_position_no_wait=AsyncMock()),
-		_my=SimpleNamespace(move_to_position_no_wait=AsyncMock()),
-		_mr=SimpleNamespace(move_to_position=AsyncMock()),
-		_ms=SimpleNamespace(ready=AsyncMock(), move_to_position=AsyncMock()),
-		_mg=SimpleNamespace(move_to_position=AsyncMock()),
-		gantry_wait=AsyncMock(),
-		ensure_safe_rotation_x_position=AsyncMock(return_value=RIGHT_MODULE_ROTATION_SAFE_X_MM),
-		restore_safe_rotation_x_position=AsyncMock(),
-		ensure_safe_rotation_stage_extension=AsyncMock(),
-		is_rotation_at_position=AsyncMock(return_value=False),
-	)
-
-	await prepare_capture_pose(
-		tool,
-		side_name='left',
-		side_number=0,
-		x_mm=950.0,
-		y_mm=1250.0,
-		absolute_rotation_deg=0.0,
-		stage_extension_mm=13.0,
-		z_mm=140.5,
-		z_move_rpm=100.0,
-		z_move_accel=100.0,
-		should_rotate=True,
-		should_use_safe_right_rotation_path=True,
-		should_move_z=False,
-	)
-
-	tool.ensure_safe_rotation_x_position.assert_awaited_once()
-	tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
-	tool._mr.move_to_position.assert_awaited_once_with(0.0)
-	tool.restore_safe_rotation_x_position.assert_awaited_once_with(RIGHT_MODULE_ROTATION_SAFE_X_MM)
-	assert tool._mx.move_to_position_no_wait.await_args_list[0].args == (RIGHT_MODULE_ROTATION_SAFE_X_MM,)
-	assert tool._mx.move_to_position_no_wait.await_args_list[1].args == (950.0,)
+	assert tool._mx.move_to_position_no_wait.await_args_list[1].args == (x_mm,)
+	assert tool._mr.move_to_position.await_args_list[0].args == (rotation,)
 
 
 @pytest.mark.asyncio

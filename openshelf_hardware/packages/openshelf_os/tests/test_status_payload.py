@@ -84,6 +84,22 @@ def test_transform_worker_payload_includes_needs_home() -> None:
     assert result["needs_home_axes"] == ["z_axis", "stage"]
 
 
+def test_transform_worker_payload_preserves_io_door_state() -> None:
+    payload = {
+        "robot_status": {
+            "gantry": {},
+            "tool": {},
+            "state": {},
+            "storage": {},
+            "io_door_open": True,
+        }
+    }
+
+    result = _transform_worker_status_payload(payload)
+
+    assert result["robot_status"]["io_door_open"] is True
+
+
 def test_transform_worker_payload_preserves_axis_telemetry() -> None:
     payload = {
         "robot_status": {

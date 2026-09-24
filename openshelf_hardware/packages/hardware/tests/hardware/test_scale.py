@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 from hardware.scale import Scale
 
@@ -89,38 +89,25 @@ async def test_to_int32_signed():
 
 
 @pytest.mark.asyncio
-async def test_get_calibration_status_zero_ok(mock_scale_controller):
+@pytest.mark.parametrize(
+	"register, zero_ok, weight_ok",
+	[
+		pytest.param(0x04, True, False, id="zero_ok"),
+		pytest.param(0x08, False, True, id="weight_ok"),
+		pytest.param(0x0C, True, True, id="both_ok"),
+	],
+)
+async def test_get_calibration_status_decodes_bits(
+	mock_scale_controller, register: int, zero_ok: bool, weight_ok: bool
+) -> None:
 	scale = Scale(mock_scale_controller)
-	mock_scale_controller.read_holding_registers.return_value = 0x04
+	mock_scale_controller.read_holding_registers.return_value = register
 
 	status = await scale.get_calibration_status()
 
-	assert status["zero_ok"] is True
-	assert status["weight_ok"] is False
-	assert status["raw"] == 0x04
-
-
-@pytest.mark.asyncio
-async def test_get_calibration_status_weight_ok(mock_scale_controller):
-	scale = Scale(mock_scale_controller)
-	mock_scale_controller.read_holding_registers.return_value = 0x08
-
-	status = await scale.get_calibration_status()
-
-	assert status["zero_ok"] is False
-	assert status["weight_ok"] is True
-	assert status["raw"] == 0x08
-
-
-@pytest.mark.asyncio
-async def test_get_calibration_status_both_ok(mock_scale_controller):
-	scale = Scale(mock_scale_controller)
-	mock_scale_controller.read_holding_registers.return_value = 0x0C
-
-	status = await scale.get_calibration_status()
-
-	assert status["zero_ok"] is True
-	assert status["weight_ok"] is True
+	assert status["zero_ok"] is zero_ok
+	assert status["weight_ok"] is weight_ok
+	assert status["raw"] == register
 
 
 @pytest.mark.asyncio
@@ -172,7 +159,14 @@ async def test_set_calibration_params(mock_scale_controller):
 	)
 
 	assert result is True
-	assert mock_scale_controller.write_single_register.call_count == 6
+	assert mock_scale_controller.write_single_register.call_args_list == [
+		call(1, Scale.REG_FULL_SCALE_HI, 0),
+		call(1, Scale.REG_FULL_SCALE_LO, 6000),
+		call(1, Scale.REG_CAL_WEIGHT_HI, 0),
+		call(1, Scale.REG_CAL_WEIGHT_LO, 500),
+		call(1, Scale.REG_PRECISION, 1),
+		call(1, Scale.REG_DIVISION, 1),
+	]
 
 
 @pytest.mark.asyncio

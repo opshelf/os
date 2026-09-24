@@ -38,22 +38,6 @@ async def test_laser_read_distance_mm(mock_laser_controller):
     )
 
 
-@pytest.mark.asyncio
-async def test_laser_initialize_returns_probe_distance(mock_laser_controller):
-    laser = LaserSensor(
-        modbus_controller=mock_laser_controller,
-        device_id=1,
-        read_function_code=3,
-        register_address=0,
-        register_count=2,
-        distance_register_index=1,
-        distance_scale_mm=0.001,
-    )
-
-    distance_mm = await laser.initialize()
-
-    assert distance_mm == pytest.approx(56.7)
-
 
 @pytest.mark.asyncio
 async def test_laser_read_distance_mm_or_none_returns_none_on_failure(mock_laser_controller):

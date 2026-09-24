@@ -448,9 +448,13 @@ def _nalu_reader_fake_container() -> MagicMock:
 	stream.average_rate = Fraction(25, 1)
 	stream.time_base = Fraction(1, 12800)
 
-	packet = MagicMock()
-	packet.pts = 1280
-	packet.bytes = bytes(FAKE_AU)
+	class _FakePacket:
+		pts = 1280
+
+		def __bytes__(self) -> bytes:
+			return FAKE_AU
+
+	packet = _FakePacket()
 
 	streams = MagicMock()
 	streams.video = [stream]
@@ -496,9 +500,11 @@ def test_nalu_source_reader_pushes_meta_frames_and_config(monkeypatch) -> None:
 	thread.join(timeout=2.0)
 
 	kinds = [kind for _source, kind, _pts, _arrival, _payload in items]
-	assert "meta" in kinds
-	assert "au" in kinds
-	assert "config" in kinds
+	assert kinds == ["meta", "au", "config"]
+	assert items[0][4] == (320, 240, 25.0, "h264")
+	assert items[1][2] == pytest.approx(0.1)
+	assert items[1][4] == FAKE_AU
+	assert items[2][4] == FAKE_AVC_C
 
 
 @pytest.mark.anyio

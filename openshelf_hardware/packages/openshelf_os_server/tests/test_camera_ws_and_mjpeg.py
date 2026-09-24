@@ -102,15 +102,17 @@ def test_camera_ws_streams_header_then_binary_access_units() -> None:
 
 def test_camera_ws_rejects_unknown_camera() -> None:
 	from starlette.testclient import TestClient
+	from starlette.websockets import WebSocketDisconnect
 
 	from openshelf_os_server.main import app
 
 	client = TestClient(app, raise_server_exceptions=False)
-	with pytest.raises(Exception):
+	with pytest.raises(WebSocketDisconnect) as exc_info:
 		with client.websocket_connect(
-			"/api/camera/ws/missing?token=unauthenticated"
+			f"/api/camera/ws/missing?token={_make_ws_token()}"
 		) as websocket:
 			websocket.receive_text()
+	assert exc_info.value.code == 4404
 
 
 def test_camera_ws_closes_stale_camera_with_4503() -> None:

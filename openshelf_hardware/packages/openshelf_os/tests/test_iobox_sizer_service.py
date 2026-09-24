@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from hardware.tof import ToFReading
 from openshelf_os.config.models import IOBoxSizerConfig
 from openshelf_os.iobox_sizer.service import IOBoxSizerService
@@ -68,10 +69,23 @@ class SequencedToFBus:
         )
 
 
-def test_iobox_sizer_service_can_median_filter_tof_samples() -> None:
+@pytest.mark.parametrize(
+    "aggregation, depths, deltas",
+    [
+        pytest.param("median", (120.0, 305.0), (80.0, 95.0), id="median"),
+        pytest.param("mean", (126.66666666666667, 305.0), None, id="mean"),
+        pytest.param("nearest", (100.0, 300.0), None, id="nearest"),
+        pytest.param("farthest", (160.0, 310.0), None, id="farthest"),
+    ],
+)
+def test_iobox_sizer_service_aggregates_tof_samples(
+    aggregation: str,
+    depths: tuple[float, float],
+    deltas: tuple[float, float] | None,
+) -> None:
     service = IOBoxSizerService(
         config=IOBoxSizerConfig(
-            tof={"channels": [6, 7], "samples": 3},
+            tof={"channels": [6, 7], "samples": 3, "aggregation": aggregation},
             calibration={"tof_blank_mm": [200.0, 400.0]},
         ),
         camera=FakeCamera(),
@@ -80,58 +94,11 @@ def test_iobox_sizer_service_can_median_filter_tof_samples() -> None:
 
     readings = service._read_tof()
 
-    assert readings[0].depth_mm == 120.0
-    assert readings[0].depth_delta_mm == 80.0
-    assert readings[1].depth_mm == 305.0
-    assert readings[1].depth_delta_mm == 95.0
-
-
-def test_iobox_sizer_service_can_mean_filter_tof_samples() -> None:
-    service = IOBoxSizerService(
-        config=IOBoxSizerConfig(
-            tof={"channels": [6, 7], "samples": 3, "aggregation": "mean"},
-            calibration={"tof_blank_mm": [200.0, 400.0]},
-        ),
-        camera=FakeCamera(),
-        tof_bus=SequencedToFBus(),
-    )
-
-    readings = service._read_tof()
-
-    assert readings[0].depth_mm == 126.66666666666667
-    assert readings[1].depth_mm == 305.0
-
-
-def test_iobox_sizer_service_can_use_nearest_tof_sample() -> None:
-    service = IOBoxSizerService(
-        config=IOBoxSizerConfig(
-            tof={"channels": [6, 7], "samples": 3, "aggregation": "nearest"},
-            calibration={"tof_blank_mm": [200.0, 400.0]},
-        ),
-        camera=FakeCamera(),
-        tof_bus=SequencedToFBus(),
-    )
-
-    readings = service._read_tof()
-
-    assert readings[0].depth_mm == 100.0
-    assert readings[1].depth_mm == 300.0
-
-
-def test_iobox_sizer_service_can_use_farthest_tof_sample() -> None:
-    service = IOBoxSizerService(
-        config=IOBoxSizerConfig(
-            tof={"channels": [6, 7], "samples": 3, "aggregation": "farthest"},
-            calibration={"tof_blank_mm": [200.0, 400.0]},
-        ),
-        camera=FakeCamera(),
-        tof_bus=SequencedToFBus(),
-    )
-
-    readings = service._read_tof()
-
-    assert readings[0].depth_mm == 160.0
-    assert readings[1].depth_mm == 310.0
+    assert readings[0].depth_mm == depths[0]
+    assert readings[1].depth_mm == depths[1]
+    if deltas is not None:
+        assert readings[0].depth_delta_mm == deltas[0]
+        assert readings[1].depth_delta_mm == deltas[1]
 
 
 def test_iobox_sizer_service_can_prefer_specific_tof_sensor() -> None:

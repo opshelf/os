@@ -562,24 +562,24 @@ class CurtainGuardTests(unittest.TestCase):
         self.assertFalse(safety["sources"]["light_curtain"]["active"])
         self.assertEqual(self.robot.pause_calls, 0)
 
-    def test_light_curtain_change_is_ignored_when_crashed(self):
+    def _assert_curtain_change_ignored(self, set_state, reason):
+        evaluate_calls = 0
+        publish_calls = 0
+
+        async def did_evaluate_safety_guard():
+            nonlocal evaluate_calls
+            evaluate_calls += 1
+            return True
+
+        async def did_publish_status():
+            nonlocal publish_calls
+            publish_calls += 1
+
+        set_state(reason)
+        self.worker._evaluate_safety_guard = did_evaluate_safety_guard
+        self.worker._publish_status = did_publish_status
+
         async def run_test():
-            evaluate_calls = 0
-            publish_calls = 0
-
-            async def did_evaluate_safety_guard():
-                nonlocal evaluate_calls
-                evaluate_calls += 1
-                return True
-
-            async def did_publish_status():
-                nonlocal publish_calls
-                publish_calls += 1
-
-            self.worker.set_crash_state("test crash")
-            self.worker._evaluate_safety_guard = did_evaluate_safety_guard
-            self.worker._publish_status = did_publish_status
-
             self.worker._on_light_curtain_change(True)
             await asyncio.sleep(0)
 
@@ -588,33 +588,12 @@ class CurtainGuardTests(unittest.TestCase):
             self.assertEqual(publish_calls, 0)
 
         asyncio.run(run_test())
+
+    def test_light_curtain_change_is_ignored_when_crashed(self):
+        self._assert_curtain_change_ignored(self.worker.set_crash_state, "test crash")
 
     def test_light_curtain_change_is_ignored_when_emergency_stopped(self):
-        async def run_test():
-            evaluate_calls = 0
-            publish_calls = 0
-
-            async def did_evaluate_safety_guard():
-                nonlocal evaluate_calls
-                evaluate_calls += 1
-                return True
-
-            async def did_publish_status():
-                nonlocal publish_calls
-                publish_calls += 1
-
-            self.worker.set_emergency_stop_state("test emergency stop")
-            self.worker._evaluate_safety_guard = did_evaluate_safety_guard
-            self.worker._publish_status = did_publish_status
-
-            self.worker._on_light_curtain_change(True)
-            await asyncio.sleep(0)
-
-            self.assertIsNone(self.worker._curtain_blocked)
-            self.assertEqual(evaluate_calls, 0)
-            self.assertEqual(publish_calls, 0)
-
-        asyncio.run(run_test())
+        self._assert_curtain_change_ignored(self.worker.set_emergency_stop_state, "test emergency stop")
 
     def test_guard_waits_for_ack_after_interruption_clears(self):
         self.robot.set_curtain_state(True)
@@ -851,21 +830,6 @@ class CurtainGuardTests(unittest.TestCase):
 
         self.assertTrue(result["accepted"])
         self.assertEqual(self.robot.resume_calls, 1)
-
-    def test_status_transform_preserves_io_door_state(self):
-        payload = _transform_worker_status_payload(
-            {
-                "robot_status": {
-                    "gantry": {},
-                    "tool": {},
-                    "state": {},
-                    "storage": {},
-                    "io_door_open": True,
-                }
-            }
-        )
-
-        self.assertTrue(payload["robot_status"]["io_door_open"])
 
     def test_idle_poll_publishes_status_when_io_door_changes(self):
         async def run_test():

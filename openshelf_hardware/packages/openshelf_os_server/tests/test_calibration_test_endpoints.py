@@ -206,6 +206,7 @@ async def test_cycle_test_rejects_when_home_is_required(client) -> None:
 
 	assert response.status_code == 409
 	assert response.json()['detail']['needs_home'] is True
+	assert response.json()['detail']['reason'] == 'test home required'
 
 
 @pytest.mark.parametrize('cell_status', [CellStatus.DISABLED, CellStatus.MAINTENANCE])

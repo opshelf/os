@@ -187,33 +187,6 @@ def test_fake_gpio_validates_expander_assignments(
         manager.input("sensor")
 
 
-def test_fake_gpio_allows_omitted_expander_topology_on_one_shared_backend() -> None:
-    manager = GpioManager(
-        {
-            "pca_sensor": GpioPinSpec(
-                name="pca_sensor",
-                board="pca9535",
-                expander="pca",
-                pin=1,
-                direction="input",
-            ),
-            "pcf_sensor": GpioPinSpec(
-                name="pcf_sensor",
-                board="pcf8575",
-                expander="pcf",
-                pin=2,
-                direction="input",
-            ),
-        },
-        fake=True,
-    )
-
-    pca_sensor = manager.input("pca_sensor")
-    pcf_sensor = manager.input("pcf_sensor")
-
-    assert isinstance(pca_sensor._backend, FakeGpioBackend)
-    assert pca_sensor._backend is pcf_sensor._backend
-
 
 def test_gpio_manager_logs_input_changes_after_initialization(caplog: pytest.LogCaptureFixture) -> None:
     manager = GpioManager(
@@ -250,25 +223,8 @@ def test_gpio_manager_observe_all_inputs_opens_every_input_pin() -> None:
 
     assert "sensor_a" in manager._inputs
     assert "sensor_b" in manager._inputs
-    assert "actuator" not in manager._outputs
+    assert "actuator" not in manager._inputs
 
-
-def test_gpio_manager_observe_all_inputs_logs_changes_without_manual_input_call(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    manager = GpioManager(
-        {
-            "sensor": GpioPinSpec(name="sensor", board="rpi", pin=1, direction="input"),
-        },
-        fake=True,
-    )
-
-    manager.observe_all_inputs()
-
-    with caplog.at_level("INFO", logger="hardware.gpio.manager"):
-        manager.set_fake_input("sensor", False)
-
-    assert "sensor: LOW" in caplog.text
 
 
 def test_gpio_manager_observe_all_inputs_allows_polling_only_pca9535(

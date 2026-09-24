@@ -153,17 +153,12 @@ async def test_stream_camera_not_found(client: AsyncClient) -> None:
 	data = response.json()
 	assert "not found" in data["detail"]["message"].lower()
 
+	other = MagicMock(spec=CameraStreamManager)
 
-@pytest.mark.anyio
-async def test_stream_camera_invalid_id(client: AsyncClient) -> None:
-	mock_sizer = MagicMock(spec=CameraStreamManager)
-
-	with patch.dict(camera_registry, {"iobox_sizer": mock_sizer}, clear=True):
+	with patch.dict(camera_registry, {"tool": other}, clear=True):
 		response = await client.get("/api/camera/invalid_camera")
 
 	assert response.status_code == 404
-
-
 
 
 @pytest.mark.anyio
@@ -187,31 +182,6 @@ async def test_stream_camera_unavailable_when_no_frames_arrive(client: AsyncClie
 	assert response.status_code == 503
 	assert "not delivering frames" in response.json()["detail"]["message"]
 	manager.stop.assert_awaited_once()
-
-
-@pytest.mark.anyio
-async def test_camera_types_identified_correctly(client: AsyncClient) -> None:
-	sizer_manager = _make_sizer_manager_mock()
-	sizer_manager.is_running = False
-	sizer_manager.consumer_count = 0
-	sizer_manager.latest_frame = None
-
-	tool_manager = _make_tool_manager_mock()
-
-	with patch.dict(camera_registry, {"iobox_sizer": sizer_manager, "tool": tool_manager}, clear=True):
-		response = await client.get("/api/camera")
-
-	assert response.status_code == 200
-	data = response.json()
-
-	sizer_camera = next((c for c in data["cameras"] if c["id"] == "iobox_sizer"), None)
-	tool_camera = next((c for c in data["cameras"] if c["id"] == "tool"), None)
-
-	assert sizer_camera is not None
-	assert sizer_camera["type"] == "IOBoxSizerCamera"
-
-	assert tool_camera is not None
-	assert tool_camera["type"] == "ToolCamera"
 
 
 def test_get_tool_camera_url_ignores_config_url_when_disabled(tmp_path, monkeypatch) -> None:

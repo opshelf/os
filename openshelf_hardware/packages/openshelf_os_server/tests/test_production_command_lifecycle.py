@@ -272,13 +272,8 @@ async def test_new_store_preserves_valid_and_unspecified_gross(
 	{}, {"barcode": None}, {"barcode": ""}, {"barcode": "  "}, {"barcode": 123},
 	{"barcode": True}, {"barcode": {}}, {"barcode": []}, {"barcode": "x" * 256},
 ])
-@pytest.mark.parametrize("mass", [
-	{key: value}
-	for key in ("tare_weight", "net_weight", "full_net_weight")
-	for value in (None, 100)
-])
 async def test_mass_store_requires_explicit_identity_before_mutation(
-	monkeypatch: pytest.MonkeyPatch, identity: dict, mass: dict,
+	monkeypatch: pytest.MonkeyPatch, identity: dict,
 ) -> None:
 	await _clear_production_commands()
 	worker = RecordingWorker()
@@ -289,7 +284,11 @@ async def test_mass_store_requires_explicit_identity_before_mutation(
 	item_data = {
 		"name": "Identity required bottle",
 		"dimensions": {"width": 100, "height": 100, "length": 100},
-		**identity, **mass,
+		**identity,
+		# One mass key is enough: enrollment is triggered by any of them, and the
+		# full mass-with-identity persistence is owned by
+		# test_mass_store_with_identity_persists_baseline_and_replays_before_validation.
+		"tare_weight": 100,
 	}
 	async with AsyncSessionLocal() as db:
 		items_before = (await db.execute(select(Item.__table__))).all()

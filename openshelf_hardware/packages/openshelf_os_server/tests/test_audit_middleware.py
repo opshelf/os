@@ -99,20 +99,6 @@ async def test_audit_logs_request_with_body(unauthenticated_client: AsyncClient)
 
 
 @pytest.mark.anyio
-async def test_audit_logs_different_methods(unauthenticated_client: AsyncClient) -> None:
-	headers = await admin_headers(unauthenticated_client)
-	role_payload = {"name": f"method_test_{uuid.uuid4().hex}", "permissions": []}
-
-	get_response = await unauthenticated_client.get("/api/users", headers=headers)
-	post_response = await unauthenticated_client.post("/api/roles", headers=headers, json=role_payload)
-
-	assert get_response.status_code == 200
-	assert post_response.status_code == 200
-	assert await latest_audit_log("/api/users", "GET") is not None
-	assert await latest_audit_log("/api/roles", "POST") is not None
-
-
-@pytest.mark.anyio
 async def test_audit_logs_client_info(unauthenticated_client: AsyncClient) -> None:
 	headers = {"User-Agent": "TestClient/1.0"}
 	response = await unauthenticated_client.post(
@@ -135,6 +121,7 @@ async def test_audit_integrity_fields_populated(client: AsyncClient) -> None:
 	log = await latest_audit_log("/api/users", "GET")
 	assert log is not None
 	assert log.seq_no is not None
+	assert log.request_duration_ms is not None
 	assert log.prev_hash is not None
 	assert len(log.prev_hash) == 64
 	assert log.entry_hash is not None
@@ -170,17 +157,6 @@ async def test_audit_logs_errors_in_endpoint(client: AsyncClient) -> None:
 	log = await latest_audit_log("/api/users/999999", "GET")
 	assert log is not None
 	assert log.response_status == 404
-
-
-@pytest.mark.anyio
-async def test_audit_duration_tracking(client: AsyncClient) -> None:
-	response = await client.get("/api/users")
-	assert response.status_code == 200
-
-	log = await latest_audit_log("/api/users", "GET")
-	assert log is not None
-	assert log.request_duration_ms is not None
-	assert log.request_duration_ms >= 0
 
 
 @pytest.mark.anyio

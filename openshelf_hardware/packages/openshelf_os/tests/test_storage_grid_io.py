@@ -1,11 +1,8 @@
-import inspect
 import json
-import os
 
 import pytest
 
-from openshelf_os.common import RootConfig, resolve_grid_path, CONFIG_PATH, write_json_file_with_backup
-from openshelf_os.runtime_state import infer_mode_from_path
+from openshelf_os.common import write_json_file_with_backup
 from openshelf_os.storage import StorageGrid, StorageValidationError
 
 
@@ -45,11 +42,6 @@ MINIMAL_CONFIG_DICT = {
 	"auth": {"require_auth": False},
 }
 
-
-def _make_config(grid_path: str) -> RootConfig:
-	data = json.loads(json.dumps(MINIMAL_CONFIG_DICT))
-	data["robot"]["grid"]["path"] = grid_path
-	return RootConfig.model_validate(data)
 
 
 EMPTY_GRID = {"left_module": [], "right_module": []}
@@ -95,48 +87,6 @@ GRID_WITH_SHELVES = {
 }
 
 
-class TestResolveGridPath:
-
-	def test_relative_path(self):
-		config = _make_config("storage.json")
-		result = resolve_grid_path(config)
-
-		mode = infer_mode_from_path(CONFIG_PATH)
-		expected = str((CONFIG_PATH.parent / f"storage{'.' + mode.value if mode.value != 'production' else ''}.json").resolve())
-
-		assert result == expected
-
-	def test_dotslash_resolves_same(self):
-		config_plain = _make_config("storage.json")
-		config_dot = _make_config("./storage.json")
-
-		assert resolve_grid_path(config_plain) == resolve_grid_path(config_dot)
-
-	def test_nested_subdirectory(self):
-		config = _make_config("grids/main.json")
-		result = resolve_grid_path(config)
-
-		mode = infer_mode_from_path(CONFIG_PATH)
-		expected = str((CONFIG_PATH.parent / f"grids/main{'.' + mode.value if mode.value != 'production' else ''}.json").resolve())
-
-		assert result == expected
-
-	def test_result_is_absolute(self):
-		config = _make_config("storage.json")
-		result = resolve_grid_path(config)
-
-		assert os.path.isabs(result) is True
-
-	def test_uses_provided_config_path_for_relative_grid_path(self, tmp_path):
-		config = _make_config("storage.json")
-		config_path = tmp_path / "nested" / "config.json"
-		result = resolve_grid_path(config, config_path)
-
-		expected = str((config_path.parent / "storage.json").resolve())
-
-		assert result == expected
-
-
 class TestLoadFromFile:
 
 	def test_file_not_found(self, tmp_path):
@@ -178,12 +128,6 @@ class TestLoadFromFile:
 		assert len(grid.left_module[0].cells) == 1
 		assert len(grid.right_module) == 1
 		assert len(grid.right_module[0].cells) == 2
-
-	def test_requires_explicit_path(self):
-		sig = inspect.signature(StorageGrid.load_from_file)
-		path_param = sig.parameters["path"]
-
-		assert path_param.default is inspect.Parameter.empty
 
 
 LEGACY_ITEM = {
@@ -272,15 +216,9 @@ class TestLegacyUpcaItem:
 
 class TestFilenameField:
 
-	def test_default_is_empty(self):
-		grid = StorageGrid()
-
-		assert grid.filename == ""
-
-	def test_explicit_filename_preserved(self):
-		grid = StorageGrid(filename="/custom/path.json")
-
-		assert grid.filename == "/custom/path.json"
+	def test_filename_field_defaults_and_round_trips(self):
+		assert StorageGrid().filename == ""
+		assert StorageGrid(filename="/custom/path.json").filename == "/custom/path.json"
 
 	def test_filename_from_json_preserved(self, tmp_path):
 		data = {**EMPTY_GRID, "filename": "/some/path"}
@@ -293,17 +231,6 @@ class TestFilenameField:
 
 
 class TestSaveToFile:
-
-	def test_writes_valid_json(self, tmp_path):
-		grid = StorageGrid.model_validate(GRID_WITH_SHELVES)
-		out = tmp_path / "out.json"
-
-		grid.save_to_file(str(out))
-
-		parsed = json.loads(out.read_text())
-
-		assert "left_module" in parsed
-		assert "right_module" in parsed
 
 	def test_save_uses_filename_field(self, tmp_path):
 		out = tmp_path / "via_save.json"

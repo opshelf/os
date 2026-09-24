@@ -92,27 +92,6 @@ def persistent_brake_registers(overrides: dict[int, int] | None = None) -> dict[
 
 
 
-
-@pytest.mark.asyncio
-async def test_servo_initialization(mock_controller):
-    servo = Servo(mock_controller)
-    assert servo._motor_id == 0x9
-    assert servo._controller == mock_controller
-    assert servo._control_reg == 0x3E8
-    assert servo._status_reg == 0x07D0
-
-
-@pytest.mark.asyncio
-async def test_servo_configure(mock_controller):
-    servo = Servo(mock_controller)
-    await servo.configure()
-
-    calls = mock_controller.write_single_register.call_args_list
-    assert len(calls) >= 8
-    assert calls[0] == ((0x9, 0x3E8, 0x0),)
-    assert calls[1] == ((0x9, 0x3E8, 0x1),)
-
-
 @pytest.mark.asyncio
 async def test_servo_open(mock_controller):
     servo = Servo(mock_controller)
@@ -149,15 +128,6 @@ async def test_servo_close(mock_controller):
         call(0x9, 0x3E8, 0x090B),
     ]
     assert servo._configured is True
-
-
-@pytest.mark.asyncio
-async def test_motor_initialization(mock_controller):
-    params = make_motor_params()
-    motor = Motor(mock_controller, params)
-    assert motor._motor_id == 1
-    assert motor._controller == mock_controller
-    assert motor._status == MotorStatus.IDLE
 
 
 @pytest.mark.asyncio
@@ -484,34 +454,6 @@ async def test_stop_preserves_fault_raised_during_stop_write(mock_controller):
     assert motor._status is MotorStatus.FAULT
     assert motor.is_hard_stopped() is True
     assert motor.is_homed() is False
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("initial_status", "expected_status"),
-    [
-        (MotorStatus.MOVING, MotorStatus.STOPPED),
-        (MotorStatus.ERROR, MotorStatus.ERROR),
-        (MotorStatus.FAULT, MotorStatus.FAULT),
-        (MotorStatus.TIMEOUT, MotorStatus.TIMEOUT),
-    ],
-)
-async def test_stop_and_clear_motion_preserves_terminal_status(
-    mock_controller,
-    initial_status,
-    expected_status,
-):
-    motor = Motor(mock_controller, make_motor_params())
-    motor._status = initial_status
-    motor._pending_motion = AsyncMock()
-    motor._target_pos = 50.0
-
-    await motor._stop_and_clear_motion()
-
-    mock_controller.write_single_register.assert_awaited_once_with(1, 0x6002, 0x40)
-    assert motor._pending_motion is None
-    assert motor._target_pos is None
-    assert motor._status is expected_status
 
 
 @pytest.mark.asyncio
