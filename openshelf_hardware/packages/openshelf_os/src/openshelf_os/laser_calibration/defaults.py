@@ -28,11 +28,12 @@ LASER_SAMPLE_SETTLE_MS = 50
 LASER_SAMPLES_PER_POINT = 3
 
 # A moving pass reads the laser and then the encoder, so each depth is assigned to a position
-# read a fixed interval later. The distance error is feed x latency: measured on lb4a-2 at
-# 45-48ms from hole-edge midpoints at 40/79/116mm/s. It scales with feed, so it is subtracted
-# per sample from the measured velocity. Re-measure it per sensor with a stopped-vs-moving
-# edge comparison before trusting the default.
-FLYING_CAPTURE_LATENCY_MS = 47.0
+# read a fixed interval later. The distance error is feed x latency: fitting that delay against
+# hole-edge midpoints on lb4a-2 at 40mm/s and 79mm/s gives 42ms (mean residual <=0.03mm at both
+# feeds; the per-hole scatter that remains is edge-detection noise, not delay). It scales with
+# feed, so it is subtracted per sample from the measured velocity. Re-measure it per sensor with
+# a stopped-vs-moving edge comparison before trusting the default.
+FLYING_CAPTURE_LATENCY_MS = 42.0
 
 # A wall depth reading is turned into a gripper z offset by a per-machine model. The
 # model records the stage extension it was derived at; this is how far the live tool
