@@ -207,11 +207,14 @@ def validate_rescan_shelf_args(
 	if validation_target is not None:
 		raise ValueError('--rescan-shelf cannot be used with --validate-cell')
 
-	if args.shelf_scout_only is False and args.known_shelf_edge_y is not None:
+	if args.known_shelf_edge_y is not None:
 		raise ValueError('--rescan-shelf derives the known shelf edge; drop --known-shelf-edge-y')
 
 	if args.x is not None or args.y is not None:
 		raise ValueError('--rescan-shelf derives its bounds from the scan config; drop --x/--y')
+
+	if args.y_offset != 0.0:
+		raise ValueError('--rescan-shelf derives its bounds from the scan config; drop --y-offset')
 
 	if args.module is None:
 		raise ValueError('--module is required with --rescan-shelf')
