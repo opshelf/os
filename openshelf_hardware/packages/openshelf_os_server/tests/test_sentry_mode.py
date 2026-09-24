@@ -119,6 +119,78 @@ def test_before_send_sentry_event_keeps_plain_cancelled_error() -> None:
 	assert main._before_send_sentry_event(event, {}) == event
 
 
+def test_before_send_sentry_event_drops_uvicorn_shutdown_cancelled_request() -> None:
+	# A restart while an SSE/MJPEG stream is open: the drain window expires and uvicorn cancels
+	# the request task, so the cancellation lands on the memory stream call_next awaits.
+	# The message is written out because the filter keys on exactly what uvicorn hands to
+	# Task.cancel() in Server.shutdown, so an edited constant has to fail here.
+	shutdown_cancel = "Task cancelled, timeout graceful shutdown exceeded"
+	assert main.UVICORN_SHUTDOWN_CANCEL_MESSAGE == shutdown_cancel
+
+	for values in (
+		[
+			{"type": "WouldBlock", "value": ""},
+			{"type": "CancelledError", "value": shutdown_cancel},
+		],
+		# Order reversed, and the anyio type name fully qualified.
+		[
+			{"type": "CancelledError", "value": shutdown_cancel},
+			{"type": "anyio.WouldBlock", "value": None},
+		],
+		# The cancellation alone, without the anyio context frame.
+		[{"type": "asyncio.exceptions.CancelledError", "value": shutdown_cancel}],
+	):
+		event = {
+			"exception": {"values": values},
+			"culprit": "fastapi.middleware.asyncexitstack.AsyncExitStackMiddleware",
+		}
+
+		assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_keeps_error_under_uvicorn_shutdown_cancel() -> None:
+	# A failure that was already in flight under the shutdown cancellation stays reportable.
+	event = {
+		"exception": {
+			"values": [
+				{"type": "ValueError", "value": "bad motor position"},
+				{"type": "CancelledError", "value": main.UVICORN_SHUTDOWN_CANCEL_MESSAGE},
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
+def test_before_send_sentry_event_keeps_task_group_error_under_uvicorn_shutdown_cancel() -> None:
+	# anyio reports a task group failure as a group next to the cancellation it also caused, and a
+	# group is not one of the stream types the filter tolerates.
+	event = {
+		"exception": {
+			"values": [
+				{"type": "ExceptionGroup", "value": "unhandled errors in a TaskGroup (1 sub-exception)"},
+				{"type": "CancelledError", "value": main.UVICORN_SHUTDOWN_CANCEL_MESSAGE},
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
+def test_before_send_sentry_event_keeps_cancelled_error_with_wouldblock_context() -> None:
+	# The same anyio context with a cancellation uvicorn did not start stays reportable.
+	event = {
+		"exception": {
+			"values": [
+				{"type": "WouldBlock", "value": ""},
+				{"type": "CancelledError", "value": "Cancelled via cancel scope 7f0 by move_door"},
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
 def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch() -> None:
 	event = {
 		"message": "ERROR: request ask for id=2 but got id=3, Skipping.",

@@ -85,6 +85,20 @@ PYMODBUS_NO_RESPONSE_RETRY_PREFIX = "No response received after "
 PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
 ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 TOOL_FAULT_LOG_EVENT = "Tool fault detected - manual intervention required"
+# The message uvicorn hands to Task.cancel() for every request task that is still running when
+# the drain window given to it in start() (`timeout_graceful_shutdown`) expires. Its presence
+# marks a cancellation uvicorn started itself rather than one a client or the app caused.
+UVICORN_SHUTDOWN_CANCEL_MESSAGE = "Task cancelled, timeout graceful shutdown exceeded"
+# Exceptions anyio leaves as the context of a cancellation delivered inside its own streams:
+# MemoryObjectReceiveStream.receive() tries the non-blocking path first, catches the WouldBlock
+# it raises, and only then awaits its receiver event, so a cancel that lands on that await carries
+# WouldBlock as its context. Starlette's BaseHTTPMiddleware awaits such a stream in call_next.
+ANYIO_STREAM_CONTEXT_ERRORS = (
+	"WouldBlock",
+	"EndOfStream",
+	"ClosedResourceError",
+	"BrokenResourceError",
+)
 DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
 ROBOT_UNAVAILABLE_REQUEST_PATH_PREFIXES = (
 	"/api/robot",
@@ -311,6 +325,58 @@ def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
 	return False
 
 
+def _sentry_exception_type_is_one_of(value: dict[str, Any], names: tuple[str, ...]) -> bool:
+	exception_type_value = value.get("type")
+	if not isinstance(exception_type_value, str):
+		return False
+
+	exception_type = exception_type_value
+	for name in names:
+		if exception_type == name or exception_type.endswith(f".{name}"):
+			return True
+
+	return False
+
+
+def _sentry_event_is_shutdown_cancelled_request(event: dict[str, Any]) -> bool:
+	"""Drop a request uvicorn cancelled when its shutdown drain window expired.
+
+	start() gives uvicorn a bounded graceful shutdown so an API restart exits even while a client
+	still holds a long-lived request - an SSE status or event stream, an MJPEG camera stream, or a
+	move that runs longer than the window. When the window expires, uvicorn cancels that request task
+	itself and the CancelledError surfaces from whatever the ASGI stack was sitting on, so the frames
+	are framework bookkeeping and the event says only "this request was still running at restart".
+
+	That is the configured outcome of a restart, not a fault, so it is dropped. The cancellation is
+	accepted on its own, though: a real failure that was chained to it stays reportable, so any
+	exception type that is not a cancellation or one of anyio's stream bookkeeping types keeps the
+	event.
+	"""
+	values = _sentry_event_exception_values(event)
+	if len(values) == 0:
+		return False
+
+	is_shutdown_cancel = False
+	for value in values:
+		if _sentry_exception_type_is_one_of(value, ("CancelledError",)) is True:
+			exception_message_value = value.get("value")
+			if not isinstance(exception_message_value, str):
+				continue
+
+			exception_message = exception_message_value
+			if UVICORN_SHUTDOWN_CANCEL_MESSAGE in exception_message:
+				is_shutdown_cancel = True
+
+			continue
+
+		if _sentry_exception_type_is_one_of(value, ANYIO_STREAM_CONTEXT_ERRORS) is True:
+			continue
+
+		return False
+
+	return is_shutdown_cancel
+
+
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _sentry_event_is_http_exception(event, _hint) is True:
 		return None
@@ -325,6 +391,9 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 		return None
 
 	if _sentry_event_is_robot_unavailable_request(event) is True:
+		return None
+
+	if _sentry_event_is_shutdown_cancelled_request(event) is True:
 		return None
 
 	request_value = event.get("request")
