@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
 from openshelf_os.laser_calibration.reference_offsets import (
+	REFERENCE_DATUM_CELL_IDX,
+	REFERENCE_DATUM_SHELF_IDX,
 	REFERENCE_MATCH_WINDOW_MM,
 	ReferenceOffsetResult,
 	ReferenceOffsetSample,
 	derive_reference_offsets,
 	select_manual_reference_cells,
+	select_reference_datum_cell,
 	z_model_datum_agreement_mm,
 )
 from openshelf_os.laser_calibration.scan import ScanDetectedCell, ScanDetectedShelf
@@ -163,6 +167,76 @@ def test_large_configured_offset_still_matches_the_reference_cell() -> None:
 	assert result.samples[0].detected_x_mm == pytest.approx(348.0)
 
 
+def test_reference_datum_needs_the_bottom_left_cell() -> None:
+	"""Only a hand-calibrated 0:0 is a datum: any other manual cell is an extra sample."""
+	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0)])
+
+	datum = select_reference_datum_cell(grid=grid, side=StorageModuleSide.LEFT)
+
+	assert datum is not None
+	assert datum[0] == REFERENCE_DATUM_SHELF_IDX
+	assert datum[1].cell_idx == REFERENCE_DATUM_CELL_IDX
+
+	assert select_reference_datum_cell(
+		grid=build_grid([build_cell(cell_idx=0, x=354.0, y=41.0, is_manual=False)]),
+		side=StorageModuleSide.LEFT,
+	) is None
+	assert select_reference_datum_cell(
+		grid=build_grid([build_cell(cell_idx=1, x=519.0, y=41.0)]),
+		side=StorageModuleSide.LEFT,
+	) is None
+
+	uncalibrated = build_cell(cell_idx=0, x=354.0, y=41.0)
+	uncalibrated.calibration_point = None
+	assert select_reference_datum_cell(
+		grid=build_grid([uncalibrated]),
+		side=StorageModuleSide.LEFT,
+	) is None
+
+	elsewhere = StorageGrid(filename="storage.json")
+	elsewhere.left_module = [
+		Shelf(shelf_idx=5, shelf_height=30.0, shelf_width=200.0, cells=[build_cell(cell_idx=0, x=354.0, y=641.0)])
+	]
+	assert select_reference_datum_cell(grid=elsewhere, side=StorageModuleSide.LEFT) is None
+
+
+def test_wall_depths_come_back_from_a_str_metadata_path(tmp_path) -> None:
+	"""The run metadata records its path as a str; the read-back has to accept it.
+
+	lb4a-2's failed left-side run: the candidates on disk held the wall depths, a str path made
+	`load_json_file` raise, and the datum's intercept came back empty so the probe was refused.
+	"""
+	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0)])
+	detected = build_detected_cell(cell_idx=0, tool_x=358.0, tool_y=44.0)
+	analysis = build_analysis([detected])
+	metadata = {
+		"candidates": [
+			{
+				"x_min": detected.center_x_mm - 20.0,
+				"x_max": detected.center_x_mm + 20.0,
+				"y_min": detected.center_y_mm - 20.0,
+				"y_max": detected.center_y_mm + 20.0,
+				"row_count": 10,
+				"wall_depth_mm": 9.62,
+				"wall_sample_count": 5,
+			}
+		]
+	}
+	metadata_path = tmp_path / "metadata.json"
+	metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+	analysis.metadata_path = str(metadata_path)
+
+	result = derive_reference_offsets(
+		grid=grid,
+		analysis=analysis,
+		side=StorageModuleSide.LEFT,
+		scan_config=build_scan_config(xy_offset=(-1.0, 1.0)),
+	)
+
+	assert result.samples[0].wall_depth_mm == pytest.approx(9.62)
+	assert result.intercept_mm == pytest.approx(6.5 - 9.62)
+
+
 def test_refuses_when_no_cell_is_marked_manual() -> None:
 	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0, is_manual=False)])
 	analysis = build_analysis([build_detected_cell(cell_idx=0, tool_x=358.0, tool_y=44.0)])
@@ -177,7 +251,7 @@ def test_refuses_when_the_reference_cell_matches_nothing() -> None:
 	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0)])
 	analysis = build_analysis([build_detected_cell(cell_idx=0, tool_x=520.0, tool_y=44.0)])
 
-	with pytest.raises(ValueError, match="matched no manual reference cell"):
+	with pytest.raises(ValueError, match="no manual reference cell matched"):
 		derive(grid, analysis, build_scan_config(xy_offset=(-1.0, 1.0)))
 
 

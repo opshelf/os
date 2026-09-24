@@ -864,8 +864,6 @@ async def stream_laser_auto_calibration(
 	include_angle_calibration: bool | None = None,
 	include_extension_calibration: bool | None = None,
 	hold_y_enabled: bool | None = None,
-	derive_offsets_from_manual_cells: bool | None = None,
-	derive_z_model_from_stall: bool | None = None,
 	subscribe_only: bool = False,
 ) -> EventSourceResponse:
 	"""Start or observe automatic laser calibration.
@@ -879,14 +877,9 @@ async def stream_laser_auto_calibration(
 	unsubscribes that client; use the abort endpoint to stop the session. Do not infer
 	cancellation from a closed connection. Optional scope parameters select cells,
 	both sides, or the angle/extension calibration phases. `hold_y_enabled=false` parks
-	Y on its brake between moves instead of holding it energised for the session.
-	`derive_offsets_from_manual_cells=true` frames the run by the cells marked manual in
-	scope, deriving each side's xy offset from them instead of using the configured one; it
-	needs at least one manual cell per side in scope and returns `400` without one.
-	`derive_z_model_from_stall=true` probes the shelf plate beside those same cells (physical
-	contact) to derive the side's z model, which is accepted only when it agrees with the
-	manual datum; the machine-level `robot.grid.scan.z_stall_anchor_enabled` asks for the same
-	thing without the parameter.
+	Y on its brake between moves instead of holding it energised for the session. Every run
+	frames its offsets from the hand-calibrated bottom-left cell of the sides it covers and
+	returns `400` before moving when one of those cells is missing or not marked manual.
 	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,
@@ -898,8 +891,6 @@ async def stream_laser_auto_calibration(
 	).model_copy(
 		update={
 			"hold_y_enabled": hold_y_enabled is not False,
-			"derive_offsets_from_manual_cells": derive_offsets_from_manual_cells is True,
-			"derive_z_model_from_stall": derive_z_model_from_stall is True,
 		}
 	)
 	manager = get_laser_auto_calibration_manager()

@@ -33,17 +33,13 @@ DETECTED_TOOL_Y_MM = 44.0
 CONFIGURED_OFFSET = (-1.0, 1.0)
 DERIVED_OFFSET = (MANUAL_X_MM - DETECTED_TOOL_X_MM, MANUAL_Y_MM - DETECTED_TOOL_Y_MM)
 
-# A second shelf that shares cell_idx 0 with the first: a cell scope that drops the shelf would
-# take this shelf's manual point into the derivation alongside the scoped one.
+# A second shelf that shares cell_idx 0 with the first: a cell scope that dropped the shelf would
+# take this shelf's manual point into the derivation alongside the datum.
 SECOND_SHELF_IDX = 3
 SECOND_SHELF_MANUAL_X_MM = 352.9
 SECOND_SHELF_MANUAL_Y_MM = 640.2
 SECOND_SHELF_DETECTED_TOOL_X_MM = 358.0
 SECOND_SHELF_DETECTED_TOOL_Y_MM = 643.4
-SECOND_SHELF_DERIVED_OFFSET = (
-	SECOND_SHELF_MANUAL_X_MM - SECOND_SHELF_DETECTED_TOOL_X_MM,
-	SECOND_SHELF_MANUAL_Y_MM - SECOND_SHELF_DETECTED_TOOL_Y_MM,
-)
 
 
 def _build_cell(*, cell_idx: int, x: float, y: float, is_manual: bool) -> Cell:
@@ -214,7 +210,6 @@ async def test_reference_run_uses_derived_offset_and_persists_it() -> None:
 	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
 		mode="side",
 		side=StorageModuleSide.LEFT,
-		derive_offsets_from_manual_cells=True,
 	)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	config = _build_root_config(scan_config)
@@ -299,7 +294,7 @@ async def test_reference_run_uses_derived_offset_and_persists_it() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reference_run_without_a_manual_cell_never_starts() -> None:
+async def test_start_without_a_manual_datum_cell_never_starts() -> None:
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	config = _build_root_config(scan_config)
@@ -309,21 +304,17 @@ async def test_reference_run_without_a_manual_cell_never_starts() -> None:
 		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
 		return_value=config,
 	):
-		with pytest.raises(ValueError, match="marked manual"):
+		with pytest.raises(ValueError, match="bottom-left cell"):
 			await manager.ensure_session_started(
 				worker,
-				LaserAutoCalibrationScope(
-					mode="side",
-					side=StorageModuleSide.LEFT,
-					derive_offsets_from_manual_cells=True,
-				),
+				LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
 			)
 
 	assert manager._task is None
 
 
 @pytest.mark.asyncio
-async def test_reference_run_needs_a_manual_cell_on_every_side_in_scope() -> None:
+async def test_start_needs_the_manual_datum_on_every_side_in_scope() -> None:
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	# Both sides carry a configured offset: the derivation needs one as its predictor, and this
@@ -336,13 +327,10 @@ async def test_reference_run_needs_a_manual_cell_on_every_side_in_scope() -> Non
 		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
 		return_value=config,
 	):
-		with pytest.raises(ValueError, match="right_module"):
+		with pytest.raises(ValueError, match="right module's bottom-left cell"):
 			await manager.ensure_session_started(
 				worker,
-				LaserAutoCalibrationScope(
-					mode="both",
-					derive_offsets_from_manual_cells=True,
-				),
+				LaserAutoCalibrationScope(mode="both"),
 			)
 
 	assert manager._task is None
@@ -356,7 +344,6 @@ async def test_single_cell_reference_run_keeps_the_datum_and_persists_the_offset
 		side=StorageModuleSide.LEFT,
 		shelf_idx=0,
 		cell_idx=0,
-		derive_offsets_from_manual_cells=True,
 	)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	config = _build_root_config(scan_config)
@@ -413,11 +400,12 @@ async def test_single_cell_reference_run_keeps_the_datum_and_persists_the_offset
 
 
 @pytest.mark.asyncio
-async def test_cell_scoped_reference_run_uses_only_the_in_scope_datum() -> None:
-	"""A cell scope derives from the (shelf, cell) it targeted, not every shelf holding the cell.
+async def test_cell_scoped_run_off_the_datum_rescans_without_reframing() -> None:
+	"""A cell scope that is not the bottom-left datum rescans its cell and keeps the frame.
 
-	The pre-motion gate checks the scope as (shelf_idx, cell_idx); a derivation that dropped the
-	shelf would median the sibling shelf's manual point into the persisted module offset.
+	The scan holds that one opening, so there is nothing in it to re-derive the side's frame
+	from: the configured offset is what the datum established, and re-framing from an opening
+	three shelves up is what the mandatory bottom-left datum exists to prevent.
 	"""
 	manager = LaserAutoCalibrationManager()
 	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
@@ -425,7 +413,6 @@ async def test_cell_scoped_reference_run_uses_only_the_in_scope_datum() -> None:
 		side=StorageModuleSide.LEFT,
 		shelf_idx=SECOND_SHELF_IDX,
 		cell_idx=0,
-		derive_offsets_from_manual_cells=True,
 	)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	config = _build_root_config(scan_config)
@@ -469,16 +456,71 @@ async def test_cell_scoped_reference_run_uses_only_the_in_scope_datum() -> None:
 									MagicMock(),
 								)
 
+	apply_rescan.assert_called_once()
+	assert saved_configs == []
+	assert manager._snapshot.reference_offset_results == []
+
+
+@pytest.mark.asyncio
+async def test_cell_scoped_run_on_the_datum_derives_and_persists_the_offset() -> None:
+	"""The datum's own cell is the narrow scope that does re-derive the frame."""
+	manager = LaserAutoCalibrationManager()
+	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
+		mode="cell",
+		side=StorageModuleSide.LEFT,
+		shelf_idx=0,
+		cell_idx=0,
+	)
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	config = _build_root_config(scan_config)
+	grid = _build_source_grid(include_second_shelf=True)
+	saved_configs: list[object] = []
+	worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+	target = SimpleNamespace(shelf_idx=0, cell_idx=0)
+	analysis = _build_analysis(include_second_shelf=True)
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
+		return_value=config,
+	):
+		with patch(
+			"openshelf_os_server.core.laser_auto_calibration.resolve_grid_path",
+			return_value="storage.json",
+		):
+			with patch(
+				"openshelf_os_server.core.laser_auto_calibration.laser_module.load_grid",
+				return_value=grid,
+			):
+				with patch(
+					"openshelf_os_server.core.laser_auto_calibration.laser_module.find_detected_cell_for_candidate",
+					return_value=analysis.shelves[0].cells[0],
+				):
+					with patch(
+						"openshelf_os_server.core.laser_auto_calibration.laser_module.apply_single_cell_rescan"
+					) as apply_rescan:
+						with patch(
+							"openshelf_os_server.core.laser_auto_calibration.save_root_config",
+							side_effect=lambda next_config, version_id=None: saved_configs.append(next_config),
+						):
+							with patch(
+								"openshelf_os_server.core.laser_auto_calibration.clear_config_cache"
+							):
+								await manager._persist_single_cell_result(
+									worker,
+									StorageModuleSide.LEFT,
+									analysis,
+									target,
+									MagicMock(),
+								)
+
 	apply_rescan.assert_not_called()
 	assert len(saved_configs) == 1
 	saved_offset = saved_configs[0].robot.grid.scan.left_gripper_xy_correction_mm
-	# The in-scope datum alone: the sibling shelf's point sits 1.1mm away, so a derivation that
-	# dropped the shelf would have persisted the median of the two datums, a value neither holds.
-	assert saved_offset.x_mm == pytest.approx(SECOND_SHELF_DERIVED_OFFSET[0])
-	assert saved_offset.y_mm == pytest.approx(SECOND_SHELF_DERIVED_OFFSET[1])
+	assert saved_offset.x_mm == pytest.approx(DERIVED_OFFSET[0])
+	assert saved_offset.y_mm == pytest.approx(DERIVED_OFFSET[1])
 	result = manager._snapshot.reference_offset_results[0]
 	assert result.sample_count == 1
-	assert result.samples[0].shelf_idx == SECOND_SHELF_IDX
+	assert result.samples[0].shelf_idx == 0
 	assert result.applied is True
 	assert result.persisted is True
 
@@ -490,7 +532,6 @@ async def test_shelf_reference_run_frames_the_apply_with_the_derived_offset() ->
 		mode="shelf",
 		side=StorageModuleSide.LEFT,
 		shelf_idx=0,
-		derive_offsets_from_manual_cells=True,
 	)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	config = _build_root_config(scan_config)
@@ -544,21 +585,49 @@ async def test_shelf_reference_run_frames_the_apply_with_the_derived_offset() ->
 
 
 @pytest.mark.asyncio
-async def test_default_run_reports_no_reference_derivation() -> None:
+async def test_side_run_derives_the_offset_without_being_asked() -> None:
+	"""The derivation is the frame, not an option: a plain side run frames from the datum."""
 	manager = LaserAutoCalibrationManager()
 	manager._snapshot.requested_scope = LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	config = _build_root_config(scan_config)
 
 	with patch(
-		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
+		"openshelf_os_server.core.laser_auto_calibration.apply_runner.get_root_config",
 		return_value=config,
 	):
 		result = await manager._derive_reference_offset(
-			worker=SimpleNamespace(),
 			side=StorageModuleSide.LEFT,
 			analysis=_build_analysis(),
 			source_grid=_build_source_grid(),
+		)
+
+	assert result is not None
+	assert result.offset_x_mm == pytest.approx(DERIVED_OFFSET[0])
+	assert result.offset_y_mm == pytest.approx(DERIVED_OFFSET[1])
+	assert len(manager._snapshot.reference_offset_results) == 1
+
+
+@pytest.mark.asyncio
+async def test_narrow_run_out_of_the_datum_scope_skips_the_derivation() -> None:
+	"""A shelf or cell scope that cannot see the datum keeps the configured frame."""
+	manager = LaserAutoCalibrationManager()
+	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
+		mode="shelf",
+		side=StorageModuleSide.LEFT,
+		shelf_idx=SECOND_SHELF_IDX,
+	)
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	config = _build_root_config(scan_config)
+
+	with patch(
+		"openshelf_os_server.core.laser_auto_calibration.apply_runner.get_root_config",
+		return_value=config,
+	):
+		result = await manager._derive_reference_offset(
+			side=StorageModuleSide.LEFT,
+			analysis=_build_analysis(),
+			source_grid=_build_source_grid(include_second_shelf=True),
 		)
 
 	assert result is None
@@ -571,7 +640,6 @@ async def test_unmatched_reference_cell_fails_the_run_instead_of_using_the_confi
 	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
 		mode="side",
 		side=StorageModuleSide.LEFT,
-		derive_offsets_from_manual_cells=True,
 	)
 	manager._reference_offset_entries = []
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
@@ -586,9 +654,8 @@ async def test_unmatched_reference_cell_fails_the_run_instead_of_using_the_confi
 		"openshelf_os_server.core.laser_auto_calibration.apply_runner.get_root_config",
 		return_value=config,
 	):
-		with pytest.raises(ValueError, match="matched no manual reference cell"):
+		with pytest.raises(ValueError, match="no manual reference cell matched"):
 			await manager._derive_reference_offset(
-				worker=SimpleNamespace(),
 				side=StorageModuleSide.LEFT,
 				analysis=analysis,
 				source_grid=_build_source_grid(),
@@ -1050,13 +1117,12 @@ async def test_shelf_scoped_probe_excludes_the_datum_in_the_analysis_key_space()
 		mode="shelf",
 		side=StorageModuleSide.LEFT,
 		shelf_idx=SECOND_SHELF_IDX,
-		derive_z_model_from_stall=True,
 	)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
 	config = _build_root_config(scan_config)
 	grid = _build_source_grid(include_second_shelf=True)
-	grid.left_module[0].cells[0].is_manual = False  # only the second shelf's cell is the datum
+	grid.left_module[0].cells[0].is_manual = False  # the manual cell is the second shelf's
 	worker = _build_z_worker(grid=grid)
 	# The scan saw the datum opening and one independent opening, both re-indexed to shelf 0.
 	analysis = SimpleNamespace(
@@ -1134,13 +1200,12 @@ async def test_datum_only_shelf_scope_keeps_the_datum_probeable() -> None:
 		mode="shelf",
 		side=StorageModuleSide.LEFT,
 		shelf_idx=SECOND_SHELF_IDX,
-		derive_z_model_from_stall=True,
 	)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
 	config = _build_root_config(scan_config)
 	grid = _build_source_grid(include_second_shelf=True)
-	grid.left_module[0].cells[0].is_manual = False  # only the second shelf's cell is the datum
+	grid.left_module[0].cells[0].is_manual = False  # the manual cell is the second shelf's
 	worker = _build_z_worker(grid=grid)
 	analysis = SimpleNamespace(
 		shelves=[
@@ -1292,10 +1357,11 @@ async def test_z_stall_probes_never_include_the_manual_datum() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scope_flag_requests_the_probe_without_touching_the_config() -> None:
-	"""The api caller can ask for a probed model; the machine setting stays untouched."""
+async def test_machine_setting_requests_the_probe_without_a_scope_flag() -> None:
+	"""`z_stall_anchor_enabled` is the whole request: no per-run flag is left to set."""
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.z_stall_anchor_enabled = True
 	config = _build_root_config(scan_config)
 	worker = _build_z_worker()
 	anchor = AsyncMock(return_value=_build_z_stall_result())
@@ -1303,10 +1369,7 @@ async def test_scope_flag_requests_the_probe_without_touching_the_config() -> No
 		mode="shelf",
 		side=StorageModuleSide.LEFT,
 		shelf_idx=0,
-		derive_z_model_from_stall=True,
 	)
-
-	assert scan_config.z_stall_anchor_enabled is False
 
 	with patch(
 		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
@@ -1329,13 +1392,12 @@ async def test_scope_flag_requests_the_probe_without_touching_the_config() -> No
 
 
 @pytest.mark.asyncio
-async def test_reference_run_without_the_probe_flag_never_probes() -> None:
+async def test_run_without_the_machine_probe_setting_never_probes() -> None:
 	manager = LaserAutoCalibrationManager()
 	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
 		mode="shelf",
 		side=StorageModuleSide.LEFT,
 		shelf_idx=0,
-		derive_offsets_from_manual_cells=True,
 	)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	config = _build_root_config(scan_config)
@@ -1370,9 +1432,9 @@ async def test_cell_scoped_probe_verifies_the_datum_and_persists_the_model() -> 
 		side=StorageModuleSide.LEFT,
 		shelf_idx=0,
 		cell_idx=0,
-		derive_z_model_from_stall=True,
 	)
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.z_stall_anchor_enabled = True
 	scan_config.left_wall_depth_to_gripper_z_model = SimpleNamespace(
 		intercept_mm=1.052,
 		x_slope_mm_per_mm=-0.00285,
