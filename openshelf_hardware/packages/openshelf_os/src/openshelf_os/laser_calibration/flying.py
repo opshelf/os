@@ -43,6 +43,10 @@ FLYING_SCAN_VELOCITY_WINDOW = 8
 # A triggered axis that has not moved at all within this window is not going to complete the
 # line; break and let gantry_wait classify the drive state.
 FLYING_SCAN_START_STALL_S = 2.0
+# After a line stops itself, the axis is commanded to stop and the sampler waits this long for
+# the drive to settle before the next move is issued.
+FLYING_SCAN_EARLY_STOP_SETTLE_S = 2.0
+FLYING_SCAN_EARLY_STOP_POLL_S = 0.05
 # Tolerance when matching an interpolated crossing to the grid interval an edge sits in.
 FLYING_EDGE_INTERVAL_EPS_MM = 0.01
 
@@ -428,6 +432,40 @@ def write_flying_line_samples(
 	return str(output_path)
 
 
+async def _stop_axis_early(scan_motor: Any) -> None:
+	"""Stop a pass that ended itself, without treating the interrupted target as a fault.
+
+	A line stopped by its own predicate is not a failed move: the drive has to stop, and the
+	pending target must be cleared so a later gantry_wait does not wait for the original end or
+	compare the stopped position against it.
+	"""
+	stop_and_clear = getattr(scan_motor, "_stop_and_clear_motion", None)
+
+	if stop_and_clear is not None:
+		await stop_and_clear()
+	else:
+		await scan_motor.stop()
+		clear_pending = getattr(scan_motor, "_clear_pending_motion", None)
+
+		if clear_pending is not None:
+			clear_pending()
+
+	last_position_mm: Optional[float] = None
+	deadline = time.monotonic() + FLYING_SCAN_EARLY_STOP_SETTLE_S
+
+	while time.monotonic() < deadline:
+		position_mm = float(await scan_motor.get_position())
+
+		if (
+			last_position_mm is not None
+			and abs(position_mm - last_position_mm) <= FLYING_SCAN_PROGRESS_EPS_MM
+		):
+			return
+
+		last_position_mm = position_mm
+		await asyncio.sleep(FLYING_SCAN_EARLY_STOP_POLL_S)
+
+
 async def _stop_flying_axes(tool: Any, scan_motor: Any, hold_motor: Any) -> None:
 	# The drive can already be triggered while the motor has not registered its pending move yet,
 	# so a plain stop goes out first; gantry_wait then clears the pending state it may know about.
@@ -531,6 +569,7 @@ async def scan_axis_flying(
 	has_moved = False
 	last_position_mm = start_position_mm
 	last_progress_at = started_at
+	stopped_early = False
 
 	try:
 		did_start = await scan_motor.move_to_position_no_wait(end_mm, rpm=rpm)
@@ -582,6 +621,7 @@ async def scan_axis_flying(
 					)
 
 			if stop_when is not None and stop_when(samples) is True:
+				stopped_early = True
 				break
 
 			if direction * (position_mm - float(end_mm)) >= 0.0:
@@ -605,7 +645,10 @@ async def scan_axis_flying(
 					f"{FLYING_SCAN_MAX_LINE_SECONDS:.0f}s"
 				)
 
-		await tool.gantry_wait(should_abort=should_abort)
+		if stopped_early is True:
+			await _stop_axis_early(scan_motor)
+		else:
+			await tool.gantry_wait(should_abort=should_abort)
 	except BaseException:
 		await _stop_flying_axes(tool, scan_motor, hold_motor)
 		raise
