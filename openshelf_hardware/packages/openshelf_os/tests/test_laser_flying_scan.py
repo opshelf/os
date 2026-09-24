@@ -655,6 +655,7 @@ async def test_capture_shelf_candidates_default_style_keeps_the_stepped_scan(
 @pytest.mark.asyncio
 async def test_probe_line_from_center_flying_prefetch_matches_stepped(monkeypatch) -> None:
 	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
+	import openshelf_os.laser_calibration.flying as flying_module
 
 	step_mm = 2.0
 	positions = [float(value) for value in range(0, 50, 2)]
@@ -695,6 +696,7 @@ async def test_probe_line_from_center_flying_prefetch_matches_stepped(monkeypatc
 	monkeypatch.setattr(fine_scan_module, "sample_scan_point", didFailToSample)
 
 	flying_requests: list[dict] = []
+	flying_lines: list[FlyingScanLine] = []
 
 	async def didScanLineFlying(
 		tool,
@@ -708,9 +710,22 @@ async def test_probe_line_from_center_flying_prefetch_matches_stepped(monkeypatc
 		**kwargs,
 	):
 		flying_requests.append({"axis": axis, "rpm": rpm, "label": progress_label})
-		return list(profile), SimpleNamespace(axis=axis, rpm=rpm)
+		flying_line = FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=[
+				FlyingScanSample(position_mm=position_mm, depth_mm=depth_mm, elapsed_s=index * 0.02)
+				for index, (position_mm, depth_mm) in enumerate(zip(positions, profile))
+			],
+			duration_s=1.0,
+		)
+		flying_lines.append(flying_line)
+		return list(profile), flying_line
 
-	monkeypatch.setattr(fine_scan_module, "scan_line_positions_flying", didScanLineFlying)
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
 
 	flying_scan = GridScanResult(
 		x_positions=positions,
@@ -742,3 +757,158 @@ async def test_probe_line_from_center_flying_prefetch_matches_stepped(monkeypatc
 	assert flying_segment.width_mm == pytest.approx(stepped_segment.width_mm)
 	assert flying_requests == [{"axis": "x", "rpm": 30, "label": "flying_probe_flying"}]
 	assert recorded_lines == ["flying_probe_flying"]
+
+
+def test_refine_segment_edges_from_samples_uses_interpolated_crossings() -> None:
+	from openshelf_os.laser_calibration import LineGapSegment, refine_segment_edges_from_samples
+
+	positions = [18.0, 20.0, 22.0, 40.0, 42.0, 44.0]
+	depth_values = [9.5, 0.0, 0.0, 0.0, 0.0, 9.5]
+	segment = LineGapSegment(
+		start_idx=1,
+		end_idx=4,
+		start_mm=19.0,
+		end_mm=43.0,
+		width_mm=24.0,
+		center_mm=31.0,
+	)
+	samples = []
+
+	for index in range(0, 107):
+		position_mm = 0.5 * index
+		depth_mm = 9.5 if position_mm < 19.25 or position_mm > 42.6 else 0.0
+		samples.append(
+			FlyingScanSample(position_mm=position_mm, depth_mm=depth_mm, elapsed_s=index * 0.01)
+		)
+
+	refined = refine_segment_edges_from_samples(
+		segment=segment,
+		positions=positions,
+		depth_values=depth_values,
+		samples=samples,
+	)
+
+	assert refined.start_idx == segment.start_idx
+	assert refined.end_idx == segment.end_idx
+	assert refined.start_mm == pytest.approx(19.25)
+	assert refined.end_mm == pytest.approx(42.75)
+	assert refined.width_mm == pytest.approx(42.75 - 19.25)
+	assert refined.center_mm == pytest.approx((19.25 + 42.75) / 2.0)
+
+
+def test_refine_segment_edges_keeps_grid_edges_without_crossings() -> None:
+	from openshelf_os.laser_calibration import LineGapSegment, refine_segment_edges_from_samples
+
+	positions = [18.0, 20.0, 22.0, 40.0, 42.0, 44.0]
+	depth_values = [9.5, 0.0, 0.0, 0.0, 0.0, 9.5]
+	segment = LineGapSegment(
+		start_idx=1,
+		end_idx=4,
+		start_mm=19.0,
+		end_mm=43.0,
+		width_mm=24.0,
+		center_mm=31.0,
+	)
+	samples = [
+		FlyingScanSample(position_mm=20.0, depth_mm=0.0, elapsed_s=0.0),
+		FlyingScanSample(position_mm=40.0, depth_mm=0.0, elapsed_s=1.0),
+	]
+
+	refined = refine_segment_edges_from_samples(
+		segment=segment,
+		positions=positions,
+		depth_values=depth_values,
+		samples=samples,
+	)
+
+	assert refined.start_mm == pytest.approx(segment.start_mm)
+	assert refined.end_mm == pytest.approx(segment.end_mm)
+	assert refined.center_mm == pytest.approx(segment.center_mm)
+
+
+@pytest.mark.asyncio
+async def test_find_hole_interior_idx_from_seed_flying_matches_stepped(monkeypatch) -> None:
+	import openshelf_os.laser_calibration.flying as flying_module
+	import openshelf_os.laser_calibration.shelf_scan as shelf_scan_module
+
+	positions = [float(value) for value in range(0, 20, 2)]
+	profile = [0.0 if 5 <= index <= 9 else 9.5 for index in range(len(positions))]
+	stepped_scan = GridScanResult(
+		x_positions=[10.0],
+		y_positions=positions,
+		depth_rows=[[None] for _ in positions],
+	)
+
+	async def didSampleStepped(tool, *, x_mm, y_mm, settle_ms, samples_per_point, should_abort=None):
+		return profile[positions.index(y_mm)]
+
+	monkeypatch.setattr(shelf_scan_module, "sample_scan_point", didSampleStepped)
+
+	stepped_idx = await shelf_scan_module.find_hole_interior_idx_from_seed(
+		SimpleNamespace(),
+		base_scan=stepped_scan,
+		axis="y",
+		positions=positions,
+		fixed_mm=10.0,
+		start_idx=2,
+		progress_prefix="stepped_seek",
+		settle_ms=0,
+		samples_per_point=1,
+		wall_depth_mm=9.5,
+	)
+
+	async def didFailToSample(*args, **kwargs):
+		raise AssertionError("stepped sampling used while flying")
+
+	monkeypatch.setattr(shelf_scan_module, "sample_scan_point", didFailToSample)
+
+	async def didScanLineFlying(
+		tool,
+		*,
+		axis,
+		positions,
+		fixed_mm,
+		rpm,
+		progress_label,
+		should_abort=None,
+		**kwargs,
+	):
+		return list(profile), FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=[
+				FlyingScanSample(position_mm=position_mm, depth_mm=depth_mm, elapsed_s=index * 0.02)
+				for index, (position_mm, depth_mm) in enumerate(zip(positions, profile))
+			],
+			duration_s=1.0,
+		)
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+
+	flying_scan = GridScanResult(
+		x_positions=[10.0],
+		y_positions=positions,
+		depth_rows=[[None] for _ in positions],
+	)
+	recorded_lines: list[str] = []
+	flying_idx = await shelf_scan_module.find_hole_interior_idx_from_seed(
+		SimpleNamespace(_my=SimpleNamespace(_params=SimpleNamespace(mpr=40.0))),
+		base_scan=flying_scan,
+		axis="y",
+		positions=positions,
+		fixed_mm=10.0,
+		start_idx=2,
+		progress_prefix="flying_seek",
+		settle_ms=0,
+		samples_per_point=1,
+		wall_depth_mm=9.5,
+		scan_config=SimpleNamespace(fine_scan_style="flying", fine_scan_feed_mm_s=40.0),
+		on_flying_line=lambda label, line: recorded_lines.append(label),
+	)
+
+	assert stepped_idx == 5
+	assert flying_idx == stepped_idx
+	assert recorded_lines == ["flying_seek_flying"]

@@ -14,6 +14,7 @@ from .core import *
 from .recording import *
 from .motion import *
 from .flying import (
+	prefetch_line_depth_values,
 	scan_line_positions_flying,
 	scan_shelf_scout_line_flying,
 	write_flying_line_samples,
@@ -871,7 +872,28 @@ async def find_hole_interior_idx_from_seed(
 	wall_depth_mm: float,
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
 	should_abort: Callable[[], bool] | None = None,
+	scan_config: Any = None,
+	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 ) -> Optional[int]:
+	prefetched_depth_values: list[float | None] | None = None
+
+	if scan_config is not None:
+		prefetched = await prefetch_line_depth_values(
+			tool,
+			scan_config=scan_config,
+			axis=axis,
+			positions=positions,
+			fixed_mm=fixed_mm,
+			progress_label=f"{progress_prefix}_flying",
+			should_abort=should_abort,
+		)
+
+		if prefetched is not None:
+			prefetched_depth_values, flying_line = prefetched
+
+			if on_flying_line is not None:
+				on_flying_line(f"{progress_prefix}_flying", flying_line)
+
 	sampled_count = 0
 	sampled_depths: dict[int, float | None] = {}
 	total_count = len(positions)
@@ -893,14 +915,17 @@ async def find_hole_interior_idx_from_seed(
 			x_mm = fixed_mm
 			y_mm = position_mm
 
-		depth_mm = await sample_scan_point(
-			tool,
-			x_mm=x_mm,
-			y_mm=y_mm,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			should_abort=should_abort,
-		)
+		if prefetched_depth_values is None:
+			depth_mm = await sample_scan_point(
+				tool,
+				x_mm=x_mm,
+				y_mm=y_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				should_abort=should_abort,
+			)
+		else:
+			depth_mm = prefetched_depth_values[position_idx]
 
 		set_scan_point(
 			base_scan,

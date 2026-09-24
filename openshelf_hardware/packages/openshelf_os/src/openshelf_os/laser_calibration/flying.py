@@ -9,7 +9,15 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Callable, Optional
 
-from .core import depth_to_label, print_status, raise_if_cancelled
+from .core import (
+	COARSE_SCAN_STYLE_FLYING,
+	LineGapSegment,
+	depth_to_label,
+	get_fine_scan_feed_mm_s,
+	get_fine_scan_style,
+	print_status,
+	raise_if_cancelled,
+)
 from .defaults import FLYING_CAPTURE_LATENCY_MS
 from .shelf_scout import (
 	SHELF_EDGE_CONFIRMATION_COUNT,
@@ -35,6 +43,8 @@ FLYING_SCAN_VELOCITY_WINDOW = 8
 # A triggered axis that has not moved at all within this window is not going to complete the
 # line; break and let gantry_wait classify the drive state.
 FLYING_SCAN_START_STALL_S = 2.0
+# Tolerance when matching an interpolated crossing to the grid interval an edge sits in.
+FLYING_EDGE_INTERVAL_EPS_MM = 0.01
 
 
 @dataclass
@@ -144,6 +154,90 @@ def find_depth_threshold_crossings(
 		)
 
 	return crossings
+
+
+def _interpolate_edge_position(
+	*,
+	positions: list[float],
+	depth_values: list[Optional[float]],
+	samples: list[FlyingScanSample],
+	wall_idx: int,
+	hole_idx: int,
+	fallback_mm: float,
+) -> float:
+	if wall_idx < 0 or hole_idx < 0:
+		return fallback_mm
+
+	if wall_idx >= len(positions) or hole_idx >= len(positions):
+		return fallback_mm
+
+	wall_depth_mm = depth_values[wall_idx]
+	hole_depth_mm = depth_values[hole_idx]
+
+	if wall_depth_mm is None or hole_depth_mm is None:
+		return fallback_mm
+
+	from_position_mm = float(positions[wall_idx])
+	to_position_mm = float(positions[hole_idx])
+	threshold_mm = (float(wall_depth_mm) + float(hole_depth_mm)) / 2.0
+	lower_mm = min(from_position_mm, to_position_mm) - FLYING_EDGE_INTERVAL_EPS_MM
+	upper_mm = max(from_position_mm, to_position_mm) + FLYING_EDGE_INTERVAL_EPS_MM
+	crossings = [
+		crossing.position_mm
+		for crossing in find_depth_threshold_crossings(samples=samples, threshold_mm=threshold_mm)
+		if lower_mm <= crossing.position_mm <= upper_mm
+	]
+
+	if len(crossings) == 0:
+		return fallback_mm
+
+	interval_midpoint_mm = (from_position_mm + to_position_mm) / 2.0
+
+	return min(crossings, key=lambda position_mm: abs(position_mm - interval_midpoint_mm))
+
+
+def refine_segment_edges_from_samples(
+	*,
+	segment: LineGapSegment,
+	positions: list[float],
+	depth_values: list[Optional[float]],
+	samples: list[FlyingScanSample],
+) -> LineGapSegment:
+	"""Replace a grid-quantized gap segment's edges with interpolated crossings.
+
+	The decision walk still runs on the binned grid, so the segment's indices and whether it
+	was accepted are unchanged; only the millimetre edges improve, and those are what the cell
+	centre is built from. An edge with no crossing in its interval (an inferred far edge) keeps
+	the grid estimate.
+	"""
+	start_mm = _interpolate_edge_position(
+		positions=positions,
+		depth_values=depth_values,
+		samples=samples,
+		wall_idx=int(segment.start_idx) - 1,
+		hole_idx=int(segment.start_idx),
+		fallback_mm=float(segment.start_mm),
+	)
+	end_mm = _interpolate_edge_position(
+		positions=positions,
+		depth_values=depth_values,
+		samples=samples,
+		wall_idx=int(segment.end_idx) + 1,
+		hole_idx=int(segment.end_idx),
+		fallback_mm=float(segment.end_mm),
+	)
+
+	if end_mm <= start_mm:
+		return segment
+
+	return LineGapSegment(
+		start_idx=segment.start_idx,
+		end_idx=segment.end_idx,
+		start_mm=start_mm,
+		end_mm=end_mm,
+		width_mm=float(end_mm - start_mm),
+		center_mm=float((start_mm + end_mm) / 2.0),
+	)
 
 
 @dataclass
@@ -569,6 +663,47 @@ async def scan_line_positions_flying(
 		positions=positions,
 		max_distance_mm=max_distance_mm,
 		mode=bin_mode,
+	)
+
+	return depth_values, line
+
+
+async def prefetch_line_depth_values(
+	tool: Any,
+	*,
+	scan_config: Any,
+	axis: str,
+	positions: list[float],
+	fixed_mm: float,
+	progress_label: str,
+	should_abort: Optional[Callable[[], bool]] = None,
+) -> Optional[tuple[list[Optional[float]], FlyingScanLine]]:
+	"""Fly a line when the fine scan is configured for it; None means the caller must step it.
+
+	The caller replays its own decision walk over the returned grid values, so its adaptive
+	order, progress output, retries and persisted grid stay identical to the stepped scan.
+	"""
+	if get_fine_scan_style(scan_config) != COARSE_SCAN_STYLE_FLYING:
+		return None
+
+	scan_motor = getattr(tool, "_mx" if axis == "x" else "_my", None)
+
+	if scan_motor is None:
+		return None
+
+	rpm = resolve_axis_rpm_for_feed(scan_motor, get_fine_scan_feed_mm_s(scan_config))
+
+	if rpm is None:
+		return None
+
+	depth_values, line = await scan_line_positions_flying(
+		tool,
+		axis=axis,
+		positions=positions,
+		fixed_mm=fixed_mm,
+		rpm=rpm,
+		progress_label=progress_label,
+		should_abort=should_abort,
 	)
 
 	return depth_values, line
