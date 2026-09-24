@@ -248,8 +248,10 @@ def load_continue_scan_context(
 	)
 
 
-def load_json_file(path: Path) -> dict[str, Any]:
-	return json.loads(path.read_text(encoding="utf-8"))
+def load_json_file(path: Path | str) -> dict[str, Any]:
+	# Run metadata carries its path as a str (ScanCaptureResult.metadata_path), so accepting both
+	# here is what keeps the read-back of a saved run from failing on the caller's type.
+	return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def load_candidates_from_metadata(metadata: dict[str, Any]) -> list[GapCandidateRegion]:
