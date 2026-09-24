@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import openshelf_os
 
 # pymodbus' Log.error appends the last frames when DEBUG logging is off, so the
@@ -19,22 +21,25 @@ PYMODBUS_REPEATING_FRAME_DUMP = (
 )
 
 
-def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_logentry_message() -> None:
+@pytest.mark.parametrize(
+	"logentry",
+	[
+		pytest.param(
+			{"message": "ERROR: request ask for id=2 but got id=3, Skipping."},
+			id="message",
+		),
+		pytest.param(
+			{
+				"message": "unformatted message",
+				"formatted": "ERROR: request ask for id=2 but got id=3, Skipping.",
+			},
+			id="formatted",
+		),
+	],
+)
+def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_logentry(logentry: dict) -> None:
 	event = {
-		"logentry": {
-			"message": "ERROR: request ask for id=2 but got id=3, Skipping.",
-		}
-	}
-
-	assert openshelf_os._before_send_sentry_event(event, {}) is None
-
-
-def test_before_send_sentry_event_drops_pymodbus_request_id_mismatch_logentry_formatted() -> None:
-	event = {
-		"logentry": {
-			"message": "unformatted message",
-			"formatted": "ERROR: request ask for id=2 but got id=3, Skipping.",
-		}
+		"logentry": logentry,
 	}
 
 	assert openshelf_os._before_send_sentry_event(event, {}) is None
@@ -50,23 +55,22 @@ def test_before_send_sentry_event_drops_pymodbus_no_response_retry_logentry() ->
 	assert openshelf_os._before_send_sentry_event(event, {}) is None
 
 
-def test_before_send_sentry_event_drops_pymodbus_no_response_retry_with_frame_dump() -> None:
+@pytest.mark.parametrize(
+	"logentry",
+	[
+		pytest.param(
+			{"message": PYMODBUS_FRAME_DUMP, "formatted": PYMODBUS_FRAME_DUMP},
+			id="message_and_formatted",
+		),
+		pytest.param(
+			{"message": "unformatted message", "formatted": PYMODBUS_FRAME_DUMP},
+			id="formatted",
+		),
+	],
+)
+def test_before_send_sentry_event_drops_pymodbus_no_response_retry_with_frame_dump(logentry: dict) -> None:
 	event = {
-		"logentry": {
-			"message": PYMODBUS_FRAME_DUMP,
-			"formatted": PYMODBUS_FRAME_DUMP,
-		}
-	}
-
-	assert openshelf_os._before_send_sentry_event(event, {}) is None
-
-
-def test_before_send_sentry_event_drops_pymodbus_no_response_retry_logentry_formatted_with_frame_dump() -> None:
-	event = {
-		"logentry": {
-			"message": "unformatted message",
-			"formatted": PYMODBUS_FRAME_DUMP,
-		}
+		"logentry": logentry,
 	}
 
 	assert openshelf_os._before_send_sentry_event(event, {}) is None
@@ -108,34 +112,39 @@ def test_before_send_sentry_event_drops_door_motor_recovery_message() -> None:
 	assert openshelf_os._before_send_sentry_event(event, {}) is None
 
 
-def test_before_send_sentry_event_drops_door_motor_recovery_failure_logentry() -> None:
-	event = {
-		"logentry": {
-			"message": "Door motor recovery failed: %s",
-			"formatted": (
-				"Door motor recovery failed: Failed during pre-home approach: "
-				"Movement failed for motor 31 (status=FAULT)"
-			),
-		}
-	}
-
-	assert openshelf_os._before_send_sentry_event(event, {}) is None
-
-
-def test_before_send_sentry_event_drops_door_motor_recovery_failure_entry() -> None:
-	event = {
-		"entries": [
+@pytest.mark.parametrize(
+	"event",
+	[
+		pytest.param(
 			{
-				"data": {
+				"logentry": {
+					"message": "Door motor recovery failed: %s",
 					"formatted": (
 						"Door motor recovery failed: Failed during pre-home approach: "
 						"Movement failed for motor 31 (status=FAULT)"
 					),
 				}
-			}
-		]
-	}
-
+			},
+			id="logentry",
+		),
+		pytest.param(
+			{
+				"entries": [
+					{
+						"data": {
+							"formatted": (
+								"Door motor recovery failed: Failed during pre-home approach: "
+								"Movement failed for motor 31 (status=FAULT)"
+							),
+						}
+					}
+				]
+			},
+			id="entries",
+		),
+	],
+)
+def test_before_send_sentry_event_drops_door_motor_recovery_failure(event: dict) -> None:
 	assert openshelf_os._before_send_sentry_event(event, {}) is None
 
 
@@ -149,53 +158,48 @@ def test_before_send_sentry_event_keeps_unrelated_door_recovery_message() -> Non
 	assert openshelf_os._before_send_sentry_event(event, {}) == event
 
 
-def test_before_send_sentry_log_drops_door_motor_recovery_failure() -> None:
-	log = {
-		"body": (
-			"Door motor recovery failed: Failed during pre-home approach: "
-			"Movement failed for motor 31 (status=FAULT)"
+@pytest.mark.parametrize(
+	"log",
+	[
+		pytest.param(
+			{
+				"body": (
+					"Door motor recovery failed: Failed during pre-home approach: "
+					"Movement failed for motor 31 (status=FAULT)"
+				),
+				"attributes": {"motor_id": 31},
+			},
+			id="body",
 		),
-		"attributes": {"motor_id": 31},
-	}
-
+		pytest.param(
+			{
+				"body": "",
+				"attributes": {"sentry.message.template": "Door motor recovery failed: %s"},
+			},
+			id="template_attribute",
+		),
+	],
+)
+def test_before_send_sentry_log_drops_door_motor_recovery_failure(log: dict) -> None:
 	assert openshelf_os._before_send_sentry_log(log, {}) is None
 
 
-def test_before_send_sentry_log_drops_door_motor_recovery_failure_template_attribute() -> None:
-	log = {
-		"body": "",
-		"attributes": {"sentry.message.template": "Door motor recovery failed: %s"},
-	}
-
-	assert openshelf_os._before_send_sentry_log(log, {}) is None
-
-
-def test_before_send_sentry_log_drops_pymodbus_no_response_retry_message() -> None:
-	log = {
-		"body": PYMODBUS_RETRY_TEXT,
-	}
-
-	assert openshelf_os._before_send_sentry_log(log, {}) is None
-
-
-def test_before_send_sentry_log_drops_pymodbus_no_response_retry_attribute() -> None:
-	log = {
-		"body": "",
-		"attributes": {"message": "No response received after 12 retries, continue with next request"},
-	}
-
-	assert openshelf_os._before_send_sentry_log(log, {}) is None
-
-
-def test_before_send_sentry_log_drops_pymodbus_no_response_retry_with_frame_dump() -> None:
-	log = {"body": PYMODBUS_FRAME_DUMP}
-
-	assert openshelf_os._before_send_sentry_log(log, {}) is None
-
-
-def test_before_send_sentry_log_drops_pymodbus_no_response_retry_with_repeating_frame() -> None:
-	log = {"body": PYMODBUS_REPEATING_FRAME_DUMP}
-
+@pytest.mark.parametrize(
+	"log",
+	[
+		pytest.param({"body": PYMODBUS_RETRY_TEXT}, id="message"),
+		pytest.param(
+			{
+				"body": "",
+				"attributes": {"message": "No response received after 12 retries, continue with next request"},
+			},
+			id="attribute",
+		),
+		pytest.param({"body": PYMODBUS_FRAME_DUMP}, id="frame_dump"),
+		pytest.param({"body": PYMODBUS_REPEATING_FRAME_DUMP}, id="repeating_frame"),
+	],
+)
+def test_before_send_sentry_log_drops_pymodbus_no_response_retry(log: dict) -> None:
 	assert openshelf_os._before_send_sentry_log(log, {}) is None
 
 
