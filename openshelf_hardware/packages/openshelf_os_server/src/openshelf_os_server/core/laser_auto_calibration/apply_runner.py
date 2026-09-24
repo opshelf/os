@@ -679,7 +679,7 @@ class ApplyRunnerMixin:
             if stage_extension_value is None or z_place_value is None:
                 raise ValueError(f"{stage_param} and Z_EXTENSION_PLACE are required to apply the z offset model")
 
-            laser_module.require_wall_depth_to_gripper_z_model_matches_tool(
+            laser_module.require_z_offset_model_matches_tool(
                 model=configured_model,
                 side=side,
                 stage_extension_mm=float(stage_extension_value),
