@@ -585,16 +585,22 @@ async def run_with_temp_robot_config(
 	config_path: str,
 	didRun: Callable[[Robot], Any],
 	shutdown_action: str,
+	config_builder: Callable[[Any], dict] | None = None,
+	status_print: Callable[[str], None] | None = None,
+	prefix: str = "laser-script-config-",
 ) -> Any:
+	config_builder = config_builder if config_builder is not None else build_standalone_config
+	status_print = status_print if status_print is not None else print_status
+
 	with tempfile.NamedTemporaryFile(
 		mode="w",
 		suffix=".json",
-		prefix="laser-script-config-",
+		prefix=prefix,
 		dir=str(Path(config_path).resolve().parent),
 		delete=False,
 	) as temp_config_file:
 		temp_config_path = Path(temp_config_file.name)
-		temp_config_data = build_standalone_config(config)
+		temp_config_data = config_builder(config)
 		json.dump(temp_config_data, temp_config_file, indent="\t")
 
 	original_common_config_path = common_module.CONFIG_PATH
@@ -605,7 +611,7 @@ async def run_with_temp_robot_config(
 
 	try:
 		robot = Robot()
-		print_status("phase=robot-configure")
+		status_print("phase=robot-configure")
 		await robot.configure()
 
 		try:
@@ -613,10 +619,10 @@ async def run_with_temp_robot_config(
 		finally:
 			if should_skip_motion_cleanup_on_cancel() is False:
 				if shutdown_action == "stop":
-					print_status("phase=robot-stop")
+					status_print("phase=robot-stop")
 					await robot.stop()
 				else:
-					print_status("phase=robot-shutdown")
+					status_print("phase=robot-shutdown")
 					await robot.shutdown()
 	finally:
 		common_module.CONFIG_PATH = original_common_config_path

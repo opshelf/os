@@ -509,7 +509,7 @@ async def test_run_with_temp_robot_config_skips_stop_when_cancelled(tmp_path) ->
 		await asyncio.sleep(10)
 
 	with patch('openshelf_os.laser_calibration.angle.build_standalone_config', return_value={}):
-		with patch('openshelf_os.robot.Robot', return_value=robot):
+		with patch('openshelf_os.laser_calibration.core.Robot', return_value=robot):
 			task = asyncio.create_task(
 				run_with_temp_robot_config(
 					config=SimpleNamespace(),

@@ -4,6 +4,7 @@ import argparse
 from typing import Any, Callable
 
 import openshelf_os.laser_calibration.angle as angle_module
+from openshelf_os.laser_calibration.shelf_scout import filter_shelf_edges as filter_shared_shelf_edges
 from .constants import (
 	LEFT_MODULE_ROTATION_CENTER_DEG,
 	RIGHT_MODULE_ROTATION_CENTER_DEG,
@@ -322,12 +323,9 @@ async def resolve_capture_y_mm(
 		if is_y_brake_disabled is True:
 			await angle_module.set_y_brake_for_shelf_scouting(tool, is_enabled=True)
 
-	filtered_edges = angle_module.filter_shelf_edges(
+	filtered_edges = filter_shared_shelf_edges(
 		edges=edges,
-		y_min_mm=y_min_mm,
 		y_max_mm=y_max_mm,
-		side_name=side_name,
-		scout_x_positions=scout_x_positions,
 	)
 	print_status(
 		'shelf_edges='

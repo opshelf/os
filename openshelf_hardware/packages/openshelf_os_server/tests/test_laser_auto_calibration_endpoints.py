@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from openshelf_os.laser_calibration import angle as angle_module
+from openshelf_os.laser_calibration.angle import capture as angle_capture_module
 from openshelf_os import laser_calibration as laser_module
 from openshelf_os.common import Parameters
 from openshelf_os.laser_calibration.scan import ScanBounds
@@ -1706,7 +1707,7 @@ async def test_resolve_capture_y_mm_stops_after_first_detected_edge() -> None:
             with patch.object(angle_module, 'set_y_brake_for_shelf_scouting', AsyncMock()):
                 with patch.object(angle_module, 'enter_capture_mode', AsyncMock()):
                     with patch.object(angle_module, 'prepare_capture_pose', AsyncMock()):
-                        with patch.object(angle_module, 'filter_shelf_edges', return_value=first_edges):
+                        with patch.object(angle_capture_module, 'filter_shared_shelf_edges', return_value=first_edges):
                             with patch.object(
                                 angle_module,
                                 'scan_shelf_scout_line',
@@ -1788,7 +1789,7 @@ async def test_resolve_capture_y_mm_enters_right_shelf_scout_at_180_deg() -> Non
         with patch.object(angle_module, 'build_axis_positions', return_value=[100.0, 98.0, 96.0]):
             with patch.object(angle_module, 'set_y_brake_for_shelf_scouting', AsyncMock()):
                 with patch.object(angle_module, 'enter_capture_mode', AsyncMock()) as enter_mock:
-                    with patch.object(angle_module, 'filter_shelf_edges', return_value=first_edges):
+                    with patch.object(angle_capture_module, 'filter_shared_shelf_edges', return_value=first_edges):
                         with patch.object(
                             angle_module,
                             'scan_shelf_scout_line',

@@ -62,7 +62,6 @@ from .robot_ops import (
 )
 from .shelf_scout import (
 	build_shelf_scout_x_positions,
-	filter_shelf_edges,
 	scan_shelf_scout_line,
 	set_y_brake_for_shelf_scouting,
 )
