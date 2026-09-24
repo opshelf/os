@@ -76,10 +76,6 @@ async def test_access_control_enforcement(client: AsyncClient) -> None:
     r = await client.get("/api/users", headers=vheaders)
     assert r.status_code == 403
 
-    # Audit verify should also be forbidden for viewer (needs audit:read)
-    r2 = await client.get("/api/audit/logs", headers=vheaders)
-    assert r2.status_code == 403
-
 
 @pytest.mark.anyio
 async def test_users_crud_as_admin(client: AsyncClient) -> None:

@@ -81,21 +81,6 @@ async def test_print_label_writes_barcode_when_printer_is_enabled() -> None:
 
 
 @pytest.mark.anyio
-async def test_print_label_simulates_hardware_in_mock_mode() -> None:
-    with (
-        patch.object(printer_router, "get_operating_mode", return_value=OperatingMode.mock),
-        patch.object(printer_router.printer, "print_label") as print_label,
-    ):
-        result = await printer_router.print_label(
-            printer_router.PrintLabelRequest(barcode="036000291452")
-        )
-
-    assert result == printer_router.PrintLabelResponse(
-        message="success", barcode="036000291452", printed=True
-    )
-    print_label.assert_not_called()
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize("barcode", ["CR00006174", "CR-0000.6174/ A", "x" * 255])
 async def test_print_label_simulates_bespoke_barcodes_in_mock_mode(barcode: str) -> None:

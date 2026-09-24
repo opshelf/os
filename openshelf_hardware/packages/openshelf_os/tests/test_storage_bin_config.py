@@ -4,46 +4,50 @@ from pydantic import ValidationError
 from openshelf_os.config.settings import StorageBinSettings
 
 
-def test_storage_bin_accepts_maximum_item_footprint() -> None:
-    configured = StorageBinSettings.model_validate(
-        {
-            "barcode": "900000000001",
-            "home_location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 0},
-            "inner_dimensions": {"width": 180, "height": 110, "length": 260},
-            "max_item_dimensions": {"width": 60, "length": 80},
-            "max_items": 6,
-        }
-    )
+@pytest.mark.parametrize(
+    "inner, item, error",
+    [
+        pytest.param(
+            {"width": 180, "height": 110, "length": 260},
+            {"width": 60, "length": 80},
+            None,
+            id="maximum_footprint_accepted",
+        ),
+        pytest.param(
+            {"width": 180, "height": 110, "length": 260},
+            {"width": 0, "length": 80},
+            "greater than 0",
+            id="non_positive_rejected",
+        ),
+        pytest.param(
+            {"width": 50, "height": 110, "length": 70},
+            {"width": 60, "length": 80},
+            "must fit inside",
+            id="footprint_larger_than_bin",
+        ),
+    ],
+)
+def test_storage_bin_validates_item_footprint(
+    inner: dict[str, float], item: dict[str, float], error: str | None
+) -> None:
+    payload = {
+        "barcode": "900000000001",
+        "home_location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 0},
+        "inner_dimensions": inner,
+        "max_item_dimensions": item,
+        "max_items": 6,
+    }
 
-    assert configured.max_item_dimensions is not None
-    assert configured.max_item_dimensions.width == 60
-    assert configured.max_item_dimensions.length == 80
+    if error is None:
+        configured = StorageBinSettings.model_validate(payload)
 
+        assert configured.max_item_dimensions is not None
+        assert configured.max_item_dimensions.width == item["width"]
+        assert configured.max_item_dimensions.length == item["length"]
+        return
 
-def test_storage_bin_rejects_non_positive_maximum_item_footprint() -> None:
-    with pytest.raises(ValidationError):
-        StorageBinSettings.model_validate(
-            {
-                "barcode": "900000000001",
-                "home_location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 0},
-                "inner_dimensions": {"width": 180, "height": 110, "length": 260},
-                "max_item_dimensions": {"width": 0, "length": 80},
-                "max_items": 6,
-            }
-        )
-
-
-def test_storage_bin_rejects_item_footprint_larger_than_bin() -> None:
-    with pytest.raises(ValidationError, match="must fit inside"):
-        StorageBinSettings.model_validate(
-            {
-                "barcode": "900000000001",
-                "home_location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 0},
-                "inner_dimensions": {"width": 50, "height": 110, "length": 70},
-                "max_item_dimensions": {"width": 60, "length": 80},
-                "max_items": 6,
-            }
-        )
+    with pytest.raises(ValidationError, match=error):
+        StorageBinSettings.model_validate(payload)
 
 
 def test_compartment_capacity_defaults_to_layout_product():

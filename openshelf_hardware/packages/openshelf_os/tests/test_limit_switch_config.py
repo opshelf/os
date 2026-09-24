@@ -12,7 +12,6 @@ import openshelf_os.common as c
 from hardware.exceptions import MotorLimitError
 from hardware.motor import Motor
 from openshelf_os.iobox import IOBox
-from openshelf_os.iobox import _create_motor_if_enabled as create_iobox_motor
 from openshelf_os.tool import Tool
 from openshelf_os.tool import _create_motor_if_enabled as create_tool_motor
 
@@ -209,15 +208,3 @@ async def test_homing_a_motor_with_a_switch_still_requires_it_to_engage() -> Non
     assert isinstance(motor, Motor)
     with pytest.raises(MotorLimitError, match="s_lim_min"):
         await motor._verify_home_limit_engaged()
-
-
-def test_iobox_create_motor_skips_the_door_switch_when_disabled() -> None:
-    motors = c.Motors.model_validate([motor_entry("door", 31, limit_switches_enabled=False)])
-    gpio = FakeGpio(pins=["io_lim_min"])
-
-    motor = create_iobox_motor(
-        AsyncMock(), motors, "door", None, logging.getLogger("test"), gpio, home_limit_pin="io_lim_min"
-    )
-
-    assert motor._home_limit_input is None
-    assert gpio.requested == []

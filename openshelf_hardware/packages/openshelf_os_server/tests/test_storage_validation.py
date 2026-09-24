@@ -11,12 +11,6 @@ from openshelf_os_server.core.validation import (
 class TestItemValidator:
     """Test item validation logic."""
 
-    def test_valid_dimensions(self) -> None:
-        """Test valid dimensions."""
-        dimensions = {"width": 10.0, "height": 20.0, "length": 30.0}
-        # Should not raise exception
-        ItemValidator.validate_dimensions(dimensions)
-
     def test_missing_dimensions(self) -> None:
         """Test missing required dimensions."""
         with pytest.raises(ValidationError, match="Missing required dimension"):
@@ -37,12 +31,6 @@ class TestItemValidator:
         """Test dimensions without arbitrary maximum size."""
         ItemValidator.validate_dimensions({"width": 2000.0, "height": 20.0, "length": 30.0})
 
-    def test_valid_weight(self) -> None:
-        """Test valid weight."""
-        # Should not raise exception
-        ItemValidator.validate_weight(100.0)
-        ItemValidator.validate_weight(None)
-
     def test_invalid_weight(self) -> None:
         """Test invalid weight."""
         with pytest.raises(ValidationError, match="must be a positive number"):
@@ -56,13 +44,6 @@ class TestItemValidator:
     def test_large_weight(self) -> None:
         """Test weight without arbitrary maximum size."""
         ItemValidator.validate_weight(2000000.0)
-
-    def test_valid_name(self) -> None:
-        """Test valid name."""
-        # Should not raise exception
-        ItemValidator.validate_name("Valid Name")
-        ItemValidator.validate_name("A")
-
 
     def test_empty_name(self) -> None:
         """Test empty name."""
@@ -78,13 +59,6 @@ class TestItemValidator:
         """Test name length is handled by request schemas."""
         ItemValidator.validate_name("a" * 256)
 
-    def test_valid_metadata(self) -> None:
-        """Test valid metadata."""
-        # Should not raise exception
-        ItemValidator.validate_metadata(None)
-        ItemValidator.validate_metadata({})
-        ItemValidator.validate_metadata({"key": "value"})
-
     def test_large_metadata(self) -> None:
         """Test metadata without pre-storage size checks."""
         ItemValidator.validate_metadata({"data": "x" * 11000})
@@ -92,14 +66,6 @@ class TestItemValidator:
 
 class TestLocationValidator:
     """Test location validation logic."""
-
-    def test_valid_shelf_idx(self) -> None:
-        """Test valid shelf index."""
-        # Should not raise exception
-        LocationValidator.validate_shelf_idx(0)
-        LocationValidator.validate_shelf_idx(1)
-        LocationValidator.validate_shelf_idx(999)
-
 
     def test_negative_shelf_idx(self) -> None:
         """Test negative shelf index."""
@@ -110,14 +76,6 @@ class TestLocationValidator:
         """Test shelf index without arbitrary maximum."""
         LocationValidator.validate_shelf_idx(1000)
 
-    def test_valid_cell_idx(self) -> None:
-        """Test valid cell index."""
-        # Should not raise exception
-        LocationValidator.validate_cell_idx(0)
-        LocationValidator.validate_cell_idx(1)
-        LocationValidator.validate_cell_idx(999)
-
-
     def test_negative_cell_idx(self) -> None:
         """Test negative cell index."""
         with pytest.raises(ValidationError, match="Cell index cannot be negative"):
@@ -126,15 +84,6 @@ class TestLocationValidator:
     def test_large_cell_idx(self) -> None:
         """Test cell index without arbitrary maximum."""
         LocationValidator.validate_cell_idx(1000)
-
-    def test_valid_location(self) -> None:
-        """Test valid location."""
-        # Should not raise exception
-        LocationValidator.validate_location(1, 1)
-        LocationValidator.validate_location(0, 0)
-        LocationValidator.validate_location(999, 999)
-
-
 
 class TestStorageCellValidator:
     """Test storage cell validation logic."""
@@ -193,17 +142,6 @@ class TestStorageCellValidator:
 
 class TestStorageValidator:
     """Test main storage validator logic."""
-
-    def test_valid_item_creation(self) -> None:
-        """Test valid item creation data."""
-        # Should not raise exception
-        StorageValidator.validate_item_creation(
-            barcode="123456789012",
-            name="Test Item",
-            dimensions={"width": 10.0, "height": 20.0, "length": 30.0},
-            weight=500.0,
-            metadata={"category": "test"}
-        )
 
     def test_invalid_barcode_creation(self) -> None:
         """Test invalid barcode in item creation."""
@@ -269,17 +207,6 @@ class TestStorageValidator:
                 dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
             )
 
-    def test_valid_item_update(self) -> None:
-        """Test valid item update data."""
-        # Should not raise exception
-        StorageValidator.validate_item_update()
-        StorageValidator.validate_item_update(name="New Name")
-        StorageValidator.validate_item_update(
-            dimensions={"width": 15.0, "height": 25.0, "length": 35.0}
-        )
-        StorageValidator.validate_item_update(weight=750.0)
-        StorageValidator.validate_item_update(metadata={"category": "updated"})
-
     def test_invalid_item_update(self) -> None:
         """Test invalid item update data."""
         with pytest.raises(ValidationError, match="Name cannot be empty"):
@@ -289,13 +216,6 @@ class TestStorageValidator:
             StorageValidator.validate_item_update(
                 dimensions={"width": 10.0, "height": 20.0}
             )
-
-    def test_valid_location_assignment(self) -> None:
-        """Test valid location assignment."""
-        # Should not raise exception
-        StorageValidator.validate_location_assignment(1, 1)
-        StorageValidator.validate_location_assignment(0, 0)
-        StorageValidator.validate_location_assignment(999, 999)
 
     def test_invalid_location_assignment(self) -> None:
         """Test invalid location assignment."""

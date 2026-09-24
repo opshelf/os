@@ -84,6 +84,11 @@ def test_scan_sampling_preserves_configured_noise_filtering() -> None:
 	assert get_coarse_settle_ms(50) == 50
 	assert get_coarse_samples_per_point(3) == 3
 
+	assert get_fine_settle_ms(-20) == 0
+	assert get_coarse_settle_ms(-20) == 0
+	assert get_fine_samples_per_point(0) == 1
+	assert get_coarse_samples_per_point(0) == 1
+
 
 def test_shelf_hole_probe_offsets_default_to_multiline_scan() -> None:
 	assert get_shelf_hole_probe_y_offsets_mm(SimpleNamespace(shelf_hole_probe_y_offsets_mm=None)) == [
@@ -870,7 +875,7 @@ def test_build_single_shelf_known_edge_y_converts_fixed_offset_back_to_laser_fra
 	assert known_shelf_edge_y == [pytest.approx(680.5)]
 
 
-def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:
+def test_apply_single_cell_rescan_preserves_frame_and_saves_grid_without_gripper_correction() -> None:
 	calibration_point = SimpleNamespace(x=1.0, y=2.0, z_offset=3.0)
 	target_cell = SimpleNamespace(calibration_point=calibration_point)
 	target_shelf = SimpleNamespace(get_cell=lambda cell_idx: target_cell)

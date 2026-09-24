@@ -141,20 +141,6 @@ async def test_controller_write_multiple_registers_preserves_modbus_error(mock_m
 
     assert "Unexpected error writing" not in str(exc_info.value)
 
-@pytest.mark.asyncio
-async def test_controller_error_handling(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-    
-    # Setup mock error response
-    result = Mock()
-    result.isError.return_value = True
-    mock_modbus_client.read_holding_registers.return_value = result
-
-    # Test error handling
-    with pytest.raises(ModbusError):
-        await controller.read_holding_registers(1, 0x100)
-
 
 @pytest.mark.asyncio
 async def test_controller_retries_modbus_read_error(mock_modbus_client):

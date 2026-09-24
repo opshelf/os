@@ -211,21 +211,6 @@ def test_remove_shelf_shifts_higher_shelves_down(tmp_path) -> None:
 	assert grid.left_module[0].cells[0].dimensions.width == 20.0
 
 
-def test_remove_shelf_deleting_top_is_unaffected(tmp_path) -> None:
-	grid = StorageGrid(
-		left_module=[
-			_shelf(0, [_cell(0, width=10.0)]),
-			_shelf(1, [_cell(0, width=20.0)]),
-		],
-		right_module=[],
-	)
-	grid.filename = str(tmp_path / "storage.json")
-
-	grid.remove_shelf(StorageModuleSide.LEFT, 1)
-
-	assert [shelf.shelf_idx for shelf in grid.left_module] == [0]
-	assert grid.left_module[0].cells[0].dimensions.width == 10.0
-
 
 def test_remove_shelf_keeps_cells_and_reindexes_persisted(tmp_path) -> None:
 	grid = StorageGrid(

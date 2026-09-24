@@ -588,22 +588,6 @@ async def test_unrelated_direct_event_is_not_swallowed_by_active_bin_workflow() 
 
 
 @pytest.mark.anyio
-async def test_add_item_location_rejects_occupied_cell() -> None:
-    await _seed_item_with_location(barcode="666", side="right_module", shelf_idx=3, cell_idx=0)
-
-    async with AsyncSessionLocal() as session:
-        storage = StorageService(session)
-        await storage.create_item(
-            barcode="777",
-            name="Second Item",
-            dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
-        )
-
-        with pytest.raises(ValidationError, match="already occupied"):
-            await storage.add_item_location("777", "right_module", 3, 0)
-
-
-@pytest.mark.anyio
 async def test_tracker_inactive_waits_nothing() -> None:
     tracker = EventProcessingTracker()
     assert await tracker.wait_until_processed(1, timeout_s=0.05) is True

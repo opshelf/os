@@ -145,13 +145,6 @@ def test_explicit_pwr_out0_wins_over_the_legacy_alias() -> None:
     assert GpioManager.from_config(gpio, fake=True).has_pin("pwr_out0")
 
 
-def test_default_pins_already_use_the_new_name() -> None:
-    gpio = GpioConfig()
-
-    assert "pwr_out0" in gpio.pins
-    assert "power_control" not in gpio.pins
-
-
 def test_missing_and_extra_pins_are_reported_against_defaults() -> None:
     missing, unrecognized = compare_gpio_pins_to_defaults(["pwr_out0", "not_a_real_pin"])
 

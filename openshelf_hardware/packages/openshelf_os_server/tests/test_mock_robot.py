@@ -339,7 +339,25 @@ async def test_mock_store_accepts_long_barcode_but_rejects_blank_or_non_string(
 async def test_mock_status_has_eighty_cells_and_db_occupancy(
 	mock_runtime: MockRobotRuntime,
 ) -> None:
-	payload = await mock_runtime.status_payload()
+	async with AsyncSessionLocal() as session:
+		item = Item(
+			barcode="occupancy-1",
+			name="Occupied",
+			dimensions={"width": 1, "height": 1, "length": 1},
+		)
+		session.add(item)
+		await session.flush()
+		session.add(ItemLocation(item_id=item.id, side="left_module", shelf_idx=1, cell_idx=2))
+		await session.commit()
+
+	try:
+		payload = await mock_runtime.status_payload()
+	finally:
+		async with AsyncSessionLocal() as session:
+			await session.execute(delete(ItemLocation))
+			await session.execute(delete(Item))
+			await session.commit()
+
 	status = json.loads(payload)
 	assert status["mode"] == "mock"
 	assert status["ready"] is True
@@ -351,6 +369,10 @@ async def test_mock_status_has_eighty_cells_and_db_occupancy(
 	assert status["robot_status"]["gantry"]["x_axis"]["homed"] == 1
 	assert status["robot_status"]["scale"]["occupied"] is False
 	assert status["robot_status"]["cabinet_doors"]["closed"] is True
+
+	cells = status["robot_status"]["storage"]["left_module"][1]["cells"]
+	assert cells[2]["status"] == "occupied"
+	assert cells[3]["status"] == "available"
 
 
 @pytest.mark.anyio

@@ -57,6 +57,7 @@ async def test_move_to_cell_reports_actual_stage_position(client) -> None:
 
 	assert response.status_code == 200
 	assert response.json()["slide_extension"] == pytest.approx(3.0)
+	assert response.json()["warnings"] is None
 
 
 @pytest.mark.anyio
@@ -98,6 +99,9 @@ async def test_move_to_position_clamps_out_of_range_targets(client) -> None:
 	assert response.json()["x"] == pytest.approx(1000.0)
 	assert response.json()["y"] == pytest.approx(1500.0)
 	assert response.json()["z_offset"] == pytest.approx(9.5)
+	warnings = response.json()["warnings"]
+	assert warnings is not None
+	assert any("X axis limit reached" in w for w in warnings)
 	assert len(response.json()["warnings"]) == 3
 
 	move_coordinate = worker._robot._tool.move.await_args.args[0]
