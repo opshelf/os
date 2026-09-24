@@ -12,48 +12,11 @@ from .core import *
 from .recording import *
 from .motion import *
 from .shelf_scan import *
-from .flying import resolve_axis_rpm_for_feed
-
-
-async def prefetch_fine_line_depth_values(
-	tool: Any,
-	*,
-	scan_config: Any,
-	axis: str,
-	positions: list[float],
-	fixed_mm: float,
-	progress_label: str,
-	should_abort: Callable[[], bool] | None = None,
-) -> Optional[tuple[list[Optional[float]], Any]]:
-	"""Fly a fine line when configured for it; None means the caller must step the line.
-
-	The probe still replays its own decision walk over the returned grid values, so its adaptive
-	order, progress output, retries and persisted grid stay identical to the stepped scan.
-	"""
-	if get_fine_scan_style(scan_config) != COARSE_SCAN_STYLE_FLYING:
-		return None
-
-	scan_motor = getattr(tool, "_mx" if axis == "x" else "_my", None)
-
-	if scan_motor is None:
-		return None
-
-	rpm = resolve_axis_rpm_for_feed(scan_motor, get_fine_scan_feed_mm_s(scan_config))
-
-	if rpm is None:
-		return None
-
-	depth_values, line = await scan_line_positions_flying(
-		tool,
-		axis=axis,
-		positions=positions,
-		fixed_mm=fixed_mm,
-		rpm=rpm,
-		progress_label=progress_label,
-		should_abort=should_abort,
-	)
-
-	return depth_values, line
+from .flying import (
+	prefetch_line_depth_values,
+	refine_segment_edges_from_samples,
+	resolve_axis_rpm_for_feed,
+)
 
 
 async def probe_line_from_center(
@@ -77,9 +40,10 @@ async def probe_line_from_center(
 	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 ) -> Optional[LineGapSegment]:
 	prefetched_depth_values: Optional[list[Optional[float]]] = None
+	flying_line: Any = None
 
 	if scan_config is not None:
-		prefetched = await prefetch_fine_line_depth_values(
+		prefetched = await prefetch_line_depth_values(
 			tool,
 			scan_config=scan_config,
 			axis=axis,
@@ -94,6 +58,17 @@ async def probe_line_from_center(
 
 			if on_flying_line is not None:
 				on_flying_line(f"{progress_prefix}_flying", flying_line)
+
+	def didRefineSegment(segment: LineGapSegment) -> LineGapSegment:
+		if flying_line is None or prefetched_depth_values is None:
+			return segment
+
+		return refine_segment_edges_from_samples(
+			segment=segment,
+			positions=positions,
+			depth_values=prefetched_depth_values,
+			samples=flying_line.samples,
+		)
 
 	left_gap_idx: Optional[int] = None
 	right_gap_idx: Optional[int] = None
@@ -247,26 +222,30 @@ async def probe_line_from_center(
 			f"assumed_span_mm={float(expected_span_mm):.2f}"
 		)
 
-		return LineGapSegment(
-			start_idx=left_gap_idx,
-			end_idx=right_gap_idx,
-			start_mm=inferred_start_mm,
-			end_mm=inferred_end_mm,
-			width_mm=float(inferred_end_mm - inferred_start_mm),
-			center_mm=float((inferred_start_mm + inferred_end_mm) / 2.0),
+		return didRefineSegment(
+			LineGapSegment(
+				start_idx=left_gap_idx,
+				end_idx=right_gap_idx,
+				start_mm=inferred_start_mm,
+				end_mm=inferred_end_mm,
+				width_mm=float(inferred_end_mm - inferred_start_mm),
+				center_mm=float((inferred_start_mm + inferred_end_mm) / 2.0),
+			)
 		)
 
 	start_mm = positions[left_gap_idx] - (step_mm / 2.0)
 	end_mm = positions[right_gap_idx] + (step_mm / 2.0)
 	width_mm = float(end_mm - start_mm)
 
-	return LineGapSegment(
-		start_idx=left_gap_idx,
-		end_idx=right_gap_idx,
-		start_mm=start_mm,
-		end_mm=end_mm,
-		width_mm=width_mm,
-		center_mm=float((start_mm + end_mm) / 2.0),
+	return didRefineSegment(
+		LineGapSegment(
+			start_idx=left_gap_idx,
+			end_idx=right_gap_idx,
+			start_mm=start_mm,
+			end_mm=end_mm,
+			width_mm=width_mm,
+			center_mm=float((start_mm + end_mm) / 2.0),
+		)
 	)
 
 
@@ -769,6 +748,8 @@ async def capture_cross_scan(
 		wall_depth_mm=wall_depth_mm,
 		on_update=on_update,
 		should_abort=should_abort,
+		scan_config=scan_config,
+		on_flying_line=on_flying_line,
 	)
 
 	if vertical_seed_idx is None:
