@@ -102,7 +102,7 @@ async def test_configure_sentry_enables_demo_and_production(tmp_path) -> None:
 			set_context_mock.assert_called()
 
 
-def test_before_send_sentry_event_drops_anyio_cancelled_error() -> None:
+def test_before_send_sentry_event_drops_sse_cancel_on_finish_cancelled_error() -> None:
 	event = {
 		"exception": {
 			"values": [
@@ -119,6 +119,131 @@ def test_before_send_sentry_event_drops_anyio_cancelled_error() -> None:
 	}
 
 	assert main._before_send_sentry_event(event, {}) is None
+
+
+# The value anyio puts on a CancelledError it delivered on behalf of BaseHTTPMiddleware's
+# call_next task, which is how a streaming request is cancelled when its response finishes.
+HTTP_MIDDLEWARE_CANCEL = (
+	"Cancelled via cancel scope 7fff50ee13d0 by "
+	"<Task cancelling name='starlette.middleware.base.BaseHTTPMiddleware.__call__."
+	"<locals>.call_next.<locals>.coro' coro=<BaseHTTPMiddleware.__call__."
+	"<locals>.call_next.<locals>.coro() running at /app/openshelf_hardware/.venv/"
+	"lib/python3.13/site-packages/starlette/middleware/base.py:144> "
+	"cb=[TaskGroup._spawn.<locals>.task_done() at /app/openshelf_hardware/.venv/"
+	"lib/python3.13/site-packages/anyio/_backends/_asyncio.py:803]>"
+)
+
+
+def test_before_send_sentry_event_keeps_error_chained_to_sse_cancel() -> None:
+	# The same guard applies to the pre-existing sse-starlette canceller: a real failure chained to
+	# its cancellation stays reportable.
+	event = {
+		"exception": {
+			"values": [
+				{"type": "ConnectionResetError", "value": "tool camera frame queue lost"},
+				{
+					"type": "CancelledError",
+					"value": (
+						"Cancelled via cancel scope 7ffea42fa710 by "
+						"<Task pending name='sse_starlette.sse.EventSourceResponse.__call__."
+						"<locals>.cancel_on_finish'>"
+					),
+				},
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
+def test_before_send_sentry_event_drops_http_middleware_cancelled_error() -> None:
+	# The exact shape of the reported event: a client stops listening to /api/robot/events, so the
+	# request task is cancelled while the pooled SQLite connection is still being closed. SQLAlchemy's
+	# pool logs "Exception terminating connection" with the CancelledError attached, and the
+	# LoggingIntegration turns that ERROR record into the event.
+	assert main.ANYIO_CANCEL_SCOPE_MESSAGE == "Cancelled via cancel scope"
+	assert "cancel_on_finish" in main.ASGI_REQUEST_CANCEL_TASKS
+	assert "starlette.middleware.base.BaseHTTPMiddleware" in main.ASGI_REQUEST_CANCEL_TASKS
+
+	event = {
+		"logger": "sqlalchemy.pool.impl.AsyncAdaptedQueuePool",
+		"logentry": {
+			"formatted": "Exception terminating connection <AdaptedConnection <aiosqlite.core.Connection object>>",
+		},
+		"exception": {
+			"values": [
+				{"type": "CancelledError", "value": HTTP_MIDDLEWARE_CANCEL},
+			]
+		},
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_drops_http_middleware_cancel_with_stream_context() -> None:
+	# anyio attaches the WouldBlock its memory stream raised as the cancellation's context, exactly
+	# as it does for the uvicorn shutdown cancel, so the stream type must not keep the event alive.
+	event = {
+		"exception": {
+			"values": [
+				{"type": "WouldBlock", "value": ""},
+				{"type": "CancelledError", "value": HTTP_MIDDLEWARE_CANCEL},
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) is None
+
+
+def test_before_send_sentry_event_keeps_error_chained_to_http_middleware_cancel() -> None:
+	# A real failure that was in flight while the request was cancelled stays reportable.
+	event = {
+		"exception": {
+			"values": [
+				{"type": "ConnectionResetError", "value": "tool camera frame queue lost"},
+				{"type": "CancelledError", "value": HTTP_MIDDLEWARE_CANCEL},
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
+def test_before_send_sentry_event_keeps_task_group_error_under_http_middleware_cancel() -> None:
+	# anyio reports a task group failure as a group next to the cancellation it also caused, and a
+	# group is not one of the stream types the filter tolerates.
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "ExceptionGroup",
+					"value": "unhandled errors in a TaskGroup (1 sub-exception)",
+				},
+				{"type": "CancelledError", "value": HTTP_MIDDLEWARE_CANCEL},
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
+
+
+def test_before_send_sentry_event_keeps_cancelled_error_from_app_cancel_scope() -> None:
+	# Cancellations we start ourselves, such as a move's own scope, stay reportable.
+	event = {
+		"exception": {
+			"values": [
+				{
+					"type": "CancelledError",
+					"value": (
+						"Cancelled via cancel scope 7f3b1c2d4e60 by "
+						"<Task cancelling name='openshelf_os.robot.worker.RobotWorker._run'>"
+					),
+				}
+			]
+		}
+	}
+
+	assert main._before_send_sentry_event(event, {}) == event
 
 
 def test_before_send_sentry_event_keeps_plain_cancelled_error() -> None:
