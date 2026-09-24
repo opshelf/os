@@ -728,15 +728,6 @@
 			</tr>
 			<tr>
 				<td colspan="3">
-					<p class="selection-hint">
-						every run frames its offsets from the hand-calibrated bottom-left cell of each side it
-						covers; calibration fails before moving when one of those cells is missing or not marked
-						manual
-					</p>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
 					<div class="actions">
 						<button type="button" onclick={didClickStart} disabled={isStartDisabled}>
 							{startButtonLabel}
@@ -856,10 +847,5 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-	}
-
-	.selection-hint {
-		margin: 0.25rem 0 0 1.5rem;
-		opacity: 0.8;
 	}
 </style>
