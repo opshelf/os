@@ -230,21 +230,17 @@ async def test_item_location_remove() -> None:
 
 @pytest.mark.anyio
 async def test_storage_cell_operations() -> None:
-    """Test storage cell operations."""
+    """Test storage cell get/update operations."""
     async with AsyncSessionLocal() as db:
         service = StorageService(db)
 
-        # Create storage cell
-        cell = await service.create_storage_cell(
-            shelf_idx=1,
-            cell_idx=1,
-            capacity="small"
-        )
+        # Seed a cell directly: creation is not part of the service API.
+        cell = StorageCell(shelf_idx=1, cell_idx=1, capacity="small")
+        db.add(cell)
+        await db.commit()
+        await db.refresh(cell)
 
         assert cell.id is not None
-        assert cell.shelf_idx == 1
-        assert cell.cell_idx == 1
-        assert cell.capacity == "small"
         assert cell.status == "available"
 
         # Get storage cells

@@ -3,7 +3,6 @@ from openshelf_os_server.core.validation import (
     ValidationError,
     ItemValidator,
     LocationValidator,
-    StorageCellValidator,
     StorageValidator
 )
 
@@ -84,60 +83,6 @@ class TestLocationValidator:
     def test_large_cell_idx(self) -> None:
         """Test cell index without arbitrary maximum."""
         LocationValidator.validate_cell_idx(1000)
-
-class TestStorageCellValidator:
-    """Test storage cell validation logic."""
-
-    def test_valid_capacity(self) -> None:
-        """Test valid capacity."""
-        # Should not raise exception
-        StorageCellValidator.validate_capacity("small")
-        StorageCellValidator.validate_capacity("large")
-        StorageCellValidator.validate_capacity("A")
-
-    def test_invalid_capacity_type(self) -> None:
-        """Test invalid capacity type."""
-        with pytest.raises(ValidationError, match="Capacity must be a string"):
-            StorageCellValidator.validate_capacity(123)  # type: ignore[arg-type]
-
-    def test_empty_capacity(self) -> None:
-        """Test empty capacity."""
-        with pytest.raises(ValidationError, match="Capacity cannot be empty"):
-            StorageCellValidator.validate_capacity("")
-
-    def test_whitespace_capacity(self) -> None:
-        """Test whitespace-only capacity."""
-        with pytest.raises(ValidationError, match="Capacity cannot be empty"):
-            StorageCellValidator.validate_capacity("   ")
-
-    def test_long_capacity(self) -> None:
-        """Test capacity that exceeds maximum length."""
-        long_capacity = "a" * 51
-        with pytest.raises(ValidationError, match="Capacity cannot exceed 50 characters"):
-            StorageCellValidator.validate_capacity(long_capacity)
-
-    def test_valid_status(self) -> None:
-        """Test valid status."""
-        # Should not raise exception
-        valid_statuses = ["available", "occupied", "maintenance", "disabled"]
-        for status in valid_statuses:
-            StorageCellValidator.validate_status(status)
-
-    def test_invalid_status(self) -> None:
-        """Test invalid status."""
-        with pytest.raises(ValidationError, match="Status must be one of"):
-            StorageCellValidator.validate_status("invalid_status")
-
-    def test_invalid_status_type(self) -> None:
-        """Test invalid status type."""
-        with pytest.raises(ValidationError, match="Status must be a string"):
-            StorageCellValidator.validate_status(123)  # type: ignore[arg-type]
-
-    def test_case_insensitive_status(self) -> None:
-        """Test that status validation is case insensitive."""
-        # Should not raise exception for any case
-        for status in ["AVAILABLE", "Occupied", "MAINTENANCE", "disabled"]:
-            StorageCellValidator.validate_status(status)
 
 
 class TestStorageValidator:
