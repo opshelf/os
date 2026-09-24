@@ -222,6 +222,35 @@ def test_validate_rescan_shelf_args_rejects_conflicting_options() -> None:
 			None,
 		)
 
+	args = module.build_parser().parse_args(
+		['--module', 'left', '--rescan-shelf', '2', '--y-offset', '20']
+	)
+
+	with pytest.raises(ValueError, match='drop --y-offset'):
+		module.validate_rescan_shelf_args(args, None, None)
+
+	args = module.build_parser().parse_args(
+		['--module', 'left', '--rescan-shelf', '2', '--known-shelf-edge-y', '320']
+	)
+
+	with pytest.raises(ValueError, match='drop --known-shelf-edge-y'):
+		module.validate_rescan_shelf_args(args, None, None)
+
+	args = module.build_parser().parse_args(
+		[
+			'--module',
+			'left',
+			'--rescan-shelf',
+			'2',
+			'--shelf-scout-only',
+			'--known-shelf-edge-y',
+			'320',
+		]
+	)
+
+	with pytest.raises(ValueError, match='drop --known-shelf-edge-y'):
+		module.validate_rescan_shelf_args(args, None, None)
+
 
 
 def test_main_dispatches_rescan_shelf_with_flying_coarse_scan(
