@@ -244,6 +244,14 @@
 		setAnchor(shelfIdx, cellIdx);
 	}
 
+	function didDoubleClickCell(shelfIdx: number, cellIdx: number): void {
+		// A dblclick arrives after two click events, and the second click just toggled
+		// the selection, so select this cell unconditionally.
+		selectedKeys = new Set([cellKey(selectedSide, shelfIdx, cellIdx)]);
+		setAnchor(shelfIdx, cellIdx);
+		overlayOpen = true;
+	}
+
 	function didClickShelf(
 		event: Pick<MouseEvent, 'shiftKey' | 'ctrlKey' | 'metaKey'>,
 		shelfIdx: number
@@ -327,7 +335,13 @@
 
 	function didDeselect(): void {
 		clearCurrentSideSelection();
+		closeOverlay();
+	}
+
+	function closeOverlay(): void {
 		overlayOpen = false;
+		testNote = '';
+		testNoteIsError = false;
 	}
 
 	// A scrim click only counts when the press both started and ended in the dimmed area.
@@ -381,7 +395,14 @@
 			return;
 		}
 
-		overlayOpen = false;
+		closeOverlay();
+	}
+
+	function didPressEscape(event: KeyboardEvent): void {
+		if (event.key !== 'Escape' || overlayOpen === false) {
+			return;
+		}
+		closeOverlay();
 	}
 
 	type EditorField = 'status' | 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
@@ -856,7 +877,7 @@
 			}
 			storageGrid = await getStorageGrid();
 			clearCurrentSideSelection();
-			overlayOpen = false;
+			closeOverlay();
 		} catch (err) {
 			fail(err, 'failed to delete cells');
 			// A partial failure deleted some cells already; reload + prune so the
@@ -892,7 +913,7 @@
 			selectedKeys = next;
 		}
 		if (next.size === 0) {
-			overlayOpen = false;
+			closeOverlay();
 		}
 		if (anchorSide !== null && anchorShelf !== null && storageGrid !== null) {
 			const anchorShelves =
@@ -942,7 +963,7 @@
 		}
 
 		if (next.size === 0) {
-			overlayOpen = false;
+			closeOverlay();
 		}
 	}
 
@@ -1165,11 +1186,13 @@
 		document.addEventListener('mousedown', didScrimMouseDown);
 		document.addEventListener('mouseup', didScrimMouseUp);
 		document.addEventListener('click', didClickOutside);
+		document.addEventListener('keydown', didPressEscape);
 		return () => {
 			disconnectScanStream();
 			document.removeEventListener('mousedown', didScrimMouseDown);
 			document.removeEventListener('mouseup', didScrimMouseUp);
 			document.removeEventListener('click', didClickOutside);
+			document.removeEventListener('keydown', didPressEscape);
 		};
 	});
 
@@ -1290,6 +1313,7 @@
 								role="button"
 								tabindex={0}
 								onclick={(event) => didClickCell(event, shelf.shelf_idx, cell.cell_idx)}
+								ondblclick={() => didDoubleClickCell(shelf.shelf_idx, cell.cell_idx)}
 								onkeydown={(event) => didPressCell(event, shelf.shelf_idx, cell.cell_idx)}
 							>
 								{cell.cell_idx}
@@ -1764,7 +1788,7 @@
 	}
 
 	.editor-test-note {
-		margin: 0;
+		margin: 0 0 1.5em 0;
 	}
 
 	.editor-test-note.is-error {
