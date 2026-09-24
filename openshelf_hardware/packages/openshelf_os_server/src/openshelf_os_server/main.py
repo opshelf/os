@@ -12,13 +12,14 @@ import logging
 import socket
 import struct
 from pathlib import Path
-from typing import Any, AsyncGenerator, Optional, cast
+from typing import Any, AsyncGenerator, NamedTuple, Optional, cast
 from urllib.parse import urlsplit
 
 import sentry_sdk
 import uvicorn
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from argon2 import PasswordHasher
 from fastapi import FastAPI, Request
 from openshelf_os_server.documentation import DESCRIPTION, TAGS, configure_security_documentation
@@ -28,7 +29,8 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.transport import HttpTransport
-from sqlalchemy import select
+from sqlalchemy import create_engine, inspect, select
+from sqlalchemy.pool import NullPool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.device import get_device_id
@@ -411,29 +413,143 @@ def _configure_sentry() -> bool:
 sentry_enabled = _configure_sentry()
 
 
-def _run_migrations() -> None:
-	try:
-		script_location = Path(__file__).parent / "alembic"
+MISSING_SCHEMA_DETAIL_LIMIT = 25
 
-		if script_location.exists() is False:
-			logger.warning("alembic_directory_missing", script_location=str(script_location))
+
+class _SchemaState(NamedTuple):
+	"""What the live database holds compared to the schema the models describe."""
+
+	current_revisions: list[str]
+	tables_present: int
+	missing: list[str]
+
+
+def _alembic_config(database_url: str) -> Optional[Config]:
+	script_location = Path(__file__).parent / "alembic"
+
+	if script_location.exists() is False:
+		logger.warning("alembic_directory_missing", script_location=str(script_location))
+		return None
+
+	# Historical resolution, kept as is: the packaged alembic.ini is not found from
+	# here, so the fallback Config is what runs in the image. Loading that ini would
+	# make alembic/env.py call fileConfig(), which disables the app loggers that
+	# configure_logging() already installed.
+	alembic_ini_path = Path(__file__).parent.parent.parent.parent.parent / "alembic.ini"
+
+	if alembic_ini_path.exists() is False:
+		logger.warning("alembic_ini_missing", path=str(alembic_ini_path), action="using_fallback_config")
+		alembic_cfg = Config()
+	else:
+		alembic_cfg = Config(str(alembic_ini_path))
+
+	alembic_cfg.set_main_option("script_location", str(script_location))
+	alembic_cfg.set_main_option("sqlalchemy.url", database_url)
+	return alembic_cfg
+
+
+def _schema_state(database_url: str) -> _SchemaState:
+	"""Compare the live schema with the schema `Base.metadata` describes.
+
+	The API builds its databases with `Base.metadata.create_all`, and a replay that
+	dies partway leaves behind the `alembic_version` rows sqlite committed around its
+	DDL, so neither the revision row nor its absence says where the schema really is.
+	Missing lists every model table, and every `table.column`, that the database does
+	not have yet.
+	"""
+	sync_engine = create_engine(database_url, poolclass=NullPool)
+
+	try:
+		with sync_engine.connect() as connection:
+			inspector = inspect(connection)
+			table_names = set(inspector.get_table_names())
+			current_revisions: list[str] = []
+
+			if "alembic_version" in table_names:
+				current_revisions = sorted(
+					str(row[0]) for row in connection.exec_driver_sql("SELECT version_num FROM alembic_version")
+				)
+
+			missing: list[str] = []
+
+			for table_name, table in Base.metadata.tables.items():
+				if table_name not in table_names:
+					missing.append(table_name)
+					continue
+
+				columns = {column["name"] for column in inspector.get_columns(table_name)}
+				missing.extend(
+					f"{table_name}.{column.name}"
+					for column in table.columns
+					if column.name not in columns
+				)
+
+			missing_tables = len([entry for entry in missing if "." not in entry])
+			return _SchemaState(
+				current_revisions=current_revisions,
+				tables_present=len(Base.metadata.tables) - missing_tables,
+				missing=missing,
+			)
+	finally:
+		sync_engine.dispose()
+
+
+def _run_migrations() -> None:
+	"""Bring the database to revision head, or baseline it when it is already there.
+
+	Databases in the field were built by `Base.metadata.create_all`, not by this
+	revision chain: they already carry the schema head describes while
+	`alembic_version` holds no version, or an old row an aborted replay left behind.
+	Replaying the full history into them can never complete - revisions create tables
+	and indexes that are already there (`storage_bins`,
+	`ix_item_sizer_measurements_upca`), and no revision creates `items`,
+	`item_locations` or `storage_cells`, whose absence breaks the batch rebuild in
+	a4b5c6d7e8f9. Every abort logged `migration_failed`, and since sqlite had already
+	committed the version rows around its DDL the next start replayed the same way, so
+	every restart of every device raised this alert again.
+
+	A database whose schema matches the models - or that holds no model table at all
+	and is about to get them from the create_all that runs right after here - is
+	baselined with a stamp instead. A stamp writes one `alembic_version` row, touches
+	no rows and no tables, and revisions land incrementally from head from then on.
+	"""
+	try:
+		db_url = get_database_url()
+		alembic_cfg = _alembic_config(db_url)
+
+		if alembic_cfg is None:
 			return
 
-		package_root = Path(__file__).parent.parent.parent.parent.parent
-		alembic_ini_path = package_root / "alembic.ini"
+		heads = sorted(ScriptDirectory.from_config(alembic_cfg).get_heads())
+		state = _schema_state(db_url)
+		fresh_database = state.tables_present == 0
+		schema_is_current = state.missing == []
 
-		if alembic_ini_path.exists() is False:
-			logger.warning("alembic_ini_missing", path=str(alembic_ini_path), action="using_fallback_config")
-			alembic_cfg = Config()
-			alembic_cfg.set_main_option("script_location", str(script_location))
-		else:
-			alembic_cfg = Config(str(alembic_ini_path))
-			alembic_cfg.set_main_option("script_location", str(script_location))
+		if state.current_revisions != heads and (fresh_database is True or schema_is_current is True):
+			logger.info(
+				"migrations_baseline_stamped",
+				reason="empty_database" if fresh_database is True else "schema_matches_models",
+				previous_revision=",".join(state.current_revisions) or None,
+				tables_present=state.tables_present,
+				model_tables=len(Base.metadata.tables),
+			)
+			command.stamp(alembic_cfg, "head")
+			logger.info("database_migrations_complete", action="baseline_stamp")
+			return
 
-		db_url = get_database_url()
-		alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+		if fresh_database is False and schema_is_current is False:
+			# The schema matches neither the models nor head, so the replay below is the
+			# only path left. Name the drift it has to close: revisions cannot add a
+			# column to a table they did not create, and an abort that follows has to say
+			# what the device is short of.
+			logger.warning(
+				"migrations_history_replay",
+				from_revision=",".join(state.current_revisions) or None,
+				missing_count=len(state.missing),
+				missing=state.missing[:MISSING_SCHEMA_DETAIL_LIMIT],
+			)
 
-		logger.info("running_database_migrations", script_location=str(script_location))
+		logger.info("running_database_migrations", script_location=str(Path(__file__).parent / "alembic"))
 		command.upgrade(alembic_cfg, "head")
 		logger.info("database_migrations_complete")
 	except Exception as e:
