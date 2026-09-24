@@ -37,7 +37,6 @@ def build_config(config_path: Path, storage_path: Path) -> SimpleNamespace:
 	scan = SimpleNamespace(
 		z_stall_probe_x_shift_mm=20.0,
 		z_stall_manual_agreement_mm=1.0,
-		z_offset_model_param_tolerance_mm=0.2,
 		z_stall_probe_repeats=2,
 		z_stall_probe_repeat_tolerance_mm=0.3,
 		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
@@ -375,7 +374,7 @@ def build_fake_anchor_result(
 		sample_count=1,
 		x_span_mm=135.0,
 		intercept_mm=intercept_mm,
-		x_slope_mm_per_mm=slope_per_mm,
+		slope_per_mm=slope_per_mm,
 		stage_extension_mm=stage_extension_mm,
 		z_place_mm=10.0,
 		rotation_center_deg=3.0,
@@ -630,7 +629,7 @@ def test_short_span_probe_reports_the_model_the_product_would_install(
 	assert exit_code == 0
 	# The installed pair is the datum's line: intercept re-based to x = 0, slope kept.
 	assert f"'intercept_mm': {round(datum_intercept_mm, 3)}" in output
-	assert "'slope_per_mm': 0.002" in output
+	assert "'x_slope_mm_per_mm': 0.002" in output
 	assert "model_source=config_short_span" in output
 	# The raw fit is still reported, so the substitution is visible.
 	assert f"raw_probe_intercept_mm={datum_intercept_mm + 0.002 * 300.0:.3f}" in output
