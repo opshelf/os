@@ -345,16 +345,31 @@ class BinStorageService:
             if row.active or await self._member_count(row.id) > 0
         ]
 
-    async def serialize_bin(self, row: StorageBin) -> dict[str, Any]:
-        # Read contents and positions together: retrieval can remove membership concurrently.
-        members = (
+    async def _contents(
+        self, bin_ids: Sequence[int]
+    ) -> dict[int, list[tuple[Item, Optional[int]]]]:
+        """Read the contents of several bins in one query, keyed by bin id.
+
+        Contents and positions are read together: retrieval can remove membership concurrently.
+        """
+        if not bin_ids:
+            return {}
+        rows = (
             await self.session.execute(
-                select(Item, StorageBinItem.compartment)
+                select(Item, StorageBinItem.compartment, StorageBinItem.bin_id)
                 .join(StorageBinItem, StorageBinItem.item_id == Item.id)
-                .where(StorageBinItem.bin_id == row.id)
-                .order_by(Item.name, Item.barcode)
+                .where(StorageBinItem.bin_id.in_(bin_ids))
+                .order_by(StorageBinItem.bin_id, Item.name, Item.barcode)
             )
         ).all()
+        contents: dict[int, list[tuple[Item, Optional[int]]]] = {}
+        for member, compartment, bin_id in rows:
+            contents.setdefault(int(bin_id), []).append((member, compartment))
+        return contents
+
+    def _serialize_bin_row(
+        self, row: StorageBin, members: Sequence[tuple[Item, Optional[int]]]
+    ) -> dict[str, Any]:
         capacity_volume = self._volume(row.inner_dimensions) or 0.0
         member_volumes = [self._volume(item.dimensions) for item, _ in members]
         used_volume = (
@@ -385,6 +400,10 @@ class BinStorageService:
             ],
         }
 
+    async def serialize_bin(self, row: StorageBin) -> dict[str, Any]:
+        members = await self._contents([int(row.id)])
+        return self._serialize_bin_row(row, members.get(int(row.id), []))
+
     async def item_bin(self, item_id: int) -> Optional[StorageBin]:
         return (
             await self.session.execute(
@@ -397,6 +416,41 @@ class BinStorageService:
     async def item_bin_payload(self, item_id: int) -> Optional[dict[str, Any]]:
         row = await self.item_bin(item_id)
         return await self.serialize_bin(row) if row else None
+
+    async def item_bin_payloads(self, item_ids: Sequence[int]) -> dict[int, dict[str, Any]]:
+        """Resolve bin payloads for many items at once, keyed by item id.
+
+        A paged item list must not pay two queries per row, and items that share a tray must not
+        re-read that tray once per member. Memberships, tray rows, and every tray's contents are
+        read in a fixed set of queries regardless of page size. Items without a bin are omitted.
+        """
+        ids = list(dict.fromkeys(int(item_id) for item_id in item_ids))
+        if not ids:
+            return {}
+        memberships = (
+            await self.session.execute(
+                select(StorageBinItem.item_id, StorageBinItem.bin_id).where(
+                    StorageBinItem.item_id.in_(ids)
+                )
+            )
+        ).all()
+        if not memberships:
+            return {}
+        bin_ids = list(dict.fromkeys(int(bin_id) for _, bin_id in memberships))
+        bins = (
+            await self.session.execute(select(StorageBin).where(StorageBin.id.in_(bin_ids)))
+        ).scalars().all()
+        contents = await self._contents(bin_ids)
+        payloads = {
+            int(row.id): self._serialize_bin_row(row, contents.get(int(row.id), []))
+            for row in bins
+        }
+        # An item has at most one bin (uq_storage_bin_items_item), so this mapping is unambiguous.
+        return {
+            int(item_id): payloads[int(bin_id)]
+            for item_id, bin_id in memberships
+            if int(bin_id) in payloads
+        }
 
     async def targets_reserved_bin_identity(self, payload: dict[str, Any]) -> bool:
         """Whether legacy direct mutation would claim a reserved bin barcode or home."""
