@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -61,6 +61,12 @@ class LaserScanConfig(BaseModel):
 
     laser_offset_x_mm: Optional[float] = None
     laser_offset_y_mm: Optional[float] = None
+    # Coarse scan motion. `stepped` stops and settles at every grid point; `flying` drives the
+    # axis at a constant feed and bins samples taken along the way onto the same grid. Flying is
+    # a POC: keep it unset until a run on the machine has been compared against a stepped one.
+    coarse_scan_style: Literal["stepped", "flying"] = "stepped"
+    coarse_scan_rpm: Optional[int] = Field(default=None, gt=0)
+    coarse_scan_bin_mode: Literal["nearest", "median"] = "nearest"
     # Scan pose: absolute stage position and Z delta relative to Z_EXTENSION_PLACE.
     laser_scan_pose_stage_mm: Optional[float] = Field(default=None, ge=0)
     laser_scan_pose_z_delta_from_place_mm: Optional[float] = None

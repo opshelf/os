@@ -8,6 +8,7 @@ import sys
 import traceback
 from dataclasses import replace
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +47,19 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--continue', dest='continue_scan', action='store_true')
 	parser.add_argument('--from-run', type=Path)
 	parser.add_argument('--shelf-scout-only', action='store_true')
+	parser.add_argument(
+		'--coarse-scan-style',
+		choices=['stepped', 'flying'],
+		help='Coarse scan motion. stepped stops at every grid point; flying drives the axis at a constant feed and bins samples onto the same grid.',
+	)
+	parser.add_argument('--coarse-scan-rpm', type=int)
+	parser.add_argument('--coarse-scan-bin-mode', choices=['nearest', 'median'])
+	parser.add_argument(
+		'--rescan-shelf',
+		type=int,
+		metavar='SHELF_IDX',
+		help='Rescan one shelf: bounds and known shelf edge come from the storage grid and scan config.',
+	)
 	parser.add_argument('--rescan-cell', type=str)
 	parser.add_argument('--validate-cell', type=str)
 	parser.add_argument('--validate-cycles', type=int, default=1)
@@ -101,6 +115,106 @@ def derive_bounds(args: argparse.Namespace) -> ScanBounds:
 		y_min=float(y_min) + float(args.y_offset),
 		y_max=float(y_max) + float(args.y_offset),
 	)
+
+
+def apply_scan_config_overrides(scan_config: Any, args: argparse.Namespace) -> Any:
+	overrides: dict[str, Any] = {}
+
+	if args.coarse_scan_style is not None:
+		overrides['coarse_scan_style'] = args.coarse_scan_style
+
+	if args.coarse_scan_rpm is not None:
+		overrides['coarse_scan_rpm'] = int(args.coarse_scan_rpm)
+
+	if args.coarse_scan_bin_mode is not None:
+		overrides['coarse_scan_bin_mode'] = args.coarse_scan_bin_mode
+
+	if len(overrides) == 0:
+		return scan_config
+
+	if hasattr(scan_config, 'model_copy') is False:
+		raise ValueError('--coarse-scan-* overrides require a validated laser scan config')
+
+	return scan_config.model_copy(update=overrides)
+
+
+def build_side_scan_bounds(scan_config: Any, side: StorageModuleSide) -> ScanBounds:
+	prefix = 'left' if side == StorageModuleSide.LEFT else 'right'
+
+	return ScanBounds(
+		x_min=float(getattr(scan_config, f'{prefix}_bounds_x_min_mm')),
+		x_max=float(getattr(scan_config, f'{prefix}_bounds_x_max_mm')),
+		y_min=float(getattr(scan_config, f'{prefix}_bounds_y_min_mm')),
+		y_max=float(getattr(scan_config, f'{prefix}_bounds_y_max_mm')),
+	)
+
+
+def shelf_calibration_center_y(shelf: Any) -> float | None:
+	y_values = [
+		float(cell.calibration_point.y)
+		for cell in shelf.cells
+		if cell.calibration_point is not None
+	]
+
+	if len(y_values) == 0:
+		return None
+
+	return float(median(y_values))
+
+
+def build_single_shelf_rescan_bounds(
+	*,
+	base_bounds: ScanBounds,
+	center_y_mm: float,
+	scan_config: Any,
+) -> ScanBounds:
+	hole_probe_offsets_mm = laser_module.get_shelf_hole_probe_y_offsets_mm(scan_config)
+	local_margin_mm = max(
+		80.0,
+		float(laser_module.EXPECTED_HOLE_HEIGHT_MM)
+		+ max(float(offset_mm) for offset_mm in hole_probe_offsets_mm)
+		+ 30.0,
+	)
+
+	return ScanBounds(
+		x_min=base_bounds.x_min,
+		x_max=base_bounds.x_max,
+		y_min=max(base_bounds.y_min, center_y_mm - local_margin_mm),
+		y_max=min(base_bounds.y_max, center_y_mm + local_margin_mm),
+	)
+
+
+def validate_rescan_shelf_args(
+	args: argparse.Namespace,
+	rescan_target: Any,
+	validation_target: Any,
+) -> None:
+	if args.rescan_shelf is None:
+		return
+
+	if args.rescan_shelf < 0:
+		raise ValueError('--rescan-shelf must be non-negative')
+
+	if args.from_run is not None:
+		raise ValueError('--rescan-shelf cannot be used with --from-run')
+
+	if args.continue_scan is True:
+		raise ValueError('--rescan-shelf cannot be used with --continue')
+
+	if rescan_target is not None:
+		raise ValueError('--rescan-shelf cannot be used with --rescan-cell')
+
+	if validation_target is not None:
+		raise ValueError('--rescan-shelf cannot be used with --validate-cell')
+
+	if args.shelf_scout_only is False and args.known_shelf_edge_y is not None:
+		raise ValueError('--rescan-shelf derives the known shelf edge; drop --known-shelf-edge-y')
+
+	if args.x is not None or args.y is not None:
+		raise ValueError('--rescan-shelf derives its bounds from the scan config; drop --x/--y')
+
+	if args.module is None:
+		raise ValueError('--module is required with --rescan-shelf')
 
 
 def print_analysis(analysis: Any) -> None:
@@ -244,10 +358,14 @@ async def run_scan(args: argparse.Namespace) -> int:
 	config = load_config_file(args.config)
 	scans_dir = derive_scans_dir(args.config, runtime_paths)
 	args.scans_dir = scans_dir
-	scan_config = config.robot.grid.scan
+	scan_config = apply_scan_config_overrides(config.robot.grid.scan, args)
 	recorder: laser_module.StagedScanRecorder | None = None
 	rescan_target = parse_single_cell_rescan_target(args.rescan_cell)
 	validation_target = parse_single_cell_rescan_target(args.validate_cell)
+	validate_rescan_shelf_args(args, rescan_target, validation_target)
+
+	if args.coarse_scan_rpm is not None and args.coarse_scan_rpm <= 0:
+		raise ValueError('--coarse-scan-rpm must be greater than zero')
 	rescan_candidate: laser_module.GapCandidateRegion | None = None
 	grid_path = runtime_paths.resolve_storage_path(config, config_path=args.config)
 	grid = laser_module.load_grid(grid_path)
@@ -365,11 +483,11 @@ async def run_scan(args: argparse.Namespace) -> int:
 		if args.step is None:
 			raise ValueError('--step is required unless --continue is used')
 
-		if rescan_target is None and args.x is None:
-			raise ValueError('--x is required unless --continue or --rescan-cell is used')
+		if rescan_target is None and args.rescan_shelf is None and args.x is None:
+			raise ValueError('--x is required unless --continue, --rescan-cell or --rescan-shelf is used')
 
-		if rescan_target is None and args.y is None:
-			raise ValueError('--y is required unless --continue or --rescan-cell is used')
+		if rescan_target is None and args.rescan_shelf is None and args.y is None:
+			raise ValueError('--y is required unless --continue, --rescan-cell or --rescan-shelf is used')
 
 		if rescan_target is not None and args.shelf_scout_only is True:
 			raise ValueError('--shelf-scout-only cannot be used with --rescan-cell')
@@ -445,7 +563,44 @@ async def run_scan(args: argparse.Namespace) -> int:
 				f'wall_depth_mm={wall_depth_label}'
 			)
 		else:
-			bounds = derive_bounds(args)
+			if args.rescan_shelf is not None:
+				target_shelf = laser_module.resolve_target_shelf(
+					grid=grid,
+					side=side,
+					shelf_idx=int(args.rescan_shelf),
+				)
+				center_y_mm = shelf_calibration_center_y(target_shelf)
+
+				if center_y_mm is None:
+					raise ValueError(
+						f'--rescan-shelf {args.rescan_shelf} has no calibration points on {side.value}'
+					)
+
+				bounds = build_single_shelf_rescan_bounds(
+					base_bounds=build_side_scan_bounds(scan_config, side),
+					center_y_mm=center_y_mm,
+					scan_config=scan_config,
+				)
+
+				if shelf_scout_only is True:
+					# A scout-only pass over the window is the quickest way to compare a flying
+					# scout against a stepped one, so the known edge is not seeded for it.
+					known_shelf_edge_y = None
+				else:
+					known_shelf_edge_y = laser_module.build_single_shelf_known_edge_y(
+						grid=grid,
+						side=side,
+						shelf_idx=int(args.rescan_shelf),
+						scan_config=scan_config,
+					)
+
+				laser_module.print_status(
+					f'rescan_shelf={args.rescan_shelf} center_y={center_y_mm:.2f} '
+					f'bounds:y=({bounds.y_min:.2f},{bounds.y_max:.2f}) '
+					f'known_shelf_edge_y={known_shelf_edge_y}'
+				)
+			else:
+				bounds = derive_bounds(args)
 
 		run_parameters = laser_module.build_run_parameters(
 			args=args,
