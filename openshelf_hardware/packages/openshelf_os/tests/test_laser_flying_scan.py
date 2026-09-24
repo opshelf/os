@@ -915,6 +915,28 @@ async def test_find_hole_interior_idx_from_seed_flying_matches_stepped(monkeypat
 	assert recorded_lines == ["flying_seek_flying"]
 
 
+def test_flying_scan_line_metrics_use_travelled_distance() -> None:
+	line = FlyingScanLine(
+		axis="y",
+		fixed_mm=0.0,
+		start_mm=1250.0,
+		end_mm=0.0,
+		rpm=30,
+		duration_s=5.0,
+		samples=[
+			FlyingScanSample(position_mm=1250.0, depth_mm=None, elapsed_s=0.0),
+			FlyingScanSample(
+				position_mm=1050.0,
+				depth_mm=9.5,
+				elapsed_s=4.9,
+				depth_position_mm=1050.0,
+			),
+		],
+	)
+
+	assert "feed_mm_s=40.00" in line.metrics_text()
+
+
 def test_build_shelf_edge_stop_predicate_needs_a_confirmed_run() -> None:
 	from openshelf_os.laser_calibration.shelf_scout import build_shelf_edge_stop_predicate
 

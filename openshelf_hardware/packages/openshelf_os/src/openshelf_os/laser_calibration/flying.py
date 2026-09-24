@@ -270,9 +270,15 @@ class FlyingScanLine:
 	def metrics_text(self) -> str:
 		spacing_mm = self.median_sample_spacing_mm()
 		feed_mm_s = 0.0
+		# An early stop never reaches end_mm, so the feed has to be the distance actually
+		# travelled, not the commanded range.
+		travel_mm = abs(float(self.end_mm) - float(self.start_mm))
+
+		if len(self.samples) > 0:
+			travel_mm = abs(sample_depth_position_mm(self.samples[-1]) - float(self.start_mm))
 
 		if self.duration_s > 0.0:
-			feed_mm_s = abs(float(self.end_mm) - float(self.start_mm)) / self.duration_s
+			feed_mm_s = travel_mm / self.duration_s
 
 		return (
 			f"axis={self.axis} fixed_mm={self.fixed_mm:.2f} "
