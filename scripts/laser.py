@@ -55,6 +55,12 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--coarse-scan-rpm', type=int)
 	parser.add_argument('--coarse-scan-bin-mode', choices=['nearest', 'median'])
 	parser.add_argument(
+		'--fine-scan-style',
+		choices=['stepped', 'flying'],
+		help='Fine line probes. flying prefetches each line in one pass and replays the same probe logic.',
+	)
+	parser.add_argument('--fine-scan-feed-mm-s', type=float)
+	parser.add_argument(
 		'--rescan-shelf',
 		type=int,
 		metavar='SHELF_IDX',
@@ -128,6 +134,12 @@ def apply_scan_config_overrides(scan_config: Any, args: argparse.Namespace) -> A
 
 	if args.coarse_scan_bin_mode is not None:
 		overrides['coarse_scan_bin_mode'] = args.coarse_scan_bin_mode
+
+	if args.fine_scan_style is not None:
+		overrides['fine_scan_style'] = args.fine_scan_style
+
+	if args.fine_scan_feed_mm_s is not None:
+		overrides['fine_scan_feed_mm_s'] = float(args.fine_scan_feed_mm_s)
 
 	if len(overrides) == 0:
 		return scan_config
@@ -369,6 +381,9 @@ async def run_scan(args: argparse.Namespace) -> int:
 
 	if args.coarse_scan_rpm is not None and args.coarse_scan_rpm <= 0:
 		raise ValueError('--coarse-scan-rpm must be greater than zero')
+
+	if args.fine_scan_feed_mm_s is not None and args.fine_scan_feed_mm_s <= 0:
+		raise ValueError('--fine-scan-feed-mm-s must be greater than zero')
 	rescan_candidate: laser_module.GapCandidateRegion | None = None
 	grid_path = runtime_paths.resolve_storage_path(config, config_path=args.config)
 	grid = laser_module.load_grid(grid_path)

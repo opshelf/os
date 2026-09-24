@@ -286,6 +286,17 @@ def estimate_axis_feed_mm_s(motor: Any, rpm: int) -> Optional[float]:
 	return float(rpm) * float(mpr) / 60.0
 
 
+def resolve_axis_rpm_for_feed(motor: Any, feed_mm_s: float) -> Optional[int]:
+	"""Commanded rpm that moves this axis at roughly the requested mm/s."""
+	params = getattr(motor, "_params", None)
+	mpr = getattr(params, "mpr", None)
+
+	if not isinstance(mpr, (int, float)) or float(mpr) <= 0.0 or feed_mm_s <= 0.0:
+		return None
+
+	return max(1, int(round(float(feed_mm_s) * 60.0 / float(mpr))))
+
+
 def write_flying_line_samples(
 	*,
 	run_dir: Optional[Path],

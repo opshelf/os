@@ -319,6 +319,13 @@ async def run_staged_scan(
 					fine_entries[candidate_idx - 1]["x_positions"] = partial_scan.x_positions
 					fine_entries[candidate_idx - 1]["y_positions"] = partial_scan.y_positions
 
+				def didRecordFlyingLine(probe_label: str, flying_line: Any) -> None:
+					write_flying_line_samples(
+						run_dir=recorder.run_dir,
+						label=probe_label,
+						line=flying_line,
+					)
+
 				fine_scan, detected_cells = await capture_cross_scan(
 					tool,
 					candidate=candidate,
@@ -331,6 +338,7 @@ async def run_staged_scan(
 					progress_prefix=f"fine_{candidate_idx}",
 					on_update=didUpdateFineScan,
 					should_abort=should_abort,
+					on_flying_line=didRecordFlyingLine,
 				)
 				raise_if_cancelled(should_abort)
 
@@ -360,6 +368,7 @@ async def run_staged_scan(
 							progress_prefix=f"fine_{candidate_idx}_retry",
 							on_update=didUpdateFineScan,
 							should_abort=should_abort,
+							on_flying_line=didRecordFlyingLine,
 						)
 						raise_if_cancelled(should_abort)
 						selected_fine_bounds = retry_fine_bounds

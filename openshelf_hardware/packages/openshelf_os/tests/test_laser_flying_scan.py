@@ -25,6 +25,10 @@ from openshelf_os.laser_calibration import (
 	get_coarse_scan_bin_mode,
 	get_coarse_scan_rpm,
 	get_coarse_scan_style,
+	get_fine_scan_feed_mm_s,
+	get_fine_scan_style,
+	GridScanResult,
+	resolve_axis_rpm_for_feed,
 	sample_depth_position_mm,
 	scan_axis_flying,
 	scan_line_positions_flying,
@@ -180,6 +184,27 @@ def test_coarse_scan_accessors_default_and_validate() -> None:
 
 	with pytest.raises(ValueError, match="coarse_scan_bin_mode"):
 		get_coarse_scan_bin_mode(SimpleNamespace(coarse_scan_bin_mode="maximum"))
+
+	assert get_fine_scan_style(SimpleNamespace()) == COARSE_SCAN_STYLE_STEPPED
+	assert get_fine_scan_style(SimpleNamespace(fine_scan_style="flying")) == COARSE_SCAN_STYLE_FLYING
+	assert get_fine_scan_feed_mm_s(SimpleNamespace()) == pytest.approx(40.0)
+	assert get_fine_scan_feed_mm_s(SimpleNamespace(fine_scan_feed_mm_s=25.0)) == pytest.approx(25.0)
+
+	with pytest.raises(ValueError, match="fine_scan_style"):
+		get_fine_scan_style(SimpleNamespace(fine_scan_style="hovering"))
+
+	with pytest.raises(ValueError, match="fine_scan_feed_mm_s"):
+		get_fine_scan_feed_mm_s(SimpleNamespace(fine_scan_feed_mm_s=0.0))
+
+
+def test_resolve_axis_rpm_for_feed_converts_mm_per_revolution() -> None:
+	assert resolve_axis_rpm_for_feed(SimpleNamespace(_params=SimpleNamespace(mpr=80.0)), 40.0) == 30
+	assert resolve_axis_rpm_for_feed(SimpleNamespace(_params=SimpleNamespace(mpr=40.0)), 40.0) == 60
+	assert resolve_axis_rpm_for_feed(SimpleNamespace(), 40.0) is None
+	assert resolve_axis_rpm_for_feed(
+		SimpleNamespace(_params=SimpleNamespace(mpr=0.0)),
+		40.0,
+	) is None
 
 
 def test_bin_samples_to_positions_picks_nearest_sample_per_position() -> None:
@@ -625,3 +650,95 @@ async def test_capture_shelf_candidates_default_style_keeps_the_stepped_scan(
 	assert stepped_sweep.await_count >= 1
 	assert flying.await_count == 0
 	assert shelf_edges[-1].y_mm == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_probe_line_from_center_flying_prefetch_matches_stepped(monkeypatch) -> None:
+	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
+
+	step_mm = 2.0
+	positions = [float(value) for value in range(0, 50, 2)]
+	hole_positions = {float(value) for value in range(20, 46, 2)}
+	profile = [0.0 if position in hole_positions else 9.5 for position in positions]
+	center_idx = positions.index(32.0)
+
+	async def didSampleStepped(tool, *, x_mm, y_mm, settle_ms, samples_per_point, should_abort=None):
+		return profile[positions.index(x_mm)]
+
+	monkeypatch.setattr(fine_scan_module, "sample_scan_point", didSampleStepped)
+
+	stepped_scan = GridScanResult(
+		x_positions=positions,
+		y_positions=[10.0],
+		depth_rows=[[None for _ in positions]],
+	)
+	stepped_segment = await fine_scan_module.probe_line_from_center(
+		SimpleNamespace(),
+		base_scan=stepped_scan,
+		axis="x",
+		positions=positions,
+		fixed_mm=10.0,
+		center_idx=center_idx,
+		step_mm=step_mm,
+		progress_prefix="stepped_probe",
+		settle_ms=0,
+		samples_per_point=1,
+		wall_depth_mm=9.5,
+		expected_span_mm=26.0,
+	)
+
+	assert stepped_segment is not None
+
+	async def didFailToSample(*args, **kwargs):
+		raise AssertionError("stepped sampling used while flying")
+
+	monkeypatch.setattr(fine_scan_module, "sample_scan_point", didFailToSample)
+
+	flying_requests: list[dict] = []
+
+	async def didScanLineFlying(
+		tool,
+		*,
+		axis,
+		positions,
+		fixed_mm,
+		rpm,
+		progress_label,
+		should_abort=None,
+		**kwargs,
+	):
+		flying_requests.append({"axis": axis, "rpm": rpm, "label": progress_label})
+		return list(profile), SimpleNamespace(axis=axis, rpm=rpm)
+
+	monkeypatch.setattr(fine_scan_module, "scan_line_positions_flying", didScanLineFlying)
+
+	flying_scan = GridScanResult(
+		x_positions=positions,
+		y_positions=[10.0],
+		depth_rows=[[None for _ in positions]],
+	)
+	recorded_lines: list[str] = []
+	flying_segment = await fine_scan_module.probe_line_from_center(
+		SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0))),
+		base_scan=flying_scan,
+		axis="x",
+		positions=positions,
+		fixed_mm=10.0,
+		center_idx=center_idx,
+		step_mm=step_mm,
+		progress_prefix="flying_probe",
+		settle_ms=0,
+		samples_per_point=1,
+		wall_depth_mm=9.5,
+		expected_span_mm=26.0,
+		scan_config=SimpleNamespace(fine_scan_style="flying", fine_scan_feed_mm_s=40.0),
+		on_flying_line=lambda label, line: recorded_lines.append(label),
+	)
+
+	assert flying_segment is not None
+	assert flying_segment.start_mm == pytest.approx(stepped_segment.start_mm)
+	assert flying_segment.end_mm == pytest.approx(stepped_segment.end_mm)
+	assert flying_segment.center_mm == pytest.approx(stepped_segment.center_mm)
+	assert flying_segment.width_mm == pytest.approx(stepped_segment.width_mm)
+	assert flying_requests == [{"axis": "x", "rpm": 30, "label": "flying_probe_flying"}]
+	assert recorded_lines == ["flying_probe_flying"]
