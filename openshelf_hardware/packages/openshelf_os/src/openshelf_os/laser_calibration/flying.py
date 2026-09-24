@@ -10,6 +10,7 @@ from statistics import median
 from typing import Any, Callable, Optional
 
 from .core import depth_to_label, print_status, raise_if_cancelled
+from .defaults import FLYING_CAPTURE_LATENCY_MS
 from .shelf_scout import (
 	SHELF_EDGE_CONFIRMATION_COUNT,
 	ShelfSurfaceEdge,
@@ -24,13 +25,125 @@ FLYING_SAMPLES_FILENAME = "flying_samples.jsonl"
 # tool.gantry_wait caps a single line at GANTRY_WAIT_TIMEOUT (120s); refuse a feed that cannot
 # finish a line inside it instead of letting the wait time out mid-pass.
 FLYING_SCAN_MAX_LINE_SECONDS = 100.0
+# The drive stops reporting progress when it has finished or faulted; the sampler breaks on that
+# and lets gantry_wait surface the reason.
+FLYING_SCAN_STALL_S = 0.5
+FLYING_SCAN_PROGRESS_EPS_MM = 0.02
+# Velocity for the depth-to-position correction is a median over the trailing deltas so a single
+# jittered timestamp cannot move a sample.
+FLYING_SCAN_VELOCITY_WINDOW = 8
+# A triggered axis that has not moved at all within this window is not going to complete the
+# line; break and let gantry_wait classify the drive state.
+FLYING_SCAN_START_STALL_S = 2.0
 
 
 @dataclass
 class FlyingScanSample:
+	"""One depth read, its raw encoder position, and the corrected position of the depth."""
+
 	position_mm: float
 	depth_mm: Optional[float]
 	elapsed_s: float
+	# Beam position at the depth's effective time: the encoder read lags the laser reading by a
+	# fixed latency, so a moving pass assigns each depth to `position_mm - velocity * latency`.
+	depth_position_mm: Optional[float] = None
+	velocity_mm_s: Optional[float] = None
+
+
+def sample_depth_position_mm(sample: FlyingScanSample) -> float:
+	"""Position the depth belongs to; corrected when the capture measured a velocity."""
+	if sample.depth_position_mm is not None:
+		return float(sample.depth_position_mm)
+
+	return float(sample.position_mm)
+
+
+def estimate_sample_velocity_mm_s(
+	samples: list[FlyingScanSample],
+	*,
+	window: int = FLYING_SCAN_VELOCITY_WINDOW,
+) -> Optional[float]:
+	"""Signed trailing velocity from consecutive samples, robust to one jittered read."""
+	if len(samples) < 2:
+		return None
+
+	recent_samples = samples[-window:]
+	velocities: list[float] = []
+
+	for index in range(1, len(recent_samples)):
+		elapsed_delta_s = recent_samples[index].elapsed_s - recent_samples[index - 1].elapsed_s
+
+		if elapsed_delta_s <= 0.0:
+			continue
+
+		position_delta_mm = recent_samples[index].position_mm - recent_samples[index - 1].position_mm
+		velocities.append(position_delta_mm / elapsed_delta_s)
+
+	if len(velocities) == 0:
+		return None
+
+	return float(median(velocities))
+
+
+@dataclass
+class FlyingDepthCrossing:
+	"""Where a moving depth profile crosses a threshold, interpolated between samples."""
+
+	position_mm: float
+	is_rising: bool
+	from_depth_mm: float
+	to_depth_mm: float
+
+
+def find_depth_threshold_crossings(
+	*,
+	samples: list[FlyingScanSample],
+	threshold_mm: float,
+) -> list[FlyingDepthCrossing]:
+	"""Interpolate every threshold crossing in acquisition order.
+
+	Fine-scan edges are a threshold crossing between a wall reading and a hole reading; the
+	samples either side of it bracket the edge to well under one sample spacing, which is the
+	resolution the stepped scan spends a settle and a move per point to reach.
+	"""
+	crossings: list[FlyingDepthCrossing] = []
+
+	for index in range(1, len(samples)):
+		previous = samples[index - 1]
+		current = samples[index]
+
+		if previous.depth_mm is None or current.depth_mm is None:
+			continue
+
+		from_depth_mm = float(previous.depth_mm)
+		to_depth_mm = float(current.depth_mm)
+		is_crossing = (from_depth_mm <= threshold_mm < to_depth_mm) or (
+			from_depth_mm >= threshold_mm > to_depth_mm
+		)
+
+		if is_crossing is False:
+			continue
+
+		from_position_mm = sample_depth_position_mm(previous)
+		to_position_mm = sample_depth_position_mm(current)
+		depth_span_mm = to_depth_mm - from_depth_mm
+
+		if depth_span_mm == 0.0:
+			crossing_position_mm = to_position_mm
+		else:
+			fraction = (threshold_mm - from_depth_mm) / depth_span_mm
+			crossing_position_mm = from_position_mm + (to_position_mm - from_position_mm) * fraction
+
+		crossings.append(
+			FlyingDepthCrossing(
+				position_mm=crossing_position_mm,
+				is_rising=to_depth_mm > from_depth_mm,
+				from_depth_mm=from_depth_mm,
+				to_depth_mm=to_depth_mm,
+			)
+		)
+
+	return crossings
 
 
 @dataclass
@@ -126,9 +239,10 @@ def bin_samples_to_positions(
 			if sample.depth_mm is None:
 				continue
 
-			index = find_index(sample.position_mm)
+			sample_position_mm = sample_depth_position_mm(sample)
+			index = find_index(sample_position_mm)
 
-			if abs(sample.position_mm - positions[index]) > max_distance_mm:
+			if abs(sample_position_mm - positions[index]) > max_distance_mm:
 				continue
 
 			buckets[index].append(float(sample.depth_mm))
@@ -145,8 +259,9 @@ def bin_samples_to_positions(
 		if sample.depth_mm is None:
 			continue
 
-		index = find_index(sample.position_mm)
-		distance_mm = abs(sample.position_mm - positions[index])
+		sample_position_mm = sample_depth_position_mm(sample)
+		index = find_index(sample_position_mm)
+		distance_mm = abs(sample_position_mm - positions[index])
 
 		if distance_mm > max_distance_mm:
 			continue
@@ -196,6 +311,8 @@ def write_flying_line_samples(
 						"end_mm": line.end_mm,
 						"rpm": line.rpm,
 						"position_mm": sample.position_mm,
+						"depth_position_mm": sample.depth_position_mm,
+						"velocity_mm_s": sample.velocity_mm_s,
 						"depth_mm": sample.depth_mm,
 						"elapsed_s": sample.elapsed_s,
 					}
@@ -240,12 +357,16 @@ async def scan_axis_flying(
 	progress_every: int = FLYING_SCAN_PROGRESS_EVERY,
 	progress_printer: Optional[Callable[[str], None]] = None,
 	should_abort: Optional[Callable[[], bool]] = None,
+	capture_latency_s: Optional[float] = None,
 ) -> FlyingScanLine:
 	if axis not in ("x", "y"):
 		raise ValueError("flying scan axis must be 'x' or 'y'")
 
 	if rpm <= 0:
 		raise ValueError("flying scan rpm must be greater than zero")
+
+	if capture_latency_s is None:
+		capture_latency_s = FLYING_CAPTURE_LATENCY_MS / 1000.0
 
 	scan_motor = getattr(tool, "_mx" if axis == "x" else "_my", None)
 	hold_motor = getattr(tool, "_my" if axis == "x" else "_mx", None)
@@ -300,27 +421,33 @@ async def scan_axis_flying(
 	if find_progress_index is not None:
 		covered_indices.add(find_progress_index(start_position_mm))
 
-	move_task: Optional[asyncio.Task[None]] = None
+	direction = 1.0 if float(end_mm) >= float(start_mm) else -1.0
+	has_moved = False
+	last_position_mm = start_position_mm
+	last_progress_at = started_at
 
 	try:
-		await scan_motor.move_to_position_no_wait(end_mm, rpm=rpm)
-		move_task = asyncio.create_task(tool.gantry_wait(should_abort=should_abort))
+		did_start = await scan_motor.move_to_position_no_wait(end_mm, rpm=rpm)
 
-		while True:
+		while did_start is True:
 			raise_if_cancelled(should_abort)
 			depth_mm = await tool.get_laser_distance()
 			position_mm = float(await scan_motor.get_position())
 			sampled_at = time.monotonic()
-			samples.append(
-				FlyingScanSample(
-					position_mm=position_mm,
-					depth_mm=None if depth_mm is None else float(depth_mm),
-					elapsed_s=sampled_at - started_at,
-				)
+			sample = FlyingScanSample(
+				position_mm=position_mm,
+				depth_mm=None if depth_mm is None else float(depth_mm),
+				elapsed_s=sampled_at - started_at,
 			)
+			samples.append(sample)
+			velocity_mm_s = estimate_sample_velocity_mm_s(samples)
+
+			if velocity_mm_s is not None:
+				sample.velocity_mm_s = velocity_mm_s
+				sample.depth_position_mm = position_mm - velocity_mm_s * capture_latency_s
 
 			if find_progress_index is not None:
-				covered_indices.add(find_progress_index(position_mm))
+				covered_indices.add(find_progress_index(sample_depth_position_mm(sample)))
 
 			is_due = (sampled_at - last_print_at) >= FLYING_SCAN_PROGRESS_INTERVAL_S
 
@@ -348,15 +475,29 @@ async def scan_axis_flying(
 						f"position={position_mm:.2f} depth={depth_to_label(depth_mm)}"
 					)
 
-			if move_task.done() is True:
+			if direction * (position_mm - float(end_mm)) >= 0.0:
 				break
 
-		await move_task
-	except BaseException:
-		if move_task is not None:
-			move_task.cancel()
-			await asyncio.gather(move_task, return_exceptions=True)
+			if abs(position_mm - last_position_mm) > FLYING_SCAN_PROGRESS_EPS_MM:
+				has_moved = True
+				last_progress_at = sampled_at
 
+			last_position_mm = position_mm
+
+			if has_moved is True and (sampled_at - last_progress_at) > FLYING_SCAN_STALL_S:
+				break
+
+			if has_moved is False and (sampled_at - started_at) > FLYING_SCAN_START_STALL_S:
+				break
+
+			if (sampled_at - started_at) > FLYING_SCAN_MAX_LINE_SECONDS:
+				raise TimeoutError(
+					f"flying {axis} line did not reach {end_mm:.2f}mm within "
+					f"{FLYING_SCAN_MAX_LINE_SECONDS:.0f}s"
+				)
+
+		await tool.gantry_wait(should_abort=should_abort)
+	except BaseException:
 		await _stop_flying_axes(tool, scan_motor, hold_motor)
 		raise
 
@@ -386,6 +527,7 @@ async def scan_line_positions_flying(
 	bin_mode: str = FLYING_SCAN_BIN_NEAREST,
 	progress_every: int = FLYING_SCAN_PROGRESS_EVERY,
 	progress_printer: Optional[Callable[[str], None]] = None,
+	capture_latency_s: Optional[float] = None,
 ) -> tuple[list[Optional[float]], FlyingScanLine]:
 	if len(positions) == 0:
 		return [], FlyingScanLine(
@@ -408,6 +550,7 @@ async def scan_line_positions_flying(
 		progress_every=progress_every,
 		progress_printer=progress_printer,
 		should_abort=should_abort,
+		capture_latency_s=capture_latency_s,
 	)
 	max_distance_mm = abs(positions[1] - positions[0]) if len(positions) > 1 else None
 	depth_values = bin_samples_to_positions(
@@ -434,6 +577,7 @@ async def scan_shelf_scout_line_flying(
 	bin_mode: str = FLYING_SCAN_BIN_NEAREST,
 	progress_every: int = FLYING_SCAN_PROGRESS_EVERY,
 	progress_printer: Optional[Callable[[str], None]] = None,
+	capture_latency_s: Optional[float] = None,
 ) -> tuple[list[Optional[float]], list[ShelfSurfaceEdge], FlyingScanLine]:
 	depth_values, line = await scan_line_positions_flying(
 		tool,
@@ -446,6 +590,7 @@ async def scan_shelf_scout_line_flying(
 		bin_mode=bin_mode,
 		progress_every=progress_every,
 		progress_printer=progress_printer,
+		capture_latency_s=capture_latency_s,
 	)
 	brim_height_kwargs: dict[str, float] = {}
 
