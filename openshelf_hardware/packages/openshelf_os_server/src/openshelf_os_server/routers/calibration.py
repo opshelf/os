@@ -38,7 +38,7 @@ from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.bin_storage import reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.errors import error_detail
-from openshelf_os_server.routers.auth_deps import get_current_user
+from openshelf_os_server.routers.auth_deps import get_current_user_for_stream
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
 
@@ -57,7 +57,13 @@ class StageMoveResponse(BaseModel):
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
+# Router-level auth gates every route here, so it cannot be scoped per route, and
+# /laser/stream answers with an EventSourceResponse that stays open for the whole
+# calibration session. Auth with a session that closes before the body streams
+# (get_current_user would pin a pooled connection until the stream ends).
+router = APIRouter(
+	prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user_for_stream)]
+)
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 P = ParamSpec("P")
