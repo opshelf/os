@@ -85,6 +85,12 @@ SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
 PYMODBUS_NO_RESPONSE_RETRY_PREFIX = "No response received after "
 PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
+# pymodbus' Log.error/Log.critical append the last frames as "\n>>>>> send: ..." /
+# "\n>>>>> recv: ..." lines whenever DEBUG logging is off, so the message of a
+# no-response retry is the log text plus that trailer. Every appended line
+# carries the marker prefix; a deduplicated frame shows up as
+# ">>>>> Repeating....".
+PYMODBUS_FRAME_DUMP_LINE_PREFIX = ">>>>> "
 ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 TOOL_FAULT_LOG_EVENT = "Tool fault detected - manual intervention required"
 # The message uvicorn hands to Task.cancel() for every request task that is still running when
@@ -140,17 +146,42 @@ def _is_pymodbus_request_id_mismatch(message: Any) -> bool:
 	return isinstance(message, str) is True and message.startswith(PYMODBUS_REQUEST_ID_MISMATCH_PREFIX)
 
 
+def _strip_pymodbus_frame_dump(message: str) -> str:
+	"""Drop the frame dump pymodbus appends to its error messages.
+
+	``Log.error``/``Log.critical`` add the last frames as ``>>>>> send:`` /
+	``>>>>> recv:`` lines when DEBUG logging is off, so only the first line
+	carries the log text. Anything else after a newline is left untouched.
+	"""
+	log_text, separator, trailer = message.partition("\n")
+	if separator == "":
+		return message
+
+	trailer_lines = [line for line in trailer.split("\n") if line.strip() != ""]
+	if trailer_lines == []:
+		return message
+
+	if any(
+		line.startswith(PYMODBUS_FRAME_DUMP_LINE_PREFIX) is False for line in trailer_lines
+	):
+		return message
+
+	return log_text
+
+
 def _is_pymodbus_no_response_retry(message: Any) -> bool:
 	if isinstance(message, str) is False:
 		return False
 
-	if message.startswith(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) is False:
+	log_text = _strip_pymodbus_frame_dump(message)
+
+	if log_text.startswith(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) is False:
 		return False
 
-	if message.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
+	if log_text.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
 		return False
 
-	retry_count = message[
+	retry_count = log_text[
 		len(PYMODBUS_NO_RESPONSE_RETRY_PREFIX):-len(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX)
 	]
 	return retry_count.isdigit()
