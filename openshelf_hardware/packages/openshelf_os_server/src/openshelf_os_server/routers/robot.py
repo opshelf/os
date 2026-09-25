@@ -80,6 +80,7 @@ from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation,
 from .auth_deps import (
     get_current_user,
     get_relay_or_current_user,
+    get_relay_or_current_user_for_stream,
     require_permissions,
     can_user_retrieve_item,
 )
@@ -1912,7 +1913,7 @@ async def get_occupied_cells_for_overlay() -> set[tuple[str, int, int]]:
 
 @router.get(
     "/status",
-    dependencies=[Depends(get_relay_or_current_user)],
+    dependencies=[Depends(get_relay_or_current_user_for_stream)],
     summary="Stream robot status",
     responses=response_docs(
         errors=(401, 503),
@@ -2032,7 +2033,7 @@ async def stream_sse() -> EventSourceResponse:
 
 @router.get(
     "/events",
-    dependencies=[Depends(get_relay_or_current_user)],
+    dependencies=[Depends(get_relay_or_current_user_for_stream)],
     summary="Stream robot events and command results",
     responses=response_docs(
         errors=(401, 503),

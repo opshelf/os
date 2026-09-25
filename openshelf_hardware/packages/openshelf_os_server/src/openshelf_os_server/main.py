@@ -116,6 +116,16 @@ ANYIO_STREAM_CONTEXT_ERRORS = (
 	"ClosedResourceError",
 	"BrokenResourceError",
 )
+# anyio names a task after the callable spawned into its task group, and records the repr of the
+# task that called CancelScope.cancel() in the CancelledError message it delivers. These are the
+# request tasks that tear a streaming request down once the client stops listening: sse-starlette
+# cancels its response task group from cancel_on_finish, and Starlette's BaseHTTPMiddleware cancels
+# the scope running the endpoint from call_next.<locals>.coro.
+ANYIO_CANCEL_SCOPE_MESSAGE = "Cancelled via cancel scope"
+ASGI_REQUEST_CANCEL_TASKS = (
+	"cancel_on_finish",
+	"starlette.middleware.base.BaseHTTPMiddleware",
+)
 DOOR_MOTOR_RECOVERY_FAILED_PREFIX = "Door motor recovery failed:"
 # The log line uvicorn writes when the drain window given to it in start()
 # (`timeout_graceful_shutdown`) expires. uvicorn.Server.shutdown logs it through its own
@@ -247,22 +257,49 @@ def _sentry_event_is_uvicorn_shutdown_drain(event: dict[str, Any]) -> bool:
 	return False
 
 
-def _sentry_event_is_anyio_cancelled_error(event: dict[str, Any]) -> bool:
-	for value in _sentry_event_exception_values(event):
-		exception_type_value = value.get("type")
-		exception_message_value = value.get("value")
-		if not isinstance(exception_type_value, str) or not isinstance(exception_message_value, str):
+def _sentry_event_is_asgi_request_cancel(event: dict[str, Any]) -> bool:
+	"""Drop a cancellation an ASGI request task issued while nothing but a cancellation failed.
+
+	A streaming endpoint such as /api/robot/events is torn down by cancelling its request task:
+	sse-starlette's `cancel_on_finish` cancels the response task group when the response finishes,
+	and Starlette's BaseHTTPMiddleware cancels the scope running the endpoint in
+	`call_next.<locals>.coro`. The CancelledError then surfaces from whatever the teardown was
+	awaiting at that moment, so a pooled SQLite connection being returned is one of the await
+	points SQLAlchemy's pool logs (`Exception terminating connection`) with the cancellation
+	attached. Those are the configured outcome of a client that stopped listening or of a restart
+	that cancelled the request, not a fault.
+
+	The cancelling task is the request task, and a real failure can be chained to the cancellation,
+	so both stay reportable: the event is dropped only when every serialized exception is a
+	cancellation, or one of anyio's stream bookkeeping types, and one of them names an ASGI request
+	task as the canceller.
+	"""
+	values = _sentry_event_exception_values(event)
+	if len(values) == 0:
+		return False
+
+	is_request_cancel = False
+	for value in values:
+		if _sentry_exception_type_is_one_of(value, ("CancelledError",)) is True:
+			exception_message_value = value.get("value")
+			if not isinstance(exception_message_value, str):
+				continue
+
+			exception_message = exception_message_value
+			if ANYIO_CANCEL_SCOPE_MESSAGE not in exception_message:
+				continue
+
+			if any(task in exception_message for task in ASGI_REQUEST_CANCEL_TASKS) is True:
+				is_request_cancel = True
+
 			continue
 
-		exception_type = exception_type_value
-		exception_message = exception_message_value
-		if exception_type.endswith("CancelledError") is False:
+		if _sentry_exception_type_is_one_of(value, ANYIO_STREAM_CONTEXT_ERRORS) is True:
 			continue
 
-		if "Cancelled via cancel scope" in exception_message and "cancel_on_finish" in exception_message:
-			return True
+		return False
 
-	return False
+	return is_request_cancel
 
 
 def _sentry_event_is_http_exception(event: dict[str, Any], hint: dict[str, Any]) -> bool:
@@ -382,7 +419,7 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 	if _sentry_event_is_http_exception(event, _hint) is True:
 		return None
 
-	if _sentry_event_is_anyio_cancelled_error(event) is True:
+	if _sentry_event_is_asgi_request_cancel(event) is True:
 		return None
 
 	if _sentry_event_has_suppressed_pymodbus_message(event) is True:
