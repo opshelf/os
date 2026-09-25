@@ -31,7 +31,7 @@ from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.database.models import User
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.settings import get_settings
-from .auth_deps import get_current_user
+from .auth_deps import get_current_user, get_current_user_for_stream
 
 logger = get_logger(__name__)
 
@@ -151,7 +151,7 @@ async def list_cameras() -> dict:
 
 @router.get(
     "/{camera_id}",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_user_for_stream)],
     summary="Stream camera frames",
     responses=response_docs(
         errors=(401, 404, 503),

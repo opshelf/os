@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from ..settings import get_settings
 from ..core.logging_config import get_logger
-from ..database.session import get_db
+from ..database.session import AsyncSessionLocal, get_db
 from ..database.models import User, Item, Role
 from ..core.auth import AuthService
 from ..core.permissions import has_permission
@@ -148,6 +148,33 @@ async def get_current_user(
 	return user
 
 
+async def get_current_user_for_stream(
+	token: Optional[str] = Depends(get_token_from_request),
+) -> User:
+	"""Authenticate a long-lived response without parking a pooled connection on it.
+
+	`Depends(get_current_user)` hands the endpoint a session that FastAPI closes only
+	once the response body is finished, because a dependency with `yield` exits through
+	the request exit stack after streaming ends. That is fine for a JSON reply and wrong
+	for a stream: an MJPEG view or an SSE session kept open by the dev UI pins an
+	aiosqlite connection out of the five-connection pool for the whole view, and the
+	bounded uvicorn shutdown drain (`timeout_graceful_shutdown`) abandons that request
+	with the connection still checked out. The garbage collector then finalizes it once
+	its worker thread is gone, which logs
+	"The garbage collector is trying to clean up non-checked-in connection ... which
+	will be dropped, as it cannot be safely terminated", and streams can starve the
+	pool for every other request.
+
+	Looking the user up in a session owned by this dependency closes it before the body
+	starts streaming, so a stream holds no connection at all. The returned user carries
+	its `role` and `access_level` already loaded (see the eager loads in
+	`get_current_user`) and sessions never commit, so the attributes stay readable after
+	close; long-lived routes authenticate on it and never pass it to the database.
+	"""
+	async with AsyncSessionLocal() as db:
+		return await get_current_user(token=token, db=db)
+
+
 def _is_relay_service_token(request: Request, token: str) -> bool:
 	"""Validate a relay service bearer token without accepting it from query parameters."""
 	authorization = request.headers.get("Authorization", "")
@@ -195,6 +222,20 @@ async def get_relay_or_current_user(
 		request.state.relay_service_authenticated = True
 		return await _get_relay_system_user(db)
 	return await get_current_user(token, db)
+
+
+async def get_relay_or_current_user_for_stream(
+	request: Request,
+	token: Optional[str] = Depends(get_token_from_request),
+) -> User:
+	"""Authenticate a long-lived response the same way `get_relay_or_current_user`
+	does, without parking a pooled connection on it (see `get_current_user_for_stream`).
+
+	`/api/robot/status` and `/api/robot/events` are the streams the dev UI keeps open
+	for a whole session, so this is the dependency that most often held a connection.
+	"""
+	async with AsyncSessionLocal() as db:
+		return await get_relay_or_current_user(request=request, token=token, db=db)
 
 
 def require_permissions(permissions: str | List[str]) -> Callable:
