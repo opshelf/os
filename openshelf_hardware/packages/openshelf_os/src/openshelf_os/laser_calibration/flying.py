@@ -40,6 +40,11 @@ FLYING_SCAN_PROGRESS_EPS_MM = 0.02
 # Velocity for the depth-to-position correction is a median over the trailing deltas so a single
 # jittered timestamp cannot move a sample.
 FLYING_SCAN_VELOCITY_WINDOW = 8
+# The correction shifts every depth backwards by feed * capture_latency_s, so a pass that stops at
+# end_mm never captures the raw samples the final grid positions would bin from. The pass flies the
+# latency shift plus this margin past the grid; the margin covers the half-step binning tolerance of
+# the 1mm fine and 4mm coarse grids.
+FLYING_SCAN_LEAD_OUT_MARGIN_MM = 1.0
 # A triggered axis that has not moved at all within this window is not going to complete the
 # line; break and let gantry_wait classify the drive state.
 FLYING_SCAN_START_STALL_S = 2.0
@@ -528,9 +533,23 @@ async def scan_axis_flying(
 		raise ValueError(f"Gantry motors are required for a flying {axis} scan")
 
 	estimated_feed_mm_s = estimate_axis_feed_mm_s(scan_motor, rpm)
+	direction = 1.0 if float(end_mm) >= float(start_mm) else -1.0
+
+	lead_out_mm = 0.0
+
+	if capture_latency_s > 0.0 and estimated_feed_mm_s is not None:
+		lead_out_mm = estimated_feed_mm_s * capture_latency_s + FLYING_SCAN_LEAD_OUT_MARGIN_MM
+
+	motion_end_mm = float(end_mm) + direction * lead_out_mm
+	scan_params = getattr(scan_motor, "_params", None)
+	lower_lim_mm = getattr(scan_params, "lower_lim", None)
+	upper_lim_mm = getattr(scan_params, "lim", None)
+
+	if isinstance(lower_lim_mm, (int, float)) and isinstance(upper_lim_mm, (int, float)):
+		motion_end_mm = min(max(motion_end_mm, float(lower_lim_mm)), float(upper_lim_mm))
 
 	if estimated_feed_mm_s is not None:
-		estimated_duration_s = abs(float(end_mm) - float(start_mm)) / estimated_feed_mm_s
+		estimated_duration_s = abs(motion_end_mm - float(start_mm)) / estimated_feed_mm_s
 
 		if estimated_duration_s > FLYING_SCAN_MAX_LINE_SECONDS:
 			raise ValueError(
@@ -560,7 +579,10 @@ async def scan_axis_flying(
 
 	# One stationary sample at the start before the move is commanded. The trigger dwell eats
 	# the first millimetres of travel, so without it the first grid position would only be
-	# covered by whichever moving sample happens to land nearest.
+	# covered by whichever moving sample happens to land nearest. The far end is covered by the
+	# lead-out instead: the latency correction shifts every moving sample backwards, so flying
+	# lead_out_mm past end_mm keeps raw samples under the final grid positions rather than
+	# leaving their bins empty.
 	start_depth_mm = await tool.get_laser_distance()
 	start_position_mm = float(await scan_motor.get_position())
 	samples.append(
@@ -574,14 +596,13 @@ async def scan_axis_flying(
 	if find_progress_index is not None:
 		covered_indices.add(find_progress_index(start_position_mm))
 
-	direction = 1.0 if float(end_mm) >= float(start_mm) else -1.0
 	has_moved = False
 	last_position_mm = start_position_mm
 	last_progress_at = started_at
 	stopped_early = False
 
 	try:
-		did_start = await scan_motor.move_to_position_no_wait(end_mm, rpm=rpm)
+		did_start = await scan_motor.move_to_position_no_wait(motion_end_mm, rpm=rpm)
 
 		while did_start is True:
 			raise_if_cancelled(should_abort)
@@ -633,7 +654,7 @@ async def scan_axis_flying(
 				stopped_early = True
 				break
 
-			if direction * (position_mm - float(end_mm)) >= 0.0:
+			if direction * (position_mm - motion_end_mm) >= 0.0:
 				break
 
 			if abs(position_mm - last_position_mm) > FLYING_SCAN_PROGRESS_EPS_MM:
@@ -650,7 +671,7 @@ async def scan_axis_flying(
 
 			if (sampled_at - started_at) > FLYING_SCAN_MAX_LINE_SECONDS:
 				raise TimeoutError(
-					f"flying {axis} line did not reach {end_mm:.2f}mm within "
+					f"flying {axis} line did not reach {motion_end_mm:.2f}mm within "
 					f"{FLYING_SCAN_MAX_LINE_SECONDS:.0f}s"
 				)
 
@@ -658,6 +679,21 @@ async def scan_axis_flying(
 			await _stop_axis_early(scan_motor)
 		else:
 			await tool.gantry_wait(should_abort=should_abort)
+			# Mirror the stationary start sample with one at the settled end: an axis limit can
+			# clamp the lead-out away, and without this read the latency-corrected cloud stops
+			# feed*latency short of the final grid position and leaves its bin empty. The axis
+			# is at rest, so the depth sits at the measured position with no latency shift.
+			end_depth_mm = await tool.get_laser_distance()
+			end_position_mm = float(await scan_motor.get_position())
+			samples.append(
+				FlyingScanSample(
+					position_mm=end_position_mm,
+					depth_mm=None if end_depth_mm is None else float(end_depth_mm),
+					elapsed_s=time.monotonic() - started_at,
+					depth_position_mm=end_position_mm,
+					velocity_mm_s=0.0,
+				)
+			)
 	except BaseException:
 		await _stop_flying_axes(tool, scan_motor, hold_motor)
 		raise

@@ -1,4 +1,5 @@
 import asyncio
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -88,6 +89,41 @@ class FakeAxisMotor:
 		self.stop_count += 1
 		self.is_moving = False
 		self.target_mm = self.position_mm
+
+
+class FakeTimedAxisMotor(FakeAxisMotor):
+	"""Advances toward the target in real time, so velocity estimates see a true feed."""
+
+	def __init__(self, feed_mm_s: float, position_mm: float = 0.0) -> None:
+		super().__init__(position_mm=position_mm)
+		self.feed_mm_s = float(feed_mm_s)
+		self.move_started_at: float | None = None
+		self.move_start_mm = float(position_mm)
+
+	async def move_to_position_no_wait(self, value: float, rpm: int | None = None) -> bool:
+		did_start = await super().move_to_position_no_wait(value, rpm=rpm)
+
+		if did_start is True:
+			self.move_started_at = time.monotonic()
+			self.move_start_mm = self.position_mm
+
+		return did_start
+
+	async def get_position(self) -> float:
+		await asyncio.sleep(0)
+
+		if self.is_moving is True and self.move_started_at is not None:
+			travelled_mm = (time.monotonic() - self.move_started_at) * self.feed_mm_s
+			remaining_mm = abs(self.target_mm - self.move_start_mm)
+
+			if travelled_mm >= remaining_mm:
+				self.position_mm = self.target_mm
+				self.is_moving = False
+			else:
+				direction = 1.0 if self.target_mm >= self.move_start_mm else -1.0
+				self.position_mm = self.move_start_mm + direction * travelled_mm
+
+		return float(self.position_mm)
 
 
 class FakeFlyingTool:
@@ -391,6 +427,33 @@ async def test_scan_axis_flying_corrects_depth_positions_by_capture_latency() ->
 
 
 @pytest.mark.asyncio
+async def test_scan_axis_flying_flies_a_lead_out_past_the_last_grid_position() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+	tool._my._params = SimpleNamespace(mpr=40.0)
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=10.0,
+		fixed_mm=25.0,
+		rpm=30,
+		progress_label="flying_lead_out",
+		capture_latency_s=0.042,
+	)
+
+	# 40mm/rev at 30rpm is 20mm/s, so the pass flies the 0.84mm latency shift plus the 1mm
+	# margin past the grid; the corrected samples then still cover the final grid position.
+	expected_motion_end_mm = 10.0 + 20.0 * 0.042 + 1.0
+
+	assert tool._my.moves[-1] == (pytest.approx(expected_motion_end_mm), 30)
+	assert line.samples[-1].position_mm == pytest.approx(expected_motion_end_mm)
+	assert line.samples[-1].position_mm > 10.0
+	assert line.start_mm == pytest.approx(0.0)
+	assert line.end_mm == pytest.approx(10.0)
+
+
+@pytest.mark.asyncio
 async def test_scan_axis_flying_breaks_when_the_axis_stalls(monkeypatch) -> None:
 	import openshelf_os.laser_calibration.flying as flying_module
 
@@ -429,6 +492,78 @@ async def test_scan_line_positions_flying_bins_the_moving_samples() -> None:
 	assert depth_values == [pytest.approx(7.5) for _ in range(6)]
 	assert line.rpm == 45
 	assert line.axis == "x"
+
+
+def test_bin_samples_to_positions_fills_the_final_bin_with_the_lead_out() -> None:
+	from openshelf_os.laser_calibration.flying import FLYING_SCAN_LEAD_OUT_MARGIN_MM
+
+	positions = [float(value) for value in range(0, 21)]
+	feed_mm_s = 40.0
+	correction_mm = feed_mm_s * 0.042
+	spacing_mm = 0.4
+
+	def flying_samples_until(last_raw_mm: float) -> list[FlyingScanSample]:
+		samples = []
+		index = 0
+
+		while index * spacing_mm <= last_raw_mm + 1e-9:
+			raw_mm = index * spacing_mm
+			samples.append(
+				FlyingScanSample(
+					position_mm=raw_mm,
+					depth_mm=5.0,
+					elapsed_s=raw_mm / feed_mm_s,
+					depth_position_mm=raw_mm - correction_mm,
+					velocity_mm_s=feed_mm_s,
+				)
+			)
+			index += 1
+
+		return samples
+
+	# Before the lead-out the move stopped at end_mm, so the corrected sample cloud ends
+	# correction_mm short of it and the final grid position has no sample to bin from.
+	without_lead_out = bin_samples_to_positions(
+		samples=flying_samples_until(20.0),
+		positions=positions,
+	)
+	assert without_lead_out[-1] is None
+
+	# Flying the latency shift plus the margin past end_mm puts corrected samples past the
+	# final grid position, so every bin the stepped scan would have probed is filled.
+	with_lead_out = bin_samples_to_positions(
+		samples=flying_samples_until(20.0 + correction_mm + FLYING_SCAN_LEAD_OUT_MARGIN_MM),
+		positions=positions,
+	)
+	assert with_lead_out == [pytest.approx(5.0) for _ in positions]
+
+
+@pytest.mark.asyncio
+async def test_scan_line_positions_flying_covers_the_final_position_with_a_clamped_lead_out() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+	# 40mm/rev at 60rpm is 40mm/s, so the lead-out would fly 2.68mm past the grid; the axis
+	# limit at 10mm clamps the commanded end back onto the final grid position instead.
+	tool._my = FakeTimedAxisMotor(feed_mm_s=40.0)
+	tool._my._params = SimpleNamespace(mpr=40.0, lower_lim=0.0, lim=10.0)
+	positions = [float(value) for value in range(0, 11)]
+
+	depth_values, line = await scan_line_positions_flying(
+		tool,
+		axis="y",
+		positions=positions,
+		fixed_mm=25.0,
+		rpm=60,
+		progress_label="flying_clamped_lead_out",
+		capture_latency_s=0.042,
+	)
+
+	assert tool._my.moves[-1] == (pytest.approx(10.0), 60)
+	# The latency-corrected moving samples stop 1.68mm short of the clamped end, so only the
+	# stationary end sample can fill the final grid position's bin.
+	assert depth_values[-1] is not None
+	assert depth_values[-1] == pytest.approx(5.0)
+	assert line.samples[-1].position_mm == pytest.approx(10.0)
+	assert line.samples[-1].velocity_mm_s == 0.0
 
 
 @pytest.mark.asyncio
@@ -941,24 +1076,81 @@ def test_flying_scan_line_metrics_use_travelled_distance() -> None:
 def test_build_shelf_edge_stop_predicate_needs_a_confirmed_run() -> None:
 	from openshelf_os.laser_calibration.shelf_scout import build_shelf_edge_stop_predicate
 
+	def sample(position_mm, depth_mm):
+		return FlyingScanSample(position_mm=position_mm, depth_mm=depth_mm, elapsed_s=0.0)
+
+	# confirmation is distance-based: the run must span min_positive_run_length grid steps
+	# (3 * 2mm = 6mm), so three 2mm-spaced positives covering 4mm must not confirm
 	predicate = build_shelf_edge_stop_predicate(min_positive_run_length=3)
-
-	def sample(depth_mm):
-		return FlyingScanSample(position_mm=0.0, depth_mm=depth_mm, elapsed_s=0.0)
-
-	assert predicate([sample(None)]) is False
-	assert predicate([sample(None), sample(9.5)]) is False
-	assert predicate([sample(None), sample(9.5), sample(9.5)]) is False
-	assert predicate([sample(None), sample(9.5), sample(9.5), sample(9.5)]) is False
-	# the first non-positive sample after three positives closes the edge
+	assert predicate([sample(0.0, None)]) is False
+	assert predicate([sample(0.0, None), sample(2.0, 9.5)]) is False
+	assert predicate([sample(0.0, None), sample(2.0, 9.5), sample(4.0, 9.5)]) is False
 	assert predicate([
-		sample(None), sample(9.5), sample(9.5), sample(9.5), sample(0.0),
+		sample(0.0, None), sample(2.0, 9.5), sample(4.0, 9.5), sample(6.0, 9.5),
+	]) is False
+	assert predicate([
+		sample(0.0, None), sample(2.0, 9.5), sample(4.0, 9.5), sample(6.0, 9.5), sample(8.0, 0.0),
+	]) is False
+
+	# a run spanning the full 6mm confirms on the first non-positive sample after it
+	confirmed = build_shelf_edge_stop_predicate(min_positive_run_length=3)
+	assert confirmed([sample(2.0, 9.5)]) is False
+	assert confirmed([sample(2.0, 9.5), sample(4.0, 9.5)]) is False
+	assert confirmed([sample(2.0, 9.5), sample(4.0, 9.5), sample(6.0, 9.5)]) is False
+	assert confirmed([
+		sample(2.0, 9.5), sample(4.0, 9.5), sample(6.0, 9.5), sample(8.0, 9.5),
+	]) is False
+	assert confirmed([
+		sample(2.0, 9.5), sample(4.0, 9.5), sample(6.0, 9.5), sample(8.0, 9.5), sample(10.0, 0.0),
 	]) is True
 
 	# an unconfirmed run resets, so a later short run cannot confirm either
 	short_run = build_shelf_edge_stop_predicate(min_positive_run_length=3)
-	assert short_run([sample(9.5), sample(0.0)]) is False
-	assert short_run([sample(9.5), sample(0.0), sample(9.5), sample(9.5), sample(0.0)]) is False
+	assert short_run([sample(0.0, 9.5)]) is False
+	assert short_run([sample(0.0, 9.5), sample(2.0, 0.0)]) is False
+	assert short_run([sample(0.0, 9.5), sample(2.0, 0.0), sample(4.0, 9.5)]) is False
+	assert short_run([
+		sample(0.0, 9.5), sample(2.0, 0.0), sample(4.0, 9.5), sample(6.0, 9.5),
+	]) is False
+	assert short_run([
+		sample(0.0, 9.5), sample(2.0, 0.0), sample(4.0, 9.5), sample(6.0, 9.5), sample(8.0, 0.0),
+	]) is False
+
+
+def test_shelf_edge_stop_predicate_matches_the_detector_on_dense_samples() -> None:
+	from openshelf_os.laser_calibration.shelf_scout import build_shelf_edge_stop_predicate
+
+	grid = [0.0, 2.0, 4.0, 6.0, 8.0]
+
+	# a flying pass samples far finer than the 2mm scout grid; three 1mm-spaced positives span
+	# only 2mm of travel, so the predicate must not stop and the binned detector rejects the run
+	short_samples = [
+		FlyingScanSample(position_mm=float(index), depth_mm=depth_mm, elapsed_s=index * 0.02)
+		for index, depth_mm in enumerate([0.5, 0.5, 0.5, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0])
+	]
+	short_predicate = build_shelf_edge_stop_predicate(min_positive_run_length=3)
+	short_stops = [
+		short_predicate(short_samples[:count]) for count in range(1, len(short_samples) + 1)
+	]
+	assert short_stops == [False] * len(short_samples)
+
+	short_binned = bin_samples_to_positions(samples=short_samples, positions=grid)
+	assert detect_shelf_edges_from_line(x_mm=10.0, y_positions=grid, depth_values=short_binned) == []
+
+	# once the positive travel reaches min_positive_run_length grid steps the predicate stops
+	# the pass, and the binned detector confirms the same edge
+	long_samples = [
+		FlyingScanSample(position_mm=float(index), depth_mm=depth_mm, elapsed_s=index * 0.02)
+		for index, depth_mm in enumerate([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -1.0, -1.0, -1.0])
+	]
+	long_predicate = build_shelf_edge_stop_predicate(min_positive_run_length=3)
+	long_stops = [
+		long_predicate(long_samples[:count]) for count in range(1, len(long_samples) + 1)
+	]
+	assert long_stops == [False] * 7 + [True, False, False]
+
+	long_binned = bin_samples_to_positions(samples=long_samples, positions=grid)
+	assert len(detect_shelf_edges_from_line(x_mm=10.0, y_positions=grid, depth_values=long_binned)) == 1
 
 
 @pytest.mark.asyncio
@@ -990,6 +1182,32 @@ async def test_scan_axis_flying_stops_early_when_asked() -> None:
 	assert tool._my.stop_count == 1
 	# Only the pre-position wait: a line stopped by its own predicate is not waited on.
 	assert tool.gantry_wait_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_skips_the_stationary_end_sample_when_stopped_early() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+
+	def didRequestStop(samples: list) -> bool:
+		return len(samples) >= 3
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=100.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_stop_when_no_end_sample",
+		stop_when=didRequestStop,
+	)
+
+	# The stationary end sample belongs to the settled normal path: a line that stopped itself
+	# returns without it, so the reads and the last sample reflect the stop, not the end.
+	assert len(line.samples) == 3
+	assert tool.depth_reads == 3
+	assert line.samples[-1].position_mm == pytest.approx(2.0)
+	assert line.samples[-1].velocity_mm_s != 0.0
 
 
 @pytest.mark.asyncio
@@ -1039,9 +1257,14 @@ async def test_angle_shelf_scout_uses_the_flying_line_when_configured(monkeypatc
 	assert flying_requests[0]["stop_after_first_edge"] is True
 	assert flying_requests[0]["stop_when"] is not None
 
-	# The streaming predicate confirms the same run length as the post-pass detector.
+	# The streaming predicate confirms once the positive run spans the distance the post-pass
+	# detector needs (min_positive_run_length grid steps), never on sample count alone.
 	predicate = flying_requests[0]["stop_when"]
 	assert predicate([FlyingScanSample(position_mm=100.0, depth_mm=9.5, elapsed_s=0.0)]) is False
+	assert predicate([
+		FlyingScanSample(position_mm=100.0, depth_mm=9.5, elapsed_s=0.0),
+		FlyingScanSample(position_mm=98.0, depth_mm=9.5, elapsed_s=0.1),
+	]) is False
 	assert predicate([
 		FlyingScanSample(position_mm=100.0, depth_mm=9.5, elapsed_s=0.0),
 		FlyingScanSample(position_mm=98.0, depth_mm=9.5, elapsed_s=0.1),
@@ -1051,7 +1274,14 @@ async def test_angle_shelf_scout_uses_the_flying_line_when_configured(monkeypatc
 		FlyingScanSample(position_mm=100.0, depth_mm=9.5, elapsed_s=0.0),
 		FlyingScanSample(position_mm=98.0, depth_mm=9.5, elapsed_s=0.1),
 		FlyingScanSample(position_mm=96.0, depth_mm=9.5, elapsed_s=0.2),
-		FlyingScanSample(position_mm=94.0, depth_mm=0.0, elapsed_s=0.3),
+		FlyingScanSample(position_mm=94.0, depth_mm=9.5, elapsed_s=0.3),
+	]) is False
+	assert predicate([
+		FlyingScanSample(position_mm=100.0, depth_mm=9.5, elapsed_s=0.0),
+		FlyingScanSample(position_mm=98.0, depth_mm=9.5, elapsed_s=0.1),
+		FlyingScanSample(position_mm=96.0, depth_mm=9.5, elapsed_s=0.2),
+		FlyingScanSample(position_mm=94.0, depth_mm=9.5, elapsed_s=0.3),
+		FlyingScanSample(position_mm=92.0, depth_mm=0.0, elapsed_s=0.4),
 	]) is True
 
 

@@ -304,6 +304,7 @@ def apply_loaded_run_analysis(
 ) -> None:
 	auto_calibration_scope = run_parameters.get('auto_calibration_scope')
 	single_cell_rescan = run_parameters.get('single_cell_rescan')
+	cli_rescan_shelf = run_parameters.get('cli', {}).get('rescan_shelf')
 
 	if isinstance(auto_calibration_scope, dict) is True:
 		scope_mode = auto_calibration_scope.get('mode')
@@ -318,6 +319,17 @@ def apply_loaded_run_analysis(
 				target_shelf_idx=int(auto_calibration_scope['shelf_idx']),
 			)
 			return
+
+	if cli_rescan_shelf is not None:
+		laser_module.apply_single_shelf_analysis(
+			analysis=analysis,
+			grid=grid,
+			grid_path=grid_path,
+			scan_config=config.robot.grid.scan,
+			side=analysis.side,
+			target_shelf_idx=int(cli_rescan_shelf),
+		)
+		return
 
 	if isinstance(single_cell_rescan, dict) is True:
 		candidate_data = single_cell_rescan.get('candidate')
@@ -493,6 +505,47 @@ async def run_scan(args: argparse.Namespace) -> int:
 		run_parameters = run_parameters_document['run_parameters']
 		shelf_scout_only = bool(run_parameters.get('cli', {}).get('shelf_scout_only', False))
 		known_shelf_edge_y = run_parameters.get('cli', {}).get('known_shelf_edge_y')
+		# The earlier portion of the run already moved with the recorded style/feed,
+		# so the resumed portion restores them instead of the current config values.
+		resolved_scan_settings = run_parameters.get('resolved', {})
+		scan_overrides = {
+			key: resolved_scan_settings[key]
+			for key in (
+				'coarse_scan_style',
+				'coarse_scan_rpm',
+				'coarse_scan_bin_mode',
+				'fine_scan_style',
+				'fine_scan_feed_mm_s',
+			)
+			if key in resolved_scan_settings
+		}
+
+		if len(scan_overrides) > 0:
+			scan_config = scan_config.model_copy(update=scan_overrides)
+			coarse_style = scan_overrides.get('coarse_scan_style')
+			coarse_rpm = scan_overrides.get('coarse_scan_rpm')
+			fine_style = scan_overrides.get('fine_scan_style')
+			fine_feed_mm_s = scan_overrides.get('fine_scan_feed_mm_s')
+			laser_module.print_status(
+				f'resume_scan_style=coarse:{coarse_style} coarse_rpm:{coarse_rpm} '
+				f'fine:{fine_style} fine_feed_mm_s:{fine_feed_mm_s}'
+			)
+		resumed_rescan_shelf = run_parameters.get('cli', {}).get('rescan_shelf')
+
+		if resumed_rescan_shelf is not None:
+			args.rescan_shelf = int(resumed_rescan_shelf)
+
+			if known_shelf_edge_y is None and shelf_scout_only is False:
+				known_shelf_edge_y = laser_module.build_single_shelf_known_edge_y(
+					grid=grid,
+					side=side,
+					shelf_idx=int(args.rescan_shelf),
+					scan_config=scan_config,
+				)
+			laser_module.print_status(
+				f'resume_rescan_shelf={args.rescan_shelf} '
+				f'known_shelf_edge_y={known_shelf_edge_y}'
+			)
 		laser_module.print_status(f'resume_run_id={recorder.run_id}')
 	else:
 		if args.module is None:
@@ -772,6 +825,15 @@ async def run_scan(args: argparse.Namespace) -> int:
 				side=side,
 				detected_cell=matched_cell,
 				scan_config=scan_config,
+			)
+		elif args.rescan_shelf is not None:
+			laser_module.apply_single_shelf_analysis(
+				analysis=analysis,
+				grid=grid,
+				grid_path=grid_path,
+				scan_config=scan_config,
+				side=side,
+				target_shelf_idx=int(args.rescan_shelf),
 			)
 		else:
 			laser_module.apply_analysis(
