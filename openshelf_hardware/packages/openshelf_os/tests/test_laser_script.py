@@ -499,3 +499,362 @@ def test_from_run_apply_uses_single_cell_rescan(
 	assert call_kwargs['target'].cell_idx == 2
 	assert call_kwargs['side'] == StorageModuleSide.LEFT
 	assert call_kwargs['detected_cell'] is detected_cell
+
+
+def test_main_dispatches_rescan_shelf_apply_to_single_shelf_scope(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	config.robot.grid.scan = LaserScanConfig(laser_offset_x_mm=51.0, laser_offset_y_mm=0.0)
+	analysis = build_analysis()
+	run_staged_scan = AsyncMock(return_value=analysis)
+	apply_single_shelf_analysis = Mock()
+	apply_analysis = Mock()
+	target_shelf = SimpleNamespace(
+		cells=[
+			SimpleNamespace(calibration_point=SimpleNamespace(y=400.0)),
+			SimpleNamespace(calibration_point=SimpleNamespace(y=404.0)),
+		]
+	)
+
+	async def didRunWithTempRobotConfig(*, config, config_path, didRun, shutdown_action):
+		return await didRun(SimpleNamespace(_tool=SimpleNamespace()))
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(module.laser_module, 'resolve_target_shelf', lambda **kwargs: target_shelf)
+	monkeypatch.setattr(
+		module.laser_module,
+		'build_single_shelf_known_edge_y',
+		lambda **kwargs: [318.0],
+	)
+	monkeypatch.setattr(module.laser_module, 'build_run_parameters', lambda **kwargs: {'module': 'left'})
+	monkeypatch.setattr(module.laser_module, 'run_staged_scan', run_staged_scan)
+	monkeypatch.setattr(
+		module.laser_module,
+		'run_with_temp_robot_config',
+		AsyncMock(side_effect=didRunWithTempRobotConfig),
+	)
+	monkeypatch.setattr(module.laser_module, 'persist_run_parameters', lambda **kwargs: '/tmp/run/run_parameters.json')
+	monkeypatch.setattr(module.laser_module, 'apply_single_shelf_analysis', apply_single_shelf_analysis)
+	monkeypatch.setattr(module.laser_module, 'apply_analysis', apply_analysis)
+	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
+
+	result = module.main(
+		[
+			'--module',
+			'left',
+			'--step',
+			'1',
+			'--rescan-shelf',
+			'2',
+			'--coarse-scan-style',
+			'flying',
+			'--coarse-scan-rpm',
+			'45',
+			'--apply',
+			'--config',
+			str(tmp_path / 'data' / 'config.json'),
+		]
+	)
+
+	assert result == 0
+	run_staged_scan.assert_awaited_once()
+	apply_single_shelf_analysis.assert_called_once()
+	assert apply_single_shelf_analysis.call_args.kwargs['target_shelf_idx'] == 2
+	apply_analysis.assert_not_called()
+
+
+
+@pytest.mark.parametrize(
+	'resolved_overrides',
+	[
+		pytest.param(
+			{
+				'coarse_scan_style': 'flying',
+				'coarse_scan_rpm': 45,
+				'coarse_scan_bin_mode': 'median',
+				'fine_scan_style': 'flying',
+				'fine_scan_feed_mm_s': 40.0,
+			},
+			id='flying',
+		),
+		pytest.param({}, id='legacy'),
+	],
+)
+
+
+def test_main_continue_restores_recorded_scan_style(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+	resolved_overrides: dict,
+) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	config.robot.grid.scan = LaserScanConfig(laser_offset_x_mm=51.0, laser_offset_y_mm=0.0)
+	analysis = build_analysis()
+	run_staged_scan = AsyncMock(return_value=analysis)
+	recorder = SimpleNamespace(
+		run_id='run-id',
+		run_parameters_path='/tmp/run/run_parameters.json',
+	)
+	run_parameters_document = {
+		'run_parameters': {
+			'module': 'left',
+			'cli': {'shelf_scout_only': False, 'known_shelf_edge_y': None},
+			'resolved': {
+				'bounds': {'x_min': 0.0, 'x_max': 10.0, 'y_min': 0.0, 'y_max': 10.0},
+				'fine_step_mm': 1.0,
+				'settle_ms': 0,
+				'samples_per_point': 1,
+				**resolved_overrides,
+			},
+		},
+	}
+
+	async def didRunWithTempRobotConfig(*, config, config_path, didRun, shutdown_action):
+		return await didRun(SimpleNamespace(_tool=SimpleNamespace()))
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(
+		module.laser_module,
+		'load_continue_scan_context',
+		lambda scans_dir: (
+			recorder,
+			StorageModuleSide.LEFT,
+			ScanBounds(x_min=0.0, x_max=10.0, y_min=0.0, y_max=10.0),
+			1.0,
+			0,
+			1,
+			0,
+			1,
+		),
+	)
+	monkeypatch.setattr(
+		module.laser_module,
+		'load_json_file',
+		lambda path: run_parameters_document,
+	)
+	monkeypatch.setattr(module.laser_module, 'run_staged_scan', run_staged_scan)
+	monkeypatch.setattr(
+		module.laser_module,
+		'run_with_temp_robot_config',
+		AsyncMock(side_effect=didRunWithTempRobotConfig),
+	)
+	monkeypatch.setattr(module.laser_module, 'persist_run_parameters', lambda **kwargs: '/tmp/run/run_parameters.json')
+	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
+
+	result = module.main(['--continue', '--config', str(tmp_path / 'data' / 'config.json')])
+
+	assert result == 0
+	run_staged_scan.assert_awaited_once()
+	scan_config = run_staged_scan.await_args.kwargs['scan_config']
+
+	if len(resolved_overrides) > 0:
+		assert scan_config.coarse_scan_style == 'flying'
+		assert scan_config.coarse_scan_rpm == 45
+		assert scan_config.coarse_scan_bin_mode == 'median'
+		assert scan_config.fine_scan_style == 'flying'
+		assert scan_config.fine_scan_feed_mm_s == pytest.approx(40.0)
+	else:
+		assert scan_config.coarse_scan_style == 'stepped'
+		assert scan_config.fine_scan_style == 'stepped'
+
+
+def test_main_continue_restores_recorded_rescan_shelf_scope(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	config.robot.grid.scan = LaserScanConfig(laser_offset_x_mm=51.0, laser_offset_y_mm=0.0)
+	analysis = build_analysis()
+	run_staged_scan = AsyncMock(return_value=analysis)
+	build_single_shelf_known_edge_y = Mock(return_value=[318.0])
+	apply_single_shelf_analysis = Mock()
+	apply_analysis = Mock()
+	recorder = SimpleNamespace(
+		run_id='run-id',
+		run_parameters_path='/tmp/run/run_parameters.json',
+	)
+	run_parameters_document = {
+		'run_parameters': {
+			'module': 'left',
+			'cli': {
+				'shelf_scout_only': False,
+				'known_shelf_edge_y': None,
+				'rescan_shelf': 2,
+			},
+			'resolved': {
+				'bounds': {'x_min': 0.0, 'x_max': 10.0, 'y_min': 0.0, 'y_max': 10.0},
+				'fine_step_mm': 1.0,
+				'settle_ms': 0,
+				'samples_per_point': 1,
+			},
+		},
+	}
+
+	async def didRunWithTempRobotConfig(*, config, config_path, didRun, shutdown_action):
+		return await didRun(SimpleNamespace(_tool=SimpleNamespace()))
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(
+		module.laser_module,
+		'load_continue_scan_context',
+		lambda scans_dir: (
+			recorder,
+			StorageModuleSide.LEFT,
+			ScanBounds(x_min=0.0, x_max=10.0, y_min=0.0, y_max=10.0),
+			1.0,
+			0,
+			1,
+			0,
+			1,
+		),
+	)
+	monkeypatch.setattr(
+		module.laser_module,
+		'load_json_file',
+		lambda path: run_parameters_document,
+	)
+	monkeypatch.setattr(
+		module.laser_module,
+		'build_single_shelf_known_edge_y',
+		build_single_shelf_known_edge_y,
+	)
+	monkeypatch.setattr(module.laser_module, 'run_staged_scan', run_staged_scan)
+	monkeypatch.setattr(
+		module.laser_module,
+		'run_with_temp_robot_config',
+		AsyncMock(side_effect=didRunWithTempRobotConfig),
+	)
+	monkeypatch.setattr(module.laser_module, 'persist_run_parameters', lambda **kwargs: '/tmp/run/run_parameters.json')
+	monkeypatch.setattr(module.laser_module, 'apply_single_shelf_analysis', apply_single_shelf_analysis)
+	monkeypatch.setattr(module.laser_module, 'apply_analysis', apply_analysis)
+	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
+
+	result = module.main(['--continue', '--apply', '--config', str(tmp_path / 'data' / 'config.json')])
+
+	assert result == 0
+	run_staged_scan.assert_awaited_once()
+	build_single_shelf_known_edge_y.assert_called_once()
+	assert build_single_shelf_known_edge_y.call_args.kwargs['shelf_idx'] == 2
+	assert run_staged_scan.await_args.kwargs['known_shelf_edge_y'] == [318.0]
+	apply_single_shelf_analysis.assert_called_once()
+	assert apply_single_shelf_analysis.call_args.kwargs['target_shelf_idx'] == 2
+	apply_analysis.assert_not_called()
+
+
+def test_main_continue_scout_only_rescan_shelf_does_not_seed_known_edge(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	config.robot.grid.scan = LaserScanConfig(laser_offset_x_mm=51.0, laser_offset_y_mm=0.0)
+	analysis = build_analysis()
+	run_staged_scan = AsyncMock(return_value=analysis)
+	build_single_shelf_known_edge_y = Mock(return_value=[318.0])
+	recorder = SimpleNamespace(
+		run_id='run-id',
+		run_parameters_path='/tmp/run/run_parameters.json',
+	)
+	run_parameters_document = {
+		'run_parameters': {
+			'module': 'left',
+			'cli': {
+				'shelf_scout_only': True,
+				'known_shelf_edge_y': None,
+				'rescan_shelf': 2,
+			},
+			'resolved': {
+				'bounds': {'x_min': 0.0, 'x_max': 10.0, 'y_min': 0.0, 'y_max': 10.0},
+				'fine_step_mm': 1.0,
+				'settle_ms': 0,
+				'samples_per_point': 1,
+			},
+		},
+	}
+
+	async def didRunWithTempRobotConfig(*, config, config_path, didRun, shutdown_action):
+		return await didRun(SimpleNamespace(_tool=SimpleNamespace()))
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(
+		module.laser_module,
+		'load_continue_scan_context',
+		lambda scans_dir: (
+			recorder,
+			StorageModuleSide.LEFT,
+			ScanBounds(x_min=0.0, x_max=10.0, y_min=0.0, y_max=10.0),
+			1.0,
+			0,
+			1,
+			0,
+			1,
+		),
+	)
+	monkeypatch.setattr(
+		module.laser_module,
+		'load_json_file',
+		lambda path: run_parameters_document,
+	)
+	monkeypatch.setattr(
+		module.laser_module,
+		'build_single_shelf_known_edge_y',
+		build_single_shelf_known_edge_y,
+	)
+	monkeypatch.setattr(module.laser_module, 'run_staged_scan', run_staged_scan)
+	monkeypatch.setattr(
+		module.laser_module,
+		'run_with_temp_robot_config',
+		AsyncMock(side_effect=didRunWithTempRobotConfig),
+	)
+	monkeypatch.setattr(module.laser_module, 'persist_run_parameters', lambda **kwargs: '/tmp/run/run_parameters.json')
+	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
+
+	result = module.main(['--continue', '--config', str(tmp_path / 'data' / 'config.json')])
+
+	assert result == 0
+	run_staged_scan.assert_awaited_once()
+	build_single_shelf_known_edge_y.assert_not_called()
+	assert run_staged_scan.await_args.kwargs['shelf_scout_only'] is True
+	assert run_staged_scan.await_args.kwargs['known_shelf_edge_y'] is None
+
+
+def test_from_run_apply_uses_cli_rescan_shelf_scope(
+	monkeypatch: pytest.MonkeyPatch,
+	tmp_path: Path,
+) -> None:
+	module = load_laser_script_module()
+	config = build_config()
+	analysis = build_analysis(str(tmp_path / 'run' / 'coarse.npy'))
+	analysis.metadata_path = str(tmp_path / 'run' / 'metadata.json')
+	apply_single_shelf_analysis = Mock()
+	apply_analysis = Mock()
+
+	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
+	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
+	monkeypatch.setattr(module.laser_module, 'load_staged_scan_analysis', lambda *args, **kwargs: analysis)
+	monkeypatch.setattr(
+		module,
+		'load_run_parameters_for_analysis',
+		lambda analysis: {
+			'cli': {'rescan_shelf': 2},
+		},
+	)
+	monkeypatch.setattr(module.laser_module, 'apply_single_shelf_analysis', apply_single_shelf_analysis)
+	monkeypatch.setattr(module.laser_module, 'apply_analysis', apply_analysis)
+	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
+
+	result = module.main(['--from-run', str(tmp_path / 'run'), '--apply'])
+
+	assert result == 0
+	apply_single_shelf_analysis.assert_called_once()
+	assert apply_single_shelf_analysis.call_args.kwargs['target_shelf_idx'] == 2
+	apply_analysis.assert_not_called()

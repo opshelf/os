@@ -190,21 +190,38 @@ def detect_shelf_edges_from_line(
 	return detected_edges
 
 
+def sample_scan_position_mm(sample: Any) -> float:
+	"""Position a sample's depth belongs to; latency-corrected when the capture measured one."""
+	depth_position_mm = getattr(sample, 'depth_position_mm', None)
+
+	if depth_position_mm is not None:
+		return float(depth_position_mm)
+
+	return float(sample.position_mm)
+
+
 def build_shelf_edge_stop_predicate(
 	*,
 	min_positive_run_length: int = SHELF_EDGE_CONFIRMATION_COUNT,
+	grid_step_mm: float = SHELF_SCOUT_STEP_MM,
 ) -> Callable[[list[Any]], bool]:
 	"""Streaming twin of the confirmation rule in detect_shelf_edges_from_line.
 
-	Returns True on the first sample that closes a confirmed positive run, so a moving pass can
-	stop at the edge instead of flying the whole window. Run length and the reset on an
-	unconfirmed run are intentionally identical to the post-pass detector.
+	Returns True on the first sample that closes a positive run spanning at least
+	`min_positive_run_length * grid_step_mm` of travel, so a moving pass can stop at the edge
+	instead of flying the whole window. The post-pass detector bins the samples onto the scout
+	grid and counts consecutive positive grid points; a span of that many grid steps always
+	holds that many grid points (sample spacing below one step keeps them binned to the run's
+	own samples), so the pass never stops on a run the detector would reject. An unconfirmed
+	run still resets the run, and the confirmation itself is conservative: it can only delay
+	the stop, never skip an edge the detector would have found.
 	"""
-	run_start_idx: int | None = None
-	run_end_idx: int | None = None
+	min_run_span_mm = float(min_positive_run_length) * float(grid_step_mm)
+	run_start_mm: float | None = None
+	run_end_mm: float | None = None
 
 	def didReachConfirmedEdge(samples: list[Any]) -> bool:
-		nonlocal run_start_idx, run_end_idx
+		nonlocal run_start_mm, run_end_mm
 
 		if len(samples) == 0:
 			return False
@@ -212,18 +229,20 @@ def build_shelf_edge_stop_predicate(
 		depth_mm = samples[-1].depth_mm
 
 		if is_positive_depth(depth_mm) is True:
-			if run_start_idx is None:
-				run_start_idx = len(samples) - 1
+			position_mm = sample_scan_position_mm(samples[-1])
 
-			run_end_idx = len(samples) - 1
+			if run_start_mm is None:
+				run_start_mm = position_mm
+
+			run_end_mm = position_mm
 			return False
 
-		if run_start_idx is None or run_end_idx is None:
+		if run_start_mm is None or run_end_mm is None:
 			return False
 
-		is_confirmed = (run_end_idx - run_start_idx + 1) >= min_positive_run_length
-		run_start_idx = None
-		run_end_idx = None
+		is_confirmed = abs(run_end_mm - run_start_mm) >= min_run_span_mm
+		run_start_mm = None
+		run_end_mm = None
 
 		return is_confirmed
 

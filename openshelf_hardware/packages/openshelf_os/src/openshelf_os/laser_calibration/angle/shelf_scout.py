@@ -15,6 +15,7 @@ from openshelf_os.laser_calibration.shelf_scout import (
 	filter_shelf_edges as filter_shared_shelf_edges,
 	scan_shelf_scout_line as scan_shared_shelf_scout_line,
 	SHELF_SCOUT_POST_EDGE_SKIP_MM,
+	SHELF_SCOUT_STEP_MM,
 )
 
 from .models import ShelfSurfaceEdge
@@ -93,7 +94,7 @@ async def scan_shelf_scout_line(
 		stop_when = None
 
 		if stop_after_first_edge is True:
-			stop_when = build_shelf_edge_stop_predicate()
+			stop_when = build_shelf_edge_stop_predicate(grid_step_mm=SHELF_SCOUT_STEP_MM)
 
 		depth_values, edges, _line = await scan_shelf_scout_line_flying(
 			tool,
