@@ -162,6 +162,31 @@ sys.exit(1)
 PY
 }
 
+# Retarget the device kiosk to the mode's UI (development -> dev UI, else the
+# built UI) when a start crosses the development boundary. Best effort only: a
+# checkout without the kiosk service (a laptop) skips, and a failed restart
+# leaves the kiosk at its last target until the next boot.
+kiosk_retarget() {
+	local service="opshelf-kiosk.service"
+	local restart_cmd
+
+	if command -v systemctl >/dev/null 2>&1; then
+		if systemctl list-unit-files 2>/dev/null | grep -q "^$service\b"; then
+			if [ "$(id -u)" = "0" ]; then
+				restart_cmd=(systemctl)
+			else
+				restart_cmd=(sudo -n systemctl)
+			fi
+			if "${restart_cmd[@]}" restart "$service" >/dev/null 2>&1; then
+				echo "retargeted kiosk to $1 UI"
+			else
+				echo "warning: could not restart $service; the kiosk keeps its current target until the next boot" >&2
+			fi
+		fi
+	fi
+	return 0
+}
+
 while [[ $# -gt 0 ]]; do
 	case $1 in
 		-h|--hardware)
@@ -307,4 +332,19 @@ if ! write_mode_file "$LAST_MODE_FILE" "$MODE"; then
 	echo "Failed to write mode tracking file: $LAST_MODE_FILE"
 	exit 1
 fi
+
+if [[ -n "$LAST_MODE" && "$LAST_MODE" != "$MODE" ]]; then
+	last_is_dev=false
+	if [[ "$LAST_MODE" == "development" ]]; then
+		last_is_dev=true
+	fi
+	curr_is_dev=false
+	if [[ "$MODE" == "development" ]]; then
+		curr_is_dev=true
+	fi
+	if [[ "$last_is_dev" != "$curr_is_dev" ]]; then
+		kiosk_retarget "$MODE"
+	fi
+fi
+
 cd "$SCRIPT_DIR" && eval $COMPOSE_CMD
