@@ -49,7 +49,6 @@ class ScanDetectedCell(BaseModel):
 class ScanDetectedShelf(BaseModel):
 	shelf_idx: int
 	center_y_mm: float
-	shelf_height_mm: float
 	shelf_width_mm: float
 	cells: list[ScanDetectedCell] = Field(default_factory=list)
 
@@ -472,7 +471,6 @@ def analyze_scan_capture(
 			current_shelf = ScanDetectedShelf(
 				shelf_idx=0,
 				center_y_mm=cell.center_y_mm,
-				shelf_height_mm=cell.height_mm,
 				shelf_width_mm=cell.width_mm,
 			)
 			current_shelf_cells = [cell]
@@ -489,14 +487,12 @@ def analyze_scan_capture(
 
 		current_shelf.cells = list(current_shelf_cells)
 		current_shelf.center_y_mm = float(np.mean([shelf_cell.center_y_mm for shelf_cell in current_shelf_cells]))
-		current_shelf.shelf_height_mm = max(shelf_cell.height_mm for shelf_cell in current_shelf_cells)
 		current_shelf.shelf_width_mm = sum(shelf_cell.width_mm for shelf_cell in current_shelf_cells)
 		shelves.append(current_shelf)
 
 		current_shelf = ScanDetectedShelf(
 			shelf_idx=len(shelves),
 			center_y_mm=cell.center_y_mm,
-			shelf_height_mm=cell.height_mm,
 			shelf_width_mm=cell.width_mm,
 		)
 		current_shelf_cells = [cell]
@@ -509,7 +505,6 @@ def analyze_scan_capture(
 
 		current_shelf.cells = list(current_shelf_cells)
 		current_shelf.center_y_mm = float(np.mean([shelf_cell.center_y_mm for shelf_cell in current_shelf_cells]))
-		current_shelf.shelf_height_mm = max(shelf_cell.height_mm for shelf_cell in current_shelf_cells)
 		current_shelf.shelf_width_mm = sum(shelf_cell.width_mm for shelf_cell in current_shelf_cells)
 		shelves.append(current_shelf)
 
@@ -850,19 +845,16 @@ def build_shelves_from_scan(
 				for detected_cell in detected_shelf.cells
 			]
 
-		output_shelf_height = detected_shelf.shelf_height_mm
 		output_shelf_width = detected_shelf.shelf_width_mm
 		if existing_shelves is not None:
 			for existing_shelf in existing_shelves:
 				if existing_shelf.shelf_idx == detected_shelf.shelf_idx:
-					output_shelf_height = existing_shelf.shelf_height
 					output_shelf_width = existing_shelf.shelf_width
 					break
 
 		shelves.append(
 			Shelf(
 				shelf_idx=detected_shelf.shelf_idx,
-				shelf_height=output_shelf_height,
 				shelf_width=output_shelf_width,
 				cells=cells,
 			)

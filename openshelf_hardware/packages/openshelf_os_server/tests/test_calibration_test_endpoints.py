@@ -27,7 +27,6 @@ def build_grid(*, is_occupied: bool, cell_status: CellStatus | None = None) -> S
 		left_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_height=200.0,
 				shelf_width=100.0,
 				cells=[
 					Cell(

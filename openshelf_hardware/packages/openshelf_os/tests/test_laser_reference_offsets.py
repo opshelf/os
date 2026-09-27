@@ -49,7 +49,7 @@ def build_cell(
 
 def build_grid(cells: list[Cell]) -> StorageGrid:
 	grid = StorageGrid(filename="storage.json")
-	grid.left_module = [Shelf(shelf_idx=0, shelf_height=30.0, shelf_width=200.0, cells=cells)]
+	grid.left_module = [Shelf(shelf_idx=0, shelf_width=200.0, cells=cells)]
 	return grid
 
 
@@ -77,7 +77,6 @@ def build_analysis(detected_cells: list[ScanDetectedCell]) -> SimpleNamespace:
 			ScanDetectedShelf(
 				shelf_idx=0,
 				center_y_mm=detected_cells[0].tool_y_mm,
-				shelf_height_mm=30.0,
 				shelf_width_mm=200.0,
 				cells=list(detected_cells),
 			)
@@ -195,7 +194,7 @@ def test_reference_datum_needs_the_bottom_left_cell() -> None:
 
 	elsewhere = StorageGrid(filename="storage.json")
 	elsewhere.left_module = [
-		Shelf(shelf_idx=5, shelf_height=30.0, shelf_width=200.0, cells=[build_cell(cell_idx=0, x=354.0, y=641.0)])
+		Shelf(shelf_idx=5, shelf_width=200.0, cells=[build_cell(cell_idx=0, x=354.0, y=641.0)])
 	]
 	assert select_reference_datum_cell(grid=elsewhere, side=StorageModuleSide.LEFT) is None
 

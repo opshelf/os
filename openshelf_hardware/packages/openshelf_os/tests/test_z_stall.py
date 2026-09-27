@@ -148,7 +148,6 @@ def build_module_analysis() -> tuple[SimpleNamespace, dict[tuple[int, int], floa
 			ScanDetectedShelf(
 				shelf_idx=shelf_idx,
 				center_y_mm=tool_y,
-				shelf_height_mm=30.0,
 				shelf_width_mm=400.0,
 				cells=build_shelf_cells(shelf_idx, tool_y=tool_y, xs=xs),
 			)
@@ -192,7 +191,6 @@ def test_select_z_stall_probes_keeps_the_other_shelves_as_reserves() -> None:
 		ScanDetectedShelf(
 			shelf_idx=2,
 			center_y_mm=440.0,
-			shelf_height_mm=30.0,
 			shelf_width_mm=300.0,
 			cells=shelf_two,
 		)
@@ -298,7 +296,6 @@ def test_excluded_probe_cells_drops_only_disabled_cells_and_datums() -> None:
 	grid.left_module = [
 		Shelf(
 			shelf_idx=0,
-			shelf_height=30.0,
 			shelf_width=200.0,
 			cells=[
 				build_cell(cell_idx=0, tool_x=350.0, tool_y=40.0),
@@ -329,7 +326,6 @@ def test_excluded_probe_cells_keeps_a_datum_only_scope_probeable() -> None:
 	grid.left_module = [
 		Shelf(
 			shelf_idx=0,
-			shelf_height=30.0,
 			shelf_width=200.0,
 			cells=[
 				build_cell(cell_idx=0, tool_x=350.0, tool_y=40.0),
@@ -380,7 +376,6 @@ def build_probe_analysis(cells: list[ScanDetectedCell], wall_depths: list[float]
 			ScanDetectedShelf(
 				shelf_idx=shelf_idx,
 				center_y_mm=shelf_cells[0].tool_y_mm,
-				shelf_height_mm=30.0,
 				shelf_width_mm=500.0,
 				cells=list(shelf_cells),
 			)
@@ -882,7 +877,6 @@ def test_grid_built_analysis_feeds_the_reference_derivation() -> None:
 	grid.left_module = [
 		Shelf(
 			shelf_idx=0,
-			shelf_height=30.0,
 			shelf_width=200.0,
 			cells=[
 				Cell(

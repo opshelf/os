@@ -30,7 +30,6 @@ def build_grid(tmp_path) -> StorageGrid:
 		left_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_height=210.0,
 				shelf_width=480.0,
 				divider_width=12.0,
 				cells=[
@@ -71,7 +70,6 @@ async def test_add_grid_shelf(client: AsyncClient, tmp_path) -> None:
 	new_shelf = grid.left_module[1]
 	assert new_shelf.shelf_idx == 1
 	# geometry is cloned from the existing shelf
-	assert new_shelf.shelf_height == 210.0
 	assert new_shelf.shelf_width == 480.0
 	assert new_shelf.divider_width == 12.0
 	assert [cell.cell_idx for cell in new_shelf.cells] == [0]
@@ -431,26 +429,6 @@ async def test_update_grid_cells_batch_rejects_empty(client: AsyncClient, tmp_pa
 
 
 @pytest.mark.anyio
-async def test_update_grid_cell_rejects_over_tall_dimensions(client: AsyncClient, tmp_path) -> None:
-	grid = build_grid(tmp_path)
-
-	with patch("openshelf_os_server.core.robot.robot_worker", build_worker(grid)):
-		response = await client.put(
-			"/api/storage/grid/cell",
-			params={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
-			json={"dimensions": {"width": 55.0, "height": 211.0, "length": 400.0}},
-		)
-
-	assert response.status_code == 400
-
-	cell = grid.get_cell(
-		StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0)
-	)
-	# the grid is unchanged
-	assert cell.dimensions == Dimensions(width=55.0, height=90.0, length=400.0)
-
-
-@pytest.mark.anyio
 async def test_update_grid_cell_rejects_non_positive_dimensions(client: AsyncClient, tmp_path) -> None:
 	grid = build_grid(tmp_path)
 
@@ -468,49 +446,6 @@ async def test_update_grid_cell_rejects_non_positive_dimensions(client: AsyncCli
 	)
 	# the grid is unchanged
 	assert cell.dimensions == Dimensions(width=55.0, height=90.0, length=400.0)
-
-
-@pytest.mark.anyio
-async def test_update_grid_cell_accepts_height_equal_to_shelf_height(client: AsyncClient, tmp_path) -> None:
-	grid = build_grid(tmp_path)
-
-	with patch("openshelf_os_server.core.robot.robot_worker", build_worker(grid)):
-		response = await client.put(
-			"/api/storage/grid/cell",
-			params={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
-			json={"dimensions": {"width": 55.0, "height": 210.0, "length": 400.0}},
-		)
-
-	assert response.status_code == 200, response.text
-
-	cell = grid.get_cell(
-		StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0)
-	)
-	# height equal to the shelf height is allowed
-	assert cell.dimensions == Dimensions(width=55.0, height=210.0, length=400.0)
-
-
-@pytest.mark.anyio
-async def test_update_grid_cells_batch_is_atomic_on_over_tall_dimensions(client: AsyncClient, tmp_path) -> None:
-	grid = build_grid(tmp_path)
-
-	with patch("openshelf_os_server.core.robot.robot_worker", build_worker(grid)):
-		response = await client.put(
-			"/api/storage/grid/cells",
-			params={"side": "left_module"},
-			json={
-				"cells": [
-					{"shelf_idx": 0, "cell_idx": 0, "status": "maintenance"},
-					{"shelf_idx": 0, "cell_idx": 1, "dimensions": {"width": 55.0, "height": 211.0, "length": 400.0}},  # over-tall
-				]
-			},
-		)
-
-	assert response.status_code == 400
-	# the valid cell was NOT mutated
-
-	c0 = grid.get_cell(StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0))
-	assert c0.status is CellStatus.AVAILABLE
 
 
 @pytest.mark.anyio

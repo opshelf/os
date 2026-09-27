@@ -1406,7 +1406,7 @@ def _manual_cell(cell_idx: int, x: float, y: float, is_manual: bool = False) -> 
 
 
 def _manual_shelf(shelf_idx: int, cells: list[Cell]) -> Shelf:
-    return Shelf(shelf_idx=shelf_idx, shelf_height=100.0, shelf_width=200.0, cells=cells)
+    return Shelf(shelf_idx=shelf_idx, shelf_width=200.0, cells=cells)
 
 
 def test_preserve_manual_cells_reinserts_manual_and_renumbers() -> None:

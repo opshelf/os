@@ -905,7 +905,6 @@ def build_probe_analysis(
 		ScanDetectedShelf(
 			shelf_idx=shelf_idx,
 			center_y_mm=float(median([cell.tool_y_mm for cell in cells])),
-			shelf_height_mm=max(float(cell.height_mm) for cell in cells),
 			shelf_width_mm=sum(float(cell.width_mm) for cell in cells),
 			cells=sorted(cells, key=lambda cell: int(cell.cell_idx)),
 		)
@@ -941,7 +940,6 @@ def restrict_analysis(
 			ScanDetectedShelf(
 				shelf_idx=int(shelf.shelf_idx),
 				center_y_mm=float(median([cell.tool_y_mm for cell in selected])),
-				shelf_height_mm=max(float(cell.height_mm) for cell in selected),
 				shelf_width_mm=sum(float(cell.width_mm) for cell in selected),
 				cells=selected,
 			)
@@ -1019,7 +1017,6 @@ def build_probe_analysis_from_grid(
 		ScanDetectedShelf(
 			shelf_idx=shelf_index,
 			center_y_mm=float(median([cell.tool_y_mm for cell in shelf_cells])),
-			shelf_height_mm=max(float(cell.height_mm) for cell in shelf_cells),
 			shelf_width_mm=sum(float(cell.width_mm) for cell in shelf_cells),
 			cells=sorted(shelf_cells, key=lambda cell: int(cell.cell_idx)),
 		)

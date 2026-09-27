@@ -15,7 +15,7 @@ class StorageValidationError(Exception):
 	pass
 
 
-DEFAULT_SHELF_HEIGHT_MM = 200.0
+DEFAULT_CELL_HEIGHT_MM = 200.0
 DEFAULT_SHELF_WIDTH_MM = 480.0
 DEFAULT_DIVIDER_WIDTH_MM = 12.0
 DEFAULT_CELL_LENGTH_MM = 400.0
@@ -111,17 +111,9 @@ class StorageModuleCellLocation(BaseModel):
 
 class Shelf(BaseModel):
 	shelf_idx: int = Field(default=0, ge=0)
-	shelf_height: float
 	shelf_width: float
 	cells: List[Cell]
 	divider_width: float = 8.0
-
-	@model_validator(mode="after")
-	def verify_tray_heights(self) -> Self:
-		if all(self.shelf_height >= cell.dimensions.height for cell in self.cells):
-			return self
-
-		raise ValueError("All Trays must be less than the height of the containing shelf")
 
 	@model_validator(mode="after")
 	def sort_cells(self) -> Self:
@@ -302,7 +294,6 @@ class StorageGrid(BaseModel):
 		template = self._get_shelf_template(side)
 		new_shelf = Shelf(
 			shelf_idx=shelf_idx,
-			shelf_height=template.shelf_height,
 			shelf_width=template.shelf_width,
 			cells=[],
 			divider_width=template.divider_width,
@@ -335,7 +326,6 @@ class StorageGrid(BaseModel):
 
 		return Shelf(
 			shelf_idx=0,
-			shelf_height=DEFAULT_SHELF_HEIGHT_MM,
 			shelf_width=DEFAULT_SHELF_WIDTH_MM,
 			cells=[],
 			divider_width=DEFAULT_DIVIDER_WIDTH_MM,
@@ -362,7 +352,7 @@ class StorageGrid(BaseModel):
 			calibration_point=None,
 			dimensions=Dimensions(
 				width=max(float(shelf.shelf_width), 1.0),
-				height=max(float(shelf.shelf_height), 1.0),
+				height=DEFAULT_CELL_HEIGHT_MM,
 				length=DEFAULT_CELL_LENGTH_MM,
 			),
 		)
@@ -373,7 +363,6 @@ class StorageGrid(BaseModel):
 
 		template = self._get_cell_template(side, shelf)
 		dimensions = template.dimensions.model_copy(deep=True)
-		dimensions.height = min(dimensions.height, max(float(shelf.shelf_height), 1.0))
 
 		return Cell(
 			cell_idx=cell_idx,
