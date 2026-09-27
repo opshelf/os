@@ -7,7 +7,6 @@ from openshelf_os.storage import (
 	Shelf,
 	StorageGrid,
 	StorageModuleSide,
-	StorageValidationError,
 )
 
 
@@ -24,7 +23,6 @@ def _cell(cell_idx: int, width: float = 50.0, height: float = 80.0, length: floa
 def _shelf(shelf_idx: int, cells: list[Cell]) -> Shelf:
 	return Shelf(
 		shelf_idx=shelf_idx,
-		shelf_height=100.0,
 		shelf_width=500.0,
 		cells=cells,
 		divider_width=8.0,
@@ -48,7 +46,6 @@ def test_add_shelf_appends_next_index_with_one_cell(tmp_path) -> None:
 	assert [shelf.shelf_idx for shelf in grid.left_module] == [0, 1]
 	assert new_shelf.shelf_idx == 1
 	# geometry is cloned from the side's most recent shelf
-	assert new_shelf.shelf_height == 100.0
 	assert new_shelf.shelf_width == 500.0
 	assert new_shelf.divider_width == 8.0
 	# the single new cell starts at index 0 and clones the side's cell dimensions
@@ -74,36 +71,30 @@ def test_add_shelf_falls_back_to_other_side_then_defaults(tmp_path) -> None:
 
 	new_shelf = grid.add_shelf(StorageModuleSide.LEFT)
 
-	# shelf geometry comes from the other side; the cell clones its geometry, clamped
+	# shelf geometry comes from the other side; the cell clones its geometry
 	assert new_shelf.shelf_idx == 0
-	assert (new_shelf.shelf_height, new_shelf.shelf_width) == (100.0, 500.0)
+	assert new_shelf.shelf_width == 500.0
 	assert new_shelf.cells[0].dimensions == Dimensions(width=60.0, height=30.0, length=400.0)
 
 	grid2 = StorageGrid(left_module=[], right_module=[])
 	grid2.filename = str(tmp_path / "storage2.json")
 	new_shelf2 = grid2.add_shelf(StorageModuleSide.RIGHT)
 
-	assert (new_shelf2.shelf_height, new_shelf2.shelf_width, new_shelf2.divider_width) == (
-		200.0,
-		480.0,
-		12.0,
-	)
+	assert (new_shelf2.shelf_width, new_shelf2.divider_width) == (480.0, 12.0)
 
 
-def test_add_shelf_clamps_cell_height_to_shelf_height(tmp_path) -> None:
+def test_add_shelf_keeps_cell_dimensions_from_template(tmp_path) -> None:
 	grid = StorageGrid(
 		left_module=[],
 		right_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_height=200.0,
 				shelf_width=500.0,
 				cells=[_cell(0, height=150.0)],
 				divider_width=8.0,
 			),
 			Shelf(
 				shelf_idx=1,
-				shelf_height=100.0,
 				shelf_width=500.0,
 				cells=[],
 				divider_width=8.0,
@@ -115,8 +106,7 @@ def test_add_shelf_clamps_cell_height_to_shelf_height(tmp_path) -> None:
 	new_shelf = grid.add_shelf(StorageModuleSide.LEFT)
 
 	# shelf geometry comes from the empty top shelf, the cell from the one below
-	assert new_shelf.shelf_height == 100.0
-	assert new_shelf.cells[0].dimensions.height == 100.0
+	assert new_shelf.cells[0].dimensions.height == 150.0
 
 
 @pytest.mark.parametrize("empty_side", [StorageModuleSide.LEFT, StorageModuleSide.RIGHT])
@@ -234,15 +224,3 @@ def test_remove_shelf_raises_for_missing_shelf(tmp_path) -> None:
 
 	with pytest.raises(IndexError):
 		grid.remove_shelf(StorageModuleSide.LEFT, 7)
-
-
-def test_over_tall_cell_round_trip_raises_storage_validation_error(tmp_path) -> None:
-	grid = _grid(tmp_path)
-
-	# Field mutation does not run the model validator, so an over-tall cell is
-	# persisted to disk and only surfaces on reload.
-	grid.left_module[0].cells[0].dimensions.height = 150.0
-	grid.save_to_file(grid.filename)
-
-	with pytest.raises(StorageValidationError):
-		StorageGrid.load_from_file(grid.filename)

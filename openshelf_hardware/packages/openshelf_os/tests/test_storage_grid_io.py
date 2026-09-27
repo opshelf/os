@@ -49,7 +49,6 @@ EMPTY_GRID = {"left_module": [], "right_module": []}
 GRID_WITH_SHELVES = {
 	"left_module": [
 		{
-			"shelf_height": 200.0,
 			"shelf_width": 400.0,
 			"cells": [
 				{
@@ -63,7 +62,6 @@ GRID_WITH_SHELVES = {
 	],
 	"right_module": [
 		{
-			"shelf_height": 200.0,
 			"shelf_width": 400.0,
 			"cells": [
 				{
@@ -146,7 +144,6 @@ class TestLegacyUpcaItem:
 			"left_module": [],
 			"right_module": [
 				{
-					"shelf_height": 200.0,
 					"shelf_width": 400.0,
 					"cells": [
 						{

@@ -305,7 +305,6 @@ def build_detected_shelves_from_edges(
 			ScanDetectedShelf(
 				shelf_idx=shelf_idx,
 				center_y_mm=edge.y_mm,
-				shelf_height_mm=0.0,
 				shelf_width_mm=float(bounds.x_max - bounds.x_min),
 				cells=[],
 			)

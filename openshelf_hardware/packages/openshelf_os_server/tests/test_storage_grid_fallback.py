@@ -95,7 +95,7 @@ class TestGetRobotGrid:
 			json.dumps(
 				{
 					"left_module": [
-						{"shelf_idx": 7, "shelf_height": 1, "shelf_width": 1, "cells": []}
+						{"shelf_idx": 7, "shelf_width": 1, "cells": []}
 					],
 					"right_module": [],
 				}

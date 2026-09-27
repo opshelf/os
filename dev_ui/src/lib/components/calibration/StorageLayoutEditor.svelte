@@ -721,12 +721,46 @@
 		return formatFieldValue(parsed) !== formatFieldValue(value);
 	}
 
+	function dimensionFieldIssue(field: NumericEditorField): string {
+		const raw = editorValues[field].trim();
+		if (raw === '' || raw.toLowerCase() === 'mixed') {
+			return '';
+		}
+		const parsed = Number(raw);
+		if (Number.isFinite(parsed) === false) {
+			return `${field} must be a number`;
+		}
+		if (parsed <= 0) {
+			return `${field} must be greater than zero`;
+		}
+		return '';
+	}
+
+	const dimensionIssue = $derived.by((): string => {
+		for (const column of DIMENSION_COLUMNS) {
+			const issue = dimensionFieldIssue(column.field);
+			if (issue !== '') {
+				return issue;
+			}
+		}
+		return '';
+	});
+
 	function isFieldValid(field: EditorField): boolean {
 		const raw = editorValues[field].trim();
 		if (raw === '' || raw.toLowerCase() === 'mixed' || field === 'status') {
 			return true;
 		}
-		return Number.isFinite(Number(raw));
+		const parsed = Number(raw);
+		if (Number.isFinite(parsed) === false) {
+			return false;
+		}
+		if (field === 'width' || field === 'height' || field === 'length') {
+			if (parsed <= 0) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	const editorDirty = $derived(
@@ -1446,6 +1480,9 @@
 					</label>
 				{/each}
 			</div>
+			{#if dimensionIssue !== ''}
+				<p class="editor-shelf-note is-error">{dimensionIssue}</p>
+			{/if}
 			{#if selectedSingle !== null}
 				<hr class="editor-hr" />
 				<label class="editor-row editor-row-tray">
@@ -1792,6 +1829,14 @@
 	}
 
 	.editor-test-note.is-error {
+		color: #b00020;
+	}
+
+	.editor-shelf-note {
+		margin: 0 0 1.5em 0;
+	}
+
+	.editor-shelf-note.is-error {
 		color: #b00020;
 	}
 </style>

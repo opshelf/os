@@ -58,7 +58,6 @@ def _build_source_grid(*, is_manual: bool = True, include_second_shelf: bool = F
 	shelves = [
 		Shelf(
 			shelf_idx=0,
-			shelf_height=30.0,
 			shelf_width=200.0,
 			cells=[
 				_build_cell(cell_idx=0, x=MANUAL_X_MM, y=MANUAL_Y_MM, is_manual=is_manual),
@@ -76,7 +75,6 @@ def _build_source_grid(*, is_manual: bool = True, include_second_shelf: bool = F
 		shelves.append(
 			Shelf(
 				shelf_idx=SECOND_SHELF_IDX,
-				shelf_height=30.0,
 				shelf_width=200.0,
 				cells=[
 					_build_cell(
@@ -96,7 +94,6 @@ def _build_analysis(*, include_second_shelf: bool = False) -> SimpleNamespace:
 		ScanDetectedShelf(
 			shelf_idx=0,
 			center_y_mm=DETECTED_TOOL_Y_MM,
-			shelf_height_mm=30.0,
 			shelf_width_mm=200.0,
 			cells=[
 				ScanDetectedCell(
@@ -123,7 +120,6 @@ def _build_analysis(*, include_second_shelf: bool = False) -> SimpleNamespace:
 			ScanDetectedShelf(
 				shelf_idx=SECOND_SHELF_IDX,
 				center_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
-				shelf_height_mm=30.0,
 				shelf_width_mm=200.0,
 				cells=[
 					ScanDetectedCell(
@@ -1099,7 +1095,6 @@ async def test_shelf_scoped_probe_excludes_the_datum_in_the_analysis_key_space()
 			ScanDetectedShelf(
 				shelf_idx=0,
 				center_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
-				shelf_height_mm=30.0,
 				shelf_width_mm=200.0,
 				cells=[
 					ScanDetectedCell(
@@ -1181,7 +1176,6 @@ async def test_datum_only_shelf_scope_keeps_the_datum_probeable() -> None:
 			ScanDetectedShelf(
 				shelf_idx=0,
 				center_y_mm=SECOND_SHELF_DETECTED_TOOL_Y_MM,
-				shelf_height_mm=30.0,
 				shelf_width_mm=200.0,
 				cells=[
 					ScanDetectedCell(

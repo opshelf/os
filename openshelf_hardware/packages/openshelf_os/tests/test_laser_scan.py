@@ -94,7 +94,6 @@ def test_build_shelves_from_scan_preserves_existing_dimensions(tmp_path):
 	analysis = analyze_scan_capture(capture, base_dir=tmp_path)
 	existing_shelf = Shelf(
 		shelf_idx=0,
-		shelf_height=456.0,
 		shelf_width=789.0,
 		cells=[
 			Cell(
@@ -114,7 +113,6 @@ def test_build_shelves_from_scan_preserves_existing_dimensions(tmp_path):
 		existing_shelves=[existing_shelf],
 	)
 
-	assert shelves[0].shelf_height == pytest.approx(456.0)
 	assert shelves[0].shelf_width == pytest.approx(789.0)
 	for cell in shelves[0].cells:
 		assert cell.dimensions == Dimensions(length=155.0, width=125.0, height=100.0)

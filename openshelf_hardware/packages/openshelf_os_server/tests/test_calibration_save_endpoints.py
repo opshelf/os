@@ -60,7 +60,6 @@ def build_grid(tmp_path) -> StorageGrid:
 		left_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_height=210.0,
 				shelf_width=480.0,
 				divider_width=12.0,
 				cells=[
@@ -96,7 +95,6 @@ def build_grid_with_empty_shelf(tmp_path) -> StorageGrid:
 		left_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_height=210.0,
 				shelf_width=480.0,
 				divider_width=12.0,
 				cells=[],
@@ -162,7 +160,6 @@ async def test_save_calibration_creates_missing_shelf_and_cell_from_templates(cl
 	new_shelf = grid.left_module[1]
 
 	assert new_shelf.shelf_idx == 1
-	assert new_shelf.shelf_height == pytest.approx(grid.left_module[0].shelf_height)
 	assert new_shelf.shelf_width == pytest.approx(grid.left_module[0].shelf_width)
 	assert new_shelf.divider_width == pytest.approx(grid.left_module[0].divider_width)
 	assert len(new_shelf.cells) == 1
@@ -295,7 +292,6 @@ async def test_save_calibration_bootstraps_first_shelf_and_cell_on_empty_grid(cl
 	new_shelf = grid.left_module[0]
 
 	assert new_shelf.shelf_idx == 0
-	assert new_shelf.shelf_height == pytest.approx(200.0)
 	assert new_shelf.shelf_width == pytest.approx(480.0)
 	assert new_shelf.divider_width == pytest.approx(12.0)
 	assert len(new_shelf.cells) == 1
@@ -325,7 +321,7 @@ async def test_save_calibration_bootstraps_first_cell_on_empty_shelf(client, tmp
 
 	assert response.status_code == 200
 	assert len(grid.left_module[0].cells) == 1
-	assert grid.left_module[0].cells[0].dimensions == Dimensions(width=480.0, height=210.0, length=400.0)
+	assert grid.left_module[0].cells[0].dimensions == Dimensions(width=480.0, height=200.0, length=400.0)
 	assert grid.left_module[0].cells[0].calibration_point is not None
 	assert grid.left_module[0].cells[0].calibration_point.x == pytest.approx(475.0)
 	assert grid.left_module[0].cells[0].calibration_point.y == pytest.approx(630.0)

@@ -40,7 +40,6 @@ def build_grid(
         left_module=[
             Shelf(
                 shelf_idx=0,
-                shelf_height=250.0,
                 shelf_width=400.0,
                 cells=[
                     Cell(
