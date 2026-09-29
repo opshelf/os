@@ -11,7 +11,7 @@ from openshelf_os.common import Motor as MotorConfig
 from hardware.controller import SharedModbusController as Controller
 from hardware.laser import LaserSensor
 from hardware.motor import Motor, MotorStatus, MOTOR_WAIT_TIMEOUT
-from hardware.servo import Servo
+from hardware.servo import GripState, Servo
 from openshelf_os.common import load_config_file
 from openshelf_os.exceptions import (
     MotorError, ConfigError,
@@ -40,6 +40,12 @@ Y_STARTUP_HOME_PEAK_CURRENT = 30
 class RotationHomeOrientation(Enum):
     LEFT_MODULE = "left_module"
     RIGHT_MODULE = "right_module"
+
+
+def require_grip(state: GripState, phase: str) -> None:
+    """Raise unless the gripper reports object contact with no drop."""
+    if not state.gripped:
+        raise GripperError(f"No grip on {phase}: {state}")
 
 
 def _create_motor_if_enabled(
@@ -455,8 +461,9 @@ class Tool:
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
             await self.extend_empty(coordinate)
-            await self._gs.open()
+            require_grip(await self._gs.open(), "grip")
             await self.retract()
+            require_grip(await self._gs.read_state(), "retract")
 
         except Exception as e:
             await self._handle_fault(e)
@@ -483,7 +490,7 @@ class Tool:
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
             await self.extend_empty(coordinate)
-            await self._gs.open()
+            require_grip(await self._gs.open(), "grip")
             original_stage_mm = await self._ms.get_position()
             await self._ms.move_to_position(0.0)
             await self._my.move_to_position(coordinate.y + lift_mm)
