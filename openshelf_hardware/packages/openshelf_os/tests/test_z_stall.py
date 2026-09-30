@@ -229,7 +229,7 @@ def test_select_z_stall_probes_returns_empty_without_wall_depths() -> None:
 
 
 def test_select_z_stall_probes_skips_cells_whose_probe_x_exceeds_the_axis_limit() -> None:
-	"""Real lb4-3 jam: L:3:6 sits at tool_x=960; the probe adds a +20mm shift -> 980, past the
+	"""Real lb4-3 jam: F:3:6 sits at tool_x=960; the probe adds a +20mm shift -> 980, past the
 	950mm axis limit. The axis clamped, putting the gripper over the cell's tray hole instead of
 	the divider; it drove down into the hole and jammed the tray."""
 

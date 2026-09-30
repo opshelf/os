@@ -788,8 +788,8 @@ class Robot:
     @staticmethod
     def _parse_demo_location(value: str) -> StorageModuleCellLocation:
         side_map = {
-            "L": StorageModuleSide.FRONT,
-            "R": StorageModuleSide.BACK,
+            "F": StorageModuleSide.FRONT,
+            "B": StorageModuleSide.BACK,
             "FRONT_MODULE": StorageModuleSide.FRONT,
             "BACK_MODULE": StorageModuleSide.BACK,
         }
