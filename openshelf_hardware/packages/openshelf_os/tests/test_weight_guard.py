@@ -103,6 +103,7 @@ class GuardHarness:
         self.axis = FakeAxis()
         self.trips: list[dict[str, Any]] = []
         self.records = tempfile.TemporaryDirectory()
+        self.flushed_path: Optional[str] = None
         self.guard = WeightChangeGuard(
             scale=self.scale,
             axis=self.axis,
@@ -121,6 +122,9 @@ class GuardHarness:
         self.guard._sample(FakeReading(grams=grams), moving=moving)
 
     def record_payload(self) -> dict[str, Any]:
+        # The record is queued on trip and written when the loop next gets a
+        # chance, which synchronous tests have to ask for themselves.
+        self.flushed_path = self.guard.flush_record()
         paths = sorted(pathlib.Path(self.records.name).glob("*.json"))
 
         assert len(paths) == 1, [str(path) for path in paths]
@@ -241,6 +245,17 @@ class WeightChangeDetectionTests(unittest.TestCase):
             ["axis_position_mm", "delta_grams", "elapsed_s", "stable", "valid", "weight_grams"],
         )
         self.assertEqual(self.harness.guard.source_state()["record_path"].endswith(".json"), True)
+        self.assertTrue(self.harness.flushed_path.endswith(".json"))
+
+    def test_stopping_the_guard_flushes_a_queued_record(self):
+        self.harness.sample(100.0, moving=False)
+        self.harness.sample(135.0, moving=True)
+
+        self.assertEqual(sorted(pathlib.Path(self.harness.records.name).glob("*.json")), [])
+
+        asyncio.run(self.harness.guard.stop())
+
+        self.assertEqual(len(sorted(pathlib.Path(self.harness.records.name).glob("*.json"))), 1)
 
     def test_source_state_reports_clears_on_ack(self):
         state = self.harness.guard.source_state()
@@ -480,6 +495,7 @@ class WeightChangeGuardLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(trips), 1)
         self.assertTrue(guard.is_latched)
         self.assertEqual(guard.source_state()["active"], True)
+        self.assertEqual(len(list(pathlib.Path(records.name).glob("*.json"))), 1)
 
         # A latched guard records but does not keep re-tripping while it waits.
         await asyncio.sleep(0.05)
