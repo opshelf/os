@@ -1601,7 +1601,7 @@ def load_staged_scan_analysis(
     if require_completed is True and metadata.get("status") != "completed":
         raise ValueError(f"Staged scan {run_dir} is not completed")
 
-    side = StorageModuleSide(metadata["side"])
+    side = StorageModuleSide(normalize_saved_side(metadata["side"]))
     bounds = ScanBounds.model_validate(metadata["bounds"])
     fine_step_mm = float(metadata["fine_step_mm"])
     candidates = load_candidates_from_metadata(metadata)
