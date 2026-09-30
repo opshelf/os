@@ -2199,10 +2199,26 @@ class RobotWorker:
             await self._refresh_safety_inputs()
             active_sources, sources = self._build_safety_sources()
 
+            acknowledge_weight = getattr(self._robot, "acknowledge_weight_change", None)
+            weight_source_suppressed = (
+                WEIGHT_CHANGE_SOURCE in sources
+                and WEIGHT_CHANGE_SOURCE not in active_sources
+            )
+
             if self._sources_clear_on_ack(sources, active_sources) is True:
                 # The weight does not come back on its own, so acknowledging is what
                 # clears the source and re-bases the guard on the new reading.
                 self._robot.acknowledge_weight_change()
+                active_sources, sources = self._build_safety_sources()
+            elif (
+                weight_source_suppressed is True
+                and acknowledge_weight is not None
+            ):
+                # A latched trip whose source is currently suppressed (crash,
+                # emergency stop or a bypass) must still be acknowledged, or it
+                # re-activates the moment the suppress clears and the guard keeps
+                # skipping sampling until a second acknowledgement.
+                acknowledge_weight()
                 active_sources, sources = self._build_safety_sources()
 
             if active_sources:
