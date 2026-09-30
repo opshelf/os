@@ -782,7 +782,6 @@
 <style>
 	td,
 	th {
-		min-height: 51px;
 		height: 51px;
 	}
 
