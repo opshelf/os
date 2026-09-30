@@ -330,7 +330,7 @@ class SafetyGuardOverrideRequest(BaseModel):
 
 
 class SafetyComponentOverrideRequest(BaseModel):
-    component: Literal["light_curtain", "cabinet_doors"]
+    component: Literal["light_curtain", "cabinet_doors", "weight_change"]
     bypass: bool
 
 
@@ -1191,9 +1191,9 @@ async def override_safety_component(
 ) -> dict[str, Any]:
     """Set a component safety bypass.
 
-    Engineering control requiring `robot:control`. Changes bypass for `light_curtain` or
-    `cabinet_doors` and returns the resulting safety state. Restore the component after the
-    controlled diagnostic procedure.
+    Engineering control requiring `robot:control`. Changes bypass for `light_curtain`,
+    `cabinet_doors` or `weight_change` and returns the resulting safety state. Restore the
+    component after the controlled diagnostic procedure.
     """
     return await worker.set_safety_component_bypassed(request.component, request.bypass)
 
