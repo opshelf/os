@@ -199,7 +199,7 @@ async function readErrorDetail(
 	return { message: text.length <= MAX_ERROR_BODY_LENGTH ? text : fallback };
 }
 
-export type StorageModuleSide = 'left_module' | 'right_module';
+export type StorageModuleSide = 'front_module' | 'back_module';
 
 export interface Position {
 	x: number;
@@ -216,8 +216,8 @@ export interface CalibrationStatus {
 }
 
 export interface StorageGrid {
-	left_module: Shelf[];
-	right_module: Shelf[];
+	front_module: Shelf[];
+	back_module: Shelf[];
 }
 
 export interface Shelf {
@@ -680,16 +680,16 @@ export interface LaserAutoCalibrationSnapshot {
 	started_at: string | null;
 	updated_at: string | null;
 	scouted_shelf_count: number;
-	left_scouted_shelf_count: number;
-	right_scouted_shelf_count: number;
+	front_scouted_shelf_count: number;
+	back_scouted_shelf_count: number;
 	candidate_count: number;
-	left_candidate_count: number;
-	right_candidate_count: number;
+	front_candidate_count: number;
+	back_candidate_count: number;
 	detected_cell_count: number;
-	left_detected_cell_count: number;
-	right_detected_cell_count: number;
-	left_stage_extension_mm: number | null;
-	right_stage_extension_mm: number | null;
+	front_detected_cell_count: number;
+	back_detected_cell_count: number;
+	front_stage_extension_mm: number | null;
+	back_stage_extension_mm: number | null;
 	shelf_edges: LaserAutoCalibrationShelfEdge[];
 	shelf_candidates: LaserAutoCalibrationCandidate[];
 	detected_cells: LaserAutoCalibrationCell[];

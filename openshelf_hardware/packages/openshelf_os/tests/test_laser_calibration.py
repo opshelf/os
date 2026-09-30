@@ -43,7 +43,7 @@ from openshelf_os.laser_calibration import (
 	run_with_temp_robot_config,
 	scan_shelf_scout_line,
 	snap_shelf_cells_to_y_line,
-	RIGHT_MODULE_ROTATION_SAFE_X_MM,
+	BACK_MODULE_ROTATION_SAFE_X_MM,
 	SingleCellRescanTarget,
 )
 from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
@@ -134,7 +134,7 @@ def write_replay_run(tmp_path: Path) -> Path:
 	metadata = {
 		"run_id": "scan-run",
 		"status": "completed",
-		"side": StorageModuleSide.LEFT.value,
+		"side": StorageModuleSide.FRONT.value,
 		"bounds": {"x_min": 0.0, "x_max": 40.0, "y_min": 0.0, "y_max": 40.0},
 		"fine_step_mm": 5.0,
 		"coarse_step_mm": 5.0,
@@ -278,7 +278,7 @@ async def test_run_staged_scan_skips_retract_when_cancelled(tmp_path: Path) -> N
 					task = asyncio.create_task(
 						run_staged_scan(
 							robot=robot,
-							side=StorageModuleSide.LEFT,
+							side=StorageModuleSide.FRONT,
 							bounds=ScanBounds(x_min=0.0, x_max=10.0, y_min=0.0, y_max=10.0),
 							fine_step_mm=1.0,
 							settle_ms=0,
@@ -288,7 +288,7 @@ async def test_run_staged_scan_skips_retract_when_cancelled(tmp_path: Path) -> N
 							scan_config=SimpleNamespace(
 								laser_offset_x_mm=1.0,
 								laser_offset_y_mm=0.0,
-								left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+								front_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 							),
 							scans_dir=str(tmp_path),
 							run_parameters={},
@@ -334,7 +334,7 @@ async def test_run_staged_scan_raises_when_abort_requested_after_coarse_scan(tmp
 					with pytest.raises(asyncio.CancelledError):
 						await run_staged_scan(
 							robot=robot,
-							side=StorageModuleSide.LEFT,
+							side=StorageModuleSide.FRONT,
 							bounds=ScanBounds(x_min=0.0, x_max=10.0, y_min=0.0, y_max=10.0),
 							fine_step_mm=1.0,
 							settle_ms=0,
@@ -344,7 +344,7 @@ async def test_run_staged_scan_raises_when_abort_requested_after_coarse_scan(tmp
 							scan_config=SimpleNamespace(
 								laser_offset_x_mm=1.0,
 								laser_offset_y_mm=0.0,
-								left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+								front_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 							),
 							scans_dir=str(tmp_path),
 							run_parameters={},
@@ -372,7 +372,7 @@ async def test_run_staged_scan_uses_candidate_wall_depth_for_fine_scan(tmp_path:
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=1.0,
 		laser_offset_y_mm=0.0,
-		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+		front_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 	)
 
 	async def didCaptureCrossScan(*args, **kwargs):
@@ -391,7 +391,7 @@ async def test_run_staged_scan_uses_candidate_wall_depth_for_fine_scan(tmp_path:
 					with pytest.raises(asyncio.CancelledError):
 						await run_staged_scan(
 							robot=robot,
-							side=StorageModuleSide.LEFT,
+							side=StorageModuleSide.FRONT,
 							bounds=ScanBounds(x_min=0.0, x_max=100.0, y_min=0.0, y_max=100.0),
 							fine_step_mm=1.0,
 							settle_ms=0,
@@ -436,7 +436,7 @@ async def test_scan_shelf_scout_line_passes_abort_to_gantry_wait() -> None:
 
 
 @pytest.mark.asyncio
-async def test_enter_scan_mode_uses_safe_x_for_right_module() -> None:
+async def test_enter_scan_mode_uses_safe_x_for_back_module() -> None:
 	params = {
 		"SCAN_POSITION": [900.0, 1200.0],
 		"Z_EXTENSION_PLACE": 100.0,
@@ -461,13 +461,13 @@ async def test_enter_scan_mode_uses_safe_x_for_right_module() -> None:
 
 	await enter_scan_mode(
 		tool,
-		side=StorageModuleSide.RIGHT,
+		side=StorageModuleSide.BACK,
 		scan_config=SimpleNamespace(),
 	)
 
 	first_move = tool.move.await_args_list[0].args[0]
 	second_move = tool.move.await_args_list[1].args[0]
-	assert first_move.x == pytest.approx(RIGHT_MODULE_ROTATION_SAFE_X_MM)
+	assert first_move.x == pytest.approx(BACK_MODULE_ROTATION_SAFE_X_MM)
 	assert first_move.y == pytest.approx(1200.0)
 	assert first_move.s == 1
 	assert second_move.x == pytest.approx(900.0)
@@ -481,7 +481,7 @@ async def test_capture_shelf_candidates_does_not_append_floor_edge_for_empty_det
 ) -> None:
 	coarse_scan, wall_depth_mm, candidates, shelf_edges = await capture_shelf_candidates(
 		SimpleNamespace(),
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		bounds=ScanBounds(x_min=0.0, x_max=10.0, y_min=0.0, y_max=100.0),
 		settle_ms=0,
 		samples_per_point=1,
@@ -498,11 +498,11 @@ async def test_capture_shelf_candidates_does_not_append_floor_edge_for_empty_det
 
 
 def test_apply_xy_reference_offsets_requires_fixed_offset() -> None:
-	with pytest.raises(ValueError, match='robot.grid.scan.left_gripper_xy_correction_mm must be configured'):
+	with pytest.raises(ValueError, match='robot.grid.scan.front_gripper_xy_correction_mm must be configured'):
 		apply_xy_reference_offsets(
 			scanned_shelves=[],
-			scan_config=SimpleNamespace(left_gripper_xy_correction_mm=None),
-			side=StorageModuleSide.LEFT,
+			scan_config=SimpleNamespace(front_gripper_xy_correction_mm=None),
+			side=StorageModuleSide.FRONT,
 		)
 
 
@@ -517,13 +517,13 @@ def test_apply_xy_reference_offsets_uses_fixed_offset_when_reference_absent() ->
 		)
 	]
 	scan_config = SimpleNamespace(
-		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
+		front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
 	)
 
 	apply_xy_reference_offsets(
 		scanned_shelves=scanned_shelves,
 		scan_config=scan_config,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 	)
 
 	assert scanned_shelves[0].cells[0].calibration_point.x == pytest.approx(97.0)
@@ -546,7 +546,7 @@ def test_build_single_cell_rescan_candidate_requires_laser_offsets() -> None:
 	with pytest.raises(ValueError, match='robot.grid.scan.laser_offset_y_mm must be configured'):
 		build_single_cell_rescan_candidate(
 			grid=grid,
-			side=StorageModuleSide.LEFT,
+			side=StorageModuleSide.FRONT,
 			target=SingleCellRescanTarget(shelf_idx=1, cell_idx=2),
 			scan_config=scan_config,
 		)
@@ -566,7 +566,7 @@ def test_build_single_cell_rescan_candidate_rejects_invalid_offset_value() -> No
 	with pytest.raises(ValueError, match='robot.grid.scan.laser_offset_x_mm must be a finite number'):
 		build_single_cell_rescan_candidate(
 			grid=grid,
-			side=StorageModuleSide.LEFT,
+			side=StorageModuleSide.FRONT,
 			target=SingleCellRescanTarget(shelf_idx=1, cell_idx=2),
 			scan_config=scan_config,
 		)
@@ -585,7 +585,7 @@ def test_build_single_cell_rescan_candidate_allows_scan_estimated_wall_depth() -
 
 	candidate = build_single_cell_rescan_candidate(
 		grid=grid,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		target=SingleCellRescanTarget(shelf_idx=1, cell_idx=2),
 		scan_config=scan_config,
 	)
@@ -595,7 +595,7 @@ def test_build_single_cell_rescan_candidate_allows_scan_estimated_wall_depth() -
 
 def test_build_run_parameters_allows_rescan_bounds_away_from_xy_reference() -> None:
 	args = SimpleNamespace(
-		module='left',
+		module='front',
 		x=None,
 		y=None,
 		y_offset=0.0,
@@ -612,12 +612,12 @@ def test_build_run_parameters_allows_rescan_bounds_away_from_xy_reference() -> N
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=50.0,
 		laser_offset_y_mm=0.0,
-		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
+		front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
 	)
 
 	run_parameters = build_run_parameters(
 		args=args,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		bounds=ScanBounds(x_min=40.0, x_max=80.0, y_min=40.0, y_max=80.0),
 		step_mm=2.0,
 		settle_ms=0,
@@ -638,7 +638,7 @@ def test_load_continue_scan_context_reads_latest_incomplete_run(tmp_path: Path) 
 		json.dumps(
 			{
 				'run_parameters': {
-					'module': 'left',
+					'module': 'front',
 					'resolved': {
 						'bounds': {'x_min': 0.0, 'x_max': 1.0, 'y_min': 0.0, 'y_max': 1.0},
 						'fine_step_mm': 1.0,
@@ -661,7 +661,7 @@ def test_load_continue_scan_context_reads_latest_incomplete_run(tmp_path: Path) 
 		json.dumps(
 			{
 				'run_parameters': {
-					'module': StorageModuleSide.RIGHT.value,
+					'module': StorageModuleSide.BACK.value,
 					'resolved': {
 						'bounds': {'x_min': 10.0, 'x_max': 20.0, 'y_min': 30.0, 'y_max': 40.0},
 						'fine_step_mm': 2.5,
@@ -683,7 +683,7 @@ def test_load_continue_scan_context_reads_latest_incomplete_run(tmp_path: Path) 
 	recorder, side, bounds, step_mm, settle_ms, samples_per_point, coarse_settle_ms, coarse_samples_per_point = load_continue_scan_context(str(tmp_path))
 
 	assert recorder.run_dir == incomplete_run_dir
-	assert side == StorageModuleSide.RIGHT
+	assert side == StorageModuleSide.BACK
 	assert bounds == ScanBounds(x_min=10.0, x_max=20.0, y_min=30.0, y_max=40.0)
 	assert step_mm == pytest.approx(2.5)
 	assert settle_ms == 25
@@ -701,13 +701,13 @@ def test_build_single_cell_rescan_candidate_without_xy_offset_falls_back_to_side
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=0.0,
-		left_gripper_xy_correction_mm=None,
-		right_gripper_xy_correction_mm=None,
+		front_gripper_xy_correction_mm=None,
+		back_gripper_xy_correction_mm=None,
 	)
 
 	candidate = build_single_cell_rescan_candidate(
 		grid=grid,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		target=SingleCellRescanTarget(shelf_idx=1, cell_idx=2),
 		scan_config=scan_config,
 	)
@@ -728,13 +728,13 @@ def test_build_single_cell_rescan_candidate_without_xy_offset_adds_x_offset_for_
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=51.0,
 		laser_offset_y_mm=0.0,
-		left_gripper_xy_correction_mm=None,
-		right_gripper_xy_correction_mm=None,
+		front_gripper_xy_correction_mm=None,
+		back_gripper_xy_correction_mm=None,
 	)
 
 	candidate = build_single_cell_rescan_candidate(
 		grid=grid,
-		side=StorageModuleSide.RIGHT,
+		side=StorageModuleSide.BACK,
 		target=SingleCellRescanTarget(shelf_idx=3, cell_idx=0),
 		scan_config=scan_config,
 	)
@@ -748,8 +748,8 @@ def test_build_single_cell_rescan_candidate_without_xy_offset_adds_x_offset_for_
 @pytest.mark.parametrize(
 	"side,xy_offset_x_mm,xy_offset_y_mm",
 	[
-		(StorageModuleSide.LEFT, -4.0, 3.0),
-		(StorageModuleSide.RIGHT, -97.0, 0.0),
+		(StorageModuleSide.FRONT, -4.0, 3.0),
+		(StorageModuleSide.BACK, -97.0, 0.0),
 	],
 )
 def test_build_single_cell_rescan_candidate_round_trips_forward_mapping(
@@ -775,8 +775,8 @@ def test_build_single_cell_rescan_candidate_round_trips_forward_mapping(
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=laser_offset_x_mm,
 		laser_offset_y_mm=laser_offset_y_mm,
-		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-4.0, y_mm=3.0),
-		right_gripper_xy_correction_mm=SimpleNamespace(x_mm=-97.0, y_mm=0.0),
+		front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-4.0, y_mm=3.0),
+		back_gripper_xy_correction_mm=SimpleNamespace(x_mm=-97.0, y_mm=0.0),
 	)
 
 	candidate = build_single_cell_rescan_candidate(
@@ -841,7 +841,7 @@ def test_build_single_shelf_known_edge_y_uses_calibrated_cells() -> None:
 
 	known_shelf_edge_y = build_single_shelf_known_edge_y(
 		grid=grid,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		shelf_idx=2,
 		scan_config=scan_config,
 	)
@@ -860,12 +860,12 @@ def test_build_single_shelf_known_edge_y_converts_fixed_offset_back_to_laser_fra
 	scan_config = SimpleNamespace(
 		laser_offset_y_mm=0.0,
 		shelf_hole_probe_y_offsets_mm=[12.25],
-		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-0.8, y_mm=-4.25),
+		front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-0.8, y_mm=-4.25),
 	)
 
 	known_shelf_edge_y = build_single_shelf_known_edge_y(
 		grid=grid,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		shelf_idx=3,
 		scan_config=scan_config,
 	)
@@ -886,14 +886,14 @@ def test_apply_single_cell_rescan_preserves_frame_and_saves_grid_without_gripper
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_gripper_xy_correction_mm=None,
+		front_gripper_xy_correction_mm=None,
 	)
 	detected_cell = SimpleNamespace(tool_x_mm=123.0, tool_y_mm=456.0)
 
 	apply_single_cell_rescan(
 		grid=grid,
 		target=SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		detected_cell=detected_cell,
 		scan_config=scan_config,
 	)
@@ -919,14 +919,14 @@ def test_apply_single_cell_rescan_uses_fixed_offset_without_reference_rescan() -
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=10.0,
 		laser_offset_y_mm=-5.0,
-		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
+		front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-3.0, y_mm=2.5),
 	)
 	detected_cell = SimpleNamespace(tool_x_mm=123.0, tool_y_mm=456.0)
 
 	apply_single_cell_rescan(
 		grid=grid,
 		target=SingleCellRescanTarget(shelf_idx=0, cell_idx=1),
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		detected_cell=detected_cell,
 		scan_config=scan_config,
 	)
@@ -979,7 +979,7 @@ def test_build_shelves_from_scan_preserves_dropped_cell_index() -> None:
 	detected_cell_key_map: dict[tuple[int, int], tuple[int, int]] = {}
 
 	result = build_shelves_from_scan(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		analysis=analysis,
 		existing_shelves=existing,
 		detected_cell_key_map=detected_cell_key_map,
@@ -1006,8 +1006,8 @@ def test_apply_single_shelf_analysis_maps_depths_around_preserved_dropped_cell(t
 
 	grid_path = tmp_path / 'grid.json'
 	grid = StorageGrid(
-		left_module=[target_shelf],
-		right_module=[],
+		front_module=[target_shelf],
+		back_module=[],
 		filename=str(grid_path),
 	)
 	grid.save()
@@ -1031,14 +1031,14 @@ def test_apply_single_shelf_analysis_maps_depths_around_preserved_dropped_cell(t
 			grid=grid,
 			grid_path=grid_path,
 			scan_config=SimpleNamespace(
-				left_gripper_xy_correction_mm=SimpleNamespace(x_mm=11.0, y_mm=-80.0),
+				front_gripper_xy_correction_mm=SimpleNamespace(x_mm=11.0, y_mm=-80.0),
 			),
-			side=StorageModuleSide.LEFT,
+			side=StorageModuleSide.FRONT,
 			target_shelf_idx=3,
 			z_delta_override_mm=4.0,
 		)
 
-	updated_cells = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells
+	updated_cells = StorageGrid.load_from_file(str(grid_path)).front_module[0].cells
 	assert [cell.cell_idx for cell in updated_cells] == [0, 1, 2, 3, 4]
 	# The physically absent cell keeps its prior calibration, while the four observed
 	# cells receive the detected XY and wall depth associated with their remapped IDs.
@@ -1057,7 +1057,7 @@ def test_build_shelves_from_scan_matches_across_frame_offset() -> None:
 	analysis = SimpleNamespace(shelves=[_detected_scan_shelf(0, [100.0, 112.0, 120.0])])
 	existing = [_existing_calibrated_shelf(0, [10.0, 20.0, 30.0])]
 
-	result = build_shelves_from_scan(side=StorageModuleSide.LEFT, analysis=analysis, existing_shelves=existing)
+	result = build_shelves_from_scan(side=StorageModuleSide.FRONT, analysis=analysis, existing_shelves=existing)
 
 	cells = sorted(result[0].cells, key=lambda cell: cell.cell_idx)
 	assert [cell.cell_idx for cell in cells] == [0, 1, 2]
@@ -1070,7 +1070,7 @@ def test_build_shelves_from_scan_appends_unmatched_detection() -> None:
 	analysis = SimpleNamespace(shelves=[_detected_scan_shelf(0, [100.0, 200.0, 300.0])])
 	existing = [_existing_calibrated_shelf(0, [100.0, 300.0])]
 
-	result = build_shelves_from_scan(side=StorageModuleSide.LEFT, analysis=analysis, existing_shelves=existing)
+	result = build_shelves_from_scan(side=StorageModuleSide.FRONT, analysis=analysis, existing_shelves=existing)
 
 	cells = sorted(result[0].cells, key=lambda cell: cell.cell_idx)
 	assert len(cells) == 3
@@ -1094,7 +1094,7 @@ def test_apply_single_shelf_analysis_shifts_cells_around_a_missing_manual_datum(
 		cell.calibration_point.z_offset = 0.0
 
 	grid_path = tmp_path / 'grid.json'
-	grid = StorageGrid(left_module=[target_shelf], right_module=[], filename=str(grid_path))
+	grid = StorageGrid(front_module=[target_shelf], back_module=[], filename=str(grid_path))
 	grid.save()
 	metadata_path = tmp_path / 'metadata.json'
 	metadata_path.write_text('{}', encoding='utf-8')
@@ -1113,13 +1113,13 @@ def test_apply_single_shelf_analysis_shifts_cells_around_a_missing_manual_datum(
 			analysis=analysis,
 			grid=grid,
 			grid_path=grid_path,
-			scan_config=SimpleNamespace(left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
-			side=StorageModuleSide.LEFT,
+			scan_config=SimpleNamespace(front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
+			side=StorageModuleSide.FRONT,
 			target_shelf_idx=3,
 			z_delta_override_mm=1.0,
 		)
 
-	updated_cells = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells
+	updated_cells = StorageGrid.load_from_file(str(grid_path)).front_module[0].cells
 	by_idx = {cell.cell_idx: cell for cell in updated_cells}
 
 	# The datum keeps its hand point.
@@ -1144,18 +1144,18 @@ def test_apply_single_cell_rescan_leaves_a_manual_datum_alone(tmp_path: Path) ->
 	hand_x_mm = float(datum.calibration_point.x)
 	hand_y_mm = float(datum.calibration_point.y)
 	grid_path = tmp_path / 'grid.json'
-	grid = StorageGrid(left_module=[target_shelf], right_module=[], filename=str(grid_path))
+	grid = StorageGrid(front_module=[target_shelf], back_module=[], filename=str(grid_path))
 	grid.save()
 
 	apply_single_cell_rescan(
 		grid=grid,
 		target=SingleCellRescanTarget(shelf_idx=3, cell_idx=0),
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		detected_cell=SimpleNamespace(tool_x_mm=500.0, tool_y_mm=700.0),
-		scan_config=SimpleNamespace(left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
+		scan_config=SimpleNamespace(front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
 	)
 
-	stored = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells[0]
+	stored = StorageGrid.load_from_file(str(grid_path)).front_module[0].cells[0]
 	assert stored.calibration_point.x == pytest.approx(hand_x_mm)
 	assert stored.calibration_point.y == pytest.approx(hand_y_mm)
 
@@ -1163,12 +1163,12 @@ def test_apply_single_cell_rescan_leaves_a_manual_datum_alone(tmp_path: Path) ->
 	apply_single_cell_rescan(
 		grid=grid,
 		target=SingleCellRescanTarget(shelf_idx=3, cell_idx=1),
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		detected_cell=SimpleNamespace(tool_x_mm=500.0, tool_y_mm=700.0),
-		scan_config=SimpleNamespace(left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
+		scan_config=SimpleNamespace(front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-10.0, y_mm=5.0)),
 	)
 
-	framed = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells[1]
+	framed = StorageGrid.load_from_file(str(grid_path)).front_module[0].cells[1]
 	assert framed.calibration_point.x == pytest.approx(490.0)
 	assert framed.calibration_point.y == pytest.approx(705.0)
 
@@ -1183,7 +1183,7 @@ def test_apply_single_shelf_analysis_preserves_a_shelf_of_only_manual_cells(tmp_
 		cell.calibration_point.z_captured_at_stage_mm = 47.0
 
 	grid_path = tmp_path / 'grid.json'
-	grid = StorageGrid(left_module=[target_shelf], right_module=[], filename=str(grid_path))
+	grid = StorageGrid(front_module=[target_shelf], back_module=[], filename=str(grid_path))
 	grid.save()
 	metadata_path = tmp_path / 'metadata.json'
 	metadata_path.write_text('{}', encoding='utf-8')
@@ -1204,13 +1204,13 @@ def test_apply_single_shelf_analysis_preserves_a_shelf_of_only_manual_cells(tmp_
 			analysis=analysis,
 			grid=grid,
 			grid_path=grid_path,
-			scan_config=SimpleNamespace(left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0)),
-			side=StorageModuleSide.LEFT,
+			scan_config=SimpleNamespace(front_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0)),
+			side=StorageModuleSide.FRONT,
 			target_shelf_idx=3,
 			z_delta_override_mm=4.0,
 		)
 
-	updated_cells = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells
+	updated_cells = StorageGrid.load_from_file(str(grid_path)).front_module[0].cells
 
 	assert len(updated_cells) == 3
 	for cell in updated_cells:
@@ -1250,8 +1250,8 @@ def test_apply_single_shelf_analysis_keeps_the_manual_datum_and_its_stamp(tmp_pa
 
 	grid_path = tmp_path / 'grid.json'
 	grid = StorageGrid(
-		left_module=[target_shelf],
-		right_module=[],
+		front_module=[target_shelf],
+		back_module=[],
 		filename=str(grid_path),
 	)
 	grid.save()
@@ -1275,14 +1275,14 @@ def test_apply_single_shelf_analysis_keeps_the_manual_datum_and_its_stamp(tmp_pa
 			grid=grid,
 			grid_path=grid_path,
 			scan_config=SimpleNamespace(
-				left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+				front_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 			),
-			side=StorageModuleSide.LEFT,
+			side=StorageModuleSide.FRONT,
 			target_shelf_idx=3,
 			z_delta_override_mm=4.0,
 		)
 
-	updated_cells = StorageGrid.load_from_file(str(grid_path)).left_module[0].cells
+	updated_cells = StorageGrid.load_from_file(str(grid_path)).front_module[0].cells
 	rebuilt_datum = updated_cells[0]
 
 	assert rebuilt_datum.cell_idx == 0
@@ -1314,7 +1314,7 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 	)
 	grid_path = tmp_path / 'grid.json'
 	grid = StorageGrid(
-		left_module=[
+		front_module=[
 			Shelf(
 				shelf_idx=0,
 				shelf_width=20.0,
@@ -1327,7 +1327,7 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 				cells=[],
 			),
 		],
-		right_module=[],
+		back_module=[],
 		filename=str(grid_path),
 	)
 	grid.save()
@@ -1350,20 +1350,20 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 					scan_config=SimpleNamespace(
 						laser_offset_x_mm=0.0,
 						laser_offset_y_mm=0.0,
-						left_gripper_xy_correction_mm=None,
+						front_gripper_xy_correction_mm=None,
 					),
-					side=StorageModuleSide.LEFT,
+					side=StorageModuleSide.FRONT,
 					target_shelf_idx=1,
 				)
 		apply_xy_reference_offsets_mock.assert_not_called()
 
 	updated_grid = StorageGrid.load_from_file(str(grid_path))
 
-	assert updated_grid.left_module[0].shelf_idx == 0
-	assert updated_grid.left_module[1].shelf_idx == 1
-	assert updated_grid.left_module[1].shelf_width == pytest.approx(777.0)
-	assert updated_grid.left_module[1].divider_width == pytest.approx(13.0)
-	assert updated_grid.left_module[2].shelf_idx == 2
+	assert updated_grid.front_module[0].shelf_idx == 0
+	assert updated_grid.front_module[1].shelf_idx == 1
+	assert updated_grid.front_module[1].shelf_width == pytest.approx(777.0)
+	assert updated_grid.front_module[1].divider_width == pytest.approx(13.0)
+	assert updated_grid.front_module[2].shelf_idx == 2
 
 
 def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_rescan(tmp_path: Path) -> None:
@@ -1383,8 +1383,8 @@ def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_
 	)
 	grid_path = tmp_path / 'grid.json'
 	grid = StorageGrid(
-		left_module=[target_shelf],
-		right_module=[],
+		front_module=[target_shelf],
+		back_module=[],
 		filename=str(grid_path),
 	)
 	grid.save()
@@ -1398,7 +1398,7 @@ def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_gripper_xy_correction_mm=None,
+		front_gripper_xy_correction_mm=None,
 	)
 
 	with patch('openshelf_os.laser_calibration.build_shelves_from_scan', return_value=[scanned_shelf]):
@@ -1407,12 +1407,12 @@ def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_
 			grid=grid,
 			grid_path=grid_path,
 			scan_config=scan_config,
-			side=StorageModuleSide.LEFT,
+			side=StorageModuleSide.FRONT,
 			target_shelf_idx=1,
 		)
 
 	updated_grid = StorageGrid.load_from_file(str(grid_path))
-	updated_point = updated_grid.left_module[0].cells[0].calibration_point
+	updated_point = updated_grid.front_module[0].cells[0].calibration_point
 	assert updated_point.x == pytest.approx(10.0)
 	assert updated_point.y == pytest.approx(20.0)
 
@@ -1434,8 +1434,8 @@ def test_apply_single_shelf_analysis_reference_less_uses_offset_and_stall_delta(
 	)
 	grid_path = tmp_path / 'grid.json'
 	grid = StorageGrid(
-		left_module=[target_shelf],
-		right_module=[],
+		front_module=[target_shelf],
+		back_module=[],
 		filename=str(grid_path),
 	)
 	grid.save()
@@ -1449,7 +1449,7 @@ def test_apply_single_shelf_analysis_reference_less_uses_offset_and_stall_delta(
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=1.0, y_mm=2.0),
+		front_gripper_xy_correction_mm=SimpleNamespace(x_mm=1.0, y_mm=2.0),
 	)
 	wall_depth_z_offsets = Mock()
 
@@ -1463,7 +1463,7 @@ def test_apply_single_shelf_analysis_reference_less_uses_offset_and_stall_delta(
 				grid=grid,
 				grid_path=grid_path,
 				scan_config=scan_config,
-				side=StorageModuleSide.LEFT,
+				side=StorageModuleSide.FRONT,
 				target_shelf_idx=1,
 				z_delta_override_mm=4.5,
 			)
@@ -1471,7 +1471,7 @@ def test_apply_single_shelf_analysis_reference_less_uses_offset_and_stall_delta(
 	wall_depth_z_offsets.assert_called_once()
 	assert wall_depth_z_offsets.call_args.kwargs['z_delta_mm'] == pytest.approx(4.5)
 	updated_grid = StorageGrid.load_from_file(str(grid_path))
-	updated_point = updated_grid.left_module[0].cells[0].calibration_point
+	updated_point = updated_grid.front_module[0].cells[0].calibration_point
 	assert updated_point.x == pytest.approx(101.0)
 	assert updated_point.y == pytest.approx(202.0)
 
@@ -1495,8 +1495,8 @@ def test_apply_single_shelf_analysis_keeps_analysis_frame_during_z_apply(tmp_pat
 
 	grid_path = tmp_path / 'grid.json'
 	grid = StorageGrid(
-		left_module=[make_shelf(0), make_shelf(1), make_shelf(2)],
-		right_module=[],
+		front_module=[make_shelf(0), make_shelf(1), make_shelf(2)],
+		back_module=[],
 		filename=str(grid_path),
 	)
 	grid.save()
@@ -1508,7 +1508,7 @@ def test_apply_single_shelf_analysis_keeps_analysis_frame_during_z_apply(tmp_pat
 	scan_config = SimpleNamespace(
 		laser_offset_x_mm=0.0,
 		laser_offset_y_mm=0.0,
-		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+		front_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
 	)
 	recorded: dict[str, int] = {}
 
@@ -1522,7 +1522,7 @@ def test_apply_single_shelf_analysis_keeps_analysis_frame_during_z_apply(tmp_pat
 				grid=grid,
 				grid_path=grid_path,
 				scan_config=scan_config,
-				side=StorageModuleSide.LEFT,
+				side=StorageModuleSide.FRONT,
 				target_shelf_idx=2,
 				z_delta_override_mm=4.5,
 			)
@@ -1532,7 +1532,7 @@ def test_apply_single_shelf_analysis_keeps_analysis_frame_during_z_apply(tmp_pat
 	# silently left unchanged for any target shelf != 0.
 	assert recorded['shelf_idx'] == 0
 	updated_grid = StorageGrid.load_from_file(str(grid_path))
-	assert updated_grid.left_module[2].shelf_idx == 2
+	assert updated_grid.front_module[2].shelf_idx == 2
 
 
 @pytest.mark.asyncio
@@ -1810,10 +1810,10 @@ def test_probe_z_until_stall_does_not_report_fast_approach_fault_as_wall_contact
 
 def test_get_wall_depth_to_gripper_z_model_returns_configured_model() -> None:
 	model = SimpleNamespace(intercept_mm=4.85, x_slope_mm_per_mm=-0.00285, reference_stage_mm=46.0, reference_z_place_mm=160.5)
-	scan_config = SimpleNamespace(left_wall_depth_to_gripper_z_model=model, right_wall_depth_to_gripper_z_model=None)
+	scan_config = SimpleNamespace(front_wall_depth_to_gripper_z_model=model, back_wall_depth_to_gripper_z_model=None)
 
-	assert get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=StorageModuleSide.LEFT) is model
-	assert get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=StorageModuleSide.RIGHT) is None
+	assert get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=StorageModuleSide.FRONT) is model
+	assert get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=StorageModuleSide.BACK) is None
 
 
 def test_require_z_offset_model_matches_tool_rejects_drifted_stage_extension() -> None:
@@ -1822,7 +1822,7 @@ def test_require_z_offset_model_matches_tool_rejects_drifted_stage_extension() -
 	with pytest.raises(ValueError, match='derived at a different tool geometry'):
 		require_z_offset_model_matches_tool(
 			model=model,
-			side=StorageModuleSide.LEFT,
+			side=StorageModuleSide.FRONT,
 			stage_extension_mm=48.0,
 			z_place_mm=160.5,
 			tolerance_mm=0.2,
@@ -1834,7 +1834,7 @@ def test_require_z_offset_model_matches_tool_accepts_unchanged_params() -> None:
 
 	require_z_offset_model_matches_tool(
 		model=model,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		stage_extension_mm=46.05,
 		z_place_mm=160.5,
 		tolerance_mm=0.2,
@@ -1920,7 +1920,7 @@ _TOP_SHELF_POSITIONS = [1113.25 + index * 2.0 for index in range(43)]
 
 
 def test_probe_line_infers_far_edge_when_topmost_shelf_has_no_wall_above() -> None:
-	# lb4-3 right top shelf: wall below the holes, then open space that reads as hole
+	# lb4-3 back top shelf: wall below the holes, then open space that reads as hole
 	# interior all the way to the end of the scan window.
 	def depth_for(y_mm: float) -> float:
 		return 9.9 if y_mm <= 1145.25 else 0.0

@@ -31,7 +31,7 @@ def _mock_worker(stage_position: float):
 		calibration_point=SimpleNamespace(x=123.0, y=456.0, z_offset=7.5),
 	)
 	shelf = SimpleNamespace(cells=[cell])
-	grid = SimpleNamespace(left_module=[shelf], right_module=[])
+	grid = SimpleNamespace(front_module=[shelf], back_module=[])
 	robot = SimpleNamespace(_grid=grid, _tool=tool)
 
 	return SimpleNamespace(
@@ -48,11 +48,11 @@ async def test_move_to_cell_reports_actual_stage_position(client) -> None:
 
 	with patch("openshelf_os_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
 		with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", AsyncMock()):
-			with patch("openshelf_os_server.routers.calibration._get_shelf", return_value=worker._robot._grid.left_module[0]):
-				with patch("openshelf_os_server.routers.calibration._get_cell", return_value=worker._robot._grid.left_module[0].cells[0]):
+			with patch("openshelf_os_server.routers.calibration._get_shelf", return_value=worker._robot._grid.front_module[0]):
+				with patch("openshelf_os_server.routers.calibration._get_cell", return_value=worker._robot._grid.front_module[0].cells[0]):
 					response = await client.post(
 						"/api/calibration/move",
-						json={"side": "left_module", "shelf_idx": 12, "cell_idx": 0},
+						json={"side": "front_module", "shelf_idx": 12, "cell_idx": 0},
 					)
 
 	assert response.status_code == 200
@@ -68,7 +68,7 @@ async def test_move_to_position_starts_manual_calibration_session(client) -> Non
 		with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", AsyncMock()):
 			response = await client.post(
 				"/api/calibration/move/position",
-				json={"side": "right_module", "x": 475.0, "y": 630.0, "z_offset": 0.0},
+				json={"side": "back_module", "x": 475.0, "y": 630.0, "z_offset": 0.0},
 			)
 
 	assert response.status_code == 200
@@ -92,7 +92,7 @@ async def test_move_to_position_clamps_out_of_range_targets(client) -> None:
 		with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", AsyncMock()):
 			response = await client.post(
 				"/api/calibration/move/position",
-				json={"side": "left_module", "x": 1200.0, "y": 1600.0, "z_offset": 20.0},
+				json={"side": "front_module", "x": 1200.0, "y": 1600.0, "z_offset": 20.0},
 			)
 
 	assert response.status_code == 200

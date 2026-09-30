@@ -812,7 +812,7 @@ def build_shelves_from_scan(
 				existing_lookup[(shelf.shelf_idx, cell.cell_idx)] = cell
 
 	shelves: list[Shelf] = []
-	side_number = 0 if side == StorageModuleSide.LEFT else 1
+	side_number = 0 if side == StorageModuleSide.FRONT else 1
 
 	for detected_shelf in analysis.shelves:
 		existing_shelf = existing_by_shelf.get(detected_shelf.shelf_idx)

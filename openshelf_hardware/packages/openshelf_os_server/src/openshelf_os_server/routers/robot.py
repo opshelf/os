@@ -265,7 +265,7 @@ def overlay_db_occupancy(payload_json: str, occupied: set[tuple[str, int, int]])
     payload = json.loads(payload_json)
     storage = payload.get("robot_status", {}).get("storage", {})
 
-    for side in ("left_module", "right_module"):
+    for side in ("front_module", "back_module"):
         for shelf_position, shelf in enumerate(storage.get(side, [])):
             shelf_idx_raw = shelf.get("shelf_idx", shelf_position)
 
@@ -708,7 +708,7 @@ async def robot_commands(
     failure.
 
     To choose the destination cell, add a top-level `location`
-    (`{"side":"left_module","shelf_idx":0,"cell_idx":0}`). The cell must exist in the
+    (`{"side":"front_module","shelf_idx":0,"cell_idx":0}`). The cell must exist in the
     storage grid, be available, and fit the item; a live bin home stays reserved and is
     reported unavailable. Omitting `location` keeps automatic allocation, and demo mode
     keeps its configured cell mapping.
@@ -2040,7 +2040,7 @@ async def stream_sse() -> EventSourceResponse:
         existing=stream_docs(
             "text/event-stream",
             "Live JSON robot events in SSE data frames; command, scanner, safety and workflow events share this stream.",
-            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"left_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
+            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"front_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
         ),
     ),
     response_class=Response,

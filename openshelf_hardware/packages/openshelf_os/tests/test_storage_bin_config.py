@@ -32,7 +32,7 @@ def test_storage_bin_validates_item_footprint(
 ) -> None:
     payload = {
         "barcode": "900000000001",
-        "home_location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 0},
+        "home_location": {"side": "front_module", "shelf_idx": 2, "cell_idx": 0},
         "inner_dimensions": inner,
         "max_item_dimensions": item,
         "max_items": 6,
@@ -53,7 +53,7 @@ def test_storage_bin_validates_item_footprint(
 def test_compartment_capacity_defaults_to_layout_product():
     configured = StorageBinSettings.model_validate({
         "barcode": "900000000001",
-        "home_location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 0},
+        "home_location": {"side": "front_module", "shelf_idx": 2, "cell_idx": 0},
         "inner_dimensions": {"width": 200, "height": 100, "length": 160},
         "compartment_layout": {"rows": 2, "columns": 4},
     })
@@ -66,7 +66,7 @@ def test_invalid_compartment_layout(rows, columns, max_items):
     with pytest.raises(ValidationError):
         StorageBinSettings.model_validate({
             "barcode": "900000000001",
-            "home_location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 0},
+            "home_location": {"side": "front_module", "shelf_idx": 2, "cell_idx": 0},
             "inner_dimensions": {"width": 200, "height": 100, "length": 160},
             "compartment_layout": {"rows": rows, "columns": columns},
             "max_items": max_items,
