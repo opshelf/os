@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -158,10 +159,12 @@ class WeightChangeGuard:
             await self._task
         except asyncio.CancelledError:
             pass
+        finally:
+            self._task = None
+            # A trip queued just before stopping still has to reach the disk, even
+            # if the sampling task died on an exception of its own.
+            self.flush_record()
 
-        self._task = None
-        # A trip queued just before stopping still has to reach the disk.
-        self.flush_record()
         logger.info("Weight change guard stopped", extra={"axis": self._axis_name})
 
     # ------------------------------------------------------------------ #
@@ -439,10 +442,15 @@ class WeightChangeGuard:
         path, payload = pending
 
         try:
+            tmp = path.with_suffix(".json.tmp")
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(payload, indent=2))
+            tmp.write_text(json.dumps(payload, indent=2))
+            # Records live on SD cards and get read after a crash, so a reader must
+            # never see a half-written one.
+            os.replace(tmp, path)
         except Exception as exc:  # pragma: no cover - filesystem dependent
-            self._record_path = None
+            if self._record_path == str(path):
+                self._record_path = None
             logger.warning(
                 "Failed to write weight change record",
                 extra={"error": str(exc), "axis": self._axis_name},
