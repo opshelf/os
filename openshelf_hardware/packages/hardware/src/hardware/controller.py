@@ -182,7 +182,14 @@ class SharedModbusController:
         address: int,
         count: int = 1,
         function_code: int = 3,
+        attempts: int = 3,
     ) -> tuple[int, ...]:
+        """Read registers, retrying inside the port lock.
+
+        `attempts` bounds that retry loop. Callers that are latency bound and have
+        their own failure handling pass 1, because a retry here holds the port lock
+        for another full device timeout.
+        """
         self._require_connected()
 
         if count <= 0:
@@ -190,6 +197,8 @@ class SharedModbusController:
 
         if function_code not in (3, 4):
             raise ValueError("function_code must be 3 or 4")
+
+        attempts = max(1, int(attempts))
 
         async def read_operation(client: AsyncModbusSerialClient) -> tuple[int, ...]:
             if function_code == 4:
@@ -239,7 +248,7 @@ class SharedModbusController:
         async with self.lock:
             return await self._run_with_reconnect_retry(
                 read_operation,
-                attempts=3,
+                attempts=attempts,
                 failure_message="Modbus read failed after reconnect",
                 unexpected_message=f"Unexpected error reading from unit {unit_id}",
                 retry_modbus_errors=True,
@@ -256,12 +265,14 @@ class SharedModbusController:
         unit_id: int,
         address: int,
         count: int = 1,
+        attempts: int = 3,
     ) -> tuple[int, ...]:
         return await self.read_register_block(
             unit_id=unit_id,
             address=address,
             count=count,
             function_code=3,
+            attempts=attempts,
         )
 
     async def read_input_register_block(

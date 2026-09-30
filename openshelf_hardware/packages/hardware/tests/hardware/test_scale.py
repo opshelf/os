@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, call
 
+from hardware.exceptions import ModbusError
 from hardware.scale import Scale
 
 
@@ -250,3 +251,26 @@ async def test_calibrate_weight_timeout(mock_scale_controller):
 
 	assert result["success"] is False
 	assert "timeout" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_read_weight_fast_uses_one_transaction_and_no_retry(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.read_holding_register_block.return_value = (0, 2457, 1, 0x11)
+
+	reading = await scale.read_weight_fast()
+
+	assert reading.grams == pytest.approx(245.7)
+	assert reading.decimals == 1
+	assert reading.stable is True
+	assert reading.valid is True
+	mock_scale_controller.read_holding_register_block.assert_awaited_once_with(1, 0, 4, attempts=1)
+
+
+@pytest.mark.asyncio
+async def test_read_weight_fast_reports_a_failed_transaction(mock_scale_controller):
+	scale = Scale(mock_scale_controller)
+	mock_scale_controller.read_holding_register_block.side_effect = ModbusError("no response")
+
+	with pytest.raises(ModbusError):
+		await scale.read_weight_fast()
