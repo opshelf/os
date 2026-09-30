@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 from sqlalchemy import delete
 
 from openshelf_os.common import CONFIG_PATH, load_config_file, resolve_grid_path
+from openshelf_os.demo_side_rename import migrate_demo_side_rename
 from openshelf_os.runtime_state import RuntimeStatePaths, ensure_mode_workspace
 from openshelf_os.storage import CellItem, CellStatus, Dimensions, StorageGrid, StorageModuleSide
 from openshelf_os_server.database.base import Base, engine
@@ -357,7 +358,9 @@ def build_placeholder_data(seed: str, template: PlaceholderTemplate) -> Dict[str
 
 
 def normalize_demo_payload(demo_path: Path) -> Dict[str, Dict[str, Any]]:
-	raw = json.loads(demo_path.read_text(encoding="utf-8"))
+	raw_content = demo_path.read_text(encoding="utf-8")
+	raw = json.loads(raw_content)
+	raw = migrate_demo_side_rename(str(demo_path), raw_content, raw)
 	if isinstance(raw, dict) is False:
 		raise ValueError("demo.json must contain a top-level object")
 
