@@ -20,7 +20,7 @@ def _status_payload(status: str = "available") -> str:
         {
             "robot_status": {
                 "storage": {
-                    "left_module": [
+                    "front_module": [
                         {
                             "shelf_idx": 0,
                             "cells": [{"cell_idx": 1, "status": status}],
@@ -51,21 +51,21 @@ async def _commit() -> None:
 @pytest.mark.anyio
 async def test_snapshot_reuses_one_read_until_a_commit(monkeypatch) -> None:
     occupancy_cache.reset()
-    calls, fake = _fake_occupied_reader([[("left_module", 0, 1, "880000000001")]])
+    calls, fake = _fake_occupied_reader([[("front_module", 0, 1, "880000000001")]])
     monkeypatch.setattr(StorageService, "get_all_occupied_cells", fake)
 
     first = await occupancy_cache.get_occupied_cells()
     second = await occupancy_cache.get_occupied_cells()
 
-    assert first == {("left_module", 0, 1)}
-    assert second == {("left_module", 0, 1)}
+    assert first == {("front_module", 0, 1)}
+    assert second == {("front_module", 0, 1)}
     assert len(calls) == 1
 
     await _commit()
 
     third = await occupancy_cache.get_occupied_cells()
 
-    assert third == {("left_module", 0, 1)}
+    assert third == {("front_module", 0, 1)}
     assert len(calls) == 2
 
 
@@ -74,24 +74,24 @@ async def test_snapshot_returns_rows_committed_after_a_read(monkeypatch) -> None
     occupancy_cache.reset()
     calls, fake = _fake_occupied_reader(
         [
-            [("left_module", 0, 1, "880000000001")],
-            [("right_module", 2, 3, "880000000002")],
+            [("front_module", 0, 1, "880000000001")],
+            [("back_module", 2, 3, "880000000002")],
         ]
     )
     monkeypatch.setattr(StorageService, "get_all_occupied_cells", fake)
 
-    assert await occupancy_cache.get_occupied_cells() == {("left_module", 0, 1)}
+    assert await occupancy_cache.get_occupied_cells() == {("front_module", 0, 1)}
 
     await _commit()
 
-    assert await occupancy_cache.get_occupied_cells() == {("right_module", 2, 3)}
+    assert await occupancy_cache.get_occupied_cells() == {("back_module", 2, 3)}
     assert len(calls) == 2
 
 
 @pytest.mark.anyio
 async def test_invalidate_forces_a_db_read(monkeypatch) -> None:
     occupancy_cache.reset()
-    calls, fake = _fake_occupied_reader([[("left_module", 0, 1, "880000000001")]])
+    calls, fake = _fake_occupied_reader([[("front_module", 0, 1, "880000000001")]])
     monkeypatch.setattr(StorageService, "get_all_occupied_cells", fake)
 
     await occupancy_cache.get_occupied_cells()
@@ -116,10 +116,10 @@ async def test_snapshot_reflects_a_real_inventory_commit() -> None:
             dimensions={"width": 10, "height": 10, "length": 10},
         )
         await service.add_item_location(
-            barcode="occupancy-item", side="left_module", shelf_idx=0, cell_idx=1
+            barcode="occupancy-item", side="front_module", shelf_idx=0, cell_idx=1
         )
 
-    assert await occupancy_cache.get_occupied_cells() == {("left_module", 0, 1)}
+    assert await occupancy_cache.get_occupied_cells() == {("front_module", 0, 1)}
 
 
 class _FakeWorker:
@@ -141,7 +141,7 @@ class _FakeWorker:
 async def test_status_stream_reads_occupancy_once_per_commit(monkeypatch) -> None:
     """Status frames must not re-read occupancy rows that no commit replaced."""
     occupancy_cache.reset()
-    calls, fake = _fake_occupied_reader([[("left_module", 0, 1, "880000000001")]])
+    calls, fake = _fake_occupied_reader([[("front_module", 0, 1, "880000000001")]])
     monkeypatch.setattr(StorageService, "get_all_occupied_cells", fake)
 
     worker = _FakeWorker()

@@ -1255,22 +1255,22 @@ def apply_single_shelf_analysis(
 	# moves to its real slot for the merge.
 	scanned_shelf.shelf_idx = target_shelf_idx
 
-	left_module = list(grid.left_module)
-	right_module = list(grid.right_module)
+	front_module = list(grid.front_module)
+	back_module = list(grid.back_module)
 	merged_shelves = merge_scanned_shelf(
 		existing_shelves=grid.get_side(side),
 		scanned_shelf=scanned_shelf,
 		target_shelf_idx=target_shelf_idx,
 	)
 
-	if side == StorageModuleSide.LEFT:
-		left_module = merged_shelves
+	if side == StorageModuleSide.FRONT:
+		front_module = merged_shelves
 	else:
-		right_module = merged_shelves
+		back_module = merged_shelves
 
 	storage_grid = StorageGrid(
-		left_module=left_module,
-		right_module=right_module,
+		front_module=front_module,
+		back_module=back_module,
 		filename=grid.filename if grid.filename != "" else str(grid_path),
 	)
 	storage_grid.save()
@@ -1291,7 +1291,7 @@ def resolve_validation_coordinate(
 	return AxisCoordinate(
 		x=float(target_cell.calibration_point.x),
 		y=float(target_cell.calibration_point.y),
-		s=0 if side == StorageModuleSide.LEFT else 1,
+		s=0 if side == StorageModuleSide.FRONT else 1,
 		z_offset=float(target_cell.calibration_point.z_offset),
 	)
 
@@ -1357,17 +1357,17 @@ def apply_analysis(
 		side=side,
 	)
 	print_status("z_offset_inference=skipped reason=cli_scan_preserves_existing_z_offsets")
-	left_module = list(grid.left_module)
-	right_module = list(grid.right_module)
+	front_module = list(grid.front_module)
+	back_module = list(grid.back_module)
 
-	if side == StorageModuleSide.LEFT:
-		left_module = scanned_shelves
+	if side == StorageModuleSide.FRONT:
+		front_module = scanned_shelves
 	else:
-		right_module = scanned_shelves
+		back_module = scanned_shelves
 
 	storage_grid = StorageGrid(
-		left_module=left_module,
-		right_module=right_module,
+		front_module=front_module,
+		back_module=back_module,
 		filename=grid.filename if grid.filename != "" else str(grid_path),
 	)
 	storage_grid.save()

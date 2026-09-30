@@ -44,7 +44,7 @@ async def _create_bin_workflow_resources(barcode: str) -> tuple[int, int]:
 		)
 		bin_row = StorageBin(
 			barcode=f"bin-{barcode}",
-			side="left_module",
+			side="front_module",
 			shelf_idx=0,
 			cell_idx=0,
 			inner_dimensions={"width": 30, "height": 30, "length": 30},
@@ -415,7 +415,7 @@ async def test_retrieve_command_uses_cached_occupied_scale_status() -> None:
 	with patch("openshelf_os_server.routers.robot.is_laser_auto_calibration_running", AsyncMock(return_value=False)):
 		with pytest.raises(HTTPException) as exc_info:
 			await robot_router.robot_commands(
-				command=RetrieveItemCommand(location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0}),
+				command=RetrieveItemCommand(location={"side": "front_module", "shelf_idx": 0, "cell_idx": 0}),
 				worker=worker,
 				current_user=SimpleNamespace(id=1),
 				db=db,
@@ -439,7 +439,7 @@ async def test_retrieve_command_bypasses_occupied_scale_with_global_safety_overr
 
 	with patch("openshelf_os_server.routers.robot.is_laser_auto_calibration_running", AsyncMock(return_value=False)):
 		await robot_router.robot_commands(
-			command=RetrieveItemCommand(location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0}),
+			command=RetrieveItemCommand(location={"side": "front_module", "shelf_idx": 0, "cell_idx": 0}),
 			worker=worker,
 			current_user=SimpleNamespace(id=1, role=SimpleNamespace(name="admin")),
 			db=db,
@@ -454,7 +454,7 @@ async def test_retrieve_command_bypasses_occupied_scale_with_global_safety_overr
 async def test_store_command_rejects_already_stored_item() -> None:
 	worker = _mock_worker()
 	item = SimpleNamespace(id=42, barcode="123456789012", name="Stored", dimensions={"length": 1.0, "width": 1.0, "height": 1.0}, weight=None)
-	location = SimpleNamespace(item_id=42, side="right_module", shelf_idx=1, cell_idx=0)
+	location = SimpleNamespace(item_id=42, side="back_module", shelf_idx=1, cell_idx=0)
 	item_result = MagicMock()
 	item_result.scalar_one_or_none.return_value = item
 	location_scalars = MagicMock()

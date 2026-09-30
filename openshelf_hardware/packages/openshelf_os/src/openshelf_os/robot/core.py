@@ -788,10 +788,10 @@ class Robot:
     @staticmethod
     def _parse_demo_location(value: str) -> StorageModuleCellLocation:
         side_map = {
-            "L": StorageModuleSide.LEFT,
-            "R": StorageModuleSide.RIGHT,
-            "LEFT_MODULE": StorageModuleSide.LEFT,
-            "RIGHT_MODULE": StorageModuleSide.RIGHT,
+            "L": StorageModuleSide.FRONT,
+            "R": StorageModuleSide.BACK,
+            "FRONT_MODULE": StorageModuleSide.FRONT,
+            "BACK_MODULE": StorageModuleSide.BACK,
         }
         parts = value.split(":")
         if len(parts) != 3:
@@ -1579,10 +1579,10 @@ class Robot:
         if isinstance(side, str):
             side = StorageModuleSide(side)
 
-        side_number = 0 if side == StorageModuleSide.LEFT else 1
+        side_number = 0 if side == StorageModuleSide.FRONT else 1
 
         if stage_extension_mm is None:
-            stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.LEFT else "STAGE_EXTENSION_SHELF_BACK"
+            stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.FRONT else "STAGE_EXTENSION_SHELF_BACK"
             stage_value = await self._tool.get_param(stage_param)
             if stage_value is not None:
                 stage_extension_mm = float(stage_value)
@@ -1634,19 +1634,19 @@ class Robot:
             existing_shelves=existing_shelves,
         )
 
-        current_left = [] if self._grid is None else self._grid.left_module
-        current_right = [] if self._grid is None else self._grid.right_module
+        current_front = [] if self._grid is None else self._grid.front_module
+        current_back = [] if self._grid is None else self._grid.back_module
 
-        if side == StorageModuleSide.LEFT:
-            left_module = scanned_shelves
-            right_module = current_right
+        if side == StorageModuleSide.FRONT:
+            front_module = scanned_shelves
+            back_module = current_back
         else:
-            left_module = current_left
-            right_module = scanned_shelves
+            front_module = current_front
+            back_module = scanned_shelves
 
         storage_grid = StorageGrid(
-            left_module=left_module,
-            right_module=right_module,
+            front_module=front_module,
+            back_module=back_module,
             filename=self._grid_path,
         )
         storage_grid.save()

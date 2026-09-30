@@ -174,10 +174,10 @@ def parse_demo_location(value: str) -> SeedLocation:
 		raise ValueError(f"invalid demo location format: {value!r}")
 
 	side_key = parts[0].strip().upper()
-	if side_key == "L" or side_key == "LEFT_MODULE":
-		side = StorageModuleSide.LEFT
-	elif side_key == "R" or side_key == "RIGHT_MODULE":
-		side = StorageModuleSide.RIGHT
+	if side_key == "L" or side_key == "FRONT_MODULE":
+		side = StorageModuleSide.FRONT
+	elif side_key == "R" or side_key == "BACK_MODULE":
+		side = StorageModuleSide.BACK
 	else:
 		raise ValueError(f"invalid demo location side: {value!r}")
 
@@ -194,7 +194,7 @@ def location_key(location: SeedLocation) -> tuple[str, int, int]:
 
 def format_cell_coordinate(location: SeedLocation) -> str:
 	side = "L"
-	if location.side == StorageModuleSide.RIGHT:
+	if location.side == StorageModuleSide.BACK:
 		side = "R"
 
 	return f"{side}:{location.shelf_idx}:{location.cell_idx}"
@@ -426,13 +426,13 @@ def normalize_demo_payload(demo_path: Path) -> Dict[str, Dict[str, Any]]:
 
 
 def iter_grid_cells(grid: StorageGrid) -> Iterable[tuple[SeedLocation, Any]]:
-	for shelf_idx, shelf in enumerate(grid.left_module):
+	for shelf_idx, shelf in enumerate(grid.front_module):
 		for cell_idx, cell in enumerate(shelf.cells):
-			yield SeedLocation(StorageModuleSide.LEFT, shelf_idx, cell_idx), cell
+			yield SeedLocation(StorageModuleSide.FRONT, shelf_idx, cell_idx), cell
 
-	for shelf_idx, shelf in enumerate(grid.right_module):
+	for shelf_idx, shelf in enumerate(grid.back_module):
 		for cell_idx, cell in enumerate(shelf.cells):
-			yield SeedLocation(StorageModuleSide.RIGHT, shelf_idx, cell_idx), cell
+			yield SeedLocation(StorageModuleSide.BACK, shelf_idx, cell_idx), cell
 
 
 def build_seed_records(grid: StorageGrid, demo_entries: Dict[str, Dict[str, Any]]) -> tuple[list[SeedRecord], int]:

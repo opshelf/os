@@ -117,7 +117,7 @@ async def test_mock_store_retrieve_persists_inventory_and_replays_request(
 	command_id = response.json()["command_id"]
 	completed = await _wait_for_status(client, command_id, "succeeded")
 	assert completed["result"]["location"] == {
-		"side": "left_module",
+		"side": "front_module",
 		"shelf_idx": 0,
 		"cell_idx": 0,
 	}
@@ -143,7 +143,7 @@ async def test_mock_store_retrieve_persists_inventory_and_replays_request(
 		json={
 			"command": "retrieve_item",
 			"request_id": "retrieve-once",
-			"location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+			"location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
 		},
 	)
 	assert retrieve.status_code == 200
@@ -181,7 +181,7 @@ async def test_mock_duplicate_storage_and_invalid_location_are_realistic_4xx(
 		"/api/robot/commands",
 		json={
 			"command": "retrieve_item",
-			"location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 0},
+			"location": {"side": "front_module", "shelf_idx": 4, "cell_idx": 0},
 		},
 	)
 	assert invalid.status_code == 400
@@ -192,7 +192,7 @@ async def test_mock_store_honors_requested_location(
 	client: AsyncClient,
 	mock_runtime: MockRobotRuntime,
 ) -> None:
-	requested = {"side": "right_module", "shelf_idx": 2, "cell_idx": 7}
+	requested = {"side": "back_module", "shelf_idx": 2, "cell_idx": 7}
 	response = await client.post(
 		"/api/robot/commands",
 		json={
@@ -213,7 +213,7 @@ async def test_mock_store_honors_requested_location(
 	async with AsyncSessionLocal() as session:
 		locations = (await session.execute(select(ItemLocation))).scalars().all()
 		assert [(row.side, row.shelf_idx, row.cell_idx) for row in locations] == [
-			("right_module", 2, 7)
+			("back_module", 2, 7)
 		]
 
 
@@ -243,33 +243,33 @@ async def test_mock_store_rejects_unusable_requested_location(
 		return await client.post("/api/robot/commands", json=payload)
 
 	first = await store(
-		"036000291454", location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
+		"036000291454", location={"side": "front_module", "shelf_idx": 0, "cell_idx": 0}
 	)
 	await _wait_for_status(client, first.json()["command_id"], "succeeded")
 
 	occupied = await store(
-		"036000291455", location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
+		"036000291455", location={"side": "front_module", "shelf_idx": 0, "cell_idx": 0}
 	)
 	assert occupied.status_code == 409
 	assert occupied.json()["detail"]["code"] == "cell_unavailable"
 
 	too_small = await store(
 		"036000291456",
-		location={"side": "left_module", "shelf_idx": 1, "cell_idx": 0},
+		location={"side": "front_module", "shelf_idx": 1, "cell_idx": 0},
 		dimensions={"width": 1000, "height": 1000, "length": 1000},
 	)
 	assert too_small.status_code == 409
 	assert too_small.json()["detail"]["code"] == "cell_too_small"
 
 	missing = await store(
-		"036000291457", location={"side": "left_module", "shelf_idx": 9, "cell_idx": 0}
+		"036000291457", location={"side": "front_module", "shelf_idx": 9, "cell_idx": 0}
 	)
 	assert missing.status_code == 422
 	assert missing.json()["detail"]["code"] == "cell_not_found"
 
 	malformed = await store(
 		"036000291458",
-		location={"side": "left_module", "shelf_idx": "not-a-number", "cell_idx": 0},
+		location={"side": "front_module", "shelf_idx": "not-a-number", "cell_idx": 0},
 		nested=True,
 	)
 	assert malformed.status_code == 422
@@ -277,7 +277,7 @@ async def test_mock_store_rejects_unusable_requested_location(
 
 	malformed_top_level = await store(
 		"036000291459",
-		location={"side": "left_module", "shelf_idx": "not-a-number", "cell_idx": 0},
+		location={"side": "front_module", "shelf_idx": "not-a-number", "cell_idx": 0},
 	)
 	assert malformed_top_level.status_code == 422
 	assert malformed_top_level.json()["detail"]["code"] == "invalid_location"
@@ -289,7 +289,7 @@ async def test_mock_store_rejects_unusable_requested_location(
 	):
 		wrong_type = await store(
 			barcode,
-			location={"side": "left_module", "shelf_idx": shelf_idx, "cell_idx": 0},
+			location={"side": "front_module", "shelf_idx": shelf_idx, "cell_idx": 0},
 			nested=nested,
 		)
 		assert wrong_type.status_code == 422
@@ -347,7 +347,7 @@ async def test_mock_status_has_eighty_cells_and_db_occupancy(
 		)
 		session.add(item)
 		await session.flush()
-		session.add(ItemLocation(item_id=item.id, side="left_module", shelf_idx=1, cell_idx=2))
+		session.add(ItemLocation(item_id=item.id, side="front_module", shelf_idx=1, cell_idx=2))
 		await session.commit()
 
 	try:
@@ -363,14 +363,14 @@ async def test_mock_status_has_eighty_cells_and_db_occupancy(
 	assert status["ready"] is True
 	assert sum(
 		len(shelf["cells"])
-		for side in ("left_module", "right_module")
+		for side in ("front_module", "back_module")
 		for shelf in status["robot_status"]["storage"][side]
 	) == 80
 	assert status["robot_status"]["gantry"]["x_axis"]["homed"] == 1
 	assert status["robot_status"]["scale"]["occupied"] is False
 	assert status["robot_status"]["cabinet_doors"]["closed"] is True
 
-	cells = status["robot_status"]["storage"]["left_module"][1]["cells"]
+	cells = status["robot_status"]["storage"]["front_module"][1]["cells"]
 	assert cells[2]["status"] == "occupied"
 	assert cells[3]["status"] == "available"
 

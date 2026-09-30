@@ -1,5 +1,7 @@
 import json
 
+from pathlib import Path
+
 import pytest
 
 from openshelf_os.common import write_json_file_with_backup
@@ -8,7 +10,7 @@ from openshelf_os.storage import StorageGrid, StorageValidationError
 
 MINIMAL_CONFIG_DICT = {
 	"name": "test",
-	"schema_version": 4,
+	"schema_version": 5,
 	"version": "0.1.0",
 	"robot": {
 		"tool": {
@@ -44,10 +46,10 @@ MINIMAL_CONFIG_DICT = {
 
 
 
-EMPTY_GRID = {"left_module": [], "right_module": []}
+EMPTY_GRID = {"front_module": [], "back_module": []}
 
 GRID_WITH_SHELVES = {
-	"left_module": [
+	"front_module": [
 		{
 			"shelf_width": 400.0,
 			"cells": [
@@ -60,7 +62,7 @@ GRID_WITH_SHELVES = {
 			],
 		}
 	],
-	"right_module": [
+	"back_module": [
 		{
 			"shelf_width": 400.0,
 			"cells": [
@@ -102,7 +104,7 @@ class TestLoadFromFile:
 
 	def test_schema_validation_failure(self, tmp_path):
 		schema_file = tmp_path / "schema.json"
-		schema_file.write_text(json.dumps({"left_module": "not_a_list"}))
+		schema_file.write_text(json.dumps({"front_module": "not_a_list"}))
 
 		with pytest.raises(StorageValidationError, match="storage schema validation failed"):
 			StorageGrid.load_from_file(str(schema_file))
@@ -113,8 +115,8 @@ class TestLoadFromFile:
 
 		grid = StorageGrid.load_from_file(str(f))
 
-		assert grid.left_module == []
-		assert grid.right_module == []
+		assert grid.front_module == []
+		assert grid.back_module == []
 
 	def test_loads_grid_with_shelves(self, tmp_path):
 		f = tmp_path / "shelves.json"
@@ -122,10 +124,10 @@ class TestLoadFromFile:
 
 		grid = StorageGrid.load_from_file(str(f))
 
-		assert len(grid.left_module) == 1
-		assert len(grid.left_module[0].cells) == 1
-		assert len(grid.right_module) == 1
-		assert len(grid.right_module[0].cells) == 2
+		assert len(grid.front_module) == 1
+		assert len(grid.front_module[0].cells) == 1
+		assert len(grid.back_module) == 1
+		assert len(grid.back_module[0].cells) == 2
 
 
 LEGACY_ITEM = {
@@ -141,8 +143,8 @@ class TestLegacyUpcaItem:
 
 	def _grid_with_item(self, item: dict) -> dict:
 		return {
-			"left_module": [],
-			"right_module": [
+			"front_module": [],
+			"back_module": [
 				{
 					"shelf_width": 400.0,
 					"cells": [
@@ -165,7 +167,7 @@ class TestLegacyUpcaItem:
 
 	def _load_item(self, tmp_path, name: str, item: dict):
 		grid, _ = self._load(tmp_path, name, item)
-		cell_item = grid.right_module[0].cells[0].item
+		cell_item = grid.back_module[0].cells[0].item
 
 		assert cell_item is not None
 
@@ -200,15 +202,100 @@ class TestLegacyUpcaItem:
 
 		grid.save_to_file(str(saved_file))
 		reloaded = StorageGrid.load_from_file(str(saved_file))
-		reloaded_item = reloaded.right_module[0].cells[0].item
+		reloaded_item = reloaded.back_module[0].cells[0].item
 
 		assert reloaded_item is not None
 		assert reloaded_item.barcode == "880000000001"
 
-		saved_item = json.loads(saved_file.read_text())["right_module"][0]["cells"][0]["item"]
+		saved_item = json.loads(saved_file.read_text())["back_module"][0]["cells"][0]["item"]
 
 		assert saved_item["barcode"] == "880000000001"
 		assert "upca" not in saved_item
+
+
+class TestSideRenameMigration:
+	"""Storage files written before the front/back cutover keyed their sides as left_module/right_module."""
+
+	def _legacy_file(self, tmp_path, name: str) -> Path:
+		f = tmp_path / name
+		f.write_text(json.dumps({
+			"left_module": [
+				{
+					"shelf_width": 400.0,
+					"cells": [
+						{
+							"status": "available",
+							"item": None,
+							"calibration_point": {"x": 10.0, "y": 20.0, "s": 0, "z_offset": 0.0},
+							"dimensions": {"length": 100.0, "width": 50.0, "height": 150.0},
+						}
+					],
+				}
+			],
+			"right_module": [
+				{
+					"shelf_width": 400.0,
+					"cells": [
+						{
+							"status": "occupied",
+							"item": {
+								"dimensions": {"length": 80.0, "width": 40.0, "height": 100.0},
+								"weight": 1.5,
+							},
+							"calibration_point": {"x": 30.0, "y": 40.0, "s": 1, "z_offset": 0.0},
+							"dimensions": {"length": 100.0, "width": 50.0, "height": 150.0},
+						}
+					],
+				}
+			],
+		}))
+		return f
+
+	def test_legacy_side_keys_migrate_in_place_on_load(self, tmp_path):
+		f = self._legacy_file(tmp_path, "legacy.json")
+		original = f.read_text()
+
+		grid = StorageGrid.load_from_file(str(f))
+
+		assert len(grid.front_module) == 1
+		assert len(grid.back_module) == 1
+		assert grid.back_module[0].cells[0].item.weight == 1.5
+		payload = json.loads(f.read_text())
+		assert "left_module" not in payload
+		assert "right_module" not in payload
+		assert payload["front_module"] == json.loads(original)["left_module"]
+		assert payload["back_module"] == json.loads(original)["right_module"]
+
+	def test_migration_writes_an_exclusive_created_backup(self, tmp_path):
+		f = self._legacy_file(tmp_path, "legacy.json")
+		original = f.read_text()
+
+		StorageGrid.load_from_file(str(f))
+
+		backup = tmp_path / (f.name + ".side-rename.bak")
+		assert backup.exists() is True
+		assert backup.read_text() == original
+
+	def test_migration_is_idempotent_on_reload(self, tmp_path):
+		f = self._legacy_file(tmp_path, "legacy.json")
+
+		StorageGrid.load_from_file(str(f))
+		migrated = f.read_text()
+
+		StorageGrid.load_from_file(str(f))
+
+		assert f.read_text() == migrated
+		assert len(list(tmp_path.glob("*.side-rename.bak"))) == 1
+
+	def test_modern_file_is_left_untouched(self, tmp_path):
+		f = tmp_path / "modern.json"
+		f.write_text(json.dumps(GRID_WITH_SHELVES))
+		original = f.read_text()
+
+		StorageGrid.load_from_file(str(f))
+
+		assert f.read_text() == original
+		assert list(tmp_path.glob("*.side-rename.bak")) == []
 
 
 class TestFilenameField:
@@ -293,10 +380,10 @@ class TestSaveToFile:
 		original.save_to_file(str(f))
 		reloaded = StorageGrid.load_from_file(str(f))
 
-		assert len(reloaded.left_module) == len(original.left_module)
-		assert len(reloaded.right_module) == len(original.right_module)
-		assert reloaded.right_module[0].cells[0].item is not None
-		assert reloaded.right_module[0].cells[0].item.weight == 1.5
+		assert len(reloaded.front_module) == len(original.front_module)
+		assert len(reloaded.back_module) == len(original.back_module)
+		assert reloaded.back_module[0].cells[0].item is not None
+		assert reloaded.back_module[0].cells[0].item.weight == 1.5
 
 	def test_save_to_file_updates_filename_field_and_payload(self, tmp_path):
 		out = tmp_path / "saved.json"

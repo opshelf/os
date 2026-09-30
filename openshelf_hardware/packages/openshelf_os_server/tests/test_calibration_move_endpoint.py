@@ -64,7 +64,7 @@ def _mock_worker_for_move(stage_position: float = 0.0):
 @pytest.mark.anyio
 @pytest.mark.parametrize(
 	("side", "expected_rotation", "expected_slide"),
-	[("left_module", "front", 40.0), ("right_module", "back", 45.0)],
+	[("front_module", "front", 40.0), ("back_module", "back", 45.0)],
 )
 async def test_move_to_cell_rotates_before_z_extension(
 	client: AsyncClient,
@@ -109,7 +109,7 @@ async def test_move_to_cell_returns_conflict_for_tool_rotation_fault(client: Asy
 		with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", new=AsyncMock()):
 			response = await client.post(
 				"/api/calibration/move",
-				json={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+				json={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
 			)
 
 	assert response.status_code == 409

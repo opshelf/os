@@ -192,7 +192,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     robot_status_payload = payload.get("robot_status") or {}
 
     state_payload = robot_status_payload.get("state") or {"current_cell": None}
-    storage_payload = robot_status_payload.get("storage") or {"left_module": [], "right_module": []}
+    storage_payload = robot_status_payload.get("storage") or {"front_module": [], "back_module": []}
     cabinet_doors = robot_status_payload.get("cabinet_doors")
     safety_payload = robot_status_payload.get("safety") or {}
     scale_payload = robot_status_payload.get("scale")
@@ -250,9 +250,9 @@ def _normalize_storage_payload(storage: Dict[str, Any]) -> Dict[str, Any]:
             cell["status"] = status.lower()
         return cell
 
-    normalized_storage: Dict[str, List[Dict[str, Any]]] = {"left_module": [], "right_module": []}
+    normalized_storage: Dict[str, List[Dict[str, Any]]] = {"front_module": [], "back_module": []}
 
-    for side in ("left_module", "right_module"):
+    for side in ("front_module", "back_module"):
         shelves = storage.get(side) or []
         normalized_shelves: List[Dict[str, Any]] = []
         for shelf in shelves:
