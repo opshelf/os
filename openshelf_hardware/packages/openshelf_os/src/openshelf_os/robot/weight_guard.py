@@ -109,6 +109,7 @@ class WeightChangeGuard:
         self._trip_info: Optional[dict[str, Any]] = None
         self._record_path: Optional[str] = None
         self._last_error: Optional[str] = None
+        self._failed: Optional[str] = None
         self._read_error_streak = 0
         self._suspend_s = READ_ERROR_SUSPEND_S
         self._suspended_until: Optional[float] = None
@@ -127,9 +128,17 @@ class WeightChangeGuard:
     def is_latched(self) -> bool:
         return self._latched
 
+    @property
+    def is_failed(self) -> bool:
+        return self._failed is not None
+
     async def start(self) -> None:
         if self._task is not None:
-            return
+            if self._task.done() is False:
+                return
+
+            # A previous sampling task died; clear it so the guard can restart.
+            self._task = None
 
         self._running = True
         self._task = asyncio.create_task(self._run(), name="weight-change-guard")
@@ -159,6 +168,11 @@ class WeightChangeGuard:
             await self._task
         except asyncio.CancelledError:
             pass
+        except Exception as exc:  # pragma: no cover - a dead task must not break shutdown
+            logger.warning(
+                "Weight change guard task failed during stop",
+                extra={"axis": self._axis_name, "error": str(exc)},
+            )
         finally:
             self._task = None
             # A trip queued just before stopping still has to reach the disk, even
@@ -173,14 +187,24 @@ class WeightChangeGuard:
 
     async def _run(self) -> None:
         while self._running is True:
-            moving = self._axis.is_moving()
-            reading = await self._read_weight()
+            moving = False
+            try:
+                moving = self._axis.is_moving()
+                reading = await self._read_weight()
 
-            if reading is not None:
-                self._sample(reading, moving=moving)
+                if reading is not None:
+                    self._sample(reading, moving=moving)
 
-            if self._pending_record is not None:
-                await asyncio.to_thread(self.flush_record)
+                if self._pending_record is not None:
+                    await asyncio.to_thread(self.flush_record)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - guard robustness
+                self._failed = str(exc)
+                logger.exception(
+                    "Weight change guard sampling failed",
+                    extra={"axis": self._axis_name},
+                )
 
             await asyncio.sleep(MOTION_TICK_S if moving else self._idle_interval_s)
 
@@ -362,6 +386,7 @@ class WeightChangeGuard:
         self._trip_info = None
         self._record_path = None
         self._streak = 0
+        self._failed = None
         # Settle the new baseline from post-acknowledgement readings only.
         self._baseline_grams = None
         self._grace_until = self._clock() + self._ack_grace_s
@@ -391,6 +416,7 @@ class WeightChangeGuard:
             "detected_at": trip.get("detected_at"),
             "record_path": self._record_path,
             "error": self._last_error,
+            "failed": self._failed,
         }
 
     # ------------------------------------------------------------------ #

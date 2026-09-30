@@ -517,6 +517,70 @@ class WeightChangeGuardLoopTests(unittest.IsolatedAsyncioTestCase):
         await guard.stop()
         self.assertIsNone(guard._task)
 
+    async def test_a_raising_record_builder_does_not_kill_sampling(self):
+        records = tempfile.TemporaryDirectory()
+        self.addCleanup(records.cleanup)
+        scale = LiveScale(100.0)
+        axis = FakeAxis()
+        trips: list[dict] = []
+
+        def raise_boom() -> dict:
+            raise RuntimeError("context boom")
+
+        guard = WeightChangeGuard(
+            scale=scale,
+            axis=axis,
+            delta_grams=10.0,
+            min_samples=1,
+            arm_delay_s=0.0,
+            ack_grace_s=0.05,
+            idle_interval_s=0.01,
+            record_dir=pathlib.Path(records.name),
+            context_provider=raise_boom,
+        )
+        guard.set_listener(trips.append)
+
+        await guard.start()
+        self.addAsyncCleanup(guard.stop)
+
+        axis.moving = True
+        await asyncio.sleep(0.05)
+        scale.grams = 130.0
+        await asyncio.sleep(0.05)
+
+        self.assertEqual(len(trips), 1)
+        self.assertTrue(guard.is_latched)
+        self.assertTrue(guard.is_failed)
+        self.assertIsNotNone(guard.source_state()["failed"])
+        self.assertFalse(guard._task.done())
+
+        await guard.stop()
+        self.assertIsNone(guard._task)
+
+    async def test_stop_swallows_a_dead_task_exception(self):
+        records = tempfile.TemporaryDirectory()
+        self.addCleanup(records.cleanup)
+        guard = WeightChangeGuard(
+            scale=LiveScale(100.0),
+            axis=FakeAxis(),
+            delta_grams=10.0,
+            min_samples=1,
+            arm_delay_s=0.0,
+            ack_grace_s=0.05,
+            idle_interval_s=0.01,
+            record_dir=pathlib.Path(records.name),
+        )
+
+        async def boom() -> None:
+            raise RuntimeError("task boom")
+
+        guard._running = True
+        guard._task = asyncio.create_task(boom())
+        await asyncio.sleep(0)
+
+        await guard.stop()
+        self.assertIsNone(guard._task)
+
 
 class LegacyRobot(FakeGuardRobot):
     """Robot double from before the weight guard existed, without the new methods."""
@@ -657,6 +721,26 @@ class WeightChangeGuardWorkerTests(unittest.IsolatedAsyncioTestCase):
         safety = worker.get_safety_status()
         self.assertEqual(safety["active_sources"], [])
         self.assertTrue(safety["sources"][SOURCE]["active"] is False)
+
+    async def test_acknowledgement_clears_a_suppressed_weight_source(self):
+        await self.trip()
+        worker = self.worker
+        worker._is_crashed = True
+        await worker._evaluate_safety_guard(refresh=False)
+
+        self.assertEqual(worker.get_safety_status()["active_sources"], [])
+
+        result = await worker.acknowledge_safety_guard()
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(self.robot.acknowledge_calls, 1)
+
+        worker._is_crashed = False
+        await worker._evaluate_safety_guard(refresh=False)
+
+        safety = worker.get_safety_status()
+        self.assertEqual(safety["active_sources"], [])
+        self.assertFalse(safety["sources"][SOURCE]["active"])
 
 
 if __name__ == "__main__":
