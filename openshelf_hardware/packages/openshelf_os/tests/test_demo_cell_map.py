@@ -20,14 +20,14 @@ def test_load_demo_cell_map_new_schema(tmp_path) -> None:
 		json.dumps(
 			{
 				"012345678901": {
-					"cell": "L:0:0",
+					"cell": "F:0:0",
 					"data": {
 						"name": "Hydrochloric Acid",
 						"weight": 590,
 					},
 				},
 				"012345678902": {
-					"cell": "R:1:2",
+					"cell": "B:1:2",
 					"nudge_override_mm": 12.5,
 				},
 			}
@@ -53,11 +53,11 @@ def test_load_demo_cell_map_legacy_schema(tmp_path) -> None:
 		json.dumps(
 			{
 				"code_cell_mapping": {
-					"049000042566": "L:0:0",
-					"049000050103": "L:0:1",
+					"049000042566": "F:0:0",
+					"049000050103": "F:0:1",
 				},
 				"nudge_override_mm": {
-					"L:0:1": 10,
+					"F:0:1": 10,
 				},
 			}
 		)

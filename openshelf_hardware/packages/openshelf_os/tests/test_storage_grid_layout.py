@@ -179,7 +179,7 @@ def test_remove_shelf_reindexes_remaining(tmp_path, remove_idx: int) -> None:
 
 
 def test_remove_shelf_shifts_higher_shelves_down(tmp_path) -> None:
-	# distinct cell widths mark the physical shelves: 10 (L:0), 20 (L:1), 30 (L:2)
+	# distinct cell widths mark the physical shelves: 10 (F:0), 20 (F:1), 30 (F:2)
 	grid = StorageGrid(
 		front_module=[
 			_shelf(0, [_cell(0, width=10.0)]),

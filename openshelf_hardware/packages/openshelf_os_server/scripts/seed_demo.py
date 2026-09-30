@@ -174,9 +174,9 @@ def parse_demo_location(value: str) -> SeedLocation:
 		raise ValueError(f"invalid demo location format: {value!r}")
 
 	side_key = parts[0].strip().upper()
-	if side_key == "L" or side_key == "FRONT_MODULE":
+	if side_key == "F" or side_key == "FRONT_MODULE":
 		side = StorageModuleSide.FRONT
-	elif side_key == "R" or side_key == "BACK_MODULE":
+	elif side_key == "B" or side_key == "BACK_MODULE":
 		side = StorageModuleSide.BACK
 	else:
 		raise ValueError(f"invalid demo location side: {value!r}")
@@ -193,9 +193,9 @@ def location_key(location: SeedLocation) -> tuple[str, int, int]:
 
 
 def format_cell_coordinate(location: SeedLocation) -> str:
-	side = "L"
+	side = "F"
 	if location.side == StorageModuleSide.BACK:
-		side = "R"
+		side = "B"
 
 	return f"{side}:{location.shelf_idx}:{location.cell_idx}"
 
