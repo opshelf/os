@@ -16,6 +16,7 @@
 		type WorkerStatusPayload
 	} from '$lib';
 	import { devicePath, stripDeviceId } from '$lib/nav';
+	import NeedsHomeAlert from '$lib/components/NeedsHomeAlert.svelte';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -184,6 +185,8 @@
 <main>
 	{@render children?.()}
 </main>
+
+<NeedsHomeAlert />
 
 {#if apiState === 'down'}
 	<div class="connection-overlay">

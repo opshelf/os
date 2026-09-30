@@ -5,7 +5,6 @@
 		ApiError,
 		getStorageGrid,
 		getCalibrationStatus,
-		homeToolMotors,
 		moveToCell,
 		jogAxis,
 		testGripper,
@@ -21,6 +20,7 @@
 		type StorageGrid,
 		type Position
 	} from '$lib/api';
+	import { robotStatus } from '$lib/stores';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
@@ -48,11 +48,7 @@
 	let message = $state<string>('');
 	let warning = $state<string>('');
 	let needsHome = $state<boolean>(false);
-	let needsHomeReason = $state<string>('');
-	let needsHomeAxes = $state<string[]>([]);
-	let isHoming = $state<boolean>(false);
-
-	const TOOL_AXES = new Set(['z_axis', 'stage']);
+	let lastStreamNeedsHome = $state<boolean>(false);
 
 	let jogStep = $state<number>(1);
 
@@ -75,35 +71,6 @@
 		{ value: 50, label: '5cm' },
 		{ value: 100, label: '10cm' }
 	];
-
-	const needsToolHome = $derived(needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
-	const needsOtherHome = $derived(
-		needsHome && (needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
-	);
-	const homeMessage = $derived(
-		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
-	);
-	const duplicateHomeError = $derived.by(() => {
-		if (needsHome !== true || error === '') {
-			return false;
-		}
-
-		const errorLower = error.toLowerCase();
-		const reasonLower = needsHomeReason.toLowerCase();
-
-		if (needsHomeReason !== '' && errorLower.includes(reasonLower)) {
-			return true;
-		}
-
-		return needsHomeReason === '' && errorLower.includes('home required');
-	});
-	const homingDisabled = $derived(
-		isHoming === true ||
-			isMoving === true ||
-			isTesting === true ||
-			isSaving === true ||
-			!needsToolHome
-	);
 
 	onMount(function () {
 		if (browser === false) {
@@ -139,8 +106,6 @@
 
 	function applyNeedsHomeStatus(status: CalibrationStatus): void {
 		needsHome = status.needs_home;
-		needsHomeReason = status.needs_home_reason ?? '';
-		needsHomeAxes = status.needs_home_axes ?? [];
 	}
 
 	function applyNeedsHomeDetail(detail?: ApiErrorDetail): void {
@@ -148,8 +113,6 @@
 			return;
 		}
 		needsHome = true;
-		needsHomeReason = detail.reason ?? detail.message ?? needsHomeReason;
-		needsHomeAxes = detail.needs_home_axes ?? [];
 	}
 
 	function handleNeedsHomeError(err: unknown): void {
@@ -158,23 +121,18 @@
 		}
 	}
 
-	async function didClickHomeToolMotors(): Promise<void> {
-		isHoming = true;
-		error = '';
-		message = '';
-		warning = '';
+	// Re-read /calibration/status when the shared stream reports the crashed
+	// motor was homed, so the calibration controls unblock. Only the
+	// true->false edge fetches; /calibration/status remains the source of truth.
+	$effect(() => {
+		const streamNeedsHome = $robotStatus?.needs_home ?? false;
 
-		try {
-			const status = await homeToolMotors();
-			applyNeedsHomeStatus(status);
-			message = 'tool motors homed';
-		} catch (err) {
-			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to home tool motors';
-		} finally {
-			isHoming = false;
+		if (lastStreamNeedsHome === true && streamNeedsHome === false) {
+			void loadCalibrationStatus();
 		}
-	}
+
+		lastStreamNeedsHome = streamNeedsHome;
+	});
 
 	function getShelvesForSide(side: 'left_module' | 'right_module') {
 		if (storageGrid === null) {
@@ -640,8 +598,7 @@
 							disabled={isMoving === true ||
 								isTesting === true ||
 								isExtending === true ||
-								needsHome === true ||
-								isHoming === true}
+								needsHome === true}
 						>
 							calibrate
 						</button>
@@ -653,7 +610,6 @@
 									isTesting === true ||
 									isExtending === true ||
 									needsHome === true ||
-									isHoming === true ||
 									stageExtensionValue === 0}
 							>
 								extend
@@ -664,8 +620,7 @@
 								disabled={isMoving === true ||
 									isTesting === true ||
 									isExtending === true ||
-									needsHome === true ||
-									isHoming === true}
+									needsHome === true}
 							>
 								retract
 							</button>
@@ -674,8 +629,7 @@
 								onclick={didClickGripperOpen}
 								disabled={isMoving === true ||
 									isTesting === true ||
-									needsHome === true ||
-									isHoming === true}
+									needsHome === true}
 							>
 								&#x2192;&#x2190;
 							</button>
@@ -684,15 +638,14 @@
 								onclick={didClickGripperClose}
 								disabled={isMoving === true ||
 									isTesting === true ||
-									needsHome === true ||
-									isHoming === true}
+									needsHome === true}
 							>
 								&#x2194;&#xFE0E;
 							</button>
 							<button
 								type="button"
 								onclick={didClickCrosshair}
-								disabled={isMoving === true || needsHome === true || isHoming === true}
+								disabled={isMoving === true || needsHome === true}
 							>
 								✛
 							</button>
@@ -718,12 +671,12 @@
 							type="number"
 							step="0.5"
 							bind:value={editX}
-							disabled={isMoving === true || needsHome === true || isHoming === true}
+							disabled={isMoving === true || needsHome === true}
 						/>
 						<button
 							type="button"
 							onclick={didClickMoveX}
-							disabled={isMoving === true || needsHome === true || isHoming === true}
+							disabled={isMoving === true || needsHome === true}
 						>
 							move
 						</button>
@@ -734,12 +687,12 @@
 							type="number"
 							step="0.5"
 							bind:value={editY}
-							disabled={isMoving === true || needsHome === true || isHoming === true}
+							disabled={isMoving === true || needsHome === true}
 						/>
 						<button
 							type="button"
 							onclick={didClickMoveY}
-							disabled={isMoving === true || needsHome === true || isHoming === true}
+							disabled={isMoving === true || needsHome === true}
 						>
 							move
 						</button>
@@ -750,12 +703,12 @@
 							type="number"
 							step="0.5"
 							bind:value={editZ}
-							disabled={isMoving === true || needsHome === true || isHoming === true}
+							disabled={isMoving === true || needsHome === true}
 						/>
 						<button
 							type="button"
 							onclick={didClickMoveZ}
-							disabled={isMoving === true || needsHome === true || isHoming === true}
+							disabled={isMoving === true || needsHome === true}
 						>
 							move
 						</button>
@@ -770,14 +723,14 @@
 				<button
 					type="button"
 					onclick={() => didClickJog('x', -jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
 					onclick={() => didClickJog('x', jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					+
 				</button>
@@ -787,14 +740,14 @@
 				<button
 					type="button"
 					onclick={() => didClickJog('y', -jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
 					onclick={() => didClickJog('y', jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					+
 				</button>
@@ -804,14 +757,14 @@
 				<button
 					type="button"
 					onclick={() => didClickJog('z', -jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
 					onclick={() => didClickJog('z', jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					+
 				</button>
@@ -820,7 +773,7 @@
 		<div class="jog-controls">
 			<div class="jog-step">
 				<span class="axis-label">step</span>
-				<select bind:value={jogStep} disabled={needsHome === true || isHoming === true}>
+				<select bind:value={jogStep} disabled={needsHome === true}>
 					{#each JOG_STEPS as step}
 						<option value={step.value}>{step.label}</option>
 					{/each}
@@ -844,8 +797,7 @@
 				disabled={isMoving === true ||
 					isTesting === true ||
 					isSaving === true ||
-					needsHome === true ||
-					isHoming === true}
+					needsHome === true}
 			>
 				reset
 			</button>
@@ -855,8 +807,7 @@
 				disabled={isMoving === true ||
 					isTesting === true ||
 					isSaving === true ||
-					needsHome === true ||
-					isHoming === true}
+					needsHome === true}
 			>
 				save
 			</button>
@@ -866,8 +817,7 @@
 				disabled={isMoving === true ||
 					isTesting === true ||
 					isSaving === true ||
-					needsHome === true ||
-					isHoming === true}
+					needsHome === true}
 			>
 				save & test
 			</button>
@@ -882,32 +832,18 @@
 		<StatusMessage message={`warning: ${warning}`} />
 	{/if}
 
-	{#if error !== '' && duplicateHomeError === false}
+	{#if error !== ''}
 		<ErrorMessage message={error} />
 	{/if}
 
 	<div class="shelf-section">
 		<ShelfCalibration
-			disabled={needsHome === true || isHoming === true}
+			disabled={needsHome === true}
 			on:needsHome={handleShelfNeedsHome}
 		/>
 	</div>
 
 	<div class="section-divider"></div>
-
-	<div class="action-buttons">
-		<button type="button" onclick={didClickHomeToolMotors} disabled={homingDisabled}>
-			home tool motors
-		</button>
-	</div>
-
-	{#if homeMessage !== ''}
-		<ErrorMessage message={homeMessage} />
-	{/if}
-
-	{#if needsOtherHome === true}
-		<StatusMessage message="other motors require homing; use the motors page" />
-	{/if}
 {/if}
 
 <style>
