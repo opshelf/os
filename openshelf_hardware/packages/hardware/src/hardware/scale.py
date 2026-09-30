@@ -166,14 +166,17 @@ class Scale:
         """Weigh in a single Modbus transaction with no retries.
 
         Motion monitoring is latency bound: a dropped frame is worth less than
-        the extra ~75 ms a four-transaction read costs. The decimal position and
-        status flags come along in the same frame so the reading stays honest
-        about its own scale factor.
+        the extra ~75 ms a four-transaction read costs, and a retry inside the
+        controller would hold the port lock for another device timeout. The
+        decimal position and status flags come along in the same frame so the
+        reading stays honest about its own scale factor, and the caller owns the
+        failure handling.
         """
         regs = await self.modbus_controller.read_holding_register_block(
             self.scale_id,
             self.REG_WEIGHT_HI,
             4,
+            attempts=1,
         )
 
         hi, lo, decimals, status_raw = regs
