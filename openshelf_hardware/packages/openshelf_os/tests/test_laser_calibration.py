@@ -234,6 +234,23 @@ def test_load_staged_scan_analysis_replays_copied_raw_fine_scan(tmp_path: Path) 
 	assert analysis.total_points == 17
 
 
+def test_load_staged_scan_analysis_maps_pre_cutover_side(tmp_path: Path) -> None:
+	run_dir = write_replay_run(tmp_path)
+	metadata_path = run_dir / "metadata.json"
+
+	for side_value in ("left_module", "front_module"):
+		metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+		metadata["side"] = side_value
+		metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+		analysis = load_staged_scan_analysis(
+			run_dir,
+			scan_config=build_replay_scan_config(),
+		)
+
+		assert analysis.side == StorageModuleSide.FRONT
+
+
 def test_find_gap_segments_in_line_matches_expected_hole_width() -> None:
 	positions = [float(idx * 4) for idx in range(12)]
 	values = [10.0, 10.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0]
@@ -690,6 +707,43 @@ def test_load_continue_scan_context_reads_latest_incomplete_run(tmp_path: Path) 
 	assert samples_per_point == 3
 	assert coarse_settle_ms == 12
 	assert coarse_samples_per_point == 2
+
+
+def write_incomplete_run(run_dir: Path, module_value: str) -> None:
+	run_dir.mkdir()
+	(run_dir / 'run_parameters.json').write_text(
+		json.dumps(
+			{
+				'run_parameters': {
+					'module': module_value,
+					'resolved': {
+						'bounds': {'x_min': 10.0, 'x_max': 20.0, 'y_min': 30.0, 'y_max': 40.0},
+						'fine_step_mm': 2.5,
+						'settle_ms': 25,
+						'samples_per_point': 3,
+						'coarse_settle_ms': 12,
+						'coarse_samples_per_point': 2,
+					}
+				}
+			}
+		),
+		encoding='utf-8',
+	)
+	(run_dir / 'metadata.json').write_text(
+		json.dumps({'status': 'fine-scan'}),
+		encoding='utf-8',
+	)
+
+
+def test_load_continue_scan_context_maps_pre_cutover_side(tmp_path: Path) -> None:
+	for module_value in ('left_module', 'front_module'):
+		scans_dir = tmp_path / module_value
+		scans_dir.mkdir()
+		write_incomplete_run(scans_dir / 'incomplete-run', module_value)
+
+		_, side, *_ = load_continue_scan_context(str(scans_dir))
+
+		assert side == StorageModuleSide.FRONT
 
 
 def test_build_single_cell_rescan_candidate_without_xy_offset_falls_back_to_side_flip() -> None:
