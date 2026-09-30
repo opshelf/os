@@ -1890,3 +1890,36 @@ async def test_dump_flight_recorder_prunes_stale_dumps(mock_controller, tmp_path
     assert path is not None
     assert Path(path).exists()
     assert not stale.exists()
+
+
+@pytest.mark.asyncio
+async def test_jog_reports_the_axis_in_motion_while_it_runs(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(
+            motor_name="y_axis",
+            brake_output_function=0x24,
+            brake_release_delay_ms=0,
+            logical_to_physical_delta=lambda value: value,
+        ),
+    )
+    seen = []
+
+    async def fake_wait_for_move(*args, **kwargs):
+        # The weight-change guard reads this, so the pre-home clearance jog has to
+        # look like motion while the drive is running the relative move.
+        seen.append(motor.is_moving())
+        await motor.stop()
+
+        return MotorStatus.STOPPED
+
+    motor.wait_for_move = fake_wait_for_move
+    motor.move_config = AsyncMock()
+    motor.is_drive_enabled = AsyncMock(return_value=True)
+    mock_controller.read_holding_registers.return_value = 0x24
+
+    status = await motor.jog(1.0)
+
+    assert status is MotorStatus.STOPPED
+    assert seen == [True]
+    assert motor.is_moving() is False
