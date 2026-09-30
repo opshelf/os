@@ -17,6 +17,7 @@
 	} from '$lib';
 	import { devicePath, stripDeviceId } from '$lib/nav';
 	import NeedsHomeAlert from '$lib/components/NeedsHomeAlert.svelte';
+	import ToastStack from '$lib/components/ToastStack.svelte';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -201,3 +202,5 @@
 		<div class="connection-message">CONNECTING, PLEASE WAIT</div>
 	</div>
 {/if}
+
+<ToastStack />

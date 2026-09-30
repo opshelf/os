@@ -175,11 +175,6 @@
 					<td colspan="2">loading...</td>
 				</tr>
 			{/if}
-			{#if statusError !== ''}
-				<tr>
-					<td colspan="2"><ErrorMessage message={statusError} /></td>
-				</tr>
-			{/if}
 		</tbody>
 
 		<thead>

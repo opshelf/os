@@ -2,7 +2,6 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { getSizerStatus, type SizerConfig, type SizerStatus } from '$lib/api';
-	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	let status: SizerStatus | null = $state(null);
 	let statusError = $state('');
@@ -98,11 +97,6 @@
 			{:else if statusError === ''}
 				<tr>
 					<td colspan="2">loading...</td>
-				</tr>
-			{/if}
-			{#if statusError !== ''}
-				<tr>
-					<td colspan="2"><ErrorMessage message={statusError} /></td>
 				</tr>
 			{/if}
 		</tbody>
