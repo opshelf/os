@@ -264,7 +264,14 @@ async def test_read_weight_fast_uses_one_transaction_and_no_retry(mock_scale_con
 	assert reading.decimals == 1
 	assert reading.stable is True
 	assert reading.valid is True
-	mock_scale_controller.read_holding_register_block.assert_awaited_once_with(1, 0, 4, attempts=1)
+	mock_scale_controller.read_holding_register_block.assert_awaited_once_with(
+		1,
+		0,
+		4,
+		attempts=1,
+		modbus_retries=0,
+		modbus_timeout_s=Scale.FAST_READ_TIMEOUT_S,
+	)
 
 
 @pytest.mark.asyncio

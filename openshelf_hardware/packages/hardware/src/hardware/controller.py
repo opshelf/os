@@ -183,12 +183,19 @@ class SharedModbusController:
         count: int = 1,
         function_code: int = 3,
         attempts: int = 3,
+        modbus_retries: Optional[int] = None,
+        modbus_timeout_s: Optional[float] = None,
     ) -> tuple[int, ...]:
         """Read registers, retrying inside the port lock.
 
         `attempts` bounds that retry loop. Callers that are latency bound and have
         their own failure handling pass 1, because a retry here holds the port lock
         for another full device timeout.
+
+        `modbus_retries` and `modbus_timeout_s` override the client's own retry
+        count and per-attempt timeout for the duration of this read. The guard's
+        fast weigh uses `modbus_retries=0` and a short timeout so one read can
+        never hold the port lock for the client default (3 retries at `timeout`).
         """
         self._require_connected()
 
@@ -246,19 +253,45 @@ class SharedModbusController:
             return registers
 
         async with self.lock:
-            return await self._run_with_reconnect_retry(
-                read_operation,
-                attempts=attempts,
-                failure_message="Modbus read failed after reconnect",
-                unexpected_message=f"Unexpected error reading from unit {unit_id}",
-                retry_modbus_errors=True,
-                retry_log_context={
-                    "unit_id": unit_id,
-                    "function_code": function_code,
-                    "address": address,
-                    "count": count,
-                },
-            )
+            if modbus_retries is None and modbus_timeout_s is None:
+                return await self._run_with_reconnect_retry(
+                    read_operation,
+                    attempts=attempts,
+                    failure_message="Modbus read failed after reconnect",
+                    unexpected_message=f"Unexpected error reading from unit {unit_id}",
+                    retry_modbus_errors=True,
+                    retry_log_context={
+                        "unit_id": unit_id,
+                        "function_code": function_code,
+                        "address": address,
+                        "count": count,
+                    },
+                )
+
+            client = self._require_connected()
+            previous_retries = client.ctx.retries
+            previous_timeout = client.comm_params.timeout_connect
+            try:
+                if modbus_retries is not None:
+                    client.ctx.retries = modbus_retries
+                if modbus_timeout_s is not None:
+                    client.comm_params.timeout_connect = modbus_timeout_s
+                return await self._run_with_reconnect_retry(
+                    read_operation,
+                    attempts=attempts,
+                    failure_message="Modbus read failed after reconnect",
+                    unexpected_message=f"Unexpected error reading from unit {unit_id}",
+                    retry_modbus_errors=True,
+                    retry_log_context={
+                        "unit_id": unit_id,
+                        "function_code": function_code,
+                        "address": address,
+                        "count": count,
+                    },
+                )
+            finally:
+                client.ctx.retries = previous_retries
+                client.comm_params.timeout_connect = previous_timeout
 
     async def read_holding_register_block(
         self,
@@ -266,6 +299,8 @@ class SharedModbusController:
         address: int,
         count: int = 1,
         attempts: int = 3,
+        modbus_retries: Optional[int] = None,
+        modbus_timeout_s: Optional[float] = None,
     ) -> tuple[int, ...]:
         return await self.read_register_block(
             unit_id=unit_id,
@@ -273,6 +308,8 @@ class SharedModbusController:
             count=count,
             function_code=3,
             attempts=attempts,
+            modbus_retries=modbus_retries,
+            modbus_timeout_s=modbus_timeout_s,
         )
 
     async def read_input_register_block(

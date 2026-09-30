@@ -34,6 +34,11 @@ class Scale:
     REG_CAL_WEIGHT = 32
     REG_CAL_STATUS = 33
 
+    # The motion guard's fast weigh owns this port briefly; a dead scale must
+    # answer (or fail) inside this window rather than hold the shared lock while
+    # pymodbus re-sends for the controller's default 2 s timeout.
+    FAST_READ_TIMEOUT_S = 0.1
+
     CAL_STATUS_ZERO_OK = 0x04
     CAL_STATUS_WEIGHT_OK = 0x08
 
@@ -177,6 +182,8 @@ class Scale:
             self.REG_WEIGHT_HI,
             4,
             attempts=1,
+            modbus_retries=0,
+            modbus_timeout_s=self.FAST_READ_TIMEOUT_S,
         )
 
         hi, lo, decimals, status_raw = regs
