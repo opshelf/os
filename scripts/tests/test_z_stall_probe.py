@@ -39,8 +39,8 @@ def build_config(config_path: Path, storage_path: Path) -> SimpleNamespace:
 		z_stall_manual_agreement_mm=1.0,
 		z_stall_probe_repeats=2,
 		z_stall_probe_repeat_tolerance_mm=0.3,
-		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
-		right_gripper_xy_correction_mm=None,
+		front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
+		back_gripper_xy_correction_mm=None,
 	)
 	tool = SimpleNamespace(
 		motors=[SimpleNamespace(motor_name="x_axis", lim=950.0, lower_lim=0.0)],
@@ -59,7 +59,7 @@ def build_config(config_path: Path, storage_path: Path) -> SimpleNamespace:
 
 def build_grid() -> StorageGrid:
 	grid = StorageGrid(filename="storage.json")
-	grid.left_module = [
+	grid.front_module = [
 		Shelf(
 			shelf_idx=1,
 			shelf_width=400.0,
@@ -166,7 +166,7 @@ def test_plan_only_reports_probes_and_the_reference_datum(tmp_path: Path, monkey
 	)
 
 	exit_code = main_with_args(
-		probe, ["--module", "left", "--from-run", str(run_dir), "--plan-only"]
+		probe, ["--module", "front", "--from-run", str(run_dir), "--plan-only"]
 	)
 
 	assert exit_code == 0
@@ -200,7 +200,7 @@ def test_shelf_count_override_decides_how_many_shelves_are_sampled(
 
 	exit_code = main_with_args(
 		probe,
-		["--module", "left", "--from-run", str(run_dir), "--plan-only", "--shelves", "1"],
+		["--module", "front", "--from-run", str(run_dir), "--plan-only", "--shelves", "1"],
 	)
 
 	assert exit_code == 0
@@ -226,7 +226,7 @@ def test_plan_only_still_plans_without_a_reference_datum(tmp_path: Path, monkeyp
 	config = build_config(config_path, tmp_path / "storage.development.json")
 	grid = build_grid()
 	# Nothing is marked manual: the probe is still worth running, it just has no verdict.
-	for shelf in grid.left_module:
+	for shelf in grid.front_module:
 		for cell in shelf.cells:
 			cell.is_manual = False
 	run_dir = build_run_dir(tmp_path / "runs" / "4fab1bf8")
@@ -240,7 +240,7 @@ def test_plan_only_still_plans_without_a_reference_datum(tmp_path: Path, monkeyp
 	)
 
 	exit_code = main_with_args(
-		probe, ["--module", "left", "--from-run", str(run_dir), "--plan-only"]
+		probe, ["--module", "front", "--from-run", str(run_dir), "--plan-only"]
 	)
 
 	assert exit_code == 0
@@ -255,11 +255,11 @@ def test_side_mismatch_is_refused_and_default_picks_the_matching_run(tmp_path: P
 	config_path.write_text("{}", encoding="utf-8")
 	config = build_config(config_path, tmp_path / "storage.development.json")
 	grid = build_grid()
-	left_run = build_run_dir(tmp_path / "runs" / "left")
-	right_run = build_run_dir(tmp_path / "runs" / "right")
-	right_metadata = json.loads((right_run / "metadata.json").read_text(encoding="utf-8"))
-	right_metadata["side"] = "right_module"
-	(right_run / "metadata.json").write_text(json.dumps(right_metadata), encoding="utf-8")
+	front_run = build_run_dir(tmp_path / "runs" / "front")
+	back_run = build_run_dir(tmp_path / "runs" / "back")
+	back_metadata = json.loads((back_run / "metadata.json").read_text(encoding="utf-8"))
+	back_metadata["side"] = "right_module"
+	(back_run / "metadata.json").write_text(json.dumps(back_metadata), encoding="utf-8")
 
 	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
 	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
@@ -269,20 +269,20 @@ def test_side_mismatch_is_refused_and_default_picks_the_matching_run(tmp_path: P
 		classmethod(lambda cls: SimpleNamespace(resolve_storage_path=lambda *a, **k: str(tmp_path / "data" / "storage.json"))),
 	)
 
-	with pytest.raises(ValueError, match="holds a right_module run"):
-		main_with_args(probe, ["--module", "left", "--from-run", str(right_run), "--plan-only"])
+	with pytest.raises(ValueError, match="holds a back_module run"):
+		main_with_args(probe, ["--module", "front", "--from-run", str(back_run), "--plan-only"])
 
-	# Both metadata files lack a side otherwise, so mark the left one and let the default pick it.
-	left_metadata = json.loads((left_run / "metadata.json").read_text(encoding="utf-8"))
-	left_metadata["side"] = "left_module"
-	(left_run / "metadata.json").write_text(json.dumps(left_metadata), encoding="utf-8")
+	# Both metadata files lack a side otherwise, so mark the front one and let the default pick it.
+	front_metadata = json.loads((front_run / "metadata.json").read_text(encoding="utf-8"))
+	front_metadata["side"] = "left_module"
+	(front_run / "metadata.json").write_text(json.dumps(front_metadata), encoding="utf-8")
 	monkeypatch.setattr(probe, "paths_for_config_file", lambda path: SimpleNamespace(calibration_dir=tmp_path / "runs"))
 
-	exit_code = main_with_args(probe, ["--module", "left", "--plan-only"])
+	exit_code = main_with_args(probe, ["--module", "front", "--plan-only"])
 
 	assert exit_code == 0
 	output = capsys.readouterr().out
-	assert str(left_run) in output
+	assert str(front_run) in output
 
 
 def test_explicit_exclusions_shield_a_cell_from_the_probe(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -291,7 +291,7 @@ def test_explicit_exclusions_shield_a_cell_from_the_probe(tmp_path: Path, monkey
 	config_path.write_text("{}", encoding="utf-8")
 	config = build_config(config_path, tmp_path / "storage.development.json")
 	grid = build_grid()
-	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	run_dir = build_run_dir(tmp_path / "runs" / "front")
 	metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
 	metadata["side"] = "left_module"
 	(run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
@@ -308,7 +308,7 @@ def test_explicit_exclusions_shield_a_cell_from_the_probe(tmp_path: Path, monkey
 		probe,
 		[
 			"--module",
-			"left",
+			"front",
 			"--from-run",
 			str(run_dir),
 			"--plan-only",
@@ -333,7 +333,7 @@ def test_from_grid_probes_the_stored_positions_with_the_sweep_depths(
 	config_path.write_text("{}", encoding="utf-8")
 	config = build_config(config_path, tmp_path / "storage.development.json")
 	grid = build_grid()
-	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	run_dir = build_run_dir(tmp_path / "runs" / "front")
 	metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
 	metadata["side"] = "left_module"
 	(run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
@@ -348,7 +348,7 @@ def test_from_grid_probes_the_stored_positions_with_the_sweep_depths(
 
 	exit_code = main_with_args(
 		probe,
-		["--module", "left", "--from-run", str(run_dir), "--from-grid", "--shelf", "1", "--plan-only"],
+		["--module", "front", "--from-run", str(run_dir), "--from-grid", "--shelf", "1", "--plan-only"],
 	)
 
 	assert exit_code == 0
@@ -390,7 +390,7 @@ def test_run_hands_the_anchor_the_raw_axis_limits(tmp_path: Path, monkeypatch, c
 	config_path.write_text("{}", encoding="utf-8")
 	config = build_config(config_path, tmp_path / "storage.development.json")
 	grid = build_grid()
-	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	run_dir = build_run_dir(tmp_path / "runs" / "front")
 
 	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
 	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
@@ -412,14 +412,14 @@ def test_run_hands_the_anchor_the_raw_axis_limits(tmp_path: Path, monkeypatch, c
 	monkeypatch.setattr(laser_module, "run_z_stall_anchor", fake_run_z_stall_anchor)
 	monkeypatch.setattr(laser_module, "run_with_temp_robot_config", fake_run_with_temp_robot_config)
 
-	exit_code = main_with_args(probe, ["--module", "left", "--from-run", str(run_dir)])
+	exit_code = main_with_args(probe, ["--module", "front", "--from-run", str(run_dir)])
 
 	assert exit_code == 0
 	# The anchor subtracts the xy offset and the probe shift itself, so the script must hand it the
 	# raw axis limits. A pre-converted limit makes the anchor subtract the offset a second time,
 	# which loosens the reachability guard by the offset.
 	x_axis_motor = config.robot.tool.motors[0]
-	offset_x_mm = float(config.robot.grid.scan.left_gripper_xy_correction_mm.x_mm)
+	offset_x_mm = float(config.robot.grid.scan.front_gripper_xy_correction_mm.x_mm)
 	assert captured["x_axis_limit_mm"] == float(x_axis_motor.lim)
 	assert captured["x_axis_lower_limit_mm"] == float(x_axis_motor.lower_lim)
 	converted = (
@@ -438,7 +438,7 @@ def test_run_hands_the_anchor_the_requested_shelf_count(
 	config_path.write_text("{}", encoding="utf-8")
 	config = build_config(config_path, tmp_path / "storage.development.json")
 	grid = build_grid()
-	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	run_dir = build_run_dir(tmp_path / "runs" / "front")
 
 	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
 	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
@@ -461,7 +461,7 @@ def test_run_hands_the_anchor_the_requested_shelf_count(
 	monkeypatch.setattr(laser_module, "run_with_temp_robot_config", fake_run_with_temp_robot_config)
 
 	exit_code = main_with_args(
-		probe, ["--module", "left", "--from-run", str(run_dir), "--shelves", "4"]
+		probe, ["--module", "front", "--from-run", str(run_dir), "--shelves", "4"]
 	)
 
 	assert exit_code == 0
@@ -481,7 +481,7 @@ def test_probe_slope_the_datum_cannot_corroborate_fails_the_verdict(
 	config_path.write_text("{}", encoding="utf-8")
 	config = build_config(config_path, tmp_path / "storage.development.json")
 	grid = build_grid()
-	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	run_dir = build_run_dir(tmp_path / "runs" / "front")
 
 	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
 	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
@@ -500,7 +500,7 @@ def test_probe_slope_the_datum_cannot_corroborate_fails_the_verdict(
 	monkeypatch.setattr(laser_module, "run_z_stall_anchor", fake_run_z_stall_anchor)
 	monkeypatch.setattr(laser_module, "run_with_temp_robot_config", fake_run_with_temp_robot_config)
 
-	exit_code = main_with_args(probe, ["--module", "left", "--from-run", str(run_dir)])
+	exit_code = main_with_args(probe, ["--module", "front", "--from-run", str(run_dir)])
 
 	assert exit_code == 1
 	output = capsys.readouterr().out
@@ -522,7 +522,7 @@ def test_from_grid_pairs_run_depths_with_stored_cells_by_position(
 	config_path.write_text("{}", encoding="utf-8")
 	config = build_config(config_path, tmp_path / "storage.development.json")
 	grid = build_grid()
-	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	run_dir = build_run_dir(tmp_path / "runs" / "front")
 	metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
 	metadata["side"] = "left_module"
 	# The run saw one opening, as a partial run does, and re-indexed it to shelf 0.
@@ -566,7 +566,7 @@ def test_from_grid_pairs_run_depths_with_stored_cells_by_position(
 	)
 
 	exit_code = main_with_args(
-		probe, ["--module", "left", "--from-run", str(run_dir), "--from-grid", "--plan-only"]
+		probe, ["--module", "front", "--from-run", str(run_dir), "--from-grid", "--plan-only"]
 	)
 
 	assert exit_code == 0
@@ -586,14 +586,14 @@ def test_short_span_probe_reports_the_model_the_product_would_install(
 	config_path = tmp_path / "config.development.json"
 	config_path.write_text("{}", encoding="utf-8")
 	config = build_config(config_path, tmp_path / "storage.development.json")
-	config.robot.grid.scan.left_wall_depth_to_gripper_z_model = SimpleNamespace(
+	config.robot.grid.scan.front_wall_depth_to_gripper_z_model = SimpleNamespace(
 		intercept_mm=-4.0735,
 		x_slope_mm_per_mm=0.002,
 		reference_stage_mm=47.0,
 		reference_z_place_mm=10.0,
 	)
 	grid = build_grid()
-	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	run_dir = build_run_dir(tmp_path / "runs" / "front")
 
 	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
 	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
@@ -621,7 +621,7 @@ def test_short_span_probe_reports_the_model_the_product_would_install(
 	monkeypatch.setattr(laser_module, "run_z_stall_anchor", fake_run_z_stall_anchor)
 	monkeypatch.setattr(laser_module, "run_with_temp_robot_config", fake_run_with_temp_robot_config)
 
-	exit_code = main_with_args(probe, ["--module", "left", "--from-run", str(run_dir)])
+	exit_code = main_with_args(probe, ["--module", "front", "--from-run", str(run_dir)])
 
 	output = capsys.readouterr().out
 
@@ -644,7 +644,7 @@ def test_datum_saved_at_another_stage_extension_fails_the_verdict(
 	config_path.write_text("{}", encoding="utf-8")
 	config = build_config(config_path, tmp_path / "storage.development.json")
 	grid = build_grid()
-	run_dir = build_run_dir(tmp_path / "runs" / "left")
+	run_dir = build_run_dir(tmp_path / "runs" / "front")
 
 	monkeypatch.setattr(probe, "load_config_file", lambda path: config)
 	monkeypatch.setattr(laser_module, "load_grid", lambda path: grid)
@@ -663,7 +663,7 @@ def test_datum_saved_at_another_stage_extension_fails_the_verdict(
 	monkeypatch.setattr(laser_module, "run_z_stall_anchor", fake_run_z_stall_anchor)
 	monkeypatch.setattr(laser_module, "run_with_temp_robot_config", fake_run_with_temp_robot_config)
 
-	exit_code = main_with_args(probe, ["--module", "left", "--from-run", str(run_dir)])
+	exit_code = main_with_args(probe, ["--module", "front", "--from-run", str(run_dir)])
 
 	assert exit_code == 1
 	output = capsys.readouterr().out
