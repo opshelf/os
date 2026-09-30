@@ -284,6 +284,15 @@ class Robot:
             gpio.apply_initial_outputs()
             gpio.observe_all_inputs()
 
+        # The pre-home clearance jog happens during tool.configure, before the
+        # worker exists, so the guard has to start sampling here or the boot-time
+        # crush scenario goes unguarded. The worker replaces the listener when it
+        # connects; start() is idempotent so its later start is a no-op.
+        weight_guard = getattr(self, "_weight_guard", None)
+        if weight_guard is not None:
+            weight_guard.set_listener(self._stop_motion_on_weight_change)
+            await weight_guard.start()
+
         await self._tool.configure(isolate=isolate, home_on_init=home_on_init)
         await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready, home_on_init=home_on_init)
         cabinet = getattr(self, "_cabinet", None)
@@ -1035,6 +1044,18 @@ class Robot:
     def register_weight_change_listener(self, listener) -> None:
         if self._weight_guard is not None:
             self._weight_guard.set_listener(listener)
+
+    def _stop_motion_on_weight_change(self, info: dict[str, Any]) -> None:
+        """Trip listener for the window before the worker takes over.
+
+        Only the drive has to stop here; the worker latches the safety state and
+        publishes the event once it connects and replaces this listener.
+        """
+        self.block_motion_for_safety()
+        self._logger.warning(
+            "Weight change guard tripped during configuration",
+            extra=info,
+        )
 
     async def start_weight_guard(self) -> None:
         if self._weight_guard is not None:
