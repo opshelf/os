@@ -14,7 +14,7 @@
 	// Dismissal is tracked per motor set so a cancelled alert does not reappear
 	// on the next snapshot, while a new crash (a different set) re-opens it.
 	let dismissedKey = $state<string | null>(null);
-	let homingMotor = $state<string | null>(null);
+	let isHoming = $state<boolean>(false);
 	let homeError = $state<string>('');
 
 	const isVisible = $derived(needsHome && dismissedKey !== motorsKey);
@@ -22,23 +22,27 @@
 	$effect(() => {
 		if (needsHome === false) {
 			dismissedKey = null;
+			isHoming = false;
 			homeError = '';
 		}
 	});
 
-	async function didHomeMotor(motor: string): Promise<void> {
-		if (homingMotor !== null) {
+	async function didHome(): Promise<void> {
+		if (isHoming === true || motors.length === 0) {
 			return;
 		}
-		homingMotor = motor;
+		isHoming = true;
 		homeError = '';
-		try {
-			await homeMotor(motor);
-		} catch (err) {
-			homeError = err instanceof Error ? err.message : `failed to home ${motor}`;
-		} finally {
-			homingMotor = null;
+		// One motor at a time: the server guards concurrent motion.
+		for (const motor of motors) {
+			try {
+				await homeMotor(motor);
+			} catch (err) {
+				homeError = `${err instanceof Error ? err.message : 'home failed'} (during ${motor})`;
+				break;
+			}
 		}
+		isHoming = false;
 	}
 
 	function didCancel(): void {
@@ -47,29 +51,23 @@
 </script>
 
 {#if isVisible}
+	<div class="needs-home-scrim"></div>
 	<aside class="needs-home-alert" role="alert">
 		<p class="needs-home-title">
 			motor needs homing{motors.length > 0 ? `: ${motors.join(', ')}` : ''}
 		</p>
-		{#if reason !== ''}
-			<p class="needs-home-reason">{reason}</p>
-		{/if}
 		<div class="needs-home-actions">
-			{#each motors as motor (motor)}
-				<button
-					type="button"
-					onclick={() => void didHomeMotor(motor)}
-					disabled={homingMotor !== null}
-				>
-					{homingMotor === motor ? `homing ${motor}...` : `home ${motor}`}
-				</button>
-			{/each}
-			{#if motors.length === 0}
-				<a class="needs-home-link" href={devicePath('/motors')}>open motors page</a>
-			{/if}
-			<button type="button" onclick={didCancel} disabled={homingMotor !== null}>
+			<button type="button" onclick={didCancel} disabled={isHoming === true}>
 				cancel
 			</button>
+			<div class="needs-home-spacer"></div>
+			{#if motors.length > 0}
+				<button type="button" onclick={() => void didHome()} disabled={isHoming === true}>
+					{isHoming ? 'homing...' : 'home'}
+				</button>
+			{:else}
+				<a class="needs-home-link" href={devicePath('/motors')}>open motors page</a>
+			{/if}
 		</div>
 		{#if homeError !== ''}
 			<p class="needs-home-error">{homeError}</p>
@@ -78,15 +76,23 @@
 {/if}
 
 <style>
+	.needs-home-scrim {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.4);
+		pointer-events: none;
+		z-index: 99;
+	}
+
 	.needs-home-alert {
 		position: fixed;
-		top: 5em;
+		top: 50%;
 		left: 50%;
-		transform: translateX(-50%);
+		transform: translate(-50%, -50%);
 		z-index: 100;
-		max-width: 36em;
+		min-width: 24em;
 		max-width: min(36em, 90vw);
-		padding: 1em 1.5em;
+		padding: 1.5em;
 		background: white;
 		border: 2px solid black;
 		box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.25);
@@ -94,22 +100,18 @@
 	}
 
 	.needs-home-title {
-		margin-bottom: 0.5em;
-		font-weight: bold;
-	}
-
-	.needs-home-reason {
-		margin-bottom: 0.5em;
-		max-width: 32em;
-		text-transform: none;
-		white-space: pre-wrap;
+		margin: 0;
 	}
 
 	.needs-home-actions {
 		display: flex;
-		gap: 0.5em;
+		gap: 1em;
 		align-items: center;
-		flex-wrap: wrap;
+		margin-top: 1.5em;
+	}
+
+	.needs-home-spacer {
+		flex: 1;
 	}
 
 	.needs-home-actions button,
@@ -118,7 +120,7 @@
 	}
 
 	.needs-home-error {
-		margin-top: 0.5em;
+		margin-top: 1em;
 		max-width: 32em;
 		color: #c40000;
 		text-transform: none;
