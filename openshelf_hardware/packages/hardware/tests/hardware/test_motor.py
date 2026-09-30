@@ -1923,3 +1923,32 @@ async def test_jog_reports_the_axis_in_motion_while_it_runs(mock_controller):
     assert status is MotorStatus.STOPPED
     assert seen == [True]
     assert motor.is_moving() is False
+
+
+@pytest.mark.asyncio
+async def test_jog_fails_when_the_safety_guard_stops_it(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(
+            motor_name="y_axis",
+            brake_output_function=0x24,
+            brake_release_delay_ms=0,
+            logical_to_physical_delta=lambda value: value,
+        ),
+        safety=SimpleNamespace(blocked=True, wait_clear=AsyncMock()),
+    )
+
+    async def fake_wait_for_move(*args, **kwargs):
+        # The guard is blocked, so the motion monitor stops the drive and then has
+        # no relative move it is allowed to restart.
+        await motor._pause_for_safety_if_needed(SimpleNamespace(reset=lambda _t: None))
+
+        return MotorStatus.STOPPED
+
+    motor.wait_for_move = fake_wait_for_move
+    motor.move_config = AsyncMock()
+    motor.is_drive_enabled = AsyncMock(return_value=True)
+    mock_controller.read_holding_registers.return_value = 0x24
+
+    with pytest.raises(MotorError, match="safety guard"):
+        await motor.jog(1.0)

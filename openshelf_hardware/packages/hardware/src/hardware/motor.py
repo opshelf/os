@@ -254,6 +254,7 @@ class Motor():
         self._stall_timeout = float(getattr(params, "stall_timeout_s", DEFAULT_STALL_TIMEOUT_S))
         self._status = MotorStatus.IDLE
         self._pending_motion: Optional[Callable[[], Awaitable[None]]] = None
+        self._safety_interrupted_move = False
         self._target_pos: Optional[float] = None
         self._last_fault_context: dict[str, Any] | None = None
         self._last_bad_position_log_at = None
@@ -1361,6 +1362,7 @@ class Motor():
             await self.set_param("Position High", pulse[0])
             await self.set_param("Position Low", pulse[1])
 
+            self._safety_interrupted_move = False
             await self._verify_brake_output_before_motion_trigger()
             await self._enable_for_motion()
             await self._controller.write_single_register(
@@ -1370,8 +1372,9 @@ class Motor():
             )
             # Deliberately no _pending_motion here: a relative jog cannot be
             # restarted from the current position without travelling the full
-            # distance again, so a safety pause stops the drive and lets the move
-            # time out instead. The status still has to say MOVING or anything
+            # distance again, so a safety pause stops the drive and jog() fails the
+            # move instead of reporting the drive's path-complete bit for a move it
+            # stopped halfway. The status still has to say MOVING or anything
             # watching this axis, such as the weight-change guard, reads the
             # pre-home clearance jog as idle.
             self._status = MotorStatus.MOVING
@@ -1385,6 +1388,13 @@ class Motor():
 
             if result != MotorStatus.STOPPED:
                 raise MotorError(f"Relative move failed (status={result.name})")
+
+            if self._safety_interrupted_move is True:
+                self._safety_interrupted_move = False
+
+                raise MotorError(
+                    "Relative move was stopped by the safety guard and did not complete"
+                )
 
             await self.move_config()
 
@@ -1644,6 +1654,13 @@ class Motor():
             )
 
             await self._pending_motion()
+
+        else:
+            # Nothing to restart. A relative jog cannot be re-triggered from where
+            # it stopped without travelling the full distance again, so the caller
+            # has to be told the move was interrupted rather than shown the drive's
+            # path-complete bit for a move that was stopped halfway.
+            self._safety_interrupted_move = True
 
         state.reset(time.monotonic())
 
