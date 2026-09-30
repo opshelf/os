@@ -453,23 +453,6 @@
 				{/each}
 			</tbody>
 		{/if}
-
-		{#if $robotStatus.error_queue && $robotStatus.error_queue.length > 0}
-			<thead>
-				<tr>
-					<th>recent errors - type</th>
-					<th>message</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each $robotStatus.error_queue as error}
-					<tr>
-						<td>{formatValue(error.error_type)}</td>
-						<td>{formatValue(error.message)}</td>
-					</tr>
-				{/each}
-			</tbody>
-		{/if}
 	{/if}
 </table>
 
