@@ -1368,6 +1368,13 @@ class Motor():
                 motor_helpers.TRIGGER,
                 0x10
             )
+            # Deliberately no _pending_motion here: a relative jog cannot be
+            # restarted from the current position without travelling the full
+            # distance again, so a safety pause stops the drive and lets the move
+            # time out instead. The status still has to say MOVING or anything
+            # watching this axis, such as the weight-change guard, reads the
+            # pre-home clearance jog as idle.
+            self._status = MotorStatus.MOVING
 
             t0 = time.monotonic()
             result = await self.wait_for_move(timeout=MOTOR_JOG_TIMEOUT, homing=homing)
