@@ -2,10 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, NamedTuple, Tuple
 from hardware.controller import SharedModbusController
 
 logger = logging.getLogger(__name__).getChild("scale")
+
+
+class WeightReading(NamedTuple):
+    """One instantaneous weighing, taken without retries."""
+
+    grams: float
+    decimals: int
+    stable: bool
+    valid: bool
+    overload: bool
 
 
 class Scale:
@@ -151,6 +161,33 @@ class Scale:
         )
 
         return (total / got) if got else None
+
+    async def read_weight_fast(self) -> WeightReading:
+        """Weigh in a single Modbus transaction with no retries.
+
+        Motion monitoring is latency bound: a dropped frame is worth less than
+        the extra ~75 ms a four-transaction read costs. The decimal position and
+        status flags come along in the same frame so the reading stays honest
+        about its own scale factor.
+        """
+        regs = await self.modbus_controller.read_holding_register_block(
+            self.scale_id,
+            self.REG_WEIGHT_HI,
+            4,
+        )
+
+        hi, lo, decimals, status_raw = regs
+        raw = self._to_int32_signed(hi, lo)
+        decimals = int(decimals)
+        status = self._interpret_status(status_raw)
+
+        return WeightReading(
+            grams=raw * (10 ** (-decimals)),
+            decimals=decimals,
+            stable=status["stable"] is True,
+            valid=status["valid"] is True,
+            overload=status["overload"] is True,
+        )
 
     async def read_weight_data(self) -> Dict[str, Any]:
         regs = await self._read_block(self.REG_WEIGHT_HI, 4)
