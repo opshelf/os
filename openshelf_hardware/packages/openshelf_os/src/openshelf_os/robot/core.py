@@ -35,6 +35,7 @@ from openshelf_os.robot.status import (
     RobotResponse, RobotCommandSuccessful, RobotCommandError,
     RobotStatus, GantryStatus, ToolAxisStatus, RobotState, AxisTelemetry, CabinetDoorState,
 )
+from openshelf_os.robot.weight_guard import WeightChangeGuard
 from openshelf_os.storage import (
     StorageGrid, Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation, CellStatus,
     StorageValidationError,
@@ -139,6 +140,8 @@ class Robot:
         self._operation_context_listener: Callable[[dict[str, Any] | None], None] | None = None
         self._last_fault_context: dict[str, Any] | None = None
         self._motor_time_accumulator: float = 0.0
+
+        self._weight_guard = self._build_weight_guard()
 
         self._demo_cell_map: dict[str, StorageModuleCellLocation] | None = None
         self._demo_nudge_map: dict[tuple[str, int, int], float] = {}
@@ -992,6 +995,64 @@ class Robot:
     def release_motion_safety(self) -> None:
         self._motion_safety.unblock()
         self._logger.info("Safety guard cleared")
+
+    def _build_weight_guard(self) -> Optional[WeightChangeGuard]:
+        """Watch the scale during y travel so a crash into the cell stops motion.
+
+        Returns None when the scale or the y axis is absent, or when the guard is
+        switched off in config, in which case the safety sources simply omit it.
+        """
+        scale_cfg = self._config.get("robot.io.scale", None)
+
+        if scale_cfg is None or getattr(scale_cfg, "enabled", True) is not True:
+            return None
+
+        if getattr(scale_cfg, "motion_guard_enabled", True) is not True:
+            self._logger.info("weight_guard_disabled")
+
+            return None
+
+        scale = getattr(self._io, "_scale", None)
+        y_motor = getattr(self._tool, "_my", None)
+
+        if scale is None or y_motor is None:
+            self._logger.info("weight_guard_unavailable: scale or y axis not configured")
+
+            return None
+
+        return WeightChangeGuard(
+            scale=scale,
+            axis=y_motor,
+            delta_grams=float(getattr(scale_cfg, "motion_guard_delta_grams", 10.0)),
+            min_samples=int(getattr(scale_cfg, "motion_guard_min_samples", 2)),
+            arm_delay_s=float(getattr(scale_cfg, "motion_guard_arm_delay_s", 0.05)),
+            ack_grace_s=float(getattr(scale_cfg, "motion_guard_ack_grace_s", 1.0)),
+            sample_timeout_s=float(getattr(scale_cfg, "motion_guard_sample_timeout_s", 0.25)),
+            idle_interval_s=float(getattr(scale_cfg, "motion_guard_idle_interval_s", 0.2)),
+            context_provider=lambda: dict(self.get_operation_context() or {}),
+        )
+
+    def register_weight_change_listener(self, listener) -> None:
+        if self._weight_guard is not None:
+            self._weight_guard.set_listener(listener)
+
+    async def start_weight_guard(self) -> None:
+        if self._weight_guard is not None:
+            await self._weight_guard.start()
+
+    async def stop_weight_guard(self) -> None:
+        if self._weight_guard is not None:
+            await self._weight_guard.stop()
+
+    def acknowledge_weight_change(self) -> None:
+        if self._weight_guard is not None:
+            self._weight_guard.acknowledge()
+
+    def get_weight_change_state(self) -> Optional[dict[str, Any]]:
+        if self._weight_guard is None:
+            return None
+
+        return self._weight_guard.source_state()
 
     def get_curtain_state(self) -> Optional[bool]:
         if self._io:

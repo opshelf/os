@@ -444,6 +444,18 @@ class Motor():
     def is_hard_stopped(self) -> bool:
         return self._hard_stopped
 
+    def is_moving(self) -> bool:
+        """Report whether a move is in flight, without touching the bus.
+
+        Cleared as soon as the drive is told to stop, including the stop that a
+        safety interruption causes, so it is a pause-aware motion flag.
+        """
+        return self._status is MotorStatus.MOVING
+
+    def position_mm(self) -> Optional[float]:
+        """Last position tracked in-process, without touching the bus."""
+        return self._cur_pos
+
     def set_diagnostic_context(
         self,
         *,

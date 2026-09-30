@@ -1130,9 +1130,11 @@ async def acknowledge_safety_guard(
 ) -> SuccessResponse:
     """Acknowledge a cleared safety interruption.
 
-    Acknowledges the worker safety guard only after all interruption sources are clear.
-    Returns `409` with `active_sources` while an interruption remains active. This does not
-    bypass sensors or home the robot.
+    Acknowledges the worker safety guard once every interruption source is either
+    clear or one an acknowledgement is enough to clear, such as a weight change
+    that leaves the scale reading permanently shifted. Returns `409` with
+    `active_sources` while a source that has to clear physically remains active.
+    This does not bypass sensors or home the robot.
     """
     result = await worker.acknowledge_safety_guard()
 
