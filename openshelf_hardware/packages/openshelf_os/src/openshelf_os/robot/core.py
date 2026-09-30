@@ -1,6 +1,8 @@
 import asyncio
 import json as _json
 import logging
+import os
+import re
 import sentry_sdk
 
 from pathlib import Path as _Path
@@ -10,7 +12,8 @@ from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import MotionSafetyInterlock
 from hardware.motor import MotorStatus
 from openshelf_os.cabinet import Cabinet
-from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
+from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path, write_json_file_with_backup
+from openshelf_os.runtime_state import infer_mode_from_path
 from openshelf_os.config.models import compare_gpio_pins_to_defaults
 from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORT,
@@ -785,6 +788,99 @@ class Robot:
     #  Demo cell mapping
     # ------------------------------------------------------------------ #
 
+    # One-time on-disk migration of the demo mapping files written before the front/back
+    # cutover, which keyed their cell locations under the L/R side letters.
+    DEMO_SIDE_RENAME_BACKUP_SUFFIX = ".demo-side-rename.bak"
+    _DEMO_SIDE_RENAME_MAP = {
+        "L": "F",
+        "R": "B",
+        "LEFT_MODULE": "FRONT_MODULE",
+        "RIGHT_MODULE": "BACK_MODULE",
+    }
+    _DEMO_SIDE_RENAME_RE = re.compile(r"^(L|R|LEFT_MODULE|RIGHT_MODULE):(\d+):(\d+)$", re.IGNORECASE)
+
+    @classmethod
+    def _migrate_demo_side_rename(cls, target_path: str, raw_content: str, data: Any) -> Any:
+        """Rename the pre-cutover side letters in a demo mapping file, in place and idempotently.
+
+        Files written before the front/back cutover keep their cell locations under the
+        L/R side letters. Rename them in the loaded data and rewrite the file with an
+        exclusive-created backup of the original bytes, so a device picks the new letters
+        up on its next load and the old file is recoverable. Files that already carry
+        the new letters are left untouched.
+        """
+        if isinstance(data, dict) is False:
+            return data
+
+        migrated = cls._rename_demo_side_letters(data)
+        if migrated is data:
+            return data
+
+        cls._write_with_demo_side_rename_backup(target_path, raw_content, migrated)
+        return migrated
+
+    @classmethod
+    def _rename_demo_side_letters(cls, node: Any) -> Any:
+        """Walk the loaded mapping and rename side letters in location strings.
+
+        Returns the same object when nothing needed renaming, so the caller can tell a
+        no-op load from a migrated one.
+        """
+        if isinstance(node, dict):
+            renamed: dict[Any, Any] = {}
+            changed = False
+            for key, value in node.items():
+                new_key = cls._rename_demo_side_string(key) if isinstance(key, str) else key
+                new_value = cls._rename_demo_side_letters(value)
+                if (new_key is not key) or (new_value is not value):
+                    changed = True
+                renamed[new_key] = new_value
+            if changed is False:
+                return node
+            return renamed
+        if isinstance(node, list):
+            renamed_items = [cls._rename_demo_side_letters(item) for item in node]
+            if all(new is old for new, old in zip(renamed_items, node)):
+                return node
+            return renamed_items
+        if isinstance(node, str):
+            return cls._rename_demo_side_string(node)
+        return node
+
+    @classmethod
+    def _rename_demo_side_string(cls, value: str) -> str:
+        match = cls._DEMO_SIDE_RENAME_RE.match(value)
+        if match is None:
+            return value
+
+        return f"{cls._DEMO_SIDE_RENAME_MAP[match.group(1).upper()]}:{match.group(2)}:{match.group(3)}"
+
+    @classmethod
+    def _write_with_demo_side_rename_backup(cls, target_path: str, raw_content: str, data: Any) -> None:
+        backup_path = target_path + cls.DEMO_SIDE_RENAME_BACKUP_SUFFIX
+
+        try:
+            # Exclusive creation prevents a later invocation from overwriting the rollback copy.
+            with open(backup_path, "xb") as stream:
+                stream.write(raw_content.encode("utf-8"))
+                stream.flush()
+                os.fsync(stream.fileno())
+        except FileExistsError:
+            # The backup is left over from an interrupted migration: trust it only when it
+            # still holds the bytes this load read, otherwise the file changed on disk.
+            with open(backup_path, "rb") as stream:
+                if stream.read() != raw_content.encode("utf-8"):
+                    raise ValueError(
+                        f"{target_path}: {cls.DEMO_SIDE_RENAME_BACKUP_SUFFIX} does not match the current file; reconcile before migrating"
+                    )
+
+        write_json_file_with_backup(
+            target_path,
+            data,
+            backup_group_name="demo",
+            backup_mode=infer_mode_from_path(target_path).value,
+        )
+
     @staticmethod
     def _parse_demo_location(value: str) -> StorageModuleCellLocation:
         side_map = {
@@ -813,7 +909,9 @@ class Robot:
             self._logger.warning("demo_cell_map_missing: %s", path)
             return None
 
-        raw = _json.loads(file_path.read_text(encoding="utf-8"))
+        raw_content = file_path.read_text(encoding="utf-8")
+        raw = _json.loads(raw_content)
+        raw = self._migrate_demo_side_rename(str(file_path), raw_content, raw)
         if isinstance(raw, dict) is False:
             raise ValueError("demo mapping must be a JSON object")
 
