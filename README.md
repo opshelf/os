@@ -85,7 +85,7 @@ chmod 600 .env
 
 the normal developer account (`developer@opshelf.com`, pin `1111`) is seeded, but authentication remains required. existing item CRUD, users, roles, access levels, permissions, audit logging, correlation-id propagation, and response schemas continue to use sqlite.
 
-the virtual cabinet has 80 deterministic cells: left module then right module, four shelves per side, and ten cells per shelf. `items` and `item_locations` in `base.mock.db` are the occupancy source of truth. the runtime exposes:
+the virtual cabinet has 80 deterministic cells: front module then back module, four shelves per side, and ten cells per shelf. `items` and `item_locations` in `base.mock.db` are the occupancy source of truth. the runtime exposes:
 
 - `GET /api/health`: reports `mode=mock`, a ready mock robot, and no hardware dependency
 - `POST /api/robot/commands`: queues `store_item` or `retrieve_item` and returns a command uuid
