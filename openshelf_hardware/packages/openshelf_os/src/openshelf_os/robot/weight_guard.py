@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -111,6 +112,8 @@ class WeightChangeGuard:
         self._suspend_s = READ_ERROR_SUSPEND_S
         self._suspended_until: Optional[float] = None
         self._last_sample_at: Optional[float] = None
+        self._pending_record: Optional[tuple[Path, dict[str, Any]]] = None
+        self._record_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
     #  Lifecycle
@@ -144,6 +147,9 @@ class WeightChangeGuard:
         self._running = False
 
         if self._task is None:
+            if self._pending_record is not None:
+                self.flush_record()
+
             return
 
         self._task.cancel()
@@ -154,6 +160,8 @@ class WeightChangeGuard:
             pass
 
         self._task = None
+        # A trip queued just before stopping still has to reach the disk.
+        self.flush_record()
         logger.info("Weight change guard stopped", extra={"axis": self._axis_name})
 
     # ------------------------------------------------------------------ #
@@ -167,6 +175,9 @@ class WeightChangeGuard:
 
             if reading is not None:
                 self._sample(reading, moving=moving)
+
+            if self._pending_record is not None:
+                await asyncio.to_thread(self.flush_record)
 
             await asyncio.sleep(MOTION_TICK_S if moving else self._idle_interval_s)
 
@@ -322,7 +333,7 @@ class WeightChangeGuard:
         if self._listener is not None:
             self._listener(dict(info))
 
-        self._record_path = self._dump(info)
+        self._record_path, self._pending_record = self._build_record(info)
         info["record_path"] = self._record_path
 
         logger.error(
@@ -348,6 +359,8 @@ class WeightChangeGuard:
         self._trip_info = None
         self._record_path = None
         self._streak = 0
+        # Settle the new baseline from post-acknowledgement readings only.
+        self._baseline_grams = None
         self._grace_until = self._clock() + self._ack_grace_s
         logger.info(
             "Weight change acknowledged",
@@ -381,35 +394,69 @@ class WeightChangeGuard:
     #  Forensics
     # ------------------------------------------------------------------ #
 
-    def _dump(self, trip: dict[str, Any]) -> Optional[str]:
-        try:
-            self._record_dir.mkdir(parents=True, exist_ok=True)
-            now = datetime.now(timezone.utc)
-            filename = (
-                f"{now.strftime('%Y%m%dT%H%M%S.%fZ')}-{self._axis_name}-weight-change.json"
-            )
-            path = self._record_dir / filename
-            payload = {
-                "created_at": now.isoformat(),
-                "source": WEIGHT_CHANGE_SOURCE,
-                "trip": trip,
-                "threshold_grams": self._delta_grams,
-                "min_samples": self._min_samples,
-                "arm_delay_s": self._arm_delay_s,
-                "ack_grace_s": self._ack_grace_s,
-                "operation_context": (
-                    self._context_provider() if self._context_provider is not None else {}
-                ),
-                "sample_count": len(self._samples),
-                "samples": [sample._asdict() for sample in self._samples],
-            }
-            path.write_text(json.dumps(payload, indent=2))
+    def _build_record(
+        self, trip: dict[str, Any]
+    ) -> tuple[str, tuple[Path, dict[str, Any]]]:
+        """Name the trip record and queue its samples for writing.
 
-            return str(path)
+        Only the name is decided here. Serialising and writing hundreds of samples
+        has to stay off the trip path, because the drive is stopped by the motor
+        monitor loop, which cannot run while this task holds the event loop.
+        """
+        now = datetime.now(timezone.utc)
+        filename = (
+            f"{now.strftime('%Y%m%dT%H%M%S.%fZ')}-{self._axis_name}-weight-change.json"
+        )
+        path = self._record_dir / filename
+        payload = {
+            "created_at": now.isoformat(),
+            "source": WEIGHT_CHANGE_SOURCE,
+            "trip": trip,
+            "threshold_grams": self._delta_grams,
+            "min_samples": self._min_samples,
+            "arm_delay_s": self._arm_delay_s,
+            "ack_grace_s": self._ack_grace_s,
+            "operation_context": (
+                self._context_provider() if self._context_provider is not None else {}
+            ),
+            "sample_count": len(self._samples),
+            "samples": [sample._asdict() for sample in self._samples],
+        }
+
+        return str(path), (path, payload)
+
+    def flush_record(self) -> Optional[str]:
+        """Write the queued trip record, from a worker thread when the loop can spare one."""
+        with self._record_lock:
+            # Claim it here so a second caller, the stop path racing a write
+            # already in flight, cannot write the same record twice.
+            pending = self._pending_record
+            self._pending_record = None
+
+        if pending is None:
+            return self._record_path
+
+        path, payload = pending
+
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, indent=2))
         except Exception as exc:  # pragma: no cover - filesystem dependent
+            self._record_path = None
             logger.warning(
                 "Failed to write weight change record",
                 extra={"error": str(exc), "axis": self._axis_name},
             )
 
             return None
+
+        logger.info(
+            "Weight change record written",
+            extra={
+                "record_path": str(path),
+                "sample_count": payload["sample_count"],
+                "delta_grams": payload["trip"].get("delta_grams"),
+            },
+        )
+
+        return str(path)
