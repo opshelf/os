@@ -35,3 +35,18 @@ def test_get_device_id_falls_back_to_hostname(monkeypatch) -> None:
 	monkeypatch.setattr(device.socket, "gethostname", lambda: "LB2-3")
 
 	assert device.get_device_id() == "lb2-3"
+
+
+def test_get_device_alias_reads_alias_file(tmp_path: pathlib.Path, monkeypatch) -> None:
+	alias_path = tmp_path / "device-alias"
+	alias_path.write_text("lb4a-3\n", encoding="utf-8")
+
+	monkeypatch.setattr(device, "DEVICE_ALIAS_PATH", alias_path)
+
+	assert device.get_device_alias() == "lb4a-3"
+
+
+def test_get_device_alias_is_empty_without_file(monkeypatch) -> None:
+	monkeypatch.setattr(device, "DEVICE_ALIAS_PATH", pathlib.Path("/missing-device-alias"))
+
+	assert device.get_device_alias() == ""
