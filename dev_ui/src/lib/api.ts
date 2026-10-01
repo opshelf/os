@@ -59,6 +59,7 @@ export type ApiErrorDetail = {
 	code?: string;
 	needs_home?: boolean;
 	needs_home_axes?: string[];
+	active_sources?: string[];
 	reason?: string;
 	warnings?: string[];
 	correlation_id?: string;

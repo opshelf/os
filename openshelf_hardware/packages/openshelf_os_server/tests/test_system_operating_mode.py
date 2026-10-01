@@ -365,3 +365,54 @@ class TestHealthEndpoint:
 		body = response.json()
 		assert body["status"] == "ok"
 		assert body["mode"] == "production"
+
+
+class TestSystemInfoEndpoint:
+	@pytest.fixture
+	async def client(self, seeded_db, auth_headers) -> httpx.AsyncClient:
+		from httpx import AsyncClient, ASGITransport
+		from openshelf_os_server.main import app
+
+		transport = ASGITransport(app=app)
+		async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True, headers=auth_headers) as ac:
+			yield ac
+
+	@pytest.mark.anyio
+	async def test_system_info_reports_device_alias(self, client: httpx.AsyncClient) -> None:
+		with patch("openshelf_os_server.main.get_device_alias", return_value="lb4a-3"):
+			response = await client.get("/api/system/info")
+
+		assert response.status_code == 200
+		assert response.json()["device_alias"] == "lb4a-3"
+
+	@pytest.mark.anyio
+	async def test_system_info_alias_is_null_without_alias(self, client: httpx.AsyncClient) -> None:
+		with patch("openshelf_os_server.main.get_device_alias", return_value=""):
+			response = await client.get("/api/system/info")
+
+		assert response.status_code == 200
+		assert response.json()["device_alias"] is None
+
+	@pytest.mark.anyio
+	async def test_system_info_reports_release_identity(self, client: httpx.AsyncClient) -> None:
+		with patch("openshelf_os_server.main.get_release_sha", return_value="7f3a2b1c"), patch(
+			"openshelf_os_server.main.get_release_branch", return_value="main"
+		):
+			response = await client.get("/api/system/info")
+
+		assert response.status_code == 200
+		body = response.json()
+		assert body["release_sha"] == "7f3a2b1c"
+		assert body["release_branch"] == "main"
+
+	@pytest.mark.anyio
+	async def test_system_info_release_is_null_without_file(self, client: httpx.AsyncClient) -> None:
+		with patch("openshelf_os_server.main.get_release_sha", return_value=""), patch(
+			"openshelf_os_server.main.get_release_branch", return_value=""
+		):
+			response = await client.get("/api/system/info")
+
+		assert response.status_code == 200
+		body = response.json()
+		assert body["release_sha"] is None
+		assert body["release_branch"] is None

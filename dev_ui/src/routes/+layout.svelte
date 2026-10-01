@@ -17,6 +17,7 @@
 	} from '$lib';
 	import { devicePath, stripDeviceId } from '$lib/nav';
 	import NeedsHomeAlert from '$lib/components/NeedsHomeAlert.svelte';
+	import SafetyAckAlert from '$lib/components/SafetyAckAlert.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
 	import '../app.css';
 
@@ -188,6 +189,7 @@
 </main>
 
 <NeedsHomeAlert />
+<SafetyAckAlert />
 
 {#if apiState === 'down'}
 	<div class="connection-overlay">
