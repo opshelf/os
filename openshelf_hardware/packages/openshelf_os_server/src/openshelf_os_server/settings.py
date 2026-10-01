@@ -11,6 +11,9 @@ from pydantic import BaseModel
 
 from openshelf_os.config.schema import CURRENT_SCHEMA_VERSION
 
+from openshelf_os.config.exceptions import ConfigError
+from openshelf_os.config_migrations.apply import migrate_config_file
+
 from openshelf_os.common import (
     RootConfig,
     StorageSettings,
@@ -262,6 +265,22 @@ def _migrate_legacy_settings(settings_path: Path, config_path: Path) -> None:
     )
 
 
+def _auto_migrate_config(path: Path) -> None:
+    """Migrate the active config file in place before first use; startup fails loud otherwise."""
+    try:
+        changed, changes, backup = migrate_config_file(path)
+    except (OSError, ValueError) as exc:
+        logger.error("Config auto-migration failed: %s", exc)
+        raise ConfigError(str(exc)) from None
+    if changed:
+        logger.info(
+            "Auto-migrated config %s (%s); rollback backup at %s",
+            path,
+            "; ".join(changes),
+            backup,
+        )
+
+
 def get_root_config() -> RootConfig:
     global _cached_config, _cached_config_path
 
@@ -294,6 +313,7 @@ def get_root_config() -> RootConfig:
         legacy_data = _load_legacy_settings(found_path)
         data = _build_minimal_config(legacy_data)
     else:
+        _auto_migrate_config(found_path)
         with open(found_path, "r") as f:
             data = json.load(f)
 
