@@ -602,7 +602,8 @@ export interface LaserAutoCalibrationCell {
 }
 
 export interface LaserAutoCalibrationAngleResult {
-	side: StorageModuleSide;
+		// The side arrives in the device vocabulary; compare via sideIndex().
+		side: string;
 	alpha_deg: number;
 	sample_count: number;
 	capture_y_mm: number;
@@ -627,7 +628,8 @@ export interface LaserAutoCalibrationReferenceOffsetSample {
 }
 
 export interface LaserAutoCalibrationReferenceOffset {
-	side: StorageModuleSide;
+		// The side arrives in the device vocabulary; compare via sideIndex().
+		side: string;
 	offset_x_mm: number;
 	offset_y_mm: number;
 	spread_x_mm: number;
@@ -655,7 +657,8 @@ export interface LaserAutoCalibrationZStallSample {
 }
 
 export interface LaserAutoCalibrationZStallResult {
-	side: StorageModuleSide;
+		// The side arrives in the device vocabulary; compare via sideIndex().
+		side: string;
 	intercept_mm: number;
 	slope_per_mm: number;
 	slope_source: string;
