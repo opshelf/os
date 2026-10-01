@@ -33,7 +33,7 @@ def _bin_entry(rows: int | None, columns: int | None) -> StorageBinSettings:
     )
     return StorageBinSettings(
         barcode=BARCODE,
-        home_location=StorageBinLocationSettings(side="left_module", shelf_idx=0, cell_idx=1),
+        home_location=StorageBinLocationSettings(side="front_module", shelf_idx=0, cell_idx=1),
         inner_dimensions=StorageBinDimensionsSettings(width=200.0, height=50.0, length=300.0),
         max_items=(rows or 1) * (columns or 1),
         compartment_layout=layout,
@@ -61,7 +61,7 @@ async def test_tray_layout_updates_config(client: AsyncClient, monkeypatch: pyte
 
     response = await client.put(
         "/api/storage/bins/tray-layout",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
         json={"rows": 4, "columns": 5},
     )
 
@@ -80,7 +80,7 @@ async def test_tray_layout_missing_cell(client: AsyncClient, monkeypatch: pytest
 
     response = await client.put(
         "/api/storage/bins/tray-layout",
-        params={"side": "left_module", "shelf_idx": 7, "cell_idx": 0},
+        params={"side": "front_module", "shelf_idx": 7, "cell_idx": 0},
         json={"rows": 2, "columns": 2},
     )
 
@@ -96,7 +96,7 @@ async def test_tray_layout_refuses_dirty_tray(client: AsyncClient, monkeypatch: 
         session.add(
             StorageBin(
                 barcode=BARCODE,
-                side="left_module",
+                side="front_module",
                 shelf_idx=0,
                 cell_idx=1,
                 inner_dimensions={"width": 200.0, "height": 50.0, "length": 300.0},
@@ -109,7 +109,7 @@ async def test_tray_layout_refuses_dirty_tray(client: AsyncClient, monkeypatch: 
 
     response = await client.put(
         "/api/storage/bins/tray-layout",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
         json={"rows": 4, "columns": 4},
     )
 
@@ -123,7 +123,7 @@ async def test_tray_layout_rejects_out_of_range(client: AsyncClient, monkeypatch
 
     response = await client.put(
         "/api/storage/bins/tray-layout",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
         json={"rows": 0, "columns": 2},
     )
 
@@ -142,7 +142,7 @@ async def test_tray_layout_noop_when_unchanged(client: AsyncClient, monkeypatch:
 
     response = await client.put(
         "/api/storage/bins/tray-layout",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
         json={"rows": 2, "columns": 3},
     )
 
@@ -153,7 +153,7 @@ async def test_tray_layout_noop_when_unchanged(client: AsyncClient, monkeypatch:
 
 def build_grid() -> StorageGrid:
     return StorageGrid(
-        left_module=[
+        front_module=[
             Shelf(
                 shelf_idx=0,
                 shelf_width=480.0,
@@ -176,7 +176,7 @@ def build_grid() -> StorageGrid:
                 ],
             )
         ],
-        right_module=[],
+        back_module=[],
     )
 
 
@@ -197,7 +197,7 @@ async def test_assign_tray_creates_config_bin(client: AsyncClient, monkeypatch: 
 
     response = await client.post(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
         json={"barcode": "223456789012", "rows": 3, "columns": 4},
     )
 
@@ -206,7 +206,7 @@ async def test_assign_tray_creates_config_bin(client: AsyncClient, monkeypatch: 
     entry = saved["config"].storage.bins[0]
     assert entry.barcode == "223456789012"
     assert (entry.home_location.side, entry.home_location.shelf_idx, entry.home_location.cell_idx) == (
-        "left_module", 0, 0
+        "front_module", 0, 0
     )
     assert entry.compartment_layout is not None
     assert (entry.compartment_layout.rows, entry.compartment_layout.columns) == (3, 4)
@@ -223,7 +223,7 @@ async def test_assign_tray_missing_cell(client: AsyncClient, monkeypatch: pytest
 
     response = await client.post(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 7, "cell_idx": 0},
+        params={"side": "front_module", "shelf_idx": 7, "cell_idx": 0},
         json={"barcode": "223456789012", "rows": 2, "columns": 2},
     )
 
@@ -232,13 +232,13 @@ async def test_assign_tray_missing_cell(client: AsyncClient, monkeypatch: pytest
 
 @pytest.mark.anyio
 async def test_assign_tray_already_home(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    _config_with_bins(monkeypatch, [_bin_entry(2, 3)])  # already homed at left/0/1
+    _config_with_bins(monkeypatch, [_bin_entry(2, 3)])  # already homed at front/0/1
     _patch_grid(monkeypatch, build_grid())
     monkeypatch.setattr(storage_router, "save_root_config", lambda config: None)
 
     response = await client.post(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
         json={"barcode": "223456789012", "rows": 2, "columns": 2},
     )
 
@@ -253,7 +253,7 @@ async def test_assign_tray_barcode_reserved(client: AsyncClient, monkeypatch: py
 
     response = await client.post(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
         json={"barcode": BARCODE, "rows": 2, "columns": 2},
     )
 
@@ -278,7 +278,7 @@ async def test_assign_tray_barcode_is_item(client: AsyncClient, monkeypatch: pyt
 
     response = await client.post(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
         json={"barcode": BARCODE, "rows": 2, "columns": 2},
     )
 
@@ -293,7 +293,7 @@ async def test_unassign_tray_removes_config_bin(client: AsyncClient, monkeypatch
 
     response = await client.delete(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
     )
 
     assert response.status_code == 200, response.text
@@ -308,7 +308,7 @@ async def test_unassign_tray_missing(client: AsyncClient, monkeypatch: pytest.Mo
 
     response = await client.delete(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
     )
 
     assert response.status_code == 404
@@ -322,7 +322,7 @@ async def test_unassign_tray_refuses_members(client: AsyncClient, monkeypatch: p
     async with AsyncSessionLocal() as session:
         bin_row = StorageBin(
             barcode=BARCODE,
-            side="left_module",
+            side="front_module",
             shelf_idx=0,
             cell_idx=1,
             inner_dimensions={"width": 200.0, "height": 50.0, "length": 300.0},
@@ -343,7 +343,7 @@ async def test_unassign_tray_refuses_members(client: AsyncClient, monkeypatch: p
 
     response = await client.delete(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
     )
 
     assert response.status_code == 409
@@ -359,7 +359,7 @@ async def test_assign_tray_reuses_deactivated_row(client: AsyncClient, monkeypat
         session.add(
             StorageBin(
                 barcode="999012345678",
-                side="left_module",
+                side="front_module",
                 shelf_idx=0,
                 cell_idx=0,
                 inner_dimensions={"width": 55.0, "height": 90.0, "length": 400.0},
@@ -373,7 +373,7 @@ async def test_assign_tray_reuses_deactivated_row(client: AsyncClient, monkeypat
 
     response = await client.post(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
         json={"barcode": "888012345671", "rows": 4, "columns": 2},
     )
 
@@ -383,7 +383,7 @@ async def test_assign_tray_reuses_deactivated_row(client: AsyncClient, monkeypat
         row = (
             await session.execute(
                 select(StorageBin).where(
-                    StorageBin.side == "left_module",
+                    StorageBin.side == "front_module",
                     StorageBin.shelf_idx == 0,
                     StorageBin.cell_idx == 0,
                 )
@@ -397,7 +397,7 @@ async def test_assign_tray_reuses_deactivated_row(client: AsyncClient, monkeypat
 def _tray_entry(barcode: str, cell_idx: int) -> StorageBinSettings:
     return StorageBinSettings(
         barcode=barcode,
-        home_location=StorageBinLocationSettings(side="left_module", shelf_idx=0, cell_idx=cell_idx),
+        home_location=StorageBinLocationSettings(side="front_module", shelf_idx=0, cell_idx=cell_idx),
         inner_dimensions=StorageBinDimensionsSettings(width=55.0, height=90.0, length=400.0),
         max_items=6,
         compartment_layout=CompartmentLayoutSettings(rows=2, columns=3),
@@ -425,18 +425,18 @@ async def test_assign_tray_barcode_held_by_another_removed_tray(client: AsyncCli
 
     response = await client.delete(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
     )
     assert response.status_code == 200, response.text
     response = await client.delete(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
     )
     assert response.status_code == 200, response.text
 
     response = await client.post(
         "/api/storage/bins/tray",
-        params={"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
         json={"barcode": "111111111111", "rows": 2, "columns": 3},
     )
 

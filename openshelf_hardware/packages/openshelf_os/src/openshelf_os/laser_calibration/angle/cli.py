@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
 	subparsers = parser.add_subparsers(dest='command', required=True)
 
 	stage_stall_parser = subparsers.add_parser('stage-stall')
-	stage_stall_parser.add_argument('--module', choices=['left', 'right'], required=True)
+	stage_stall_parser.add_argument('--module', choices=['front', 'back'], required=True)
 	stage_stall_parser.add_argument('--y-range', nargs=2, metavar=('MIN', 'MAX'), type=float, required=True)
 	stage_stall_parser.add_argument('--scout-x-mm', type=float)
 	stage_stall_parser.add_argument('--probe-x-mm', type=float)

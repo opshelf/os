@@ -348,7 +348,7 @@ def derive_reference_offsets(
 		# With nothing configured there is no prediction to make, and a proximity match at a
 		# ~105mm pitch silently lands on a neighbouring opening: one wrong match re-frames and
 		# persists every cell on the module.
-		side_name = "left" if side == StorageModuleSide.LEFT else "right"
+		side_name = "front" if side == StorageModuleSide.FRONT else "back"
 		raise ValueError(
 			f"reference offsets on the {side.value}: no "
 			f"robot.grid.scan.{side_name}_gripper_xy_correction_mm is configured, so there is nothing to "

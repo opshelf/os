@@ -8,6 +8,7 @@
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
 	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
 	import { devicePath } from '$lib/nav';
+	import { sideIndex } from '$lib/side';
 
 	type CalibrationView = 'layout' | 'cell_auto' | 'cell_manual' | 'stage' | 'io' | 'rotation' | 'test';
 
@@ -15,8 +16,10 @@
 
 	const sideParam = page.url.searchParams.get('side');
 
+	// Accepts any side token the device vocabulary may use; the child
+	// components normalize it to their canonical state.
 	const initialSide =
-		sideParam === 'left_module' || sideParam === 'right_module' ? sideParam : undefined;
+		sideParam !== null && sideIndex(sideParam) !== null ? sideParam : undefined;
 
 	const initialShelf = page.url.searchParams.has('shelf')
 		? parseInt(page.url.searchParams.get('shelf')!, 10)

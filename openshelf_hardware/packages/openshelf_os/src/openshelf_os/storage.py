@@ -20,10 +20,15 @@ DEFAULT_SHELF_WIDTH_MM = 480.0
 DEFAULT_DIVIDER_WIDTH_MM = 12.0
 DEFAULT_CELL_LENGTH_MM = 400.0
 
+# One-time on-disk migration of the storage files written before the front/back
+# cutover, which keyed their shelves under left_module/right_module.
+SIDE_RENAME_BACKUP_SUFFIX = ".side-rename.bak"
+_SIDE_RENAMES = (("left_module", "front_module"), ("right_module", "back_module"))
+
 
 class StorageModuleSide(str, Enum):
-	RIGHT = "right_module"
-	LEFT = "left_module"
+	FRONT = "front_module"
+	BACK = "back_module"
 
 
 @dataclass
@@ -143,8 +148,8 @@ class CellLocationData(BaseModel):
 
 
 class StorageGrid(BaseModel):
-	left_module: List[Shelf] = Field(default_factory=list)
-	right_module: List[Shelf] = Field(default_factory=list)
+	front_module: List[Shelf] = Field(default_factory=list)
+	back_module: List[Shelf] = Field(default_factory=list)
 	filename: str = ""
 
 	@staticmethod
@@ -154,7 +159,7 @@ class StorageGrid(BaseModel):
 
 		normalized = dict(data)
 
-		for side_key in ("left_module", "right_module"):
+		for side_key in ("front_module", "back_module"):
 			shelves_raw = normalized.get(side_key)
 
 			if isinstance(shelves_raw, list) is False:
@@ -210,10 +215,61 @@ class StorageGrid(BaseModel):
 
 	@model_validator(mode="after")
 	def sort_shelves(self) -> Self:
-		self.left_module.sort(key=lambda shelf: shelf.shelf_idx)
-		self.right_module.sort(key=lambda shelf: shelf.shelf_idx)
+		self.front_module.sort(key=lambda shelf: shelf.shelf_idx)
+		self.back_module.sort(key=lambda shelf: shelf.shelf_idx)
 
 		return self
+
+	@classmethod
+	def _migrate_side_rename(cls, target_path: str, raw_content: str, data: object) -> object:
+		"""Rename the pre-cutover side keys in a storage file, in place and idempotently.
+
+		Files written before the front/back cutover keep their shelves under the
+		left_module/right_module keys. Rename them in the loaded data and rewrite the
+		file with an exclusive-created backup of the original bytes, so a device
+		picks the new keys up on its next load and the old file is recoverable.
+		Files that already carry the new keys are left untouched.
+		"""
+		if isinstance(data, dict) is False:
+			return data
+		if "front_module" in data or "back_module" in data:
+			return data
+		if all(key not in data for key, _ in _SIDE_RENAMES):
+			return data
+
+		migrated = dict(data)
+		for old, new in _SIDE_RENAMES:
+			if old in migrated:
+				migrated[new] = migrated.pop(old)
+
+		cls._write_with_side_rename_backup(target_path, raw_content, migrated)
+		return migrated
+
+	@classmethod
+	def _write_with_side_rename_backup(cls, target_path: str, raw_content: str, data: Mapping) -> None:
+		backup_path = target_path + SIDE_RENAME_BACKUP_SUFFIX
+
+		try:
+			# Exclusive creation prevents a later invocation from overwriting the rollback copy.
+			with open(backup_path, "xb") as stream:
+				stream.write(raw_content.encode("utf-8"))
+				stream.flush()
+				os.fsync(stream.fileno())
+		except FileExistsError:
+			# The backup is left over from an interrupted migration: trust it only when it
+			# still holds the bytes this load read, otherwise the file changed on disk.
+			with open(backup_path, "rb") as stream:
+				if stream.read() != raw_content.encode("utf-8"):
+					raise StorageValidationError(
+						f"{target_path}: {SIDE_RENAME_BACKUP_SUFFIX} does not match the current file; reconcile before migrating"
+					)
+
+		write_json_file_with_backup(
+			target_path,
+			data,
+			backup_group_name="storage",
+			backup_mode=infer_mode_from_path(target_path).value,
+		)
 
 	@classmethod
 	def load_from_file(cls, path: str) -> "StorageGrid":
@@ -229,6 +285,8 @@ class StorageGrid(BaseModel):
 			data = json.loads(raw_content)
 		except json.JSONDecodeError as e:
 			raise StorageValidationError(f"invalid json in storage file: {e}") from e
+
+		data = cls._migrate_side_rename(target_path, raw_content, data)
 
 		try:
 			grid = cls.model_validate(data)
@@ -254,15 +312,15 @@ class StorageGrid(BaseModel):
 		self.save_to_file(self.filename, version_id=version_id)
 
 	def get_side(self, side: StorageModuleSide) -> List[Shelf]:
-		if side == StorageModuleSide.RIGHT:
-			return self.right_module
-		return self.left_module
+		if side == StorageModuleSide.BACK:
+			return self.back_module
+		return self.front_module
 
 	def _set_side(self, side: StorageModuleSide, shelves: List[Shelf]) -> None:
-		if side == StorageModuleSide.RIGHT:
-			self.right_module = shelves
+		if side == StorageModuleSide.BACK:
+			self.back_module = shelves
 		else:
-			self.left_module = shelves
+			self.front_module = shelves
 
 	def remove_shelf(self, side: StorageModuleSide, shelf_idx: int) -> None:
 		self.get_shelf(side, shelf_idx)
@@ -318,7 +376,7 @@ class StorageGrid(BaseModel):
 		if len(shelves) > 0:
 			return shelves[-1]
 
-		other_side = StorageModuleSide.RIGHT if side == StorageModuleSide.LEFT else StorageModuleSide.LEFT
+		other_side = StorageModuleSide.BACK if side == StorageModuleSide.FRONT else StorageModuleSide.FRONT
 		other_shelves = self.get_side(other_side)
 
 		if len(other_shelves) > 0:
@@ -339,7 +397,7 @@ class StorageGrid(BaseModel):
 			if len(candidate_shelf.cells) > 0:
 				return candidate_shelf.cells[-1]
 
-		other_side = StorageModuleSide.RIGHT if side == StorageModuleSide.LEFT else StorageModuleSide.LEFT
+		other_side = StorageModuleSide.BACK if side == StorageModuleSide.FRONT else StorageModuleSide.FRONT
 
 		for candidate_shelf in reversed(self.get_side(other_side)):
 			if len(candidate_shelf.cells) > 0:
@@ -415,36 +473,36 @@ class StorageGrid(BaseModel):
 		self.get_cell(location).clear()
 
 	def clear_all_items(self) -> None:
-		for shelf in self.left_module:
+		for shelf in self.front_module:
 			for cell in shelf.cells:
 				cell.clear()
 
-		for shelf in self.right_module:
+		for shelf in self.back_module:
 			for cell in shelf.cells:
 				cell.clear()
 
 	def get_all_items(self) -> List[StorageModuleCellLocation]:
 		items: List[StorageModuleCellLocation] = []
 
-		for shelf in self.left_module:
+		for shelf in self.front_module:
 			for cell in shelf.cells:
 				if cell.status == CellStatus.OCCUPIED:
 					items.append(
 						StorageModuleCellLocation(
 							shelf_idx=shelf.shelf_idx,
 							cell_idx=cell.cell_idx,
-							side=StorageModuleSide.LEFT,
+							side=StorageModuleSide.FRONT,
 						)
 					)
 
-		for shelf in self.right_module:
+		for shelf in self.back_module:
 			for cell in shelf.cells:
 				if cell.status == CellStatus.OCCUPIED:
 					items.append(
 						StorageModuleCellLocation(
 							shelf_idx=shelf.shelf_idx,
 							cell_idx=cell.cell_idx,
-							side=StorageModuleSide.RIGHT,
+							side=StorageModuleSide.BACK,
 						)
 					)
 
@@ -455,7 +513,7 @@ class StorageGrid(BaseModel):
 	def get_all_cell_data(self) -> List[CellLocationData]:
 		items: List[CellLocationData] = []
 
-		for shelf in self.left_module:
+		for shelf in self.front_module:
 			for cell in shelf.cells:
 				if cell.status == CellStatus.OCCUPIED:
 					items.append(
@@ -464,12 +522,12 @@ class StorageGrid(BaseModel):
 							location=StorageModuleCellLocation(
 								shelf_idx=shelf.shelf_idx,
 								cell_idx=cell.cell_idx,
-								side=StorageModuleSide.LEFT,
+								side=StorageModuleSide.FRONT,
 							),
 						)
 					)
 
-		for shelf in self.right_module:
+		for shelf in self.back_module:
 			for cell in shelf.cells:
 				if cell.status == CellStatus.OCCUPIED:
 					items.append(
@@ -478,7 +536,7 @@ class StorageGrid(BaseModel):
 							location=StorageModuleCellLocation(
 								shelf_idx=shelf.shelf_idx,
 								cell_idx=cell.cell_idx,
-								side=StorageModuleSide.RIGHT,
+								side=StorageModuleSide.BACK,
 							),
 						)
 					)
@@ -493,9 +551,9 @@ class StorageGrid(BaseModel):
 		possible_slots: List[Tuple[StorageModuleCellLocation, Tuple[float, float, float, float, float]]] = []
 		excluded_locations = excluded_locations or set()
 
-		for shelf in self.left_module:
+		for shelf in self.front_module:
 			for cell in shelf.cells:
-				if (StorageModuleSide.LEFT.value, shelf.shelf_idx, cell.cell_idx) in excluded_locations:
+				if (StorageModuleSide.FRONT.value, shelf.shelf_idx, cell.cell_idx) in excluded_locations:
 					continue
 				if cell.status == CellStatus.AVAILABLE and self.cell_fits_item(cell, item):
 					unused_volume = (
@@ -514,7 +572,7 @@ class StorageGrid(BaseModel):
 					possible_slots.append(
 						(
 							StorageModuleCellLocation(
-								side=StorageModuleSide.LEFT,
+								side=StorageModuleSide.FRONT,
 								shelf_idx=shelf.shelf_idx,
 								cell_idx=cell.cell_idx,
 							),
@@ -522,9 +580,9 @@ class StorageGrid(BaseModel):
 						)
 					)
 
-		for shelf in self.right_module:
+		for shelf in self.back_module:
 			for cell in shelf.cells:
-				if (StorageModuleSide.RIGHT.value, shelf.shelf_idx, cell.cell_idx) in excluded_locations:
+				if (StorageModuleSide.BACK.value, shelf.shelf_idx, cell.cell_idx) in excluded_locations:
 					continue
 				if cell.status == CellStatus.AVAILABLE and self.cell_fits_item(cell, item):
 					unused_volume = (
@@ -543,7 +601,7 @@ class StorageGrid(BaseModel):
 					possible_slots.append(
 						(
 							StorageModuleCellLocation(
-								side=StorageModuleSide.RIGHT,
+								side=StorageModuleSide.BACK,
 								shelf_idx=shelf.shelf_idx,
 								cell_idx=cell.cell_idx,
 							),

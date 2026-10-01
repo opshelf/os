@@ -34,7 +34,7 @@ def statements() -> Iterator[List[str]]:
 def _tray(cell_idx: int, status: str = "at_home", gross_weight: float | None = None) -> StorageBin:
     return StorageBin(
         barcode=f"90000000{cell_idx:04d}",
-        side="left_module",
+        side="front_module",
         shelf_idx=0,
         cell_idx=cell_idx,
         inner_dimensions={"width": 200.0, "height": 100.0, "length": 160.0},

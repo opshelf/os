@@ -156,9 +156,9 @@ def _build_snapshot(state: str = "running") -> LaserAutoCalibrationSnapshot:
     return LaserAutoCalibrationSnapshot(
         state=state,
         session_id="laser-session",
-        run_id="left-run",
+        run_id="front-run",
         requested_scope=LaserAutoCalibrationScope(),
-        current_side="left_module",
+        current_side="front_module",
         current_stage="shelf-scout",
         bounds=ScanBounds(x_min=0.0, x_max=950.0, y_min=0.0, y_max=1250.0),
         started_at="2026-01-01T00:00:00+00:00",
@@ -166,7 +166,7 @@ def _build_snapshot(state: str = "running") -> LaserAutoCalibrationSnapshot:
         scouted_shelf_count=2,
         candidate_count=3,
         detected_cell_count=0,
-        stage_detail={"side": "left_module", "phase": "shelf-scout"},
+        stage_detail={"side": "front_module", "phase": "shelf-scout"},
     )
 
 
@@ -187,7 +187,7 @@ def test_build_stage_stall_rotation_positions_uses_wide_coarse_defaults() -> Non
 
     rotation_positions = _build_stage_stall_rotation_positions(
         scan_config,
-        StorageModuleSide.RIGHT,
+        StorageModuleSide.BACK,
         0.0,
         360.0,
     )
@@ -203,8 +203,8 @@ def test_build_stage_stall_rotation_positions_uses_wide_coarse_defaults() -> Non
 def test_build_stage_stall_rotation_center_uses_configured_side_angles() -> None:
     parameters = SimpleNamespace(ROTATION_FRONT=2.7, ROTATION_BACK=183.0)
 
-    assert _build_stage_stall_rotation_center_deg(parameters, StorageModuleSide.RIGHT) == pytest.approx(183.0)
-    assert _build_stage_stall_rotation_center_deg(parameters, StorageModuleSide.LEFT) == pytest.approx(2.7)
+    assert _build_stage_stall_rotation_center_deg(parameters, StorageModuleSide.BACK) == pytest.approx(183.0)
+    assert _build_stage_stall_rotation_center_deg(parameters, StorageModuleSide.FRONT) == pytest.approx(2.7)
 
 
 def test_build_stage_stall_fine_rotation_positions_centers_on_coarse_best() -> None:
@@ -320,29 +320,29 @@ def test_build_angle_x_positions_runs_from_high_x_to_low_x() -> None:
 def test_build_angle_rotation_center_deg_uses_configured_front_for_left() -> None:
     parameters = SimpleNamespace(ROTATION_FRONT=184.5, ROTATION_BACK=4.5)
 
-    assert _build_angle_rotation_center_deg(parameters, StorageModuleSide.LEFT) == 184.5
+    assert _build_angle_rotation_center_deg(parameters, StorageModuleSide.FRONT) == 184.5
 
 
 def test_build_angle_rotation_center_deg_uses_configured_back_for_right() -> None:
     parameters = SimpleNamespace(ROTATION_FRONT=184.5, ROTATION_BACK=4.5)
 
-    assert _build_angle_rotation_center_deg(parameters, StorageModuleSide.RIGHT) == 4.5
+    assert _build_angle_rotation_center_deg(parameters, StorageModuleSide.BACK) == 4.5
 
 
 def test_build_bounds_for_side_clamps_x_min_away_from_zero() -> None:
     scan_config = SimpleNamespace(
-        left_bounds_x_min_mm=0.0,
-        left_bounds_x_max_mm=950.0,
-        left_bounds_y_min_mm=0.0,
-        left_bounds_y_max_mm=1250.0,
-        right_bounds_x_min_mm=0.0,
-        right_bounds_x_max_mm=950.0,
-        right_bounds_y_min_mm=0.0,
-        right_bounds_y_max_mm=1250.0,
+        front_bounds_x_min_mm=0.0,
+        front_bounds_x_max_mm=950.0,
+        front_bounds_y_min_mm=0.0,
+        front_bounds_y_max_mm=1250.0,
+        back_bounds_x_min_mm=0.0,
+        back_bounds_x_max_mm=950.0,
+        back_bounds_y_min_mm=0.0,
+        back_bounds_y_max_mm=1250.0,
     )
 
-    left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.LEFT)
-    right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.RIGHT)
+    left_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.FRONT)
+    right_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.BACK)
 
     assert left_bounds.x_min == pytest.approx(5.0)
     assert right_bounds.x_min == pytest.approx(5.0)
@@ -352,14 +352,14 @@ def _build_reference_bounds_scan_config(**overrides) -> SimpleNamespace:
     values = {
         "laser_offset_x_mm": 50.0,
         "laser_offset_y_mm": 0.0,
-        "left_bounds_x_min_mm": 0.0,
-        "left_bounds_x_max_mm": 950.0,
-        "left_bounds_y_min_mm": 0.0,
-        "left_bounds_y_max_mm": 1250.0,
-        "right_bounds_x_min_mm": 0.0,
-        "right_bounds_x_max_mm": 950.0,
-        "right_bounds_y_min_mm": 0.0,
-        "right_bounds_y_max_mm": 1250.0,
+        "front_bounds_x_min_mm": 0.0,
+        "front_bounds_x_max_mm": 950.0,
+        "front_bounds_y_min_mm": 0.0,
+        "front_bounds_y_max_mm": 1250.0,
+        "back_bounds_x_min_mm": 0.0,
+        "back_bounds_x_max_mm": 950.0,
+        "back_bounds_y_min_mm": 0.0,
+        "back_bounds_y_max_mm": 1250.0,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -372,10 +372,10 @@ async def test_ensure_session_started_rejects_invalid_config_before_starting_bac
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
 
     with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
-        with pytest.raises(ValueError, match="left_gripper_xy_correction_mm must be configured"):
+        with pytest.raises(ValueError, match="front_gripper_xy_correction_mm must be configured"):
             await manager.ensure_session_started(
                 SimpleNamespace(),
-                LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+                LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.FRONT),
             )
 
     assert manager._task is None
@@ -388,7 +388,7 @@ async def test_datum_shelf_rescan_without_xy_offset_rejects_before_motion() -> N
     scan_config = _build_reference_bounds_scan_config()
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     grid = StorageGrid()
-    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
+    grid.front_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
     worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
 
     with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
@@ -398,7 +398,7 @@ async def test_datum_shelf_rescan_without_xy_offset_rejects_before_motion() -> N
                     worker,
                     LaserAutoCalibrationScope(
                         mode="shelf",
-                        side=StorageModuleSide.LEFT,
+                        side=StorageModuleSide.FRONT,
                         shelf_idx=0,
                     ),
                 )
@@ -413,7 +413,7 @@ def test_out_of_datum_shelf_rescan_needs_no_xy_offset() -> None:
     scan_config = _build_reference_bounds_scan_config()
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     grid = StorageGrid()
-    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
+    grid.front_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
     worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
 
     with patch(
@@ -423,7 +423,7 @@ def test_out_of_datum_shelf_rescan_needs_no_xy_offset() -> None:
         manager._validate_requested_scope_config(
             LaserAutoCalibrationScope(
                 mode="shelf",
-                side=StorageModuleSide.LEFT,
+                side=StorageModuleSide.FRONT,
                 shelf_idx=3,
             ),
             worker,
@@ -435,11 +435,11 @@ async def test_start_refuses_when_the_datum_cell_is_not_marked_manual() -> None:
     """A hand-calibrated cell elsewhere on the side is not the frame the run needs."""
     manager = LaserAutoCalibrationManager()
     scan_config = _build_reference_bounds_scan_config(
-        left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+        front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     grid = StorageGrid()
-    grid.left_module = [
+    grid.front_module = [
         _manual_shelf(
             0,
             [
@@ -452,10 +452,10 @@ async def test_start_refuses_when_the_datum_cell_is_not_marked_manual() -> None:
 
     with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
         with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
-            with pytest.raises(ValueError, match="left module's bottom-left cell"):
+            with pytest.raises(ValueError, match="front module's bottom-left cell"):
                 await manager.ensure_session_started(
                     worker,
-                    LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+                    LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.FRONT),
                 )
 
     run_session_mock.assert_not_awaited()
@@ -467,11 +467,11 @@ async def test_narrow_rescan_still_needs_the_datum_on_its_side() -> None:
     """A manual cell on the scanned shelf does not stand in for the bottom-left datum."""
     manager = LaserAutoCalibrationManager()
     scan_config = _build_reference_bounds_scan_config(
-        left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+        front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     grid = StorageGrid()
-    grid.left_module = [
+    grid.front_module = [
         _manual_shelf(0, [_manual_cell(0, 354.0, 41.0)]),
         _manual_shelf(3, [_manual_cell(0, 354.0, 641.0, is_manual=True)]),
     ]
@@ -479,10 +479,10 @@ async def test_narrow_rescan_still_needs_the_datum_on_its_side() -> None:
 
     with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
         with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
-            with pytest.raises(ValueError, match="left module's bottom-left cell"):
+            with pytest.raises(ValueError, match="front module's bottom-left cell"):
                 await manager.ensure_session_started(
                     worker,
-                    LaserAutoCalibrationScope(mode="shelf", side=StorageModuleSide.LEFT, shelf_idx=3),
+                    LaserAutoCalibrationScope(mode="shelf", side=StorageModuleSide.FRONT, shelf_idx=3),
                 )
 
     run_session_mock.assert_not_awaited()
@@ -492,12 +492,12 @@ async def test_narrow_rescan_still_needs_the_datum_on_its_side() -> None:
 async def test_z_stall_anchor_flag_without_manual_cell_rejects_before_motion() -> None:
     manager = LaserAutoCalibrationManager()
     scan_config = _build_reference_bounds_scan_config(
-        left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+        front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
         z_stall_anchor_enabled=True,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     grid = StorageGrid()
-    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0)])]
+    grid.front_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0)])]
     worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
 
     with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
@@ -505,7 +505,7 @@ async def test_z_stall_anchor_flag_without_manual_cell_rejects_before_motion() -
             with pytest.raises(ValueError, match="marked manual"):
                 await manager.ensure_session_started(
                     worker,
-                    LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+                    LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.FRONT),
                 )
 
     run_session_mock.assert_not_awaited()
@@ -516,19 +516,19 @@ async def test_z_stall_anchor_flag_without_manual_cell_rejects_before_motion() -
 async def test_z_stall_anchor_flag_starts_when_a_manual_cell_is_in_scope() -> None:
     manager = LaserAutoCalibrationManager()
     scan_config = _build_reference_bounds_scan_config(
-        left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
+        front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.0, y_mm=1.0),
         z_stall_anchor_enabled=True,
     )
     config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=scan_config)))
     grid = StorageGrid()
-    grid.left_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
+    grid.front_module = [_manual_shelf(0, [_manual_cell(0, 354.0, 41.0, is_manual=True)])]
     worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
 
     with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
         with patch.object(manager, "_run_session", AsyncMock()) as run_session_mock:
             snapshot = await manager.ensure_session_started(
                 worker,
-                LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.LEFT),
+                LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.FRONT),
             )
 
     assert snapshot.state == "starting"
@@ -550,7 +550,7 @@ async def test_home_after_abort_homes_tool_and_door() -> None:
 
     await manager._home_after_abort(worker)
 
-    tool._mx.move_to_position.assert_awaited_once_with(angle_module.RIGHT_MODULE_ROTATION_SAFE_X_MM)
+    tool._mx.move_to_position.assert_awaited_once_with(angle_module.BACK_MODULE_ROTATION_SAFE_X_MM)
     tool.home.assert_awaited_once()
     io.home_door.assert_awaited_once()
     worker.clear_needs_home.assert_called_once()
@@ -654,7 +654,7 @@ async def test_scan_status_callback_does_not_overwrite_terminal_state(tmp_path: 
     manager = LaserAutoCalibrationManager()
     await manager._set_terminal_state("completed", None)
     callback = manager._build_scan_status_callback(
-        "left_module",
+        "front_module",
         SimpleNamespace(
             run_id="run-id",
             metadata_path=tmp_path / "metadata.json",
@@ -738,7 +738,7 @@ async def test_run_angle_calibration_uses_stage_stall_method_when_configured(mon
                         with patch.object(angle_module, 'finish_stage_stall_capture', AsyncMock()):
                             result = await manager._run_angle_calibration_for_side(
                                 worker,
-                                StorageModuleSide.LEFT,
+                                StorageModuleSide.FRONT,
                                 ScanBounds(x_min=5.0, x_max=950.0, y_min=1000.0, y_max=1210.0),
                             )
 
@@ -834,7 +834,7 @@ async def test_run_angle_calibration_validates_top_fine_angles_by_median(monkeyp
                             with patch.object(angle_module, 'write_stage_stall_output_document') as write_mock:
                                 result = await manager._run_angle_calibration_for_side(
                                     worker,
-                                    StorageModuleSide.RIGHT,
+                                    StorageModuleSide.BACK,
                                     ScanBounds(x_min=5.0, x_max=950.0, y_min=1000.0, y_max=1210.0),
                                 )
 
@@ -929,7 +929,7 @@ async def test_run_angle_calibration_retries_low_validation_contacts(monkeypatch
                             with patch.object(angle_module, 'write_stage_stall_output_document') as write_mock:
                                 result = await manager._run_angle_calibration_for_side(
                                     worker,
-                                    StorageModuleSide.RIGHT,
+                                    StorageModuleSide.BACK,
                                     ScanBounds(x_min=5.0, x_max=950.0, y_min=1000.0, y_max=1210.0),
                                 )
 
@@ -978,7 +978,7 @@ async def test_run_angle_calibration_skips_final_retract_when_cancelled() -> Non
             task = asyncio.create_task(
                 manager._run_angle_calibration_for_side(
                     worker,
-                    StorageModuleSide.LEFT,
+                    StorageModuleSide.FRONT,
                     ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                 )
             )
@@ -1032,7 +1032,7 @@ async def test_run_angle_calibration_raises_when_abort_requested_during_capture(
                     with pytest.raises(asyncio.CancelledError):
                         await manager._run_angle_calibration_for_side(
                             worker,
-                            StorageModuleSide.LEFT,
+                            StorageModuleSide.FRONT,
                             ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                         )
 
@@ -1044,14 +1044,14 @@ async def test_scan_status_callback_preserves_cancelling_snapshot() -> None:
     manager._snapshot = LaserAutoCalibrationSnapshot(
         state='running',
         session_id='laser-session',
-        current_side='left_module',
+        current_side='front_module',
         current_stage='cancelling',
         updated_at='2026-01-01T00:00:00+00:00',
     )
     manager._refresh_scan_side_state = AsyncMock()
     manager._update_snapshot = AsyncMock()
     callback = manager._build_scan_status_callback(
-        'left_module',
+        'front_module',
         SimpleNamespace(run_id='run-id'),
         ScanBounds(x_min=0.0, x_max=1.0, y_min=0.0, y_max=1.0),
     )
@@ -1069,7 +1069,7 @@ async def test_run_all_sides_processes_right_before_left() -> None:
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=tool))
     processed_sides: list[StorageModuleSide] = []
     left_angle_result = LaserAutoCalibrationAngleResult(
-        side='left_module',
+        side='front_module',
         alpha_deg=3.815,
         sample_count=45,
         capture_y_mm=1095.0,
@@ -1080,7 +1080,7 @@ async def test_run_all_sides_processes_right_before_left() -> None:
         updated_rotation_deg=3.815,
     )
     right_angle_result = LaserAutoCalibrationAngleResult(
-        side='right_module',
+        side='back_module',
         alpha_deg=11.25,
         sample_count=45,
         capture_y_mm=1140.0,
@@ -1107,7 +1107,7 @@ async def test_run_all_sides_processes_right_before_left() -> None:
                                 with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
                                     await manager._run_all_sides(worker)
 
-    assert processed_sides == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
+    assert processed_sides == [StorageModuleSide.BACK, StorageModuleSide.FRONT]
     assert run_angle_mock.await_count == 2
     assert apply_mock.await_count == 2
     assert stage_mock.await_count == 2
@@ -1115,20 +1115,20 @@ async def test_run_all_sides_processes_right_before_left() -> None:
     persist_mock.assert_awaited_once()
     assert probe_y_mock.await_count == 2
 
-    assert run_angle_mock.await_args_list[0].args[1] == StorageModuleSide.RIGHT
-    assert run_angle_mock.await_args_list[1].args[1] == StorageModuleSide.LEFT
-    assert stage_mock.await_args_list[0].args[1] == StorageModuleSide.RIGHT
-    assert stage_mock.await_args_list[1].args[1] == StorageModuleSide.LEFT
+    assert run_angle_mock.await_args_list[0].args[1] == StorageModuleSide.BACK
+    assert run_angle_mock.await_args_list[1].args[1] == StorageModuleSide.FRONT
+    assert stage_mock.await_args_list[0].args[1] == StorageModuleSide.BACK
+    assert stage_mock.await_args_list[1].args[1] == StorageModuleSide.FRONT
     assert stage_mock.await_args_list[0].kwargs['probe_y_mm'] == pytest.approx(1148.0)
     assert stage_mock.await_args_list[1].kwargs['probe_y_mm'] == pytest.approx(1120.0)
-    assert probe_y_mock.await_args_list[0].args[1] == StorageModuleSide.RIGHT
-    assert probe_y_mock.await_args_list[1].args[1] == StorageModuleSide.LEFT
+    assert probe_y_mock.await_args_list[0].args[1] == StorageModuleSide.BACK
+    assert probe_y_mock.await_args_list[1].args[1] == StorageModuleSide.FRONT
     assert probe_y_mock.await_args_list[0].kwargs['top_shelf_y_mm'] == pytest.approx(right_angle_result.capture_y_mm)
     assert probe_y_mock.await_args_list[1].kwargs['top_shelf_y_mm'] == pytest.approx(left_angle_result.capture_y_mm)
 
     persisted_results = persist_mock.await_args.args[1]
 
-    assert [result.side for result in persisted_results] == [StorageModuleSide.RIGHT, StorageModuleSide.LEFT]
+    assert [result.side for result in persisted_results] == [StorageModuleSide.BACK, StorageModuleSide.FRONT]
     assert persisted_results[0].angle_result.updated_rotation_deg == pytest.approx(191.25)
 
 
@@ -1159,7 +1159,7 @@ async def test_run_single_side_uses_angle_capture_y_for_stage_probe() -> None:
     manager = LaserAutoCalibrationManager()
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=SimpleNamespace()))
     angle_result = LaserAutoCalibrationAngleResult(
-        side='right_module',
+        side='back_module',
         alpha_deg=5.5,
         sample_count=45,
         capture_y_mm=1114.0,
@@ -1176,9 +1176,9 @@ async def test_run_single_side_uses_angle_capture_y_for_stage_probe() -> None:
                 with patch.object(manager, '_resolve_stage_extension_probe_y_mm', AsyncMock(return_value=1139.0)) as probe_y_mock:
                     with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock(return_value=37.0)):
                         with patch.object(manager, '_apply_stage_extension_calibration', AsyncMock()):
-                            with patch.object(manager, '_run_side', AsyncMock(return_value=SimpleNamespace(side=StorageModuleSide.RIGHT, angle_result=angle_result))):
+                            with patch.object(manager, '_run_side', AsyncMock(return_value=SimpleNamespace(side=StorageModuleSide.BACK, angle_result=angle_result))):
                                 with patch.object(manager, '_persist_completed_results', AsyncMock()):
-                                    await manager._run_single_side(worker, StorageModuleSide.RIGHT)
+                                    await manager._run_single_side(worker, StorageModuleSide.BACK)
 
     assert probe_y_mock.await_args.kwargs['top_shelf_y_mm'] == pytest.approx(angle_result.capture_y_mm)
 
@@ -1189,7 +1189,7 @@ async def test_run_single_side_skips_extension_calibration_when_disabled() -> No
     manager = LaserAutoCalibrationManager()
     worker = SimpleNamespace(_robot=SimpleNamespace(_tool=SimpleNamespace()))
     angle_result = LaserAutoCalibrationAngleResult(
-        side='right_module',
+        side='back_module',
         alpha_deg=5.5,
         sample_count=45,
         capture_y_mm=1114.0,
@@ -1206,11 +1206,11 @@ async def test_run_single_side_skips_extension_calibration_when_disabled() -> No
                 with patch.object(manager, '_resolve_stage_extension_probe_y_mm', AsyncMock()) as probe_y_mock:
                     with patch.object(manager, '_run_stage_extension_calibration_for_side', AsyncMock()) as stage_mock:
                         with patch.object(manager, '_apply_stage_extension_calibration', AsyncMock()) as apply_stage_mock:
-                            with patch.object(manager, '_run_side', AsyncMock(return_value=SimpleNamespace(side=StorageModuleSide.RIGHT, angle_result=angle_result))):
+                            with patch.object(manager, '_run_side', AsyncMock(return_value=SimpleNamespace(side=StorageModuleSide.BACK, angle_result=angle_result))):
                                 with patch.object(manager, '_persist_completed_results', AsyncMock()) as persist_mock:
                                     await manager._run_single_side(
                                         worker,
-                                        StorageModuleSide.RIGHT,
+                                        StorageModuleSide.BACK,
                                         include_extension_calibration=False,
                                     )
 
@@ -1222,8 +1222,8 @@ async def test_run_single_side_skips_extension_calibration_when_disabled() -> No
 @pytest.mark.asyncio
 async def test_persist_completed_results_saves_stage_extensions() -> None:
     manager = LaserAutoCalibrationManager()
-    manager._side_states['left_module'] = _SideState(stage_extension_mm=41.0)
-    manager._side_states['right_module'] = _SideState(stage_extension_mm=44.0)
+    manager._side_states['front_module'] = _SideState(stage_extension_mm=41.0)
+    manager._side_states['back_module'] = _SideState(stage_extension_mm=44.0)
 
     params = Parameters.model_validate(
         {
@@ -1253,15 +1253,15 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
     )
     config.model_copy = lambda deep=True: copy.deepcopy(config)
 
-    source_grid = SimpleNamespace(left_module=[], right_module=[], filename='storage.json', save=MagicMock())
+    source_grid = SimpleNamespace(front_module=[], back_module=[], filename='storage.json', save=MagicMock())
     reloaded_grid = SimpleNamespace()
     saved_configs: list[tuple[object, str | None]] = []
     saved_storage_grids: list[object] = []
 
     class FakeStorageGrid:
-        def __init__(self, *, left_module, right_module, filename) -> None:
-            self.left_module = left_module
-            self.right_module = right_module
+        def __init__(self, *, front_module, back_module, filename) -> None:
+            self.front_module = front_module
+            self.back_module = back_module
             self.filename = filename
 
         def save(self, *, version_id: str | None = None) -> None:
@@ -1272,9 +1272,9 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
     analysis = SimpleNamespace(shelves=[object()], metadata_path=Path('/tmp/fake-metadata.json'))
     completed_results = [
         SimpleNamespace(
-            side=StorageModuleSide.LEFT,
+            side=StorageModuleSide.FRONT,
             angle_result=LaserAutoCalibrationAngleResult(
-                side='left_module',
+                side='front_module',
                 alpha_deg=1.0,
                 sample_count=1,
                 capture_y_mm=100.0,
@@ -1287,9 +1287,9 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
             analysis=analysis,
         ),
         SimpleNamespace(
-            side=StorageModuleSide.RIGHT,
+            side=StorageModuleSide.BACK,
             angle_result=LaserAutoCalibrationAngleResult(
-                side='right_module',
+                side='back_module',
                 alpha_deg=1.0,
                 sample_count=1,
                 capture_y_mm=100.0,
@@ -1340,10 +1340,10 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
     manager = LaserAutoCalibrationManager()
     manager._update_snapshot = AsyncMock()
     scan_config = SimpleNamespace(
-        right_bounds_x_min_mm=0.0,
-        right_bounds_x_max_mm=950.0,
-        right_bounds_y_min_mm=0.0,
-        right_bounds_y_max_mm=1250.0,
+        back_bounds_x_min_mm=0.0,
+        back_bounds_x_max_mm=950.0,
+        back_bounds_y_min_mm=0.0,
+        back_bounds_y_max_mm=1250.0,
         laser_offset_y_mm=0.0,
         shelf_hole_probe_y_offsets_mm=[32.25],
     )
@@ -1378,11 +1378,11 @@ async def test_run_single_shelf_uses_known_shelf_edge_with_neighbor_clipped_boun
                 ) as known_edge_mock:
                     with patch.object(manager, '_run_scan_analysis', AsyncMock(return_value=analysis)) as scan_mock:
                         with patch.object(manager, '_persist_single_shelf_result', AsyncMock()) as persist_mock:
-                            await manager._run_single_shelf(worker, StorageModuleSide.RIGHT, 0)
+                            await manager._run_single_shelf(worker, StorageModuleSide.BACK, 0)
 
     known_edge_mock.assert_called_once()
     assert known_edge_mock.call_args.kwargs['grid'] is grid
-    assert known_edge_mock.call_args.kwargs['side'] == StorageModuleSide.RIGHT
+    assert known_edge_mock.call_args.kwargs['side'] == StorageModuleSide.BACK
     assert known_edge_mock.call_args.kwargs['shelf_idx'] == 0
     assert scan_mock.await_args.kwargs['known_shelf_edge_y'] == [30.75]
     scan_config_override = scan_mock.await_args.kwargs['scan_config_override']
@@ -1468,7 +1468,7 @@ async def test_run_stage_extension_calibration_accepts_no_progress_terminal_stat
             ) as probe_mock:
                 calibrated_stage_extension_mm = await manager._run_stage_extension_calibration_for_side(
                     worker,
-                    StorageModuleSide.RIGHT,
+                    StorageModuleSide.BACK,
                     ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                     probe_y_mm=1123.0,
                 )
@@ -1522,7 +1522,7 @@ async def test_run_stage_extension_calibration_rejects_timeout_terminal_state() 
                 with pytest.raises(ValueError, match='timed out before stall'):
                     await manager._run_stage_extension_calibration_for_side(
                         worker,
-                        StorageModuleSide.RIGHT,
+                        StorageModuleSide.BACK,
                         ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                         probe_y_mm=1123.0,
                     )
@@ -1570,7 +1570,7 @@ async def test_run_stage_extension_calibration_skips_final_retract_when_cancelle
                 task = asyncio.create_task(
                     manager._run_stage_extension_calibration_for_side(
                         worker,
-                        StorageModuleSide.RIGHT,
+                        StorageModuleSide.BACK,
                         ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                         probe_y_mm=1123.0,
                     )
@@ -1623,7 +1623,7 @@ async def test_run_stage_extension_calibration_raises_when_abort_requested_durin
                 with pytest.raises(asyncio.CancelledError):
                     await manager._run_stage_extension_calibration_for_side(
                         worker,
-                        StorageModuleSide.RIGHT,
+                        StorageModuleSide.BACK,
                         ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
                         probe_y_mm=1123.0,
                     )
@@ -1654,7 +1654,7 @@ async def test_resolve_stage_extension_probe_y_uses_right_scout_and_offset() -> 
         with patch.object(angle_module, 'resolve_capture_y_mm', AsyncMock(return_value=1123.0)) as resolve_mock:
             probe_y_mm = await manager._resolve_stage_extension_probe_y_mm(
                 worker,
-                StorageModuleSide.RIGHT,
+                StorageModuleSide.BACK,
                 ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0),
             )
 
@@ -1671,12 +1671,12 @@ def test_build_stage_extension_probe_y_offsets_top_shelf() -> None:
 @pytest.mark.asyncio
 async def test_sync_snapshot_uses_live_counts_when_metadata_lags() -> None:
     manager = LaserAutoCalibrationManager()
-    manager._side_states['left_module'] = _SideState(
+    manager._side_states['front_module'] = _SideState(
         live_shelf_count=7,
         live_candidate_count=11,
         live_detected_cell_count=3,
     )
-    manager._side_states['right_module'] = _SideState(
+    manager._side_states['back_module'] = _SideState(
         live_shelf_count=2,
         live_candidate_count=5,
         live_detected_cell_count=1,
@@ -1684,12 +1684,12 @@ async def test_sync_snapshot_uses_live_counts_when_metadata_lags() -> None:
 
     snapshot = await manager._sync_snapshot()
 
-    assert snapshot.left_scouted_shelf_count == 7
-    assert snapshot.right_scouted_shelf_count == 2
-    assert snapshot.left_candidate_count == 11
-    assert snapshot.right_candidate_count == 5
-    assert snapshot.left_detected_cell_count == 3
-    assert snapshot.right_detected_cell_count == 1
+    assert snapshot.front_scouted_shelf_count == 7
+    assert snapshot.back_scouted_shelf_count == 2
+    assert snapshot.front_candidate_count == 11
+    assert snapshot.back_candidate_count == 5
+    assert snapshot.front_detected_cell_count == 3
+    assert snapshot.back_detected_cell_count == 1
     assert snapshot.scouted_shelf_count == 9
     assert snapshot.candidate_count == 16
     assert snapshot.detected_cell_count == 4
@@ -1717,7 +1717,7 @@ async def test_resolve_capture_y_mm_stops_after_first_detected_edge() -> None:
                                     tool,
                                     args=args,
                                     scan_config=scan_config,
-                                    side_name='left',
+                                    side_name='front',
                                     side_number=0,
                                     x_positions=[10.0, 20.0],
                                     rotation_center_deg=0.0,
@@ -1761,7 +1761,7 @@ async def test_resolve_capture_y_mm_raises_cancelled_when_abort_requested_betwee
                                     tool,
                                     args=args,
                                     scan_config=scan_config,
-                                    side_name='left',
+                                    side_name='front',
                                     side_number=0,
                                     x_positions=[10.0, 20.0],
                                     rotation_center_deg=0.0,
@@ -1799,7 +1799,7 @@ async def test_resolve_capture_y_mm_enters_right_shelf_scout_at_180_deg() -> Non
                                 tool,
                                 args=args,
                                 scan_config=scan_config,
-                                side_name='right',
+                                side_name='back',
                                 side_number=1,
                                 x_positions=[945.0, 845.0],
                                 rotation_center_deg=180.0,
@@ -2004,7 +2004,7 @@ async def test_stream_laser_auto_calibration_starts_single_shelf_scope() -> None
             request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
             response = await calibration_router.stream_laser_auto_calibration(
                 request,
-                side="right_module",
+                side="back_module",
                 shelf_idx=2,
                 cell_idx=None,
             )
@@ -2013,18 +2013,18 @@ async def test_stream_laser_auto_calibration_starts_single_shelf_scope() -> None
 
     payload = json.loads(chunk["data"])
     assert payload["requested_scope"]["mode"] == "shelf"
-    assert payload["requested_scope"]["side"] == "right_module"
+    assert payload["requested_scope"]["side"] == "back_module"
     assert payload["requested_scope"]["shelf_idx"] == 2
     assert manager.last_requested_scope is not None
     assert manager.last_requested_scope.mode == "shelf"
-    assert manager.last_requested_scope.side == "right_module"
+    assert manager.last_requested_scope.side == "back_module"
     assert manager.last_requested_scope.shelf_idx == 2
 
 
 @pytest.mark.asyncio
 async def test_stream_laser_auto_calibration_rejects_mismatched_scope_while_running() -> None:
     snapshot = _build_snapshot()
-    snapshot.requested_scope = LaserAutoCalibrationScope(mode="side", side="left_module")
+    snapshot.requested_scope = LaserAutoCalibrationScope(mode="side", side="front_module")
     manager = FakeLaserManager(snapshot=snapshot, is_active=True)
 
     with patch(
@@ -2036,7 +2036,7 @@ async def test_stream_laser_auto_calibration_rejects_mismatched_scope_while_runn
         with pytest.raises(HTTPException) as exc_info:
             await calibration_router.stream_laser_auto_calibration(
                 request,
-                side="right_module",
+                side="back_module",
                 shelf_idx=None,
                 cell_idx=None,
             )
@@ -2047,7 +2047,7 @@ async def test_stream_laser_auto_calibration_rejects_mismatched_scope_while_runn
 
 @pytest.mark.asyncio
 async def test_stream_laser_auto_calibration_rejects_cell_without_shelf(client) -> None:
-    response = await client.get("/api/calibration/laser/stream?side=left_module&cell_idx=1")
+    response = await client.get("/api/calibration/laser/stream?side=front_module&cell_idx=1")
 
     assert response.status_code == 400
     assert response.json()["detail"]["message"] == "shelf_idx is required when cell_idx is provided"
@@ -2077,7 +2077,7 @@ async def test_move_is_blocked_while_laser_auto_calibration_is_running(client) -
     ):
         response = await client.post(
             "/api/calibration/move",
-            json={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+            json={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
         )
 
     assert response.status_code == 409
@@ -2119,7 +2119,7 @@ async def test_apply_angle_calibration_persists_rotation_to_disk() -> None:
     manager = LaserAutoCalibrationManager()
     worker = SimpleNamespace(_robot=SimpleNamespace(reload_parameters=MagicMock()))
     angle_result = LaserAutoCalibrationAngleResult(
-        side=StorageModuleSide.LEFT,
+        side=StorageModuleSide.FRONT,
         alpha_deg=0.25,
         rotation_deg=182.25,
         capture_y_mm=1120.0,
@@ -2133,7 +2133,7 @@ async def test_apply_angle_calibration_persists_rotation_to_disk() -> None:
 
     with patch.object(manager, '_persist_tool_parameter') as persist_mock:
         with patch.object(manager, '_update_snapshot', AsyncMock()):
-            await manager._apply_angle_calibration(worker, StorageModuleSide.LEFT, angle_result)
+            await manager._apply_angle_calibration(worker, StorageModuleSide.FRONT, angle_result)
 
     persist_mock.assert_called_once_with(worker, 'ROTATION_FRONT', 182.25)
 
