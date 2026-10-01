@@ -338,8 +338,8 @@ async def test_store_fault_preserves_resolved_cell_and_coordinate_context() -> N
     robot._operation_context = {}
     robot._last_fault_context = None
     robot._demo_cell_map = None
-    robot._reserved_cell_locations = {("left_module", 1, 2)}
-    location = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2)
+    robot._reserved_cell_locations = {("front_module", 1, 2)}
+    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
     coordinate = AxisCoordinate(x=12.0, y=34.0, s=0, z_offset=1.5)
     async def did_get_weight() -> float:
         return 42.0
@@ -363,7 +363,7 @@ async def test_store_fault_preserves_resolved_cell_and_coordinate_context() -> N
     assert fault_context is not None
     operation_context = fault_context["operation_context"]
     assert operation_context["command"] == "store_item"
-    assert operation_context["target_cell"]["side"] == "left_module"
+    assert operation_context["target_cell"]["side"] == "front_module"
     assert operation_context["target_cell"]["shelf_idx"] == 1
     assert operation_context["target_coordinate"]["x"] == 12.0
     assert operation_context["phase"] == "store.moving_from_shelf_to_io"

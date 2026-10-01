@@ -15,7 +15,7 @@
 	const sideParam = page.url.searchParams.get('side');
 
 	const initialSide =
-		sideParam === 'left_module' || sideParam === 'right_module' ? sideParam : undefined;
+		sideParam === 'front_module' || sideParam === 'back_module' ? sideParam : undefined;
 
 	const initialShelf = page.url.searchParams.has('shelf')
 		? parseInt(page.url.searchParams.get('shelf')!, 10)

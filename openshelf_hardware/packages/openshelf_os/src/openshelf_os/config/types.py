@@ -10,12 +10,12 @@ TwoInt = Tuple[int, int]
 class AxisCoordinate:
     x: float
     y: float
-    s: int = 0  # 0 -> left module, 1 -> right module
+    s: int = 0  # 0 -> front module, 1 -> back module
     z_offset: float = 0.0
 
     def __post_init__(self) -> None:
         if self.s not in (0, 1):
-            raise ValueError("AxisCoordinate.s must be 0 (left) or 1 (right)")
+            raise ValueError("AxisCoordinate.s must be 0 (front) or 1 (back)")
 
     def _assert_same_side(self, other: "AxisCoordinate", op: str) -> None:
         if not isinstance(other, AxisCoordinate):

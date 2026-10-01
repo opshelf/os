@@ -57,7 +57,7 @@ def build_parameter_worker(stage_limit: float = 170.0):
 
 def build_grid(tmp_path) -> StorageGrid:
 	return StorageGrid(
-		left_module=[
+		front_module=[
 			Shelf(
 				shelf_idx=0,
 				shelf_width=480.0,
@@ -73,7 +73,7 @@ def build_grid(tmp_path) -> StorageGrid:
 				],
 			)
 		],
-		right_module=[],
+		back_module=[],
 		filename=str(tmp_path / 'storage-grid.json'),
 	)
 
@@ -84,15 +84,15 @@ def build_worker(grid: StorageGrid):
 
 def build_empty_grid(tmp_path) -> StorageGrid:
 	return StorageGrid(
-		left_module=[],
-		right_module=[],
+		front_module=[],
+		back_module=[],
 		filename=str(tmp_path / 'storage-grid.json'),
 	)
 
 
 def build_grid_with_empty_shelf(tmp_path) -> StorageGrid:
 	return StorageGrid(
-		left_module=[
+		front_module=[
 			Shelf(
 				shelf_idx=0,
 				shelf_width=480.0,
@@ -100,7 +100,7 @@ def build_grid_with_empty_shelf(tmp_path) -> StorageGrid:
 				cells=[],
 			)
 		],
-		right_module=[],
+		back_module=[],
 		filename=str(tmp_path / 'storage-grid.json'),
 	)
 
@@ -114,7 +114,7 @@ async def test_save_calibration_creates_missing_cell_from_existing_shelf(client,
 		response = await client.post(
 			'/api/calibration/save',
 			json={
-				'side': 'left_module',
+				'side': 'front_module',
 				'shelf_idx': 0,
 				'cell_idx': 3,
 				'x': 475.0,
@@ -125,11 +125,11 @@ async def test_save_calibration_creates_missing_cell_from_existing_shelf(client,
 
 	assert response.status_code == 200
 
-	new_cell = next(cell for cell in grid.left_module[0].cells if cell.cell_idx == 3)
+	new_cell = next(cell for cell in grid.front_module[0].cells if cell.cell_idx == 3)
 
 	assert new_cell.status == CellStatus.AVAILABLE
 	assert new_cell.item is None
-	assert new_cell.dimensions == grid.left_module[0].cells[0].dimensions
+	assert new_cell.dimensions == grid.front_module[0].cells[0].dimensions
 	assert new_cell.calibration_point is not None
 	assert new_cell.calibration_point.x == pytest.approx(475.0)
 	assert new_cell.calibration_point.y == pytest.approx(630.0)
@@ -145,7 +145,7 @@ async def test_save_calibration_creates_missing_shelf_and_cell_from_templates(cl
 		response = await client.post(
 			'/api/calibration/save',
 			json={
-				'side': 'left_module',
+				'side': 'front_module',
 				'shelf_idx': 1,
 				'cell_idx': 0,
 				'x': 475.0,
@@ -155,15 +155,15 @@ async def test_save_calibration_creates_missing_shelf_and_cell_from_templates(cl
 		)
 
 	assert response.status_code == 200
-	assert len(grid.left_module) == 2
+	assert len(grid.front_module) == 2
 
-	new_shelf = grid.left_module[1]
+	new_shelf = grid.front_module[1]
 
 	assert new_shelf.shelf_idx == 1
-	assert new_shelf.shelf_width == pytest.approx(grid.left_module[0].shelf_width)
-	assert new_shelf.divider_width == pytest.approx(grid.left_module[0].divider_width)
+	assert new_shelf.shelf_width == pytest.approx(grid.front_module[0].shelf_width)
+	assert new_shelf.divider_width == pytest.approx(grid.front_module[0].divider_width)
 	assert len(new_shelf.cells) == 1
-	assert new_shelf.cells[0].dimensions == grid.left_module[0].cells[0].dimensions
+	assert new_shelf.cells[0].dimensions == grid.front_module[0].cells[0].dimensions
 	assert new_shelf.cells[0].calibration_point is not None
 	assert new_shelf.cells[0].calibration_point.x == pytest.approx(475.0)
 	assert new_shelf.cells[0].calibration_point.y == pytest.approx(630.0)
@@ -178,7 +178,7 @@ async def test_save_calibration_rejects_negative_indices(client, tmp_path) -> No
 		response = await client.post(
 			'/api/calibration/save',
 			json={
-				'side': 'left_module',
+				'side': 'front_module',
 				'shelf_idx': -1,
 				'cell_idx': 0,
 				'x': 475.0,
@@ -277,7 +277,7 @@ async def test_save_calibration_bootstraps_first_shelf_and_cell_on_empty_grid(cl
 		response = await client.post(
 			'/api/calibration/save',
 			json={
-				'side': 'left_module',
+				'side': 'front_module',
 				'shelf_idx': 0,
 				'cell_idx': 0,
 				'x': 475.0,
@@ -287,9 +287,9 @@ async def test_save_calibration_bootstraps_first_shelf_and_cell_on_empty_grid(cl
 		)
 
 	assert response.status_code == 200
-	assert len(grid.left_module) == 1
+	assert len(grid.front_module) == 1
 
-	new_shelf = grid.left_module[0]
+	new_shelf = grid.front_module[0]
 
 	assert new_shelf.shelf_idx == 0
 	assert new_shelf.shelf_width == pytest.approx(480.0)
@@ -310,7 +310,7 @@ async def test_save_calibration_bootstraps_first_cell_on_empty_shelf(client, tmp
 		response = await client.post(
 			'/api/calibration/save',
 			json={
-				'side': 'left_module',
+				'side': 'front_module',
 				'shelf_idx': 0,
 				'cell_idx': 0,
 				'x': 475.0,
@@ -320,11 +320,11 @@ async def test_save_calibration_bootstraps_first_cell_on_empty_shelf(client, tmp
 		)
 
 	assert response.status_code == 200
-	assert len(grid.left_module[0].cells) == 1
-	assert grid.left_module[0].cells[0].dimensions == Dimensions(width=480.0, height=200.0, length=400.0)
-	assert grid.left_module[0].cells[0].calibration_point is not None
-	assert grid.left_module[0].cells[0].calibration_point.x == pytest.approx(475.0)
-	assert grid.left_module[0].cells[0].calibration_point.y == pytest.approx(630.0)
+	assert len(grid.front_module[0].cells) == 1
+	assert grid.front_module[0].cells[0].dimensions == Dimensions(width=480.0, height=200.0, length=400.0)
+	assert grid.front_module[0].cells[0].calibration_point is not None
+	assert grid.front_module[0].cells[0].calibration_point.x == pytest.approx(475.0)
+	assert grid.front_module[0].cells[0].calibration_point.y == pytest.approx(630.0)
 
 
 @pytest.mark.anyio
@@ -336,7 +336,7 @@ async def test_save_calibration_updates_dimensions(client, tmp_path) -> None:
 		response = await client.post(
 			'/api/calibration/save',
 			json={
-				'side': 'left_module',
+				'side': 'front_module',
 				'shelf_idx': 0,
 				'cell_idx': 0,
 				'x': 475.0,
@@ -348,7 +348,7 @@ async def test_save_calibration_updates_dimensions(client, tmp_path) -> None:
 
 	assert response.status_code == 200
 
-	cell = grid.left_module[0].cells[0]
+	cell = grid.front_module[0].cells[0]
 	assert cell.dimensions == Dimensions(width=30.0, height=25.0, length=350.0)
 	assert cell.calibration_point is not None
 	assert cell.calibration_point.x == pytest.approx(475.0)
@@ -357,14 +357,14 @@ async def test_save_calibration_updates_dimensions(client, tmp_path) -> None:
 @pytest.mark.anyio
 async def test_save_calibration_keeps_dimensions_when_omitted(client, tmp_path) -> None:
 	grid = build_grid(tmp_path)
-	original = grid.left_module[0].cells[0].dimensions
+	original = grid.front_module[0].cells[0].dimensions
 	worker = build_worker(grid)
 
 	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
 		response = await client.post(
 			'/api/calibration/save',
 			json={
-				'side': 'left_module',
+				'side': 'front_module',
 				'shelf_idx': 0,
 				'cell_idx': 0,
 				'x': 475.0,
@@ -374,4 +374,4 @@ async def test_save_calibration_keeps_dimensions_when_omitted(client, tmp_path) 
 		)
 
 	assert response.status_code == 200
-	assert grid.left_module[0].cells[0].dimensions == original
+	assert grid.front_module[0].cells[0].dimensions == original

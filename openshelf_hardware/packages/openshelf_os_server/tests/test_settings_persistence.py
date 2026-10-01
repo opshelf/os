@@ -6,7 +6,7 @@ from openshelf_os_server import settings as settings_module
 
 MINIMAL_CONFIG = {
 	"name": "test",
-	"schema_version": 4,
+	"schema_version": 5,
 	"version": "0.1.0",
 	"robot": {
 		"tool": {

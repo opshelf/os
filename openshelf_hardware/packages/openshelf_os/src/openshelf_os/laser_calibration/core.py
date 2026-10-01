@@ -35,7 +35,7 @@ from openshelf_os.robot import Robot
 from openshelf_os.storage import StorageGrid, StorageModuleSide
 from openshelf_os.laser_calibration.shelf_scout import (
 	GAP_DEPTH_THRESHOLD_MM,
-	RIGHT_MODULE_SHELF_SCOUT_X_MM,
+	BACK_MODULE_SHELF_SCOUT_X_MM,
 	SHELF_BRIM_MAX_HEIGHT_MM,
 	SHELF_BRIM_MIN_HEIGHT_MM,
 	SHELF_EDGE_CONFIRMATION_COUNT,
@@ -50,7 +50,7 @@ from openshelf_os.laser_calibration.shelf_scout import (
 LASER_SCAN_STAGE_EXTENSION_MM = 13.0
 LASER_SCAN_Z_OFFSET_MM = 10.0
 COARSE_SCAN_STEP_MM = 4.0
-RIGHT_MODULE_ROTATION_SAFE_X_MM = 475.0
+BACK_MODULE_ROTATION_SAFE_X_MM = 475.0
 SHELF_SWEEP_X_STEP_MM = 4.0
 # Coarse sweep widths quantize to the 4mm step. Across two full hardware runs (43 confirmed
 # cells) real holes never measured below 24mm, while false gaps bottomed out at 20mm -- so 22
@@ -235,7 +235,7 @@ def get_gripper_xy_correction(
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> tuple[float, float] | None:
-	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+	prefix = "front" if side == StorageModuleSide.FRONT else "back"
 	configured_offset = getattr(scan_config, f"{prefix}_gripper_xy_correction_mm", None)
 
 	if configured_offset is None:
@@ -252,7 +252,7 @@ def get_wall_depth_to_gripper_z_model(
 	scan_config: Any,
 	side: StorageModuleSide,
 ) -> Any | None:
-	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+	prefix = "front" if side == StorageModuleSide.FRONT else "back"
 	configured_model = getattr(scan_config, f"{prefix}_wall_depth_to_gripper_z_model", None)
 
 	if configured_model is None:
@@ -282,7 +282,7 @@ def require_z_offset_model_matches_tool(
 	Either drifting shifts every cell's z offset one-for-one, and the auto calibration itself
 	re-derives stage extension each run, so a stale model would silently mis-place every cell.
 	"""
-	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+	prefix = "front" if side == StorageModuleSide.FRONT else "back"
 	drifted: list[str] = []
 
 	if abs(float(model.reference_stage_mm) - float(stage_extension_mm)) > tolerance_mm:
@@ -311,7 +311,7 @@ def require_scan_xy_correction(
 	if get_gripper_xy_correction(scan_config=scan_config, side=side) is not None:
 		return
 
-	prefix = "left" if side == StorageModuleSide.LEFT else "right"
+	prefix = "front" if side == StorageModuleSide.FRONT else "back"
 	raise ValueError(
 		f"robot.grid.scan.{prefix}_gripper_xy_correction_mm must be configured for laser calibration"
 	)
