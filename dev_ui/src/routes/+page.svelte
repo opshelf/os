@@ -7,22 +7,17 @@
 		controlCabinetRelease,
 		setBypassSafetyGuard,
 		setBypassSafetyComponent,
-		isApiConnected,
 		robotInit,
 		robotStatus,
-		robotStatusLastUpdate,
 		type SafetyComponent
 	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import InitProgress from '$lib/components/InitProgress.svelte';
 
 	const RESTART_BUTTON_RESET_MS = 15000;
-	const FAULT_STATUSES = new Set(['error', 'fault', 'timeout']);
 
 	let deviceId = '';
 	let deviceAlias = '';
-	let releaseSha = '';
-	let releaseBranch = '';
 	let operatingMode = '';
 	let lanIp = '';
 	let isUnlockingCabinet = false;
@@ -50,15 +45,6 @@
 		{ key: 'light_curtain', label: 'bypass light curtain' },
 		{ key: 'cabinet_doors', label: 'bypass cabinet sensors' }
 	];
-
-	type MotorTelemetry = {
-		position?: number;
-		homed?: number;
-		hard_stopped?: number;
-		status?: string;
-		current_limit?: number | null;
-		max_following_error?: number | null;
-	};
 
 	function getLightCurtainBlocked(): unknown {
 		const safety = $robotStatus?.robot_status?.safety;
@@ -154,41 +140,6 @@
 		} finally {
 			isAcknowledgingSafety = false;
 		}
-	}
-
-	function getMotors(): Array<[string, MotorTelemetry]> {
-		const status = $robotStatus?.robot_status;
-		if (!status || typeof status !== 'object') {
-			return [];
-		}
-		const motors = (status as Record<string, unknown>).motors;
-		if (!motors || typeof motors !== 'object') {
-			return [];
-		}
-		return Object.entries(motors as Record<string, MotorTelemetry>).filter(
-			([, motor]) => motor !== null && typeof motor === 'object'
-		);
-	}
-
-	function formatPosition(value: number | undefined): string {
-		if (typeof value !== 'number' || !Number.isFinite(value)) {
-			return '—';
-		}
-		return `${Math.round(value * 100) / 100}`;
-	}
-
-	function formatCurrentLimit(value: number | null | undefined): string {
-		if (typeof value !== 'number' || !Number.isFinite(value)) {
-			return '—';
-		}
-		return `${Math.round(value * 100) / 100} A`;
-	}
-
-	function formatFollowingErrorLimit(value: number | null | undefined): string {
-		if (typeof value !== 'number' || !Number.isFinite(value)) {
-			return '—';
-		}
-		return `${value}`;
 	}
 
 	async function didClickCabinetUnlock(): Promise<void> {
@@ -335,21 +286,15 @@
 			const data = await apiFetch<{
 				device_id: string;
 				device_alias: string | null;
-				release_sha: string | null;
-				release_branch: string | null;
 				lan_ip: string | null;
 			}>('/system/info');
 
 			deviceId = data.device_id;
 			deviceAlias = data.device_alias ?? '';
-			releaseSha = data.release_sha ?? '';
-			releaseBranch = data.release_branch ?? '';
 			lanIp = data.lan_ip ?? '';
 		} catch {
 			deviceId = '';
 			deviceAlias = '';
-			releaseSha = '';
-			releaseBranch = '';
 			lanIp = '';
 		}
 	}
@@ -384,45 +329,112 @@
 			</thead>
 			<tbody>
 				<tr>
-					<td>device id</td>
-					<td>{deviceId || 'loading...'}</td>
+					<td class="label-cell">device id</td>
+					<td class="value-cell">{deviceId || 'loading...'}</td>
 				</tr>
 				<tr>
-					<td>device alias</td>
-					<td>{deviceAlias || '—'}</td>
+					<td class="label-cell">device alias</td>
+					<td class="value-cell">{deviceAlias || '—'}</td>
 				</tr>
 				<tr>
-					<td>release</td>
-					<td>{releaseSha === '' ? '—' : releaseBranch === '' ? releaseSha : `${releaseBranch} @ ${releaseSha}`}</td>
+					<td class="label-cell">operating mode</td>
+					<td class="value-cell">{operatingMode || '—'}</td>
 				</tr>
 				<tr>
-					<td>operating mode</td>
-					<td>{operatingMode || '—'}</td>
-				</tr>
-				<tr>
-					<td>lan ip</td>
-					<td>{lanIp || 'loading...'}</td>
-				</tr>
-				<tr>
-					<td>stream status</td>
-					<td>{$isApiConnected ? 'connected' : 'disconnected'}</td>
-				</tr>
-				<tr>
-					<td>last update</td>
-					<td>{$robotStatusLastUpdate || 'waiting for first event'}</td>
+					<td class="label-cell">lan ip</td>
+					<td class="value-cell">{lanIp || 'loading...'}</td>
 				</tr>
 			</tbody>
+		</table>
 
-			{#if $robotStatus}
+		<table>
+			<thead>
+				<tr>
+					<th colspan="2">control loop override</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr>
+					<td class="label-cell">homing on startup</td>
+					<td class="value-cell">
+						<div class="status-action-cell">
+							<span
+								>{isLoadingHomeOnInit === true
+									? 'loading...'
+									: homeOnInit
+										? 'enabled'
+										: 'disabled'}</span
+							>
+							<button
+								disabled={isLoadingHomeOnInit === true || isUpdatingHomeOnInit === true}
+								onclick={didClickHomeOnInit}
+							>
+								{homeOnInit ? 'DISABLE' : 'ENABLE'}
+							</button>
+						</div>
+						{#if homeOnInitError !== ''}
+							<ErrorMessage message={homeOnInitError} />
+						{/if}
+					</td>
+				</tr>
+				{#if $robotStatus}
+					<tr>
+						<td class="label-cell">bypass safety guard</td>
+						<td class="value-cell">
+							<div class="status-action-cell">
+								<span class:enabled-danger={getBypassSafetyGuard() === true}>
+									{getBypassSafetyGuard() ? 'enabled' : 'disabled'}
+								</span>
+								<button
+									disabled={isUpdatingSafetyOverride === true}
+									onclick={didClickBypassSafetyGuard}
+								>
+									{getBypassSafetyGuard() ? 'DISABLE' : 'ENABLE'}
+								</button>
+							</div>
+							{#if safetyOverrideError !== ''}
+								<ErrorMessage message={safetyOverrideError} />
+							{/if}
+						</td>
+					</tr>
+					{#each safetyComponents as component (component.key)}
+						<tr>
+							<td class="label-cell">{component.label}</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span class:enabled-danger={getComponentBypass(component.key) === true}>
+										{getComponentBypass(component.key) ? 'enabled' : 'disabled'}
+									</span>
+									<button
+										disabled={componentUpdating[component.key] === true}
+										onclick={() => didClickBypassComponent(component.key)}
+									>
+										{getComponentBypass(component.key) ? 'DISABLE' : 'ENABLE'}
+									</button>
+								</div>
+								{#if componentErrors[component.key] !== ''}
+									<ErrorMessage message={componentErrors[component.key]} />
+								{/if}
+							</td>
+						</tr>
+					{/each}
+				{/if}
+			</tbody>
+		</table>
+	</div>
+
+	<div class="status-column">
+		{#if $robotStatus}
+			<table>
 				<thead>
 					<tr>
-						<th colspan="2">current robot state</th>
+						<th colspan="2">robot state</th>
 					</tr>
 				</thead>
 				<tbody>
 					<tr>
-						<td>worker running</td>
-						<td>
+						<td class="label-cell">worker running</td>
+						<td class="value-cell">
 							<div class="status-action-cell">
 								<span>{$robotStatus.running ? 'yes' : 'no'}</span>
 								<button
@@ -436,12 +448,12 @@
 						</td>
 					</tr>
 					<tr>
-						<td>io box</td>
-						<td>{getIoBoxOccupied() ? 'occupied' : 'empty'}</td>
+						<td class="label-cell">io box</td>
+						<td class="value-cell">{getIoBoxOccupied() ? 'occupied' : 'empty'}</td>
 					</tr>
 					<tr>
-						<td>light curtain</td>
-						<td>
+						<td class="label-cell">light curtain</td>
+						<td class="value-cell">
 							{#if getLightCurtainBlocked() === null}
 								disabled
 							{:else if getLightCurtainBlocked() === true}
@@ -454,8 +466,8 @@
 						</td>
 					</tr>
 					<tr>
-						<td>cabinet</td>
-						<td>
+						<td class="label-cell">cabinet</td>
+						<td class="value-cell">
 							<div class="status-action-cell">
 								<span>{getCabinetStatus()}</span>
 								<button
@@ -466,8 +478,8 @@
 						</td>
 					</tr>
 					<tr>
-						<td>home required</td>
-						<td>
+						<td class="label-cell">home required</td>
+						<td class="value-cell">
 							<div class="status-action-cell">
 								<span>
 									{#if $robotStatus.needs_home}
@@ -484,8 +496,8 @@
 						</td>
 					</tr>
 					<tr>
-						<td>ack required</td>
-						<td>
+						<td class="label-cell">ack required</td>
+						<td class="value-cell">
 							<div class="status-action-cell">
 								<span>{getSafetyAwaitingAck() ? 'yes' : 'no'}</span>
 								<button
@@ -509,123 +521,14 @@
 					<tbody>
 						{#each formatCommand($robotStatus.current_command) as entry}
 							<tr>
-								<td>{entry.field}</td>
-								<td>{entry.value}</td>
+								<td class="label-cell">{entry.field}</td>
+								<td class="value-cell">{entry.value}</td>
 							</tr>
 						{/each}
 					</tbody>
 				{/if}
-			{/if}
-		</table>
-	</div>
-
-	<div class="status-column">
-		<table>
-			<thead>
-				<tr>
-					<th colspan="2">control loop override</th>
-				</tr>
-			</thead>
-			<tbody>
-				<tr>
-					<td>homing on startup</td>
-					<td>
-						<div class="status-action-cell">
-							<span
-								>{isLoadingHomeOnInit === true
-									? 'loading...'
-									: homeOnInit
-										? 'enabled'
-										: 'disabled'}</span
-							>
-							<button
-								disabled={isLoadingHomeOnInit === true || isUpdatingHomeOnInit === true}
-								onclick={didClickHomeOnInit}
-							>
-								{homeOnInit ? 'DISABLE' : 'ENABLE'}
-							</button>
-						</div>
-						{#if homeOnInitError !== ''}
-							<ErrorMessage message={homeOnInitError} />
-						{/if}
-					</td>
-				</tr>
-				{#if $robotStatus}
-					<tr>
-						<td>bypass safety guard</td>
-						<td>
-							<div class="status-action-cell">
-								<span class:enabled-danger={getBypassSafetyGuard() === true}>
-									{getBypassSafetyGuard() ? 'enabled' : 'disabled'}
-								</span>
-								<button
-									disabled={isUpdatingSafetyOverride === true}
-									onclick={didClickBypassSafetyGuard}
-								>
-									{getBypassSafetyGuard() ? 'DISABLE' : 'ENABLE'}
-								</button>
-							</div>
-							{#if safetyOverrideError !== ''}
-								<ErrorMessage message={safetyOverrideError} />
-							{/if}
-						</td>
-					</tr>
-					{#each safetyComponents as component (component.key)}
-						<tr>
-							<td>{component.label}</td>
-							<td>
-								<div class="status-action-cell">
-									<span class:enabled-danger={getComponentBypass(component.key) === true}>
-										{getComponentBypass(component.key) ? 'enabled' : 'disabled'}
-									</span>
-									<button
-										disabled={componentUpdating[component.key] === true}
-										onclick={() => didClickBypassComponent(component.key)}
-									>
-										{getComponentBypass(component.key) ? 'DISABLE' : 'ENABLE'}
-									</button>
-								</div>
-								{#if componentErrors[component.key] !== ''}
-									<ErrorMessage message={componentErrors[component.key]} />
-								{/if}
-							</td>
-						</tr>
-					{/each}
-				{/if}
-			</tbody>
-		</table>
-
-		<table>
-			<thead>
-				<tr>
-					<th colspan="2">motors state</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each getMotors() as [name, motor] (name)}
-					<tr>
-						<td>{name}</td>
-						<td>
-							<div class="motor-fields">
-								<span>home: {motor.homed === 1 ? 'yes' : 'no'}</span>
-								<span
-									class:enabled-danger={FAULT_STATUSES.has(motor.status ?? '')}
-									>fault: {motor.status ?? 'idle'}</span
-								>
-								<span>stop: {motor.hard_stopped === 1 ? 'yes' : 'no'}</span>
-								<span>pos: {formatPosition(motor.position)}</span>
-								<span>limit: {formatCurrentLimit(motor.current_limit)}</span>
-								<span>fe: {formatFollowingErrorLimit(motor.max_following_error)}</span>
-							</div>
-						</td>
-					</tr>
-				{:else}
-					<tr>
-						<td colspan="2">no motor data</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
+			</table>
+		{/if}
 	</div>
 </div>
 
@@ -635,6 +538,24 @@
 		grid-template-columns: 1fr 1fr;
 		gap: 1.5em;
 		align-items: start;
+	}
+
+	.status-column {
+		display: flex;
+		flex-direction: column;
+		gap: 1.5em;
+	}
+
+	table {
+		width: 100%;
+	}
+
+	.value-cell {
+		width: 100%;
+	}
+
+	.label-cell {
+		white-space: nowrap;
 	}
 
 	@media (max-width: 900px) {
@@ -648,12 +569,6 @@
 		justify-content: space-between;
 		align-items: center;
 		gap: 1em;
-	}
-
-	.motor-fields {
-		display: grid;
-		grid-template-columns: repeat(3, auto);
-		gap: 0.25em 1.5em;
 	}
 
 	.enabled-danger {
