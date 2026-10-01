@@ -59,16 +59,14 @@ def _write_migrated(path: Path, original: bytes, migrated: dict[str, Any], backu
     if path.is_symlink() or path.read_bytes() != original:
         raise ValueError(f"{path}: changed since preview; retry with the application stopped")
     source_stat = path.stat()
-    backup = path.with_name(path.name + backup_suffix)
-    # Exclusive creation prevents a later invocation from overwriting the rollback copy.
-    with os.fdopen(os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
-        os.fchmod(stream.fileno(), stat.S_IMODE(source_stat.st_mode))
-        stream.write(original)
-        stream.flush()
-        os.fsync(stream.fileno())
 
     temporary: Path | None = None
     try:
+        # The temp file is written and fsynced before the backup is created: a
+        # failure in this phase (ENOSPC, EPERM from the fchown below) must not
+        # orphan a backup, because auto-migration runs unattended on startup and
+        # a leftover backup would make every retry refuse with a misleading
+        # "backup already exists" conflict instead of surfacing the real error.
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=path.parent, delete=False
         ) as stream:
@@ -80,6 +78,15 @@ def _write_migrated(path: Path, original: bytes, migrated: dict[str, Any], backu
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
+
+        backup = path.with_name(path.name + backup_suffix)
+        # Exclusive creation prevents a later invocation from overwriting the rollback copy.
+        with os.fdopen(os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
+            os.fchmod(stream.fileno(), stat.S_IMODE(source_stat.st_mode))
+            stream.write(original)
+            stream.flush()
+            os.fsync(stream.fileno())
+
         os.replace(temporary, path)
     finally:
         if temporary is not None:

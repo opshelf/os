@@ -138,6 +138,27 @@ def test_failed_validation_leaves_file_untouched(tmp_path, v4_config):
     assert list(tmp_path.iterdir()) == [path]
 
 
+def test_failed_temp_write_leaves_no_backup_and_retries_cleanly(tmp_path, v4_config, monkeypatch):
+    path, raw = _write(tmp_path, "config.json", v4_config)
+
+    def broken_tempfile(*_args, **_kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(apply.tempfile, "NamedTemporaryFile", broken_tempfile)
+    with pytest.raises(OSError):
+        apply.migrate_config_file(path)
+    monkeypatch.undo()
+    assert path.read_bytes() == raw
+    assert not path.with_name("config.json.schema-v4.bak").exists()
+    assert list(tmp_path.iterdir()) == [path]
+
+    changed, changes, backup = apply.migrate_config_file(path)
+    assert changed is True
+    assert backup == path.with_name("config.json.schema-v4.bak")
+    assert backup.read_bytes() == raw
+    assert json.loads(path.read_bytes())["schema_version"] == 5
+
+
 def test_symlink_is_refused(tmp_path, v4_config):
     target, raw = _write(tmp_path, "real.json", v4_config)
     link = tmp_path / "config.json"
