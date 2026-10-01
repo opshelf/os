@@ -125,6 +125,18 @@
 		return (safety as Record<string, unknown>).can_acknowledge === true;
 	}
 
+	function getSafetyActiveSources(): string[] {
+		const safety = $robotStatus?.robot_status?.safety;
+		if (!safety || typeof safety !== 'object') {
+			return [];
+		}
+		const activeSources = (safety as Record<string, unknown>).active_sources;
+		if (!Array.isArray(activeSources)) {
+			return [];
+		}
+		return activeSources.filter((source): source is string => typeof source === 'string');
+	}
+
 	async function didClickAcknowledgeSafety(): Promise<void> {
 		isAcknowledgingSafety = true;
 		safetyAckError = '';
@@ -499,10 +511,16 @@
 						<td class="label-cell">ack required</td>
 						<td class="value-cell">
 							<div class="status-action-cell">
-								<span>{getSafetyAwaitingAck() ? 'yes' : 'no'}</span>
+								<span>
+									{#if getSafetyAwaitingAck()}
+										yes{getSafetyCanAcknowledge() !== true ? ` (${getSafetyActiveSources().join(', ')})` : ''}
+									{:else}
+										no
+									{/if}
+								</span>
 								<button
 									disabled={getSafetyCanAcknowledge() !== true || isAcknowledgingSafety === true}
-									onclick={didClickAcknowledgeSafety}>ACKNOWLEDGE</button
+									onclick={didClickAcknowledgeSafety}>ACK</button
 								>
 							</div>
 							{#if safetyAckError !== ''}
