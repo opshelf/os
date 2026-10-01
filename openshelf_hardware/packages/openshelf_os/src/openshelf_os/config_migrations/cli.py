@@ -49,8 +49,10 @@ def main(argv: list[str] | None = None) -> int:
                 if path not in paths:
                     paths.append(path)
 
-        # Validate every requested document and backup destination before changing any file.
-        plans = [plan_config_file(path) for path in paths]
+        # Validate every requested document (and backup destination when
+        # writing) before changing any file; a read-only preview reports the
+        # existing-backup state instead of aborting on it.
+        plans = [plan_config_file(path, backup_free_required=args.write) for path in paths]
         for path, original, migrated, changes, backup_suffix in plans:
             print(
                 f"{path}: {'migrate' if args.write else 'would migrate'}"

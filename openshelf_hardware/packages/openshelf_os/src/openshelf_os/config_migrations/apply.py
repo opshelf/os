@@ -86,11 +86,22 @@ def _write_migrated(path: Path, original: bytes, migrated: dict[str, Any], backu
             temporary.unlink(missing_ok=True)
 
 
-def plan_config_file(path: Path) -> Plan:
+def plan_config_file(
+    path: Path, *, backup_free_required: bool = True, validate: bool = True
+) -> Plan:
     """Read, migrate, and validate one config file without writing anything.
 
     Raises ValueError for unreadable documents, newer-than-supported versions,
-    failed validation, or an existing migration backup that must be reconciled.
+    failed validation, or a symlink. An existing migration backup also raises
+    ValueError when ``backup_free_required`` is true (the writing paths: the
+    server's auto-migration and the CLI with ``--write``) and must be
+    preserved and reconciled before retrying; a read-only preview passes
+    false so it can still report what would migrate in that state.
+
+    ``validate`` true (the CLI, both preview and write) validates every
+    planned document, even one that is already current; false (the server's
+    one-shot auto-migration) validates only files that will be migrated,
+    leaving validation of untouched files to the caller's own config load.
     """
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"{path}: expected a regular config file, not a symlink")
@@ -99,9 +110,10 @@ def plan_config_file(path: Path) -> Plan:
     config = load_config_json(original)
     source_version = read_schema_version(config)
     migrated, changes = migrate_config(config)
-    validate_migrated_config(migrated)
+    if changes or validate:
+        validate_migrated_config(migrated)
     backup_suffix = f".schema-v{source_version}.bak"
-    if changes and path.with_name(path.name + backup_suffix).exists():
+    if changes and backup_free_required and path.with_name(path.name + backup_suffix).exists():
         raise ValueError(
             f"{path}: migration backup already exists; preserve it and reconcile before retrying"
         )
@@ -118,7 +130,12 @@ def write_planned(plan: Plan) -> Path | None:
 
 
 def migrate_config_file(path: Path) -> tuple[bool, list[str], Path | None]:
-    """Migrate one config file in place; (changed, changes, backup path)."""
-    plan = plan_config_file(path)
+    """Migrate one config file in place; (changed, changes, backup path).
+
+    Only files that will actually be written are validated here; an already
+    current file that fails RootConfig validation is left for the caller's
+    own load_and_validate_config to report with the file path.
+    """
+    plan = plan_config_file(path, validate=False)
     backup = write_planned(plan)
     return (backup is not None, plan[3], backup)
