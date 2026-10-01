@@ -33,7 +33,7 @@ from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.pool import NullPool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from openshelf_os.device import get_device_id
+from openshelf_os.device import get_device_alias, get_device_id
 from openshelf_os import (
     DOOR_MOTOR_RECOVERY_EVENT,
     _redact_sensitive_mapping,
@@ -1234,10 +1234,12 @@ async def health() -> JSONResponse:
     responses=response_docs(model=SystemInfoResponse),
 )
 async def system_info() -> dict[str, str | None]:
-	"""Read device identity and network address.
+	"""Read device identity, alias, and network address.
 
-	Public device discovery information. `lan_ip` is the IPv4 address of `wlan0`, or null
-	when that interface cannot be read. This endpoint does not establish robot readiness.
+	Public device discovery information. `device_alias` is the operator-assigned alias
+	staged by provisioning, or null when the device has none. `lan_ip` is the IPv4
+	address of `wlan0`, or null when that interface cannot be read. This endpoint does
+	not establish robot readiness.
 	"""
 	lan_ip: str | None = None
 	try:
@@ -1249,7 +1251,11 @@ async def system_info() -> dict[str, str | None]:
 	except OSError:
 		pass
 
-	return {"device_id": get_device_id(), "lan_ip": lan_ip}
+	return {
+		"device_id": get_device_id(),
+		"device_alias": get_device_alias() or None,
+		"lan_ip": lan_ip,
+	}
 
 
 app.include_router(auth.router)

@@ -365,3 +365,30 @@ class TestHealthEndpoint:
 		body = response.json()
 		assert body["status"] == "ok"
 		assert body["mode"] == "production"
+
+
+class TestSystemInfoEndpoint:
+	@pytest.fixture
+	async def client(self, seeded_db, auth_headers) -> httpx.AsyncClient:
+		from httpx import AsyncClient, ASGITransport
+		from openshelf_os_server.main import app
+
+		transport = ASGITransport(app=app)
+		async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True, headers=auth_headers) as ac:
+			yield ac
+
+	@pytest.mark.anyio
+	async def test_system_info_reports_device_alias(self, client: httpx.AsyncClient) -> None:
+		with patch("openshelf_os_server.main.get_device_alias", return_value="lb4a-3"):
+			response = await client.get("/api/system/info")
+
+		assert response.status_code == 200
+		assert response.json()["device_alias"] == "lb4a-3"
+
+	@pytest.mark.anyio
+	async def test_system_info_alias_is_null_without_alias(self, client: httpx.AsyncClient) -> None:
+		with patch("openshelf_os_server.main.get_device_alias", return_value=""):
+			response = await client.get("/api/system/info")
+
+		assert response.status_code == 200
+		assert response.json()["device_alias"] is None
