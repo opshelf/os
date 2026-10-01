@@ -518,7 +518,7 @@ class MockRobotRuntime:
 
 		running = next((row for row in commands if row.status == "running"), None)
 		queued = [row for row in commands if row.status == "queued"]
-		axis = {"position": 0, "homed": 1, "hard_stopped": 0, "status_flags": {"value": 0}, "error_flags": {"value": 0}}
+		axis = {"position": 0, "homed": 1, "hard_stopped": 0, "status_flags": {"value": 0}, "error_flags": {"value": 0}, "status": "idle", "current_limit": None, "max_following_error": None}
 		storage: dict[str, list[dict[str, Any]]] = {}
 		for side in MOCK_SIDES:
 			storage[side] = [
@@ -578,6 +578,14 @@ class MockRobotRuntime:
 					"updated_at": _utcnow().isoformat(),
 				},
 				"safety": {"ready": True},
+				"motors": {
+					"x_axis": axis,
+					"y_axis": axis,
+					"z_axis": axis,
+					"stage": axis,
+					"rotate": axis,
+					"door": axis,
+				},
 			},
 		}
 		return json.dumps(payload)

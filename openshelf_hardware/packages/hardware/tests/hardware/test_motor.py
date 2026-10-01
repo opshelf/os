@@ -1890,3 +1890,37 @@ async def test_dump_flight_recorder_prunes_stale_dumps(mock_controller, tmp_path
     assert path is not None
     assert Path(path).exists()
     assert not stale.exists()
+
+
+def test_status_name_reports_cached_state_without_bus_read(mock_controller):
+    motor = Motor(mock_controller, make_motor_params())
+
+    assert motor.status_name() == "idle"
+
+    motor._status = MotorStatus.FAULT
+    assert motor.status_name() == "fault"
+
+    assert mock_controller.read_holding_registers.await_count == 0
+
+
+def test_peak_current_amps_and_following_error_limit_come_from_config(mock_controller):
+    motor = Motor(mock_controller, make_motor_params(Ip=16, max_following_error=2500))
+
+    assert motor.peak_current_amps() == 1.6
+    assert motor.following_error_limit() == 2500
+
+
+def test_peak_current_amps_is_none_when_config_missing(mock_controller):
+    params = make_motor_params()
+    params.Ip = None
+    motor = Motor(mock_controller, params)
+
+    assert motor.peak_current_amps() is None
+
+
+def test_following_error_limit_is_none_when_config_missing(mock_controller):
+    params = make_motor_params()
+    params.max_following_error = None
+    motor = Motor(mock_controller, params)
+
+    assert motor.following_error_limit() is None

@@ -29,6 +29,15 @@ class AxisTelemetry(BaseModel):
     position: float = 0.0
     homed: int = 0
     hard_stopped: int = 0
+    # Cached drive state (idle|moving|stopped|error|fault|timeout); never re-read
+    # from the bus in the status path.
+    status: str = "idle"
+    # Configured peak current in amperes (config Ip, 0.1 A units); static, not a
+    # live measurement.
+    current_limit: Optional[float] = None
+    # Configured allowed max position following error; the drive exposes no
+    # readback for the live following error value.
+    max_following_error: Optional[int] = None
 
 
 class ToolAxisStatus(BaseModel):
