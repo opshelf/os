@@ -77,6 +77,9 @@ def _default_axis_status() -> Dict[str, Any]:
         "position": 0,
         "homed": 0,
         "hard_stopped": 0,
+        "status": "idle",
+        "current_limit": None,
+        "max_following_error": None,
     }
 
 
@@ -102,6 +105,15 @@ def _normalize_axis_status(axis_payload: Any) -> Dict[str, Any]:
 
     if "hard_stopped" in axis_payload:
         normalized["hard_stopped"] = axis_payload.get("hard_stopped", 0)
+
+    if isinstance(axis_payload.get("status"), str):
+        normalized["status"] = axis_payload.get("status")
+
+    if axis_payload.get("current_limit") is not None:
+        normalized["current_limit"] = axis_payload.get("current_limit")
+
+    if axis_payload.get("max_following_error") is not None:
+        normalized["max_following_error"] = axis_payload.get("max_following_error")
 
     return normalized
 

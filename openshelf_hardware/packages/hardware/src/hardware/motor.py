@@ -444,6 +444,26 @@ class Motor():
     def is_hard_stopped(self) -> bool:
         return self._hard_stopped
 
+    def status_name(self) -> str:
+        """Last known drive state (idle/moving/stopped/error/fault/timeout),
+        without touching the bus."""
+        return self._status.name.lower()
+
+    def peak_current_amps(self) -> Optional[float]:
+        """Configured peak current in amperes (config Ip, 0.1 A units)."""
+        raw = getattr(self._params, "Ip", None)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return None
+        return round(raw * 0.1, 2)
+
+    def following_error_limit(self) -> Optional[int]:
+        """Configured allowed max position following error; the drive exposes no
+        readback for the live following error value."""
+        raw = getattr(self._params, "max_following_error", None)
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            return None
+        return raw
+
     def set_diagnostic_context(
         self,
         *,
