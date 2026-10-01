@@ -25,11 +25,18 @@
 		type Shelf,
 		type Cell
 	} from '$lib/api';
+	import { activeVocabulary, activeVocabularyStore, sideIndex, sideInitial, sideLabel } from '$lib/side';
+	import type { SideIndex, SideVocabulary } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import {
 		createReconnectingEventSource,
 		type ReconnectingEventSource
 	} from '$lib/sse';
+
+	let vocabulary = $state(activeVocabulary());
+	$effect(() => activeVocabularyStore.subscribe((v) => {
+		vocabulary = v;
+	}));
 
 	let storageGrid = $state<StorageGrid | null>(null);
 	let loading = $state<boolean>(true);
@@ -57,10 +64,14 @@
 
 	const selectedSide = $derived.by(
 		(): StorageModuleSide =>
-			page.url.searchParams.get('side') === 'back_module' ? 'back_module' : 'front_module'
+			sideIndex(page.url.searchParams.get('side')) === 1 ? 'back_module' : 'front_module'
 	);
 
-	const sideInitial = $derived(selectedSide === 'back_module' ? 'B' : 'F');
+	const sideInitialLetter = $derived(sideInitialFor(selectedSide, vocabulary));
+
+	function sideInitialFor(side: StorageModuleSide, vocab: SideVocabulary): string {
+		return sideInitial(sideIndex(side) as SideIndex, vocab);
+	}
 
 	function sideHref(side: StorageModuleSide): string {
 		const url = new URL(page.url.pathname, location.origin);
@@ -103,7 +114,7 @@
 			if (parsed === null) {
 				continue;
 			}
-			entries.push({ shelf: parsed.shelf, cell: parsed.cell, label: `${sideInitial}:${parsed.shelf}:${parsed.cell}` });
+			entries.push({ shelf: parsed.shelf, cell: parsed.cell, label: `${sideInitialLetter}:${parsed.shelf}:${parsed.cell}` });
 		}
 
 		entries.sort((a, b) => a.shelf - b.shelf || a.cell - b.cell);
@@ -499,7 +510,7 @@
 				continue;
 			}
 			if (
-				bin.home_location.side === selectedSide &&
+				sideIndex(bin.home_location.side) === sideIndex(selectedSide) &&
 				bin.home_location.shelf_idx === shelfIdx &&
 				bin.home_location.cell_idx === cell.cell_idx
 			) {
@@ -1148,7 +1159,7 @@
 				if (testAborting) {
 					break;
 				}
-				testCurrent = `${sideInitial}:${target.shelf}:${target.cell.cell_idx}`;
+				testCurrent = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
 				if (result.ok) {
 				testPassed += 1;
@@ -1278,7 +1289,7 @@
 
 	async function didDeleteShelf(shelfIdx: number): Promise<void> {
 		const confirmed = confirm(
-			`are you sure you want to delete shelf ${sideInitial}:${shelfIdx}?`
+			`are you sure you want to delete shelf ${sideInitialLetter}:${shelfIdx}?`
 		);
 		if (confirmed !== true) {
 			return;
@@ -1301,10 +1312,10 @@
 <div class="layout-toolbar">
 	<div class="toggle-group">
 		<a class:selected={selectedSide === 'front_module'} href={sideHref('front_module')}>
-			front
+			{sideLabel(0, vocabulary).toLowerCase()}
 		</a>
 		<a class:selected={selectedSide === 'back_module'} href={sideHref('back_module')}>
-			back
+			{sideLabel(1, vocabulary).toLowerCase()}
 		</a>
 	</div>
 	<span class="toolbar-separator">—</span>
@@ -1325,7 +1336,7 @@
 	<ErrorMessage message={loadError} />
 {:else if storageGrid !== null}
 	{#if getShelves().length === 0}
-		<p class="empty">no shelves on the {sideInitial} side</p>
+		<p class="empty">no shelves on the {sideInitialLetter} side</p>
 	{:else}
 		<div class="shelf-list">
 			{#each getShelves() as shelf (shelf.shelf_idx)}
@@ -1337,7 +1348,7 @@
 				onclick={(event) => didClickShelf(event, shelf.shelf_idx)}
 				onkeydown={(event) => didPressShelf(event, shelf.shelf_idx)}
 			>
-				{sideInitial}:{shelf.shelf_idx}
+				{sideInitialLetter}:{shelf.shelf_idx}
 			</span>
 					<div class="shelf-cells">
 						{#each shelf.cells as cell (cell.cell_idx)}
