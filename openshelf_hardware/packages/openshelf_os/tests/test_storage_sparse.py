@@ -13,7 +13,7 @@ from openshelf_os.storage import (
 def test_storage_grid_assigns_missing_indices_from_payload() -> None:
 	grid = StorageGrid.model_validate(
 		{
-			"left_module": [
+			"front_module": [
 				{
 					"shelf_width": 200.0,
 					"cells": [
@@ -26,17 +26,17 @@ def test_storage_grid_assigns_missing_indices_from_payload() -> None:
 					],
 				}
 			],
-			"right_module": [],
+			"back_module": [],
 		}
 	)
 
-	assert grid.left_module[0].shelf_idx == 0
-	assert grid.left_module[0].cells[0].cell_idx == 0
+	assert grid.front_module[0].shelf_idx == 0
+	assert grid.front_module[0].cells[0].cell_idx == 0
 
 
 def test_storage_grid_resolves_sparse_indices_by_explicit_ids() -> None:
 	grid = StorageGrid(
-		left_module=[
+		front_module=[
 			Shelf(
 				shelf_idx=5,
 				shelf_width=220.0,
@@ -51,9 +51,9 @@ def test_storage_grid_resolves_sparse_indices_by_explicit_ids() -> None:
 				],
 			)
 		],
-		right_module=[],
+		back_module=[],
 	)
-	location = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=5, cell_idx=7)
+	location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=5, cell_idx=7)
 
 	cell = grid.get_cell(location)
 	coordinate = grid.get_cell_coordinate(location)

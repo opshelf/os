@@ -29,7 +29,7 @@
 	let isExtensionCalibrationSelected = $state<boolean>(true);
 	let preferredAngleCalibration = $state<boolean>(true);
 	let preferredExtensionCalibration = $state<boolean>(true);
-	let selectedSide = $state<'' | 'left_module' | 'right_module'>('');
+	let selectedSide = $state<'' | 'front_module' | 'back_module'>('');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
 	let activeRequestedScope = $state<LaserAutoCalibrationRequest | null>(null);
@@ -173,16 +173,16 @@
 		return defaultRequestedScope;
 	}
 
-	function getShelvesForSide(side: '' | 'left_module' | 'right_module') {
+	function getShelvesForSide(side: '' | 'front_module' | 'back_module') {
 		if (storageGrid === null || side === '') {
 			return [];
 		}
 
-		if (side === 'left_module') {
-			return storageGrid.left_module;
+		if (side === 'front_module') {
+			return storageGrid.front_module;
 		}
 
-		return storageGrid.right_module;
+		return storageGrid.back_module;
 	}
 
 	function getShelves() {
@@ -460,7 +460,7 @@
 	function didChangeSide(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
-		selectedSide = target.value as '' | 'left_module' | 'right_module';
+		selectedSide = target.value as '' | 'front_module' | 'back_module';
 		syncSelection();
 		applyCalibrationOptionSelection();
 		error = '';
@@ -577,7 +577,7 @@
 		return snapshot?.angle_results ?? [];
 	}
 
-	function getRotationValue(side: 'left_module' | 'right_module'): string {
+	function getRotationValue(side: 'front_module' | 'back_module'): string {
 		const angleResult = getAngleResults().find(function (result) {
 			return result.side === side;
 		});
@@ -589,12 +589,12 @@
 		return formatNumber(angleResult.updated_rotation_deg, 4);
 	}
 
-	function getStageExtensionValue(side: 'left_module' | 'right_module'): string {
-		if (side === 'left_module') {
-			return formatNumber(snapshot?.left_stage_extension_mm);
+	function getStageExtensionValue(side: 'front_module' | 'back_module'): string {
+		if (side === 'front_module') {
+			return formatNumber(snapshot?.front_stage_extension_mm);
 		}
 
-		return formatNumber(snapshot?.right_stage_extension_mm);
+		return formatNumber(snapshot?.back_stage_extension_mm);
 	}
 
 	function formatStageDetailValue(value: unknown): string {
@@ -658,8 +658,8 @@
 							disabled={isAllSelected === true || isSelectionDisabled || storageGrid === null}
 						>
 							<option value="">-</option>
-							<option value="left_module">left module</option>
-							<option value="right_module">right module</option>
+							<option value="front_module">front module</option>
+							<option value="back_module">back module</option>
 						</select>
 					</div>
 				</td>
@@ -750,8 +750,8 @@
 			<thead>
 				<tr>
 					<th>auto results</th>
-					<th>left / x</th>
-					<th>right / y</th>
+					<th>front / x</th>
+					<th>back / y</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -769,28 +769,28 @@
 				</tr>
 				<tr>
 					<td>scouted shelves</td>
-					<td>{snapshot?.left_scouted_shelf_count ?? 0}</td>
-					<td>{snapshot?.right_scouted_shelf_count ?? 0}</td>
+					<td>{snapshot?.front_scouted_shelf_count ?? 0}</td>
+					<td>{snapshot?.back_scouted_shelf_count ?? 0}</td>
 				</tr>
 				<tr>
 					<td>candidate cells</td>
-					<td>{snapshot?.left_candidate_count ?? 0}</td>
-					<td>{snapshot?.right_candidate_count ?? 0}</td>
+					<td>{snapshot?.front_candidate_count ?? 0}</td>
+					<td>{snapshot?.back_candidate_count ?? 0}</td>
 				</tr>
 				<tr>
 					<td>confirmed cells</td>
-					<td>{snapshot?.left_detected_cell_count ?? 0}</td>
-					<td>{snapshot?.right_detected_cell_count ?? 0}</td>
+					<td>{snapshot?.front_detected_cell_count ?? 0}</td>
+					<td>{snapshot?.back_detected_cell_count ?? 0}</td>
 				</tr>
 				<tr>
 					<td>rotation angle</td>
-					<td>{getRotationValue('left_module')}</td>
-					<td>{getRotationValue('right_module')}</td>
+					<td>{getRotationValue('front_module')}</td>
+					<td>{getRotationValue('back_module')}</td>
 				</tr>
 				<tr>
 					<td>stage extension</td>
-					<td>{getStageExtensionValue('left_module')}</td>
-					<td>{getStageExtensionValue('right_module')}</td>
+					<td>{getStageExtensionValue('front_module')}</td>
+					<td>{getStageExtensionValue('back_module')}</td>
 				</tr>
 			</tbody>
 		</table>

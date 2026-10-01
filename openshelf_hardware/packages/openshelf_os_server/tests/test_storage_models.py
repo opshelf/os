@@ -180,7 +180,7 @@ async def test_item_location() -> None:
         # Add location
         location = await service.add_item_location(
             barcode="123456789012",
-            side="left_module",
+            side="front_module",
             shelf_idx=1,
             cell_idx=2
         )
@@ -211,12 +211,12 @@ async def test_item_location_remove() -> None:
             dimensions={"width": 10.0, "height": 20.0, "length": 30.0}
         )
 
-        await service.add_item_location(barcode="123456789012", side="left_module", shelf_idx=1, cell_idx=2)
+        await service.add_item_location(barcode="123456789012", side="front_module", shelf_idx=1, cell_idx=2)
 
         # Remove location
         success = await service.remove_item_location(
             barcode="123456789012",
-            side="left_module",
+            side="front_module",
             shelf_idx=1,
             cell_idx=2
         )
@@ -284,15 +284,15 @@ async def test_get_all_occupied_cells() -> None:
             dimensions={"width": 20, "height": 20, "length": 20}
         )
 
-        await service.add_item_location(barcode="item1", side="left_module", shelf_idx=0, cell_idx=1)
-        await service.add_item_location(barcode="item1", side="right_module", shelf_idx=2, cell_idx=3)
-        await service.add_item_location(barcode="item2", side="left_module", shelf_idx=1, cell_idx=0)
+        await service.add_item_location(barcode="item1", side="front_module", shelf_idx=0, cell_idx=1)
+        await service.add_item_location(barcode="item1", side="back_module", shelf_idx=2, cell_idx=3)
+        await service.add_item_location(barcode="item2", side="front_module", shelf_idx=1, cell_idx=0)
 
         result = await service.get_all_occupied_cells()
 
         assert len(result) == 3
 
         occupied_set = {(row[0], row[1], row[2], row[3]) for row in result}
-        assert ("left_module", 0, 1, "item1") in occupied_set
-        assert ("right_module", 2, 3, "item1") in occupied_set
-        assert ("left_module", 1, 0, "item2") in occupied_set
+        assert ("front_module", 0, 1, "item1") in occupied_set
+        assert ("back_module", 2, 3, "item1") in occupied_set
+        assert ("front_module", 1, 0, "item2") in occupied_set

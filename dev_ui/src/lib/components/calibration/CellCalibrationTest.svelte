@@ -19,13 +19,13 @@
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	interface Props {
-		initialSide?: 'left_module' | 'right_module';
+		initialSide?: 'front_module' | 'back_module';
 		initialShelf?: number;
 		initialCell?: number;
 	}
 
 	interface StoredCellSelection {
-		side?: 'left_module' | 'right_module';
+		side?: 'front_module' | 'back_module';
 		shelf?: number;
 		cell?: number;
 	}
@@ -35,7 +35,7 @@
 	let storageGrid = $state<StorageGrid | null>(null);
 	let loading = $state<boolean>(true);
 	let loadError = $state<string>('');
-	let selectedSide = $state<'left_module' | 'right_module'>(initialSide ?? 'left_module');
+	let selectedSide = $state<'front_module' | 'back_module'>(initialSide ?? 'front_module');
 	let selectedShelf = $state<number>(0);
 	let selectedCell = $state<number>(0);
 	let isRunningQuick = $state<boolean>(false);
@@ -163,8 +163,8 @@
 		}
 	}
 
-	function isStorageModuleSide(value: unknown): value is 'left_module' | 'right_module' {
-		return value === 'left_module' || value === 'right_module';
+	function isStorageModuleSide(value: unknown): value is 'front_module' | 'back_module' {
+		return value === 'front_module' || value === 'back_module';
 	}
 
 	function isSelectionIndex(value: unknown): value is number {
@@ -202,16 +202,16 @@
 		}
 	}
 
-	function getShelvesForSide(side: 'left_module' | 'right_module') {
+	function getShelvesForSide(side: 'front_module' | 'back_module') {
 		if (storageGrid === null) {
 			return [];
 		}
 
-		if (side === 'left_module') {
-			return storageGrid.left_module;
+		if (side === 'front_module') {
+			return storageGrid.front_module;
 		}
 
-		return storageGrid.right_module;
+		return storageGrid.back_module;
 	}
 
 	function getShelves() {
@@ -295,7 +295,7 @@
 	function didChangeSide(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
-		selectedSide = target.value as 'left_module' | 'right_module';
+		selectedSide = target.value as 'front_module' | 'back_module';
 		syncSelection();
 		persistSelection();
 		error = '';
@@ -431,8 +431,8 @@
 				<td>
 					<span class="field-label">side</span>
 					<select value={selectedSide} onchange={didChangeSide}>
-						<option value="left_module">left module</option>
-						<option value="right_module">right module</option>
+						<option value="front_module">front module</option>
+						<option value="back_module">back module</option>
 					</select>
 				</td>
 				<td>

@@ -37,7 +37,7 @@ def build_grid(
     dimensions: Dimensions | None = None,
 ) -> StorageGrid:
     return StorageGrid(
-        left_module=[
+        front_module=[
             Shelf(
                 shelf_idx=0,
                 shelf_width=400.0,
@@ -53,7 +53,7 @@ def build_grid(
                 ],
             )
         ],
-        right_module=[],
+        back_module=[],
     )
 
 
@@ -95,7 +95,7 @@ def item_payload(barcode: str, location: StorageModuleCellLocation | None = None
 
 @pytest.mark.asyncio
 async def test_demo_store_allows_trusted_explicit_home() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2)
+    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
     robot, grid = build_demo_store_robot(
         {},
         {(home.side.value, home.shelf_idx, home.cell_idx)},
@@ -110,8 +110,8 @@ async def test_demo_store_allows_trusted_explicit_home() -> None:
 
 @pytest.mark.asyncio
 async def test_demo_store_uses_explicit_home_over_conflicting_demo_mapping() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2)
-    mapped_location = StorageModuleCellLocation(side=StorageModuleSide.RIGHT, shelf_idx=3, cell_idx=4)
+    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
+    mapped_location = StorageModuleCellLocation(side=StorageModuleSide.BACK, shelf_idx=3, cell_idx=4)
     robot, grid = build_demo_store_robot(
         {"bin-123": mapped_location},
         {(home.side.value, home.shelf_idx, home.cell_idx)},
@@ -127,9 +127,9 @@ async def test_demo_store_uses_explicit_home_over_conflicting_demo_mapping() -> 
 
 @pytest.mark.asyncio
 async def test_demo_store_allows_explicit_home_for_unmapped_bin_barcode() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2)
+    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
     robot, grid = build_demo_store_robot(
-        {"ordinary-item": StorageModuleCellLocation(side=StorageModuleSide.RIGHT, shelf_idx=0, cell_idx=0)},
+        {"ordinary-item": StorageModuleCellLocation(side=StorageModuleSide.BACK, shelf_idx=0, cell_idx=0)},
         {(home.side.value, home.shelf_idx, home.cell_idx)},
     )
 
@@ -143,10 +143,10 @@ async def test_demo_store_allows_explicit_home_for_unmapped_bin_barcode() -> Non
 @pytest.mark.asyncio
 async def test_demo_store_uses_mapping_over_ordinary_explicit_location() -> None:
     mapped_location = StorageModuleCellLocation(
-        side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2
+        side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2
     )
     ordinary_location = StorageModuleCellLocation(
-        side=StorageModuleSide.RIGHT, shelf_idx=3, cell_idx=4
+        side=StorageModuleSide.BACK, shelf_idx=3, cell_idx=4
     )
     robot, grid = build_demo_store_robot(
         {"ordinary-item": mapped_location},
@@ -163,7 +163,7 @@ async def test_demo_store_uses_mapping_over_ordinary_explicit_location() -> None
 @pytest.mark.asyncio
 async def test_demo_store_rejects_unmapped_barcode_with_ordinary_explicit_location() -> None:
     ordinary_location = StorageModuleCellLocation(
-        side=StorageModuleSide.RIGHT, shelf_idx=3, cell_idx=4
+        side=StorageModuleSide.BACK, shelf_idx=3, cell_idx=4
     )
     robot, grid = build_demo_store_robot({}, set())
 
@@ -178,7 +178,7 @@ async def test_demo_store_rejects_unmapped_barcode_with_ordinary_explicit_locati
 @pytest.mark.asyncio
 async def test_non_demo_store_rejects_unknown_explicit_location() -> None:
     explicit_location = StorageModuleCellLocation(
-        side=StorageModuleSide.RIGHT, shelf_idx=3, cell_idx=4
+        side=StorageModuleSide.BACK, shelf_idx=3, cell_idx=4
     )
     grid = build_grid()
     robot = build_store_robot(grid)
@@ -192,7 +192,7 @@ async def test_non_demo_store_rejects_unknown_explicit_location() -> None:
 
 @pytest.mark.asyncio
 async def test_non_demo_store_stores_to_available_explicit_location() -> None:
-    location = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0)
+    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
     grid = build_grid()
     robot = build_store_robot(grid)
 
@@ -206,7 +206,7 @@ async def test_non_demo_store_stores_to_available_explicit_location() -> None:
 
 @pytest.mark.asyncio
 async def test_non_demo_store_rejects_occupied_explicit_location() -> None:
-    location = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0)
+    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
     robot = build_store_robot(build_grid(status=CellStatus.OCCUPIED))
 
     result = await robot.store(item_payload("ordinary-item", location))
@@ -218,7 +218,7 @@ async def test_non_demo_store_rejects_occupied_explicit_location() -> None:
 
 @pytest.mark.asyncio
 async def test_non_demo_store_rejects_too_small_explicit_location() -> None:
-    location = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0)
+    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
     robot = build_store_robot(build_grid(dimensions=Dimensions(width=1.0, length=1.0, height=1.0)))
 
     result = await robot.store(item_payload("ordinary-item", location))
@@ -243,7 +243,7 @@ async def test_non_demo_store_rejects_malformed_explicit_location() -> None:
 
 @pytest.mark.asyncio
 async def test_demo_store_rejects_mapped_reserved_location_without_explicit_location() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.LEFT, shelf_idx=1, cell_idx=2)
+    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
     robot, grid = build_demo_store_robot(
         {"ordinary-item": home},
         {(home.side.value, home.shelf_idx, home.cell_idx)},

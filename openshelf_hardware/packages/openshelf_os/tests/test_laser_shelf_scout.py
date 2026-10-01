@@ -208,18 +208,18 @@ def test_build_shelf_scout_x_positions_preserves_right_zero_and_scout_override()
 	assert build_shelf_scout_x_positions(
 		x_min_mm=0.0,
 		x_max_mm=900.0,
-		is_right_side=True,
+		is_back_side=True,
 	) == [0.0]
 	assert build_shelf_scout_x_positions(
 		x_min_mm=0.0,
 		x_max_mm=900.0,
-		is_right_side=True,
+		is_back_side=True,
 		scout_x_mm=950.0,
 	) == [950.0]
 	assert build_shelf_scout_x_positions(
 		x_min_mm=0.0,
 		x_max_mm=900.0,
-		is_right_side=False,
+		is_back_side=False,
 		scout_x_mm=123.0,
 	) == [123.0]
 
@@ -229,8 +229,8 @@ def test_scan_shelf_scout_x_positions_uses_configured_side_override() -> None:
 
 	assert build_scan_shelf_scout_x_positions(
 		bounds=bounds,
-		side=StorageModuleSide.RIGHT,
-		scan_config=SimpleNamespace(right_shelf_scout_x_mm=950.0),
+		side=StorageModuleSide.BACK,
+		scan_config=SimpleNamespace(back_shelf_scout_x_mm=950.0),
 	) == [950.0]
 
 
@@ -239,7 +239,7 @@ def test_resolve_lower_boundary_shelf_edge_uses_scan_lower_bound() -> None:
 
 	edge = resolve_lower_boundary_shelf_edge(
 		bounds=bounds,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		shelf_edges=[ShelfSurfaceEdge(x_mm=950.0, y_mm=281.0)],
 		hole_probe_y_offsets_mm=[32.25],
 	)
@@ -252,7 +252,7 @@ def test_resolve_lower_boundary_shelf_edge_skips_nearby_detected_edge() -> None:
 
 	edge = resolve_lower_boundary_shelf_edge(
 		bounds=bounds,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		shelf_edges=[ShelfSurfaceEdge(x_mm=950.0, y_mm=12.0)],
 		hole_probe_y_offsets_mm=[32.25],
 	)

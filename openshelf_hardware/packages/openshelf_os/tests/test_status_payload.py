@@ -68,7 +68,7 @@ from openshelf_os.robot.worker import RobotWorker, _transform_worker_status_payl
 def test_transform_worker_payload_includes_needs_home() -> None:
     payload = {
         "robot_status": {
-            "storage": {"left_module": [], "right_module": []},
+            "storage": {"front_module": [], "back_module": []},
             "state": {"current_cell": None},
         },
         "error_queue": [],
@@ -110,7 +110,7 @@ def test_transform_worker_payload_preserves_axis_telemetry() -> None:
             "tool": {
                 "z_axis": {"position": 3.25, "homed": 1, "hard_stopped": 0},
             },
-            "storage": {"left_module": [], "right_module": []},
+            "storage": {"front_module": [], "back_module": []},
             "state": {"current_cell": None},
         },
         "error_queue": [],
@@ -127,7 +127,7 @@ def test_transform_worker_payload_preserves_axis_telemetry() -> None:
 def test_transform_worker_payload_preserves_safety_status() -> None:
     payload = {
         "robot_status": {
-            "storage": {"left_module": [], "right_module": []},
+            "storage": {"front_module": [], "back_module": []},
             "state": {"current_cell": None},
             "cabinet_doors": {
                 "top_closed": False,
@@ -160,7 +160,7 @@ def test_transform_worker_payload_preserves_safety_status() -> None:
 def test_transform_worker_payload_preserves_scale_status() -> None:
     payload = {
         "robot_status": {
-            "storage": {"left_module": [], "right_module": []},
+            "storage": {"front_module": [], "back_module": []},
             "state": {"current_cell": None},
             "scale": {
                 "available": True,

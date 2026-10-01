@@ -6,7 +6,7 @@ import pytest
 
 import openshelf_os.laser_calibration.angle.cli as angle_cli
 from openshelf_os.laser_calibration.angle import (
-	RIGHT_MODULE_ROTATION_SAFE_X_MM,
+	BACK_MODULE_ROTATION_SAFE_X_MM,
 	build_shelf_scout_x_positions,
 	get_default_rotation_center_deg,
 	prepare_capture_pose,
@@ -48,68 +48,68 @@ def test_angle_cli_initializes_mode_workspace_before_parsing_args() -> None:
 
 
 def test_get_default_rotation_center_deg_uses_front_for_left() -> None:
-	assert get_default_rotation_center_deg('left') == 0.0
+	assert get_default_rotation_center_deg('front') == 0.0
 
 
 def test_get_default_rotation_center_deg_uses_back_for_right() -> None:
-	assert get_default_rotation_center_deg('right') == 180.0
+	assert get_default_rotation_center_deg('back') == 180.0
 
 
 def test_resolve_rotation_center_deg_uses_configured_front_for_left() -> None:
 	parameters = SimpleNamespace(ROTATION_FRONT=184.5, ROTATION_BACK=4.5)
 
-	assert resolve_rotation_center_deg('left', parameters) == 184.5
+	assert resolve_rotation_center_deg('front', parameters) == 184.5
 
 
 def test_resolve_rotation_center_deg_uses_configured_back_for_right() -> None:
 	parameters = SimpleNamespace(ROTATION_FRONT=184.5, ROTATION_BACK=4.5)
 
-	assert resolve_rotation_center_deg('right', parameters) == 4.5
+	assert resolve_rotation_center_deg('back', parameters) == 4.5
 
 
 
 
 def test_angle_shelf_scout_uses_configured_scan_bounds_instead_of_probe_x() -> None:
 	scan_config = SimpleNamespace(
-		left_bounds_x_min_mm=0.0,
-		left_bounds_x_max_mm=950.0,
+		front_bounds_x_min_mm=0.0,
+		front_bounds_x_max_mm=950.0,
 	)
 
 	assert build_shelf_scout_x_positions(
 		scan_config=scan_config,
 		x_min_mm=475.0,
 		x_max_mm=475.0,
-		side_name='left',
+		side_name='front',
 		scout_x_mm=None,
 	) == [950.0]
 
 
 def test_angle_shelf_scout_uses_configured_side_override() -> None:
 	scan_config = SimpleNamespace(
-		right_bounds_x_min_mm=0.0,
-		right_bounds_x_max_mm=950.0,
-		right_shelf_scout_x_mm=950.0,
+		back_bounds_x_min_mm=0.0,
+		back_bounds_x_max_mm=950.0,
+		back_shelf_scout_x_mm=950.0,
 	)
 
 	assert build_shelf_scout_x_positions(
 		scan_config=scan_config,
 		x_min_mm=475.0,
 		x_max_mm=475.0,
-		side_name='right',
+		side_name='back',
 		scout_x_mm=None,
 	) == [950.0]
 
 def test_angle_shelf_scout_explicit_x_overrides_configured_scan_bounds() -> None:
 	scan_config = SimpleNamespace(
-		left_bounds_x_min_mm=0.0,
-		left_bounds_x_max_mm=950.0,
+		front_bounds_x_min_mm=0.0,
+		front_bounds_x_max_mm=950.0,
 	)
 
 	assert build_shelf_scout_x_positions(
 		scan_config=scan_config,
 		x_min_mm=475.0,
 		x_max_mm=475.0,
-		side_name='left',
+		side_name='front',
 		scout_x_mm=475.0,
 	) == [475.0]
 
@@ -128,7 +128,7 @@ async def test_prepare_capture_pose_skips_rotation_move_for_right_when_rotation_
 
 	await prepare_capture_pose(
 		tool,
-		side_name='right',
+		side_name='back',
 		side_number=1,
 		x_mm=845.0,
 		y_mm=1096.0,
@@ -138,7 +138,7 @@ async def test_prepare_capture_pose_skips_rotation_move_for_right_when_rotation_
 		z_move_rpm=100.0,
 		z_move_accel=100.0,
 		should_rotate=False,
-		should_use_safe_right_rotation_path=False,
+		should_use_safe_back_rotation_path=False,
 		should_move_z=False,
 	)
 
@@ -165,7 +165,7 @@ async def test_prepare_capture_pose_rotates_in_place_for_right_when_rotation_cha
 
 	await prepare_capture_pose(
 		tool,
-		side_name='right',
+		side_name='back',
 		side_number=1,
 		x_mm=945.0,
 		y_mm=1096.0,
@@ -175,7 +175,7 @@ async def test_prepare_capture_pose_rotates_in_place_for_right_when_rotation_cha
 		z_move_rpm=100.0,
 		z_move_accel=100.0,
 		should_rotate=True,
-		should_use_safe_right_rotation_path=False,
+		should_use_safe_back_rotation_path=False,
 		should_move_z=False,
 	)
 
@@ -193,23 +193,23 @@ async def test_prepare_capture_pose_rotates_in_place_for_right_when_rotation_cha
 	[
 		pytest.param(
 			(
-				"right",
+				"back",
 				1,
 				945.0,
 				1096.0,
 				180.0,
 			),
-			id="right_module",
+			id="back_module",
 		),
 		pytest.param(
 			(
-				"left",
+				"front",
 				0,
 				950.0,
 				1250.0,
 				0.0,
 			),
-			id="left_module",
+			id="front_module",
 		),
 	],
 )
@@ -224,7 +224,7 @@ async def test_prepare_capture_pose_uses_safe_rotation_path_when_requested(
 		_ms=SimpleNamespace(ready=AsyncMock(), move_to_position=AsyncMock()),
 		_mg=SimpleNamespace(move_to_position=AsyncMock()),
 		gantry_wait=AsyncMock(),
-		ensure_safe_rotation_x_position=AsyncMock(return_value=RIGHT_MODULE_ROTATION_SAFE_X_MM),
+		ensure_safe_rotation_x_position=AsyncMock(return_value=BACK_MODULE_ROTATION_SAFE_X_MM),
 		restore_safe_rotation_x_position=AsyncMock(),
 		ensure_safe_rotation_stage_extension=AsyncMock(),
 		is_rotation_at_position=AsyncMock(return_value=False),
@@ -242,15 +242,15 @@ async def test_prepare_capture_pose_uses_safe_rotation_path_when_requested(
 		z_move_rpm=100.0,
 		z_move_accel=100.0,
 		should_rotate=True,
-		should_use_safe_right_rotation_path=True,
+		should_use_safe_back_rotation_path=True,
 		should_move_z=False,
 	)
 
 	tool.ensure_safe_rotation_x_position.assert_awaited_once()
 	tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
 	tool._mr.move_to_position.assert_awaited_once_with(rotation)
-	tool.restore_safe_rotation_x_position.assert_awaited_once_with(RIGHT_MODULE_ROTATION_SAFE_X_MM)
-	assert tool._mx.move_to_position_no_wait.await_args_list[0].args == (RIGHT_MODULE_ROTATION_SAFE_X_MM,)
+	tool.restore_safe_rotation_x_position.assert_awaited_once_with(BACK_MODULE_ROTATION_SAFE_X_MM)
+	assert tool._mx.move_to_position_no_wait.await_args_list[0].args == (BACK_MODULE_ROTATION_SAFE_X_MM,)
 	assert tool._mx.move_to_position_no_wait.await_args_list[1].args == (x_mm,)
 	assert tool._mr.move_to_position.await_args_list[0].args == (rotation,)
 

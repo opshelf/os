@@ -85,7 +85,7 @@ chmod 600 .env
 
 the normal developer account (`developer@opshelf.com`, pin `1111`) is seeded, but authentication remains required. existing item CRUD, users, roles, access levels, permissions, audit logging, correlation-id propagation, and response schemas continue to use sqlite.
 
-the virtual cabinet has 80 deterministic cells: left module then right module, four shelves per side, and ten cells per shelf. `items` and `item_locations` in `base.mock.db` are the occupancy source of truth. the runtime exposes:
+the virtual cabinet has 80 deterministic cells: front module then back module, four shelves per side, and ten cells per shelf. `items` and `item_locations` in `base.mock.db` are the occupancy source of truth. the runtime exposes:
 
 - `GET /api/health`: reports `mode=mock`, a ready mock robot, and no hardware dependency
 - `POST /api/robot/commands`: queues `store_item` or `retrieve_item` and returns a command uuid
@@ -198,7 +198,7 @@ npm run build
 
 ## config schema migrations
 
-`schema_version` is a top-level positive integer in the config files, independent of the application's `version` string. a missing `schema_version` means **1** (the pre-versioning provisioning schema); the current schema is **4** (`config.schema.CURRENT_SCHEMA_VERSION`). the application requires the current schema at startup, never auto-migrates, and refuses older or newer versions before parsing nested config models. do not fix a startup error by changing only `schema_version`: the old field names would then lose their meaning.
+`schema_version` is a top-level positive integer in the config files, independent of the application's `version` string. a missing `schema_version` means **1** (the pre-versioning provisioning schema); the current schema is **5** (`config.schema.CURRENT_SCHEMA_VERSION`). the application requires the current schema at startup, never auto-migrates, and refuses older or newer versions before parsing nested config models. do not fix a startup error by changing only `schema_version`: the old field names would then lose their meaning.
 
 ### applying a migration
 
@@ -236,7 +236,7 @@ at release time, migrate `../provision/config/config.json` with the same runner 
 
 ### adding a migration
 
-add `v005_<description>.py` under `openshelf_hardware/packages/openshelf_os/src/openshelf_os/config_migrations/`. its `migrate(config)` function accepts the raw previous-schema dictionary and returns the transformed dictionary plus a list of changed field paths. register it under the destination version in `runner.MIGRATIONS` and increment `config.schema.CURRENT_SCHEMA_VERSION`. the runner advances the version only after each step succeeds and validates the complete result before persistence.
+add `v006_<description>.py` under `openshelf_hardware/packages/openshelf_os/src/openshelf_os/config_migrations/`. its `migrate(config)` function accepts the raw previous-schema dictionary and returns the transformed dictionary plus a list of changed field paths. register it under the destination version in `runner.MIGRATIONS` and increment `config.schema.CURRENT_SCHEMA_VERSION`. the runner advances the version only after each step succeeds and validates the complete result before persistence.
 
 never modify a released migration; append a new step. test value preservation, conflicting keys, optional fields, the whole migration chain, and startup rejection. update generated config defaults, fixtures, release notes, and the provisioning template for each new schema; do not include secrets in migration diagnostics.
 
