@@ -204,6 +204,10 @@
 		</tbody>
 	</table>
 
+	{#if statusError !== ''}
+		<ErrorMessage message={statusError} />
+	{/if}
+
 	<div class="action-buttons">
 		<button type="button" on:click={didClickRefresh} disabled={isRefreshing === true}>
 			refresh
