@@ -217,7 +217,7 @@ class ItemLocation(Base):
 
 	id: Mapped[int] = mapped_column(Integer, primary_key=True)
 	item_id: Mapped[int] = mapped_column(Integer, ForeignKey("items.id"), nullable=False)
-	side: Mapped[str] = mapped_column(String(20), nullable=False, default="left_module")
+	side: Mapped[str] = mapped_column(String(20), nullable=False, default="front_module")
 	shelf_idx: Mapped[int] = mapped_column(Integer, nullable=False)
 	cell_idx: Mapped[int] = mapped_column(Integer, nullable=False)
 	created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

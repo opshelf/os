@@ -6,8 +6,8 @@ from typing import Any, Callable
 import openshelf_os.laser_calibration.angle as angle_module
 from openshelf_os.laser_calibration.shelf_scout import filter_shelf_edges as filter_shared_shelf_edges
 from .constants import (
-	LEFT_MODULE_ROTATION_CENTER_DEG,
-	RIGHT_MODULE_ROTATION_CENTER_DEG,
+	FRONT_MODULE_ROTATION_CENTER_DEG,
+	BACK_MODULE_ROTATION_CENTER_DEG,
 	ROTATION_SAFE_X_MM,
 	SHELF_SCOUT_STEP_MM,
 )
@@ -83,14 +83,14 @@ def build_shelf_scout_debug_document(
 
 
 def get_default_rotation_center_deg(side_name: str) -> float:
-	if side_name == 'right':
-		return RIGHT_MODULE_ROTATION_CENTER_DEG
+	if side_name == 'back':
+		return BACK_MODULE_ROTATION_CENTER_DEG
 
-	return LEFT_MODULE_ROTATION_CENTER_DEG
+	return FRONT_MODULE_ROTATION_CENTER_DEG
 
 
 def resolve_rotation_center_deg(side_name: str, parameters: Any) -> float:
-	parameter_name = 'ROTATION_BACK' if side_name == 'right' else 'ROTATION_FRONT'
+	parameter_name = 'ROTATION_BACK' if side_name == 'back' else 'ROTATION_FRONT'
 
 	if isinstance(parameters, dict):
 		value = parameters.get(parameter_name)
@@ -131,7 +131,7 @@ async def enter_capture_mode(
 		z_move_rpm=z_move_rpm,
 		z_move_accel=z_move_accel,
 		should_rotate=True,
-		should_use_safe_right_rotation_path=True,
+		should_use_safe_back_rotation_path=True,
 		should_move_z=True,
 		should_abort=should_abort,
 	)
@@ -149,11 +149,11 @@ async def prepare_capture_pose(
 	z_move_rpm: float,
 	z_move_accel: float,
 	should_rotate: bool,
-	should_use_safe_right_rotation_path: bool,
+	should_use_safe_back_rotation_path: bool,
 	should_move_z: bool,
 	should_abort: Callable[[], bool] | None = None,
 ) -> None:
-	if should_rotate is True and should_use_safe_right_rotation_path is True:
+	if should_rotate is True and should_use_safe_back_rotation_path is True:
 		if await tool.is_rotation_at_position(absolute_rotation_deg):
 			await move_gantry_direct(
 				tool,
@@ -282,7 +282,7 @@ async def resolve_capture_y_mm(
 					z_move_rpm=z_move_rpm,
 					z_move_accel=z_move_accel,
 					should_rotate=False,
-					should_use_safe_right_rotation_path=False,
+					should_use_safe_back_rotation_path=False,
 					should_move_z=False,
 					should_abort=should_abort,
 				)

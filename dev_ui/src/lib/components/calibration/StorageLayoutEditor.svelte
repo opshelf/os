@@ -57,10 +57,10 @@
 
 	const selectedSide = $derived.by(
 		(): StorageModuleSide =>
-			page.url.searchParams.get('side') === 'right_module' ? 'right_module' : 'left_module'
+			page.url.searchParams.get('side') === 'back_module' ? 'back_module' : 'front_module'
 	);
 
-	const sideInitial = $derived(selectedSide === 'right_module' ? 'R' : 'L');
+	const sideInitial = $derived(selectedSide === 'back_module' ? 'B' : 'F');
 
 	function sideHref(side: StorageModuleSide): string {
 		const url = new URL(page.url.pathname, location.origin);
@@ -73,7 +73,7 @@
 			return [];
 		}
 		const shelves =
-			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+			selectedSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
 		// Highest index renders on top, so a newly added shelf (next index) appears first.
 		return [...shelves].sort((a, b) => b.shelf_idx - a.shelf_idx);
 	}
@@ -122,7 +122,7 @@
 			return false;
 		}
 		const shelves =
-			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+			selectedSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
 
 		return shelves.some(
 			(shelf) => shelf.shelf_idx === shelfIdx && shelf.cells.some((cell) => cell.cell_idx === cellIdx)
@@ -134,7 +134,7 @@
 			return null;
 		}
 		const shelves =
-			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+			selectedSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
 		const shelf = shelves.find((candidate) => candidate.shelf_idx === shelfIdx);
 		return shelf === undefined ? null : shelf.cells;
 	}
@@ -433,7 +433,7 @@
 				return [];
 			}
 			const shelves =
-				selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+				selectedSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
 			const entries: Array<{ shelfIdx: number; cell: Cell }> = [];
 
 			for (const shelf of shelves) {
@@ -930,14 +930,14 @@
 	function pruneSelection(): void {
 		const existing = new Set<string>();
 		if (storageGrid !== null) {
-			for (const shelf of storageGrid.left_module) {
+			for (const shelf of storageGrid.front_module) {
 				for (const cell of shelf.cells) {
-					existing.add(cellKey('left_module', shelf.shelf_idx, cell.cell_idx));
+					existing.add(cellKey('front_module', shelf.shelf_idx, cell.cell_idx));
 				}
 			}
-			for (const shelf of storageGrid.right_module) {
+			for (const shelf of storageGrid.back_module) {
 				for (const cell of shelf.cells) {
-					existing.add(cellKey('right_module', shelf.shelf_idx, cell.cell_idx));
+					existing.add(cellKey('back_module', shelf.shelf_idx, cell.cell_idx));
 				}
 			}
 		}
@@ -951,7 +951,7 @@
 		}
 		if (anchorSide !== null && anchorShelf !== null && storageGrid !== null) {
 			const anchorShelves =
-				anchorSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+				anchorSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
 			const surviving = anchorShelves.find((shelf) => shelf.shelf_idx === anchorShelf);
 
 			if (surviving === undefined) {
@@ -1300,11 +1300,11 @@
 
 <div class="layout-toolbar">
 	<div class="toggle-group">
-		<a class:selected={selectedSide === 'left_module'} href={sideHref('left_module')}>
-			left
+		<a class:selected={selectedSide === 'front_module'} href={sideHref('front_module')}>
+			front
 		</a>
-		<a class:selected={selectedSide === 'right_module'} href={sideHref('right_module')}>
-			right
+		<a class:selected={selectedSide === 'back_module'} href={sideHref('back_module')}>
+			back
 		</a>
 	</div>
 	<span class="toolbar-separator">—</span>

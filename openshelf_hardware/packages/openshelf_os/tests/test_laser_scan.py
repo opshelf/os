@@ -49,7 +49,7 @@ def build_synthetic_depth_rows() -> list[list[float | None]]:
 
 def build_synthetic_capture():
 	return create_scan_capture(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		bounds=ScanBounds(x_min=0.0, x_max=130.0, y_min=0.0, y_max=95.0),
 		step_mm=5.0,
 		settle_ms=25,
@@ -81,7 +81,7 @@ def test_analyze_scan_capture_detects_enclosed_holes_and_rejects_boundary_gaps(t
 
 	analysis = analyze_scan_capture(capture, base_dir=tmp_path)
 	shelves = build_shelves_from_scan(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		analysis=analysis,
 	)
 
@@ -108,7 +108,7 @@ def test_build_shelves_from_scan_preserves_existing_dimensions(tmp_path):
 	)
 
 	shelves = build_shelves_from_scan(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		analysis=analysis,
 		existing_shelves=[existing_shelf],
 	)
@@ -139,7 +139,7 @@ def test_analyze_scan_capture_accepts_synthetic_npy_fixture(tmp_path):
 		depth_rows.append(depth_row)
 
 	capture = create_scan_capture(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		bounds=ScanBounds(x_min=0.0, x_max=130.0, y_min=0.0, y_max=95.0),
 		step_mm=5.0,
 		settle_ms=25,
@@ -151,7 +151,7 @@ def test_analyze_scan_capture_accepts_synthetic_npy_fixture(tmp_path):
 
 	analysis = analyze_scan_capture(capture, base_dir=tmp_path)
 	shelves = build_shelves_from_scan(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		analysis=analysis,
 	)
 

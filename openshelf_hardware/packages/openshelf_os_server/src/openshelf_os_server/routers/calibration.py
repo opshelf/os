@@ -260,7 +260,7 @@ def _build_coordinate_for_location(grid, location: StorageModuleCellLocation) ->
 	return AxisCoordinate(
 		x=calibration_point.x,
 		y=calibration_point.y,
-		s=0 if location.side == StorageModuleSide.LEFT else 1,
+		s=0 if location.side == StorageModuleSide.FRONT else 1,
 		z_offset=calibration_point.z_offset,
 	)
 
@@ -324,7 +324,7 @@ class LaserReadingResponse(BaseModel):
 
 _current_position: Optional[PositionResponse] = None
 _current_side: int = 0
-_current_side_name: str = "left_module"
+_current_side_name: str = "front_module"
 
 
 def _build_error_detail(
@@ -575,7 +575,7 @@ def _get_shelf_template(grid, side: StorageModuleSide) -> Shelf:
 	if len(shelves) > 0:
 		return shelves[-1]
 
-	other_side = StorageModuleSide.RIGHT if side == StorageModuleSide.LEFT else StorageModuleSide.LEFT
+	other_side = StorageModuleSide.BACK if side == StorageModuleSide.FRONT else StorageModuleSide.FRONT
 	other_shelves = grid.get_side(other_side)
 
 	if len(other_shelves) > 0:
@@ -592,7 +592,7 @@ def _get_cell_template(grid, side: StorageModuleSide, shelf) -> Cell:
 		if len(candidate_shelf.cells) > 0:
 			return candidate_shelf.cells[-1]
 
-	other_side = StorageModuleSide.RIGHT if side == StorageModuleSide.LEFT else StorageModuleSide.LEFT
+	other_side = StorageModuleSide.BACK if side == StorageModuleSide.FRONT else StorageModuleSide.FRONT
 
 	for candidate_shelf in reversed(grid.get_side(other_side)):
 		if len(candidate_shelf.cells) > 0:

@@ -14,16 +14,16 @@ from openshelf_os.tool import (
 )
 
 
-def test_derive_rotation_home_orientation_detects_left_module() -> None:
+def test_derive_rotation_home_orientation_detects_front_module() -> None:
     orientation = derive_rotation_home_orientation(rotation_front=4.0, rotation_back=184.0)
 
-    assert orientation == RotationHomeOrientation.LEFT_MODULE
+    assert orientation == RotationHomeOrientation.FRONT_MODULE
 
 
-def test_derive_rotation_home_orientation_detects_right_module() -> None:
+def test_derive_rotation_home_orientation_detects_back_module() -> None:
     orientation = derive_rotation_home_orientation(rotation_front=184.0, rotation_back=4.0)
 
-    assert orientation == RotationHomeOrientation.RIGHT_MODULE
+    assert orientation == RotationHomeOrientation.BACK_MODULE
 
 
 def test_derive_rotation_home_orientation_rejects_ambiguous_angles() -> None:

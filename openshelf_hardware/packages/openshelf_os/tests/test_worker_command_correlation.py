@@ -55,7 +55,7 @@ async def test_worker_internal_failure_is_normalized_and_marked_internal() -> No
 	worker, events, callback = _bare_worker()
 	command = RetrieveItemCommand(
 		request_id="bin-workflow-id",
-		location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+		location={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
 	)
 	operation = QueuedOperation(
 		command=command,
@@ -79,7 +79,7 @@ async def test_worker_internal_failure_is_normalized_and_marked_internal() -> No
 		"code": "execution_failed",
 		"request_id": "bin-workflow-id",
 		"barcode": None,
-		"location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+		"location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
 		"visibility": "internal",
 	}
 	callback.assert_awaited_once_with("failed", operation, payload)
@@ -91,7 +91,7 @@ def test_status_normalization_preserves_command_and_request_ids() -> None:
 			"command": "retrieve_item",
 			"command_id": "command-current",
 			"request_id": "request-current",
-			"location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+			"location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
 		},
 		"queued_operations": [
 			{

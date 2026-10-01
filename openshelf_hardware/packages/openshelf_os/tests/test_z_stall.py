@@ -113,7 +113,7 @@ def build_result(*, intercept_mm: float, slope_per_mm: float = 0.0, x_span_mm: f
 	)
 
 	return ZStallResult(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		intercept_mm=intercept_mm,
 		slope_per_mm=slope_per_mm,
 		fit_source="constant",
@@ -229,7 +229,7 @@ def test_select_z_stall_probes_returns_empty_without_wall_depths() -> None:
 
 
 def test_select_z_stall_probes_skips_cells_whose_probe_x_exceeds_the_axis_limit() -> None:
-	"""Real lb4-3 jam: L:3:6 sits at tool_x=960; the probe adds a +20mm shift -> 980, past the
+	"""Real lb4-3 jam: F:3:6 sits at tool_x=960; the probe adds a +20mm shift -> 980, past the
 	950mm axis limit. The axis clamped, putting the gripper over the cell's tray hole instead of
 	the divider; it drove down into the hole and jammed the tray."""
 
@@ -293,7 +293,7 @@ def test_select_z_stall_probes_skips_excluded_cells() -> None:
 
 def test_excluded_probe_cells_drops_only_disabled_cells_and_datums() -> None:
 	grid = StorageGrid(filename="storage.json")
-	grid.left_module = [
+	grid.front_module = [
 		Shelf(
 			shelf_idx=0,
 			shelf_width=200.0,
@@ -308,14 +308,14 @@ def test_excluded_probe_cells_drops_only_disabled_cells_and_datums() -> None:
 	# A maintenance cell IS a production tray home, and a tray presents the same gripper interface
 	# and the same divider to the laser as an empty cell, so it stays probeable - and an item in a
 	# cell is out of the probe's way, so that stays probeable too.
-	grid.left_module[0].cells[0].status = CellStatus.MAINTENANCE
-	grid.left_module[0].cells[1].status = CellStatus.DISABLED
-	grid.left_module[0].cells[2].item = CellItem(
+	grid.front_module[0].cells[0].status = CellStatus.MAINTENANCE
+	grid.front_module[0].cells[1].status = CellStatus.DISABLED
+	grid.front_module[0].cells[2].item = CellItem(
 		dimensions=Dimensions(length=50.0, width=40.0, height=100.0)
 	)
-	grid.left_module[0].cells[3].is_manual = True
+	grid.front_module[0].cells[3].is_manual = True
 
-	excluded = excluded_probe_cells(grid=grid, side=StorageModuleSide.LEFT)
+	excluded = excluded_probe_cells(grid=grid, side=StorageModuleSide.FRONT)
 
 	# Only the cell the rack does not have and the hand-calibrated datum.
 	assert excluded == {(0, 1), (0, 3)}
@@ -323,7 +323,7 @@ def test_excluded_probe_cells_drops_only_disabled_cells_and_datums() -> None:
 
 def test_excluded_probe_cells_keeps_a_datum_only_scope_probeable() -> None:
 	grid = StorageGrid(filename="storage.json")
-	grid.left_module = [
+	grid.front_module = [
 		Shelf(
 			shelf_idx=0,
 			shelf_width=200.0,
@@ -333,21 +333,21 @@ def test_excluded_probe_cells_keeps_a_datum_only_scope_probeable() -> None:
 			],
 		)
 	]
-	grid.left_module[0].cells[0].is_manual = True
+	grid.front_module[0].cells[0].is_manual = True
 
 	# The whole side is the scope: the independent opening holds the datum out of the sample set.
-	assert excluded_probe_cells(grid=grid, side=StorageModuleSide.LEFT) == {(0, 0)}
+	assert excluded_probe_cells(grid=grid, side=StorageModuleSide.FRONT) == {(0, 0)}
 
 	# A scope that holds nothing but the datum keeps it probeable: verifying that datum by
 	# contact is exactly what a run scoped to the manual cell asks for.
 	assert (
-		excluded_probe_cells(grid=grid, side=StorageModuleSide.LEFT, scanned_cells={(0, 0)}) == set()
+		excluded_probe_cells(grid=grid, side=StorageModuleSide.FRONT, scanned_cells={(0, 0)}) == set()
 	)
 
 	# Any independent opening in scope still holds the datum out.
 	assert (
 		excluded_probe_cells(
-			grid=grid, side=StorageModuleSide.LEFT, scanned_cells={(0, 0), (0, 1)}
+			grid=grid, side=StorageModuleSide.FRONT, scanned_cells={(0, 0), (0, 1)}
 		) == {(0, 0)}
 	)
 
@@ -454,7 +454,7 @@ async def run_anchor(
 						tool=tool or FakeTool(),
 						analysis=analysis,
 						scan_config=scan_config or build_scan_config(),
-						side=StorageModuleSide.LEFT,
+						side=StorageModuleSide.FRONT,
 						candidates=candidates,
 						excluded_cells=excluded_cells,
 						x_axis_limit_mm=950.0,
@@ -591,7 +591,7 @@ async def test_anchor_refuses_a_fault_on_the_rapid_approach() -> None:
 							tool=FakeTool(),
 							analysis=analysis,
 							scan_config=build_scan_config(),
-							side=StorageModuleSide.LEFT,
+							side=StorageModuleSide.FRONT,
 							candidates=candidates,
 						)
 
@@ -695,7 +695,7 @@ async def test_anchor_stops_after_the_requested_shelves_and_leaves_the_reserves(
 						tool=FakeTool(),
 						analysis=analysis,
 						scan_config=scan_config,
-						side=StorageModuleSide.LEFT,
+						side=StorageModuleSide.FRONT,
 						candidates=candidates,
 						x_axis_limit_mm=950.0,
 						x_axis_lower_limit_mm=0.0,
@@ -756,7 +756,7 @@ async def test_anchor_fits_in_the_frame_the_model_is_applied_in() -> None:
 						tool=FakeTool(),
 						analysis=analysis,
 						scan_config=build_scan_config(),
-						side=StorageModuleSide.LEFT,
+						side=StorageModuleSide.FRONT,
 						candidates=candidates,
 						x_axis_limit_mm=950.0,
 						x_axis_lower_limit_mm=0.0,
@@ -789,7 +789,7 @@ def test_resolved_model_rebases_the_intercept_when_it_substitutes_a_slope() -> N
 		for shelf_idx, grab_x, delta_mm in ((0, 300.0, -2.2854), (3, 400.0, -2.0472))
 	]
 	result = ZStallResult(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		intercept_mm=-2.1663,
 		slope_per_mm=0.0,
 		fit_source="constant",
@@ -800,16 +800,16 @@ def test_resolved_model_rebases_the_intercept_when_it_substitutes_a_slope() -> N
 		samples=samples,
 	)
 	scan_config = SimpleNamespace(
-		left_wall_depth_to_gripper_z_model=SimpleNamespace(
+		front_wall_depth_to_gripper_z_model=SimpleNamespace(
 			intercept_mm=-1.0,
 			x_slope_mm_per_mm=0.002382,
 			reference_stage_mm=47.0,
 			reference_z_place_mm=160.5,
 		),
-		right_wall_depth_to_gripper_z_model=None,
+		back_wall_depth_to_gripper_z_model=None,
 	)
 
-	decision = resolve_z_stall_model(result=result, scan_config=scan_config, side=StorageModuleSide.LEFT)
+	decision = resolve_z_stall_model(result=result, scan_config=scan_config, side=StorageModuleSide.FRONT)
 
 	assert decision.source == "config_short_span"
 	assert decision.slope_per_mm == pytest.approx(0.002382)
@@ -824,7 +824,7 @@ def test_resolved_model_keeps_a_tilt_the_probe_measured() -> None:
 	from openshelf_os.laser_calibration.z_stall import ZStallResult, resolve_z_stall_model
 
 	result = ZStallResult(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		intercept_mm=0.32,
 		slope_per_mm=0.002,
 		fit_source="tilt",
@@ -837,8 +837,8 @@ def test_resolved_model_keeps_a_tilt_the_probe_measured() -> None:
 
 	decision = resolve_z_stall_model(
 		result=result,
-		scan_config=SimpleNamespace(left_wall_depth_to_gripper_z_model=None, right_wall_depth_to_gripper_z_model=None),
-		side=StorageModuleSide.LEFT,
+		scan_config=SimpleNamespace(front_wall_depth_to_gripper_z_model=None, back_wall_depth_to_gripper_z_model=None),
+		side=StorageModuleSide.FRONT,
 	)
 
 	assert decision.source == "probe"
@@ -874,7 +874,7 @@ def test_grid_built_analysis_feeds_the_reference_derivation() -> None:
 	from openshelf_os.laser_calibration.reference_offsets import derive_reference_offsets
 
 	grid = StorageGrid(filename="storage.json")
-	grid.left_module = [
+	grid.front_module = [
 		Shelf(
 			shelf_idx=0,
 			shelf_width=200.0,
@@ -897,21 +897,21 @@ def test_grid_built_analysis_feeds_the_reference_derivation() -> None:
 		laser_offset_y_mm=0.0,
 		expected_hole_width_mm=26.0,
 		expected_hole_height_mm=30.0,
-		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
-		left_wall_depth_to_gripper_z_model=None,
+		front_gripper_xy_correction_mm=SimpleNamespace(x_mm=-1.25, y_mm=-2.75),
+		front_wall_depth_to_gripper_z_model=None,
 	)
 	analysis = SimpleNamespace(
 		shelves=[SimpleNamespace(shelf_idx=0, cells=[], center_y_mm=0.0)],
 		metadata_path=None,
 		wall_depths_by_cell={},
 	)
-	built = run_from_grid(grid=grid, side=StorageModuleSide.LEFT, scan_config=scan_config)
+	built = run_from_grid(grid=grid, side=StorageModuleSide.FRONT, scan_config=scan_config)
 	analysis = built
 
 	result = derive_reference_offsets(
 		grid=grid,
 		analysis=analysis,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		scan_config=scan_config,
 		candidates=[],
 	)
