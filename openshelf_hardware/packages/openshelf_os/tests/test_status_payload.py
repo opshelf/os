@@ -124,63 +124,6 @@ def test_transform_worker_payload_preserves_axis_telemetry() -> None:
     assert result["robot_status"]["tool"]["z_axis"]["position"] == 3.25
 
 
-def test_transform_worker_payload_preserves_motor_status_fields() -> None:
-    payload = {
-        "robot_status": {
-            "motors": {
-                "x_axis": {
-                    "position": 12.5,
-                    "homed": 1,
-                    "hard_stopped": 0,
-                    "status": "moving",
-                    "current_limit": 3.6,
-                    "max_following_error": 4000,
-                },
-                "y_axis": {
-                    "position": 7.0,
-                    "homed": 0,
-                    "hard_stopped": 1,
-                    "status": "fault",
-                    "current_limit": None,
-                    "max_following_error": None,
-                },
-            },
-            "storage": {"front_module": [], "back_module": []},
-            "state": {"current_cell": None},
-        },
-        "error_queue": [],
-    }
-
-    result = _transform_worker_status_payload(payload)
-    x_axis = result["robot_status"]["motors"]["x_axis"]
-    y_axis = result["robot_status"]["motors"]["y_axis"]
-
-    assert x_axis["status"] == "moving"
-    assert x_axis["current_limit"] == 3.6
-    assert x_axis["max_following_error"] == 4000
-    assert y_axis["status"] == "fault"
-    assert y_axis["current_limit"] is None
-    assert y_axis["max_following_error"] is None
-
-
-def test_transform_worker_payload_defaults_missing_motor_status_fields() -> None:
-    payload = {
-        "robot_status": {
-            "motors": {"x_axis": {"position": 12.5, "homed": 1, "hard_stopped": 0}},
-            "storage": {"front_module": [], "back_module": []},
-            "state": {"current_cell": None},
-        },
-        "error_queue": [],
-    }
-
-    result = _transform_worker_status_payload(payload)
-    x_axis = result["robot_status"]["motors"]["x_axis"]
-
-    assert x_axis["status"] == "idle"
-    assert x_axis["current_limit"] is None
-    assert x_axis["max_following_error"] is None
-
-
 def test_transform_worker_payload_preserves_safety_status() -> None:
     payload = {
         "robot_status": {

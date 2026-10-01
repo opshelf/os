@@ -961,20 +961,7 @@ class Robot:
             position=position,
             homed=int(motor.is_homed()),
             hard_stopped=int(motor.is_hard_stopped()),
-            status=self._safe_motor_field(motor, "status_name", "idle"),
-            current_limit=self._safe_motor_field(motor, "peak_current_amps", None),
-            max_following_error=self._safe_motor_field(motor, "following_error_limit", None),
         )
-
-    @staticmethod
-    def _safe_motor_field(motor: "Motor", name: str, default: Any) -> Any:
-        """Read a zero-bus motor accessor without letting a stub or partial
-        motor break the whole status publish."""
-        try:
-            value = getattr(motor, name)()
-        except Exception:
-            return default
-        return value if value is not None else default
 
     async def get_status(self) -> RobotStatus:
         gantry_status = GantryStatus(
