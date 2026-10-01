@@ -106,6 +106,20 @@ def test_backup_conflict_refuses_without_touching_file(tmp_path, v4_config):
     assert path.with_name("config.json.schema-v4.bak").read_bytes() == b"pre-existing rollback"
 
 
+def test_cli_preview_reports_migrating_file_with_existing_backup(tmp_path, v4_config, capsys):
+    path, raw = _write(tmp_path, "config.json", v4_config)
+    backup = path.with_name("config.json.schema-v4.bak")
+    backup.write_bytes(b"pre-existing rollback")
+
+    assert main([str(tmp_path)]) == 0  # preview does not abort on the existing backup
+    assert "would migrate" in capsys.readouterr().out
+
+    assert main([str(tmp_path), "--write"]) == 1
+    assert "migration backup already exists" in capsys.readouterr().err
+    assert path.read_bytes() == raw
+    assert backup.read_bytes() == b"pre-existing rollback"
+
+
 def test_future_version_is_rejected_without_touching_file(tmp_path, v4_config):
     future = {**v4_config, "schema_version": 6}
     path, raw = _write(tmp_path, "config.json", future)
