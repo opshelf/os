@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import {
 		apiFetch,
+		acknowledgeSafety,
+		ApiError,
 		controlCabinetRelease,
 		setBypassSafetyGuard,
 		setBypassSafetyComponent,
@@ -33,6 +35,8 @@
 	let homeOnInitError = '';
 	let isRestartingApi = false;
 	let restartApiError = '';
+	let isAcknowledgingSafety = false;
+	let safetyAckError = '';
 	let componentUpdating: Record<SafetyComponent, boolean> = {
 		light_curtain: false,
 		cabinet_doors: false
@@ -113,6 +117,43 @@
 			return false;
 		}
 		return (componentBypasses as Record<string, unknown>)[component] === true;
+	}
+
+	function getSafetyAwaitingAck(): boolean {
+		const safety = $robotStatus?.robot_status?.safety;
+		if (!safety || typeof safety !== 'object') {
+			return false;
+		}
+		return (safety as Record<string, unknown>).awaiting_ack === true;
+	}
+
+	// The server decides whether an acknowledgement would clear every active
+	// source, including sources only an acknowledgement can clear (the scale
+	// weight-change guard), so the button stays correct with or without the
+	// motion guard.
+	function getSafetyCanAcknowledge(): boolean {
+		const safety = $robotStatus?.robot_status?.safety;
+		if (!safety || typeof safety !== 'object') {
+			return false;
+		}
+		return (safety as Record<string, unknown>).can_acknowledge === true;
+	}
+
+	async function didClickAcknowledgeSafety(): Promise<void> {
+		isAcknowledgingSafety = true;
+		safetyAckError = '';
+
+		try {
+			await acknowledgeSafety();
+		} catch (err) {
+			if (err instanceof ApiError && err.status === 409 && err.detail?.active_sources?.length) {
+				safetyAckError = `cannot acknowledge: ${err.detail.active_sources.join(', ')}`;
+			} else {
+				safetyAckError = err instanceof Error ? err.message : 'acknowledge failed';
+			}
+		} finally {
+			isAcknowledgingSafety = false;
+		}
 	}
 
 	function getMotors(): Array<[string, MotorTelemetry]> {
@@ -440,6 +481,21 @@
 									onclick={didClickHome}>HOME</button
 								>
 							</div>
+						</td>
+					</tr>
+					<tr>
+						<td>ack required</td>
+						<td>
+							<div class="status-action-cell">
+								<span>{getSafetyAwaitingAck() ? 'yes' : 'no'}</span>
+								<button
+									disabled={getSafetyCanAcknowledge() !== true || isAcknowledgingSafety === true}
+									onclick={didClickAcknowledgeSafety}>ACKNOWLEDGE</button
+								>
+							</div>
+							{#if safetyAckError !== ''}
+								<ErrorMessage message={safetyAckError} />
+							{/if}
 						</td>
 					</tr>
 				</tbody>
