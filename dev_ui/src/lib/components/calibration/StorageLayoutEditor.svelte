@@ -938,6 +938,87 @@
 		}
 	}
 
+	async function didBulkDeleteSelected(): Promise<void> {
+		if (busy === true || hasSelection === false || storageGrid === null) {
+			return;
+		}
+		const shelves =
+			selectedSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
+		const cellTargets: Array<{ shelf: number; cellIdx: number }> = [];
+		const shelfTargets: number[] = [];
+
+		for (const shelf of shelves) {
+			const selectedOnShelf = shelf.cells.filter(
+				(cell) => selectedKeys.has(cellKey(selectedSide, shelf.shelf_idx, cell.cell_idx))
+			);
+			if (selectedOnShelf.length === 0) {
+				continue;
+			}
+			if (selectedOnShelf.length === shelf.cells.length) {
+				shelfTargets.push(shelf.shelf_idx);
+			} else {
+				for (const cell of selectedOnShelf) {
+					cellTargets.push({ shelf: shelf.shelf_idx, cellIdx: cell.cell_idx });
+				}
+			}
+		}
+
+		if (cellTargets.length === 0 && shelfTargets.length === 0) {
+			return;
+		}
+
+		const parts: string[] = [];
+		if (shelfTargets.length > 0) {
+			const labels = [...shelfTargets].sort((a, b) => a - b).map((idx) => `${sideInitial}:${idx}`);
+			parts.push(`${shelfTargets.length} ${shelfTargets.length === 1 ? 'shelf' : 'shelves'} ${labels.join(', ')}`);
+		}
+		if (cellTargets.length > 0) {
+			const labels = cellTargets
+				.map((target) => `${sideInitial}:${target.shelf}:${target.cellIdx}`)
+				.sort();
+			parts.push(`${cellTargets.length} ${cellTargets.length === 1 ? 'cell' : 'cells'} ${labels.join(', ')}`);
+		}
+
+		const confirmed = confirm(`are you sure you want to delete ${parts.join(' and ')}?`);
+		if (confirmed !== true) {
+			return;
+		}
+
+		busy = true;
+		error = '';
+		const deletedShelves: number[] = [];
+
+		try {
+			// Cell deletions keep the surviving cells' indices, so they run before any
+			// shelf deletion shifts the shelf indices; shelves go down-to-up so the
+			// indices of the shelves still to delete stay valid.
+			for (const target of cellTargets) {
+				await deleteCell(selectedSide, target.shelf, target.cellIdx);
+			}
+			for (const shelfIdx of [...shelfTargets].sort((a, b) => b - a)) {
+				await deleteShelf(selectedSide, shelfIdx);
+				deletedShelves.push(shelfIdx);
+			}
+		} catch (err) {
+			fail(err, 'failed to delete');
+		}
+
+		try {
+			storageGrid = await getStorageGrid();
+		} catch (err) {
+			fail(err, 'failed to load storage grid');
+		}
+		for (const shelfIdx of deletedShelves) {
+			remapSelectionAfterShelfDelete(shelfIdx);
+		}
+		pruneSelection();
+		if (error === '') {
+			clearCurrentSideSelection();
+			closeOverlay();
+		}
+		busy = false;
+	}
+
 	function pruneSelection(): void {
 		const existing = new Set<string>();
 		if (storageGrid !== null) {
@@ -1273,12 +1354,85 @@
 		}
 	}
 
+	// The 0:0 datum is the module's coordinate origin; z=13 is the fixed front
+	// offset of the first shelf's opening.
+	const ORIGIN_Z_OFFSET = 13;
+
+	type InferredPoint = { cellIdx: number; x: number; y: number; z: number };
+
+	// Infer the new (pointless) cell's calibration point from its calibrated
+	// neighbours: a new 0:0 takes the fixed origin, a cell appended on a shelf
+	// steps right from the nearest calibrated neighbour on that shelf
+	// (accumulating the widths of any uncalibrated cells in between), and the
+	// first cell of a higher shelf rises from the shelf below, keeping x and z.
+	function inferNewCellPoint(shelfIdx: number): InferredPoint | null {
+		const cells = getShelfCells(shelfIdx);
+		if (cells === null || cells.length === 0) {
+			return null;
+		}
+		const cellIdx = Math.max(...cells.map((cell) => cell.cell_idx));
+
+		if (shelfIdx === 0 && cellIdx === 0) {
+			return { cellIdx, x: 0, y: 0, z: ORIGIN_Z_OFFSET };
+		}
+
+		if (cellIdx === 0) {
+			const belowCells = getShelfCells(shelfIdx - 1) ?? [];
+			const reference =
+				belowCells.find((cell) => cell.cell_idx === 0 && cell.calibration_point !== null) ??
+				belowCells.find((cell) => cell.calibration_point !== null);
+			if (reference === undefined || reference.calibration_point === null) {
+				return null;
+			}
+			return {
+				cellIdx,
+				x: reference.calibration_point.x,
+				y: reference.calibration_point.y + reference.dimensions.height,
+				z: reference.calibration_point.z_offset
+			};
+		}
+
+		const byIdx = new Map(cells.map((cell) => [cell.cell_idx, cell]));
+		let widthSum = 0;
+		for (let idx = cellIdx - 1; idx >= 0; idx -= 1) {
+			const cell = byIdx.get(idx);
+			if (cell === undefined) {
+				continue; // gap left by a deleted cell: no physical slot, no width
+			}
+			if (cell.calibration_point !== null) {
+				return {
+					cellIdx,
+					x: cell.calibration_point.x + widthSum + cell.dimensions.width,
+					y: cell.calibration_point.y,
+					z: cell.calibration_point.z_offset
+				};
+			}
+			widthSum += cell.dimensions.width;
+		}
+		return null;
+	}
+
 	async function didAddCell(shelfIdx: number): Promise<void> {
 		busy = true;
 		error = '';
 		try {
 			await addCell(selectedSide, shelfIdx);
 			storageGrid = await getStorageGrid();
+			const inferred = inferNewCellPoint(shelfIdx);
+			if (inferred !== null) {
+				await updateGridCells(selectedSide, {
+					cells: [
+						{
+							shelf_idx: shelfIdx,
+							cell_idx: inferred.cellIdx,
+							x: inferred.x,
+							y: inferred.y,
+							z_offset: inferred.z
+						}
+					]
+				});
+				storageGrid = await getStorageGrid();
+			}
 			pruneSelection();
 		} catch (err) {
 			fail(err, 'failed to add cell');
@@ -1328,6 +1482,13 @@
 	<button type="button" onclick={didDeselect} disabled={hasSelection === false}>
 		deselect
 	</button>
+	<button
+		type="button"
+		onclick={() => void didBulkDeleteSelected()}
+		disabled={hasSelection === false || busy === true}
+	>
+		delete
+	</button>
 </div>
 
 {#if loading === true}
@@ -1355,6 +1516,11 @@
 							<div
 								class="storage-cell"
 								class:selected={isSelected(selectedSide, shelf.shelf_idx, cell.cell_idx)}
+								class:occupied={cell.status.toLowerCase() === 'occupied'}
+								class:dimmed={
+									cell.status.toLowerCase() === 'maintenance' ||
+									cell.status.toLowerCase() === 'disabled'
+								}
 								role="button"
 								tabindex={0}
 								onclick={(event) => didClickCell(event, shelf.shelf_idx, cell.cell_idx)}
@@ -1646,9 +1812,18 @@
 		cursor: pointer;
 	}
 
+	.storage-cell.occupied {
+		background: rgba(0, 0, 0, 0.5);
+	}
+
+	.storage-cell.dimmed {
+		opacity: 0.5;
+	}
+
 	.storage-cell.selected {
 		background: black;
 		color: #fff;
+		opacity: 1;
 	}
 
 	.shelf-actions {
