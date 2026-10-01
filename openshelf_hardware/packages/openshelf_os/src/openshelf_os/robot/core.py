@@ -1149,7 +1149,10 @@ class Robot:
         await self._set_tray_grip(engaged=True)
         self.set_operation_context(phase="return_tray.retract")
         await self._tool.retract()
-        require_grip(await self._tool._gs.read_state(), "tray retract")
+        try:
+            require_grip(await self._tool._gs.read_state(), "tray retract")
+        except Exception as exc:
+            raise GripperError(f"Tray retract grip verification failed: {exc}") from exc
         self.set_operation_context(phase="return_tray.close_door")
         await self._io.close_door()
         self.set_operation_context(phase="return_tray.place_at_home", target_coordinate=coord)

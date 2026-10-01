@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
+from hardware.exceptions import ModbusError
 from hardware.exceptions import MotorError as HardwareMotorError
 from hardware.servo import GripState
 from pydantic import TypeAdapter
@@ -89,6 +90,7 @@ async def test_failed_extension_does_not_transfer_grip_or_close_door(operation):
     ('deliver_tray', 'close', 'deliver_tray.release', call.release()),
     ('return_tray', 'close', 'return_tray.release', call.release()),
     ('return_tray', 'open', 'return_tray.grip', call.grip()),
+    ('return_tray', 'read_state', 'return_tray.retract', call.read_state()),
 ])
 async def test_tray_servo_fault_preserves_context_and_requires_recovery(
     monkeypatch, operation, servo_method, phase, last_call,
@@ -107,7 +109,12 @@ async def test_tray_servo_fault_preserves_context_and_requires_recovery(
     )
     robot._io.get_weight = AsyncMock(return_value=0.0)
     robot.get_diagnostic_snapshot = AsyncMock(return_value={})
-    fault = HardwareMotorError('Servo motion failed')
+    fault = (
+        ModbusError('Servo status read failed')
+        if servo_method == 'read_state'
+        else HardwareMotorError('Servo motion failed')
+    )
+    ops.attach_mock(robot._tool._gs.read_state, 'read_state')
     getattr(robot._tool._gs, servo_method).side_effect = fault
     location = {'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 2}
     if operation == 'deliver_tray':
