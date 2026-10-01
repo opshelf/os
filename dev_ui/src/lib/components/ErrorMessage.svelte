@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { postToast } from '$lib/toasts';
+
 	type Props = {
 		message: string;
 	};
@@ -19,6 +21,12 @@
 
 		return message;
 	});
-</script>
 
-<div class="message error">{formattedMessage}</div>
+	$effect(() => {
+		if (formattedMessage.trim() === '') {
+			return;
+		}
+
+		postToast('error', formattedMessage);
+	});
+</script>
