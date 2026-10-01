@@ -105,7 +105,7 @@ async def test_tray_servo_fault_preserves_context_and_requires_recovery(
     robot.get_diagnostic_snapshot = AsyncMock(return_value={})
     fault = HardwareMotorError('Servo motion failed')
     getattr(robot._tool._gs, servo_method).side_effect = fault
-    location = {'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 2}
+    location = {'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 2}
     if operation == 'deliver_tray':
         command = DeliverTrayCommand(barcode='900000000001', location=location)
     else:
@@ -154,7 +154,7 @@ async def test_internal_commands_dispatch_tray_motion_and_public_payload_cannot_
     robot._operation_context = {}
     robot.store = AsyncMock()
     robot.retrieve_by_location = AsyncMock()
-    location = {'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 2}
+    location = {'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 2}
     deliver = DeliverTrayCommand(barcode='900000000001', location=location)
     worker = RobotWorker.__new__(RobotWorker)
     queued = worker._snapshot_command(deliver)

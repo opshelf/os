@@ -45,7 +45,7 @@ def _legacy_schema(connection) -> None:
         metadata,
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("item_id", sa.Integer(), sa.ForeignKey("items.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("side", sa.String(20), nullable=False, server_default="left_module"),
+        sa.Column("side", sa.String(20), nullable=False, server_default="front_module"),
     )
     measurements = sa.Table(
         "item_sizer_measurements",
@@ -57,7 +57,7 @@ def _legacy_schema(connection) -> None:
     sa.Index("ix_item_sizer_measurements_upca", measurements.c.upca)
     metadata.create_all(connection)
     connection.execute(items.insert().values(id=1, upca="CR-00006174/A", name="Bottle"))
-    connection.execute(locations.insert().values(id=1, item_id=1, side="left_module"))
+    connection.execute(locations.insert().values(id=1, item_id=1, side="front_module"))
     connection.execute(measurements.insert().values(id=1, item_id=1, upca="CR-00006174/A"))
 
 
@@ -95,7 +95,7 @@ def test_upgrade_renames_columns_and_indexes_preserving_values(foreign_keys):
         location_rows = connection.execute(
             sa.text("SELECT id, item_id, side FROM item_locations")
         )
-        assert location_rows.fetchall() == [(1, 1, "left_module")]
+        assert location_rows.fetchall() == [(1, 1, "front_module")]
         measurement_rows = connection.execute(sa.text("SELECT id, item_id FROM item_sizer_measurements"))
         assert measurement_rows.fetchall() == [(1, 1)]
         assert connection.execute(sa.text("PRAGMA foreign_key_check")).fetchall() == []

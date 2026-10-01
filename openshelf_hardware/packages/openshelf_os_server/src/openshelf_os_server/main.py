@@ -49,6 +49,7 @@ from openshelf_os.common import CONFIG_PATH, OperatingMode
 from openshelf_os.operating_mode import should_enable_sentry
 from openshelf_os.runtime_state import RuntimeStatePaths
 from openshelf_os_server.core.logging_config import configure_logging, get_logger, get_correlation_id
+from openshelf_os_server.core.migrations import rename_module_side_values
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, stop_robot_worker
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
@@ -617,6 +618,25 @@ def _schema_state(database_url: str) -> _SchemaState:
 		sync_engine.dispose()
 
 
+def _apply_module_side_rename(database_url: str) -> None:
+	"""Re-run the idempotent side-value rename that a baseline stamp skips.
+
+	`_schema_state` compares table and column names only, so the data-only
+	revision f9a0b1c2d3e4 (left/right to front/back in `item_locations` and
+	`storage_bins`) is invisible to it: a field database stamped onto head
+	would keep its old side values under code that no longer matches them.
+	The UPDATEs only touch rows that still carry the old values, so re-running
+	them after every startup path is a no-op in steady state.
+	"""
+	sync_engine = create_engine(database_url, poolclass=NullPool)
+
+	try:
+		with sync_engine.begin() as connection:
+			rename_module_side_values(connection, forward=True)
+	finally:
+		sync_engine.dispose()
+
+
 def _run_migrations() -> None:
 	"""Bring the database to revision head, or baseline it when it is already there.
 
@@ -657,6 +677,7 @@ def _run_migrations() -> None:
 				model_tables=len(Base.metadata.tables),
 			)
 			command.stamp(alembic_cfg, "head")
+			_apply_module_side_rename(db_url)
 			logger.info("database_migrations_complete", action="baseline_stamp")
 			return
 
@@ -674,6 +695,7 @@ def _run_migrations() -> None:
 
 		logger.info("running_database_migrations", script_location=str(Path(__file__).parent / "alembic"))
 		command.upgrade(alembic_cfg, "head")
+		_apply_module_side_rename(db_url)
 		logger.info("database_migrations_complete")
 	except Exception as e:
 		logger.error("migration_failed", error=str(e), exc_info=True)

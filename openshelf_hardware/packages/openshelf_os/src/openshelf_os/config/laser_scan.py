@@ -14,9 +14,12 @@ from openshelf_os.config_migrations.v003_remove_unused_scan_keys import (
 from openshelf_os.config_migrations.v004_promote_scan_constants import (
     REMOVED_SCAN_KEYS as PROMOTED_SCAN_KEYS,
 )
+from openshelf_os.config_migrations.v005_module_side_names import (
+    SCAN_KEY_RENAMES as SIDE_SCAN_KEY_RENAMES,
+)
 
 # Keys removed by any schema step; a current-schema config must not carry them.
-REJECTED_SCAN_KEYS = (*REMOVED_SCAN_KEYS, *UNUSED_SCAN_KEYS, *PROMOTED_SCAN_KEYS)
+REJECTED_SCAN_KEYS = (*REMOVED_SCAN_KEYS, *UNUSED_SCAN_KEYS, *PROMOTED_SCAN_KEYS, *SIDE_SCAN_KEY_RENAMES)
 
 
 class LaserScanXYOffsetConfig(BaseModel):
@@ -67,16 +70,16 @@ class LaserScanConfig(BaseModel):
     shelf_hole_probe_y_offsets_mm: Optional[List[float]] = None
     fine_cell_scan_y_margin_mm: Optional[float] = Field(default=None, gt=0)
     fine_scan_step_mm: float = Field(1.0, gt=0)
-    left_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
-    right_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
+    front_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
+    back_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     shelf_scout_post_edge_skip_mm: float = Field(40.0, ge=0)
     shelf_brim_max_height_mm: float = Field(13.0, gt=0)
 
-    left_gripper_xy_correction_mm: Optional[LaserScanXYOffsetConfig] = None
-    right_gripper_xy_correction_mm: Optional[LaserScanXYOffsetConfig] = None
+    front_gripper_xy_correction_mm: Optional[LaserScanXYOffsetConfig] = None
+    back_gripper_xy_correction_mm: Optional[LaserScanXYOffsetConfig] = None
 
-    left_wall_depth_to_gripper_z_model: Optional[LaserScanZOffsetModelConfig] = None
-    right_wall_depth_to_gripper_z_model: Optional[LaserScanZOffsetModelConfig] = None
+    front_wall_depth_to_gripper_z_model: Optional[LaserScanZOffsetModelConfig] = None
+    back_wall_depth_to_gripper_z_model: Optional[LaserScanZOffsetModelConfig] = None
 
     z_stall_anchor_enabled: bool = False
     z_stall_tray_engagement_mm: float = 0.0
@@ -92,15 +95,15 @@ class LaserScanConfig(BaseModel):
     z_stall_probe_repeat_tolerance_mm: float = Field(1.0, gt=0)
     z_stall_probe_x_shift_mm: float = 40.0
 
-    left_bounds_x_min_mm: float = 0.0
-    left_bounds_x_max_mm: float = 950.0
-    left_bounds_y_min_mm: float = 0.0
-    left_bounds_y_max_mm: float = 1250.0
+    front_bounds_x_min_mm: float = 0.0
+    front_bounds_x_max_mm: float = 950.0
+    front_bounds_y_min_mm: float = 0.0
+    front_bounds_y_max_mm: float = 1250.0
 
-    right_bounds_x_min_mm: float = 0.0
-    right_bounds_x_max_mm: float = 950.0
-    right_bounds_y_min_mm: float = 0.0
-    right_bounds_y_max_mm: float = 1250.0
+    back_bounds_x_min_mm: float = 0.0
+    back_bounds_x_max_mm: float = 950.0
+    back_bounds_y_min_mm: float = 0.0
+    back_bounds_y_max_mm: float = 1250.0
 
     angle_calibration_x_max_mm: float = 950.0
 

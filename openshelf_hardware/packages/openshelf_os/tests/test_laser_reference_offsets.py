@@ -49,7 +49,7 @@ def build_cell(
 
 def build_grid(cells: list[Cell]) -> StorageGrid:
 	grid = StorageGrid(filename="storage.json")
-	grid.left_module = [Shelf(shelf_idx=0, shelf_width=200.0, cells=cells)]
+	grid.front_module = [Shelf(shelf_idx=0, shelf_width=200.0, cells=cells)]
 	return grid
 
 
@@ -87,7 +87,7 @@ def build_analysis(detected_cells: list[ScanDetectedCell]) -> SimpleNamespace:
 
 def build_scan_config(xy_offset: tuple[float, float] | None = None) -> LaserScanConfig:
 	config = LaserScanConfig()
-	config.left_gripper_xy_correction_mm = None if xy_offset is None else LaserScanXYOffsetConfig(
+	config.front_gripper_xy_correction_mm = None if xy_offset is None else LaserScanXYOffsetConfig(
 		x_mm=xy_offset[0], y_mm=xy_offset[1]
 	)
 	return config
@@ -97,7 +97,7 @@ def derive(grid: StorageGrid, analysis: SimpleNamespace, scan_config: LaserScanC
 	return derive_reference_offsets(
 		grid=grid,
 		analysis=analysis,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		scan_config=scan_config,
 		candidates=[],
 	)
@@ -170,7 +170,7 @@ def test_reference_datum_needs_the_bottom_left_cell() -> None:
 	"""Only a hand-calibrated 0:0 is a datum: any other manual cell is an extra sample."""
 	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0)])
 
-	datum = select_reference_datum_cell(grid=grid, side=StorageModuleSide.LEFT)
+	datum = select_reference_datum_cell(grid=grid, side=StorageModuleSide.FRONT)
 
 	assert datum is not None
 	assert datum[0] == REFERENCE_DATUM_SHELF_IDX
@@ -178,31 +178,31 @@ def test_reference_datum_needs_the_bottom_left_cell() -> None:
 
 	assert select_reference_datum_cell(
 		grid=build_grid([build_cell(cell_idx=0, x=354.0, y=41.0, is_manual=False)]),
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 	) is None
 	assert select_reference_datum_cell(
 		grid=build_grid([build_cell(cell_idx=1, x=519.0, y=41.0)]),
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 	) is None
 
 	uncalibrated = build_cell(cell_idx=0, x=354.0, y=41.0)
 	uncalibrated.calibration_point = None
 	assert select_reference_datum_cell(
 		grid=build_grid([uncalibrated]),
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 	) is None
 
 	elsewhere = StorageGrid(filename="storage.json")
-	elsewhere.left_module = [
+	elsewhere.front_module = [
 		Shelf(shelf_idx=5, shelf_width=200.0, cells=[build_cell(cell_idx=0, x=354.0, y=641.0)])
 	]
-	assert select_reference_datum_cell(grid=elsewhere, side=StorageModuleSide.LEFT) is None
+	assert select_reference_datum_cell(grid=elsewhere, side=StorageModuleSide.FRONT) is None
 
 
 def test_wall_depths_come_back_from_a_str_metadata_path(tmp_path) -> None:
 	"""The run metadata records its path as a str; the read-back has to accept it.
 
-	lb4a-2's failed left-side run: the candidates on disk held the wall depths, a str path made
+	lb4a-2's failed front-side run: the candidates on disk held the wall depths, a str path made
 	`load_json_file` raise, and the datum's intercept came back empty so the probe was refused.
 	"""
 	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0)])
@@ -228,7 +228,7 @@ def test_wall_depths_come_back_from_a_str_metadata_path(tmp_path) -> None:
 	result = derive_reference_offsets(
 		grid=grid,
 		analysis=analysis,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		scan_config=build_scan_config(xy_offset=(-1.0, 1.0)),
 	)
 
@@ -243,7 +243,7 @@ def test_refuses_when_no_cell_is_marked_manual() -> None:
 	with pytest.raises(ValueError, match="marked manual"):
 		derive(grid, analysis, build_scan_config(xy_offset=(-1.0, 1.0)))
 
-	assert select_manual_reference_cells(grid=grid, side=StorageModuleSide.LEFT) == []
+	assert select_manual_reference_cells(grid=grid, side=StorageModuleSide.FRONT) == []
 
 
 def test_refuses_when_the_reference_cell_matches_nothing() -> None:
@@ -290,7 +290,7 @@ def test_refuses_to_predict_from_zero_when_no_offset_is_configured() -> None:
 
 	with pytest.raises(
 		ValueError,
-		match=r"no robot\.grid\.scan\.left_gripper_xy_correction_mm is configured.*set a rough one first",
+		match=r"no robot\.grid\.scan\.front_gripper_xy_correction_mm is configured.*set a rough one first",
 	):
 		derive(grid, analysis, build_scan_config(xy_offset=None))
 
@@ -320,7 +320,7 @@ def test_stale_offset_one_pitch_off_matches_the_opening_its_prediction_implies()
 
 
 def test_match_window_stays_under_half_the_smallest_opening_pitch() -> None:
-	# The rack's tightest pitch on the left module is ~105mm; half of it bounds a safe match.
+	# The rack's tightest pitch on the front module is ~105mm; half of it bounds a safe match.
 	assert REFERENCE_MATCH_WINDOW_MM < 105.0 / 2.0
 
 
@@ -333,14 +333,14 @@ def test_scope_filters_select_manual_cells_only() -> None:
 		]
 	)
 
-	selected = select_manual_reference_cells(grid=grid, side=StorageModuleSide.LEFT)
+	selected = select_manual_reference_cells(grid=grid, side=StorageModuleSide.FRONT)
 
 	assert [int(cell.cell_idx) for _, cell in selected] == [0, 2]
 	assert select_manual_reference_cells(
-		grid=grid, side=StorageModuleSide.LEFT, cell_idx=2
+		grid=grid, side=StorageModuleSide.FRONT, cell_idx=2
 	)[0][1].cell_idx == 2
-	assert select_manual_reference_cells(grid=grid, side=StorageModuleSide.LEFT, shelf_idx=4) == []
-	assert select_manual_reference_cells(grid=grid, side=StorageModuleSide.RIGHT) == []
+	assert select_manual_reference_cells(grid=grid, side=StorageModuleSide.FRONT, shelf_idx=4) == []
+	assert select_manual_reference_cells(grid=grid, side=StorageModuleSide.BACK) == []
 
 
 def build_manual_reference(
@@ -362,7 +362,7 @@ def build_manual_reference(
 	)
 
 	return ReferenceOffsetResult(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		offset_x_mm=sample.delta_x_mm,
 		offset_y_mm=sample.delta_y_mm,
 		spread_x_mm=0.0,

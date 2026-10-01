@@ -11,6 +11,7 @@ from hardware.curtain import MotionSafetyInterlock
 from hardware.motor import MotorStatus
 from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
+from openshelf_os.demo_side_rename import DEMO_SIDE_RENAME_BACKUP_SUFFIX, migrate_demo_side_rename
 from openshelf_os.config.models import compare_gpio_pins_to_defaults
 from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORT,
@@ -797,13 +798,32 @@ class Robot:
     #  Demo cell mapping
     # ------------------------------------------------------------------ #
 
+    # One-time on-disk migration of the demo mapping files written before the front/back
+    # cutover, which keyed their cell locations under the L/R side letters. The shared
+    # implementation lives in openshelf_os.demo_side_rename so other demo.json readers
+    # (e.g. scripts/seed_demo.py) migrate on load with the same semantics.
+    # Kept as a class attribute alias of the shared constant for existing references.
+    DEMO_SIDE_RENAME_BACKUP_SUFFIX = DEMO_SIDE_RENAME_BACKUP_SUFFIX
+
+    @classmethod
+    def _migrate_demo_side_rename(cls, target_path: str, raw_content: str, data: Any) -> Any:
+        """Rename the pre-cutover side letters in a demo mapping file, in place and idempotently.
+
+        Files written before the front/back cutover keep their cell locations under the
+        L/R side letters. Rename them in the loaded data and rewrite the file with an
+        exclusive-created backup of the original bytes, so a device picks the new letters
+        up on its next load and the old file is recoverable. Files that already carry
+        the new letters are left untouched.
+        """
+        return migrate_demo_side_rename(target_path, raw_content, data)
+
     @staticmethod
     def _parse_demo_location(value: str) -> StorageModuleCellLocation:
         side_map = {
-            "L": StorageModuleSide.LEFT,
-            "R": StorageModuleSide.RIGHT,
-            "LEFT_MODULE": StorageModuleSide.LEFT,
-            "RIGHT_MODULE": StorageModuleSide.RIGHT,
+            "F": StorageModuleSide.FRONT,
+            "B": StorageModuleSide.BACK,
+            "FRONT_MODULE": StorageModuleSide.FRONT,
+            "BACK_MODULE": StorageModuleSide.BACK,
         }
         parts = value.split(":")
         if len(parts) != 3:
@@ -825,7 +845,9 @@ class Robot:
             self._logger.warning("demo_cell_map_missing: %s", path)
             return None
 
-        raw = _json.loads(file_path.read_text(encoding="utf-8"))
+        raw_content = file_path.read_text(encoding="utf-8")
+        raw = _json.loads(raw_content)
+        raw = self._migrate_demo_side_rename(str(file_path), raw_content, raw)
         if isinstance(raw, dict) is False:
             raise ValueError("demo mapping must be a JSON object")
 
@@ -1661,10 +1683,10 @@ class Robot:
         if isinstance(side, str):
             side = StorageModuleSide(side)
 
-        side_number = 0 if side == StorageModuleSide.LEFT else 1
+        side_number = 0 if side == StorageModuleSide.FRONT else 1
 
         if stage_extension_mm is None:
-            stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.LEFT else "STAGE_EXTENSION_SHELF_BACK"
+            stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.FRONT else "STAGE_EXTENSION_SHELF_BACK"
             stage_value = await self._tool.get_param(stage_param)
             if stage_value is not None:
                 stage_extension_mm = float(stage_value)
@@ -1716,19 +1738,19 @@ class Robot:
             existing_shelves=existing_shelves,
         )
 
-        current_left = [] if self._grid is None else self._grid.left_module
-        current_right = [] if self._grid is None else self._grid.right_module
+        current_front = [] if self._grid is None else self._grid.front_module
+        current_back = [] if self._grid is None else self._grid.back_module
 
-        if side == StorageModuleSide.LEFT:
-            left_module = scanned_shelves
-            right_module = current_right
+        if side == StorageModuleSide.FRONT:
+            front_module = scanned_shelves
+            back_module = current_back
         else:
-            left_module = current_left
-            right_module = scanned_shelves
+            front_module = current_front
+            back_module = scanned_shelves
 
         storage_grid = StorageGrid(
-            left_module=left_module,
-            right_module=right_module,
+            front_module=front_module,
+            back_module=back_module,
             filename=self._grid_path,
         )
         storage_grid.save()

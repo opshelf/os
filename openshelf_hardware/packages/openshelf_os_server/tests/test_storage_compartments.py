@@ -14,7 +14,7 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 def tray(columns=4, rows=2, cell=0, width=200, length=160):
     return StorageBinSettings.model_validate({
         "barcode": f"90000000000{cell}",
-        "home_location": {"side": "left_module", "shelf_idx": 0, "cell_idx": cell},
+        "home_location": {"side": "front_module", "shelf_idx": 0, "cell_idx": cell},
         "inner_dimensions": {"width": width, "length": length, "height": 100},
         "compartment_layout": {"rows": rows, "columns": columns},
     })

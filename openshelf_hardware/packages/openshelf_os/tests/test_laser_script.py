@@ -30,7 +30,7 @@ def build_config():
 				scan=SimpleNamespace(
 					laser_offset_x_mm=51.0,
 					laser_offset_y_mm=0.0,
-					left_gripper_xy_correction_mm=SimpleNamespace(x_mm=10.0, y_mm=20.0),
+					front_gripper_xy_correction_mm=SimpleNamespace(x_mm=10.0, y_mm=20.0),
 				)
 			),
 			tool=SimpleNamespace(
@@ -55,7 +55,7 @@ def build_analysis(raw_scan_path: str = '/tmp/run/coarse.npy'):
 		raw_scan_path=raw_scan_path,
 		run_id='run-id',
 		shelves=[],
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		bounds=SimpleNamespace(x_min=0.0, x_max=10.0, y_min=0.0, y_max=10.0),
 		wall_depth_mm=8.0,
 	)
@@ -163,7 +163,7 @@ def test_main_dispatches_full_scan_to_package_methods(monkeypatch: pytest.Monkey
 
 	monkeypatch.setattr(module, 'load_config_file', lambda path: config)
 	monkeypatch.setattr(module.laser_module, 'load_grid', lambda path: SimpleNamespace())
-	monkeypatch.setattr(module.laser_module, 'build_run_parameters', lambda **kwargs: {'module': 'left'})
+	monkeypatch.setattr(module.laser_module, 'build_run_parameters', lambda **kwargs: {'module': 'front'})
 	monkeypatch.setattr(module.laser_module, 'run_staged_scan', run_staged_scan)
 	monkeypatch.setattr(
 		module.laser_module,
@@ -175,7 +175,7 @@ def test_main_dispatches_full_scan_to_package_methods(monkeypatch: pytest.Monkey
 
 	result = module.main([
 		'--module',
-		'left',
+		'front',
 		'--x',
 		'0',
 		'10',
@@ -221,7 +221,7 @@ def test_main_dispatches_rescan_apply_to_package_methods(monkeypatch: pytest.Mon
 		lambda **kwargs: ScanBounds(x_min=0.0, x_max=50.0, y_min=0.0, y_max=80.0),
 	)
 	monkeypatch.setattr(module.laser_module, 'is_point_in_bounds', lambda **kwargs: True)
-	monkeypatch.setattr(module.laser_module, 'build_run_parameters', lambda **kwargs: {'module': 'left'})
+	monkeypatch.setattr(module.laser_module, 'build_run_parameters', lambda **kwargs: {'module': 'front'})
 	monkeypatch.setattr(module.laser_module, 'run_staged_scan', run_staged_scan)
 	monkeypatch.setattr(
 		module.laser_module,
@@ -238,7 +238,7 @@ def test_main_dispatches_rescan_apply_to_package_methods(monkeypatch: pytest.Mon
 	monkeypatch.setattr(module.laser_module, 'apply_analysis', apply_analysis)
 	monkeypatch.setattr(module, 'print_analysis', lambda analysis: None)
 
-	result = module.main(['--module', 'left', '--step', '1', '--rescan-cell', '1:2', '--apply'])
+	result = module.main(['--module', 'front', '--step', '1', '--rescan-cell', '1:2', '--apply'])
 
 	assert result == 0
 	run_staged_scan.assert_awaited_once()
@@ -262,7 +262,7 @@ def test_from_run_apply_uses_single_shelf_scope(monkeypatch: pytest.MonkeyPatch,
 		lambda analysis: {
 			'auto_calibration_scope': {
 				'mode': 'shelf',
-				'side': 'left',
+				'side': 'front',
 				'shelf_idx': 2,
 			},
 		},
@@ -322,7 +322,7 @@ def test_from_run_apply_uses_single_cell_rescan(
 	call_kwargs = apply_single_cell_rescan.call_args.kwargs
 	assert call_kwargs['target'].shelf_idx == 1
 	assert call_kwargs['target'].cell_idx == 2
-	assert call_kwargs['side'] == StorageModuleSide.LEFT
+	assert call_kwargs['side'] == StorageModuleSide.FRONT
 	assert call_kwargs['detected_cell'] is detected_cell
 
 
