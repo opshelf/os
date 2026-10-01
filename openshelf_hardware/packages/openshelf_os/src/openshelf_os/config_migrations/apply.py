@@ -61,7 +61,7 @@ def _write_migrated(path: Path, original: bytes, migrated: dict[str, Any], backu
     source_stat = path.stat()
 
     temporary: Path | None = None
-    backup: Path | None = None
+    backup = path.with_name(path.name + backup_suffix)
     backup_created = False
     backup_written = False
     replaced = False
@@ -85,7 +85,6 @@ def _write_migrated(path: Path, original: bytes, migrated: dict[str, Any], backu
             stream.flush()
             os.fsync(stream.fileno())
 
-        backup = path.with_name(path.name + backup_suffix)
         # Exclusive creation prevents a later invocation from overwriting the rollback copy.
         with os.fdopen(os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
             backup_created = True
