@@ -61,12 +61,18 @@ def _write_migrated(path: Path, original: bytes, migrated: dict[str, Any], backu
     source_stat = path.stat()
 
     temporary: Path | None = None
+    backup: Path | None = None
+    backup_created = False
+    backup_written = False
+    replaced = False
     try:
-        # The temp file is written and fsynced before the backup is created: a
-        # failure in this phase (ENOSPC, EPERM from the fchown below) must not
-        # orphan a backup, because auto-migration runs unattended on startup and
-        # a leftover backup would make every retry refuse with a misleading
-        # "backup already exists" conflict instead of surfacing the real error.
+        # The temp file is written and fsynced before the backup is created, and
+        # a failed backup write (the write or fsync below) deletes the partially
+        # written backup before the error propagates: auto-migration runs
+        # unattended on startup, and a leftover backup would make every retry
+        # refuse with a misleading "backup already exists" conflict instead of
+        # surfacing the real error. Only a failed os.replace leaves a backup,
+        # after which it is the only rollback copy of the original bytes.
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=path.parent, delete=False
         ) as stream:
@@ -82,12 +88,27 @@ def _write_migrated(path: Path, original: bytes, migrated: dict[str, Any], backu
         backup = path.with_name(path.name + backup_suffix)
         # Exclusive creation prevents a later invocation from overwriting the rollback copy.
         with os.fdopen(os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
+            backup_created = True
             os.fchmod(stream.fileno(), stat.S_IMODE(source_stat.st_mode))
             stream.write(original)
             stream.flush()
             os.fsync(stream.fileno())
+            backup_written = True
 
         os.replace(temporary, path)
+        replaced = True
+    except BaseException:
+        # A failed write phase (temp or backup) must not orphan a backup;
+        # a failed os.replace keeps it as the only rollback copy of the
+        # original bytes (backup written, replace not completed).
+        if backup_created and not backup_written and not replaced:
+            try:
+                backup.unlink(missing_ok=True)
+            except OSError:
+                # A backup that cannot be deleted is left in place; keep the
+                # original error as the one that propagates.
+                pass
+        raise
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

@@ -159,6 +159,32 @@ def test_failed_temp_write_leaves_no_backup_and_retries_cleanly(tmp_path, v4_con
     assert json.loads(path.read_bytes())["schema_version"] == 5
 
 
+def test_failed_backup_write_leaves_no_backup_and_retries_cleanly(tmp_path, v4_config, monkeypatch):
+    path, raw = _write(tmp_path, "config.json", v4_config)
+
+    fsync_calls = 0
+
+    def flaky_fsync(fd):
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 2:  # the backup write's fsync
+            raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(apply.os, "fsync", flaky_fsync)
+    with pytest.raises(OSError):
+        apply.migrate_config_file(path)
+    monkeypatch.undo()
+    assert path.read_bytes() == raw
+    assert not path.with_name("config.json.schema-v4.bak").exists()
+    assert list(tmp_path.iterdir()) == [path]
+
+    changed, changes, backup = apply.migrate_config_file(path)
+    assert changed is True
+    assert backup == path.with_name("config.json.schema-v4.bak")
+    assert backup.read_bytes() == raw
+    assert json.loads(path.read_bytes())["schema_version"] == 5
+
+
 def test_symlink_is_refused(tmp_path, v4_config):
     target, raw = _write(tmp_path, "real.json", v4_config)
     link = tmp_path / "config.json"
