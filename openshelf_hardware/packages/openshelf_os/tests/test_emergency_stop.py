@@ -485,12 +485,12 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         queued_before_stop = RetrieveItemCommand(
             request_id="bin-workflow-before-emergency-boundary",
             barcode="900000000013",
-            location={"side": "left_module", "shelf_idx": 2, "cell_idx": 4},
+            location={"side": "front_module", "shelf_idx": 2, "cell_idx": 4},
         )
         recovered_command = RetrieveItemCommand(
             request_id="bin-workflow-after-emergency-boundary",
             barcode="900000000014",
-            location={"side": "right_module", "shelf_idx": 1, "cell_idx": 3},
+            location={"side": "back_module", "shelf_idx": 1, "cell_idx": 3},
         )
         robot.handle_command = successful_handler
         worker._discard_queued_commands = track_cleanup_discard
@@ -516,7 +516,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "error": "Emergency stop: cleanup boundary",
                 "request_id": "bin-workflow-before-emergency-boundary",
                 "barcode": "900000000013",
-                "location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 4},
+                "location": {"side": "front_module", "shelf_idx": 2, "cell_idx": 4},
             })
             remaining_events = []
             while events.empty() is False:
@@ -603,7 +603,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-completed-stop",
             barcode="900000000005",
-            location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+            location={"side": "front_module", "shelf_idx": 1, "cell_idx": 2},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
         worker._queued_commands.append(worker._current_operation)
@@ -655,13 +655,13 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         retrieve = RetrieveItemCommand(
             request_id="bin-workflow-queued-retrieve",
             barcode="900000000006",
-            location={"side": "right_module", "shelf_idx": 2, "cell_idx": 3},
+            location={"side": "back_module", "shelf_idx": 2, "cell_idx": 3},
         )
         store = StoreItemCommand(
             request_id="bin-workflow-queued-store",
             item={
                 "barcode": "900000000007",
-                "location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 5},
+                "location": {"side": "front_module", "shelf_idx": 4, "cell_idx": 5},
             },
         )
         await worker.enqueue_command(retrieve)
@@ -683,7 +683,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "error": "Emergency stop: test",
                 "request_id": "bin-workflow-queued-retrieve",
                 "barcode": "900000000006",
-                "location": {"side": "right_module", "shelf_idx": 2, "cell_idx": 3},
+                "location": {"side": "back_module", "shelf_idx": 2, "cell_idx": 3},
             },
             "bin-workflow-queued-store": {
                 "command": "store_item",
@@ -691,7 +691,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "error": "Emergency stop: test",
                 "request_id": "bin-workflow-queued-store",
                 "barcode": "900000000007",
-                "location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 5},
+                "location": {"side": "front_module", "shelf_idx": 4, "cell_idx": 5},
             },
         }
         for request_id, expected in expected_failures.items():
@@ -716,7 +716,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-1",
             barcode="900000000001",
-            location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+            location={"side": "front_module", "shelf_idx": 1, "cell_idx": 2},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
         worker._current_task = asyncio.create_task(slow_command())
@@ -734,7 +734,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             "error": "Emergency stop: test",
             "request_id": "bin-workflow-1",
             "barcode": "900000000001",
-            "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+            "location": {"side": "front_module", "shelf_idx": 1, "cell_idx": 2},
         })
 
         RobotWorker._instance = None
@@ -761,7 +761,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-2",
             barcode="900000000002",
-            location={"side": "right_module", "shelf_idx": 3, "cell_idx": 4},
+            location={"side": "back_module", "shelf_idx": 3, "cell_idx": 4},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
         worker._current_task = asyncio.create_task(faulting_command())
@@ -778,7 +778,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "error": "motor fault",
                 "request_id": "bin-workflow-2",
                 "barcode": "900000000002",
-                "location": {"side": "right_module", "shelf_idx": 3, "cell_idx": 4},
+                "location": {"side": "back_module", "shelf_idx": 3, "cell_idx": 4},
             }, code="execution_error")
         finally:
             worker._running = False
@@ -813,7 +813,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-3",
             barcode="900000000003",
-            location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+            location={"side": "front_module", "shelf_idx": 1, "cell_idx": 2},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
         worker._current_task = asyncio.create_task(successful_command())
@@ -903,7 +903,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         command = RetrieveItemCommand(
             request_id="bin-workflow-dequeued-estop",
             barcode="900000000009",
-            location={"side": "right_module", "shelf_idx": 2, "cell_idx": 4},
+            location={"side": "back_module", "shelf_idx": 2, "cell_idx": 4},
         )
         await worker.enqueue_command(command)
         worker._publish_status = block_dequeue_status
@@ -926,7 +926,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "error": "Emergency stop: dequeue window",
                 "request_id": "bin-workflow-dequeued-estop",
                 "barcode": "900000000009",
-                "location": {"side": "right_module", "shelf_idx": 2, "cell_idx": 4},
+                "location": {"side": "back_module", "shelf_idx": 2, "cell_idx": 4},
             })
             await asyncio.sleep(0)
             remaining_events = []
@@ -992,7 +992,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         command = RetrieveItemCommand(
             request_id="bin-workflow-dequeued-clear",
             barcode="900000000011",
-            location={"side": "right_module", "shelf_idx": 4, "cell_idx": 1},
+            location={"side": "back_module", "shelf_idx": 4, "cell_idx": 1},
         )
         worker._publish_status = no_status_publish
         worker._evaluate_safety_guard = no_safety_change
@@ -1019,7 +1019,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "error": "Commands cleared",
                 "request_id": "bin-workflow-dequeued-clear",
                 "barcode": "900000000011",
-                "location": {"side": "right_module", "shelf_idx": 4, "cell_idx": 1},
+                "location": {"side": "back_module", "shelf_idx": 4, "cell_idx": 1},
             })
             await asyncio.sleep(0.05)
 
@@ -1086,7 +1086,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             command = RetrieveItemCommand(
                 request_id="bin-workflow-after-idle-clear",
                 barcode="900000000012",
-                location={"side": "left_module", "shelf_idx": 2, "cell_idx": 3},
+                location={"side": "front_module", "shelf_idx": 2, "cell_idx": 3},
             )
             await worker.enqueue_command(command)
 
@@ -1131,7 +1131,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         command = RetrieveItemCommand(
             request_id="bin-workflow-dequeued-shutdown",
             barcode="900000000010",
-            location={"side": "left_module", "shelf_idx": 3, "cell_idx": 1},
+            location={"side": "front_module", "shelf_idx": 3, "cell_idx": 1},
         )
         await worker.enqueue_command(command)
         worker._publish_status = block_dequeue_status
@@ -1155,7 +1155,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
                 "error": "Robot stopped during shutdown",
                 "request_id": "bin-workflow-dequeued-shutdown",
                 "barcode": "900000000010",
-                "location": {"side": "left_module", "shelf_idx": 3, "cell_idx": 1},
+                "location": {"side": "front_module", "shelf_idx": 3, "cell_idx": 1},
             })
             remaining_events = []
             while events.empty() is False:
@@ -1196,7 +1196,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-shutdown",
             barcode="900000000004",
-            location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+            location={"side": "front_module", "shelf_idx": 1, "cell_idx": 2},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
         worker._current_task = asyncio.create_task(slow_command())
@@ -1213,7 +1213,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
             "error": "Robot stopped during shutdown",
             "request_id": "bin-workflow-shutdown",
             "barcode": "900000000004",
-            "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+            "location": {"side": "front_module", "shelf_idx": 1, "cell_idx": 2},
         })
         self.assertEqual(robot.shutdown_calls, 1)
         self.assertEqual(robot.lifecycle_events[-2:], ["status", "shutdown"])
@@ -1241,7 +1241,7 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         worker._current_command = RetrieveItemCommand(
             request_id="bin-workflow-completed-shutdown",
             barcode="900000000008",
-            location={"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+            location={"side": "front_module", "shelf_idx": 1, "cell_idx": 2},
         )
         worker._current_operation = worker._snapshot_command(worker._current_command)
         worker._queued_commands.append(worker._current_operation)

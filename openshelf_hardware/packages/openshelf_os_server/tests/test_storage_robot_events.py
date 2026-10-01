@@ -47,12 +47,12 @@ async def _seed_item_with_location(barcode: str, side: str, shelf_idx: int, cell
 
 @pytest.mark.anyio
 async def test_process_robot_event_removes_location_on_success() -> None:
-    await _seed_item_with_location(barcode="111", side="left_module", shelf_idx=1, cell_idx=2)
+    await _seed_item_with_location(barcode="111", side="front_module", shelf_idx=1, cell_idx=2)
 
     payload = {
         "command": "retrieve_item",
         "message": "success",
-        "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 2},
+        "location": {"side": "front_module", "shelf_idx": 1, "cell_idx": 2},
         "barcode": "111",
     }
 
@@ -69,12 +69,12 @@ async def test_process_robot_event_removes_location_on_success() -> None:
 
 @pytest.mark.anyio
 async def test_process_robot_event_ignores_incomplete_payload() -> None:
-    await _seed_item_with_location(barcode="222", side="left_module", shelf_idx=0, cell_idx=0)
+    await _seed_item_with_location(barcode="222", side="front_module", shelf_idx=0, cell_idx=0)
 
     payload = {
         "command": "retrieve_item",
         "message": "error",
-        "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        "location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
         "barcode": "222",
     }
 
@@ -104,7 +104,7 @@ async def test_process_robot_event_adds_location_on_store_success() -> None:
     payload = {
         "command": "store_item",
         "message": "success",
-        "location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 4},
+        "location": {"side": "front_module", "shelf_idx": 2, "cell_idx": 4},
         "barcode": "333",
     }
 
@@ -127,7 +127,7 @@ async def test_process_robot_event_creates_item_when_missing() -> None:
     payload = {
         "command": "store_item",
         "message": "success",
-        "location": {"side": "left_module", "shelf_idx": 1, "cell_idx": 1},
+        "location": {"side": "front_module", "shelf_idx": 1, "cell_idx": 1},
         "barcode": "444",
     }
 
@@ -164,7 +164,7 @@ async def test_process_robot_event_updates_weight_from_scale() -> None:
     payload = {
         "command": "store_item",
         "message": "success",
-        "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        "location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
         "barcode": barcode,
         "weight": 152.0,
     }
@@ -202,7 +202,7 @@ async def test_mock_debug_scanner_publishes_outside_tray_without_motion(
         )
         bin_row = StorageBin(
             barcode="scanner-restore-bin",
-            side="left_module",
+            side="front_module",
             shelf_idx=1,
             cell_idx=1,
             inner_dimensions={"width": 30.0, "height": 30.0, "length": 30.0},
@@ -254,7 +254,7 @@ async def test_mock_debug_scanner_handles_active_item_and_bin_scans(
         )
         bin_row = StorageBin(
             barcode="scanner-active-bin",
-            side="left_module",
+            side="front_module",
             shelf_idx=1,
             cell_idx=1,
             inner_dimensions={"width": 30.0, "height": 30.0, "length": 30.0},
@@ -347,7 +347,7 @@ async def _seed_active_bin_workflow(state: str) -> tuple[str, str]:
         )
         bin_row = StorageBin(
             barcode=f"9000000000{state[-2:]}",
-            side="left_module",
+            side="front_module",
             shelf_idx=3,
             cell_idx=3,
             inner_dimensions={"width": 30.0, "height": 30.0, "length": 30.0},
@@ -434,7 +434,7 @@ async def test_correlated_bin_event_handler_exception_never_uses_legacy_mutation
     )
 
     if command == "retrieve_item":
-        await _seed_item_with_location(barcode, "left_module", 3, 3)
+        await _seed_item_with_location(barcode, "front_module", 3, 3)
 
     await process_robot_event(
         {
@@ -442,7 +442,7 @@ async def test_correlated_bin_event_handler_exception_never_uses_legacy_mutation
             "message": "success",
             "request_id": workflow_id,
             "barcode": barcode,
-            "location": {"side": "left_module", "shelf_idx": 3, "cell_idx": 3},
+            "location": {"side": "front_module", "shelf_idx": 3, "cell_idx": 3},
             "weight": 200.0,
         },
         worker=object(),  # type: ignore[arg-type]
@@ -469,7 +469,7 @@ async def test_reserved_bin_barcode_and_home_never_use_legacy_mutation_without_w
     reservation: str,
 ) -> None:
     barcode = f"9000000000{len(reservation):02d}"
-    home = ("right_module", 2, len(reservation))
+    home = ("back_module", 2, len(reservation))
     if reservation == "configured":
         monkeypatch.setattr(
             bin_storage,
@@ -504,7 +504,7 @@ async def test_reserved_bin_barcode_and_home_never_use_legacy_mutation_without_w
             await session.commit()
 
     for barcode, location in (
-        (barcode, {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}),
+        (barcode, {"side": "front_module", "shelf_idx": 0, "cell_idx": 0}),
         (f"direct-{reservation}", {"side": home[0], "shelf_idx": home[1], "cell_idx": home[2]}),
     ):
         await process_robot_event(
@@ -529,7 +529,7 @@ async def test_released_bin_barcode_and_home_allow_legacy_mutation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     barcode = "900000000010"
-    home = ("right_module", 2, 10)
+    home = ("back_module", 2, 10)
     async with AsyncSessionLocal() as session:
         session.add(
             StorageBin(
@@ -546,7 +546,7 @@ async def test_released_bin_barcode_and_home_allow_legacy_mutation(
         await session.commit()
 
     for barcode, location in (
-        (barcode, {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}),
+        (barcode, {"side": "front_module", "shelf_idx": 0, "cell_idx": 0}),
         ("direct-released", {"side": home[0], "shelf_idx": home[1], "cell_idx": home[2]}),
     ):
         await process_robot_event(
@@ -575,7 +575,7 @@ async def test_unrelated_direct_event_is_not_swallowed_by_active_bin_workflow() 
             "command": "store_item",
             "message": "success",
             "barcode": "ordinary-direct",
-            "location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 4},
+            "location": {"side": "front_module", "shelf_idx": 4, "cell_idx": 4},
         },
         worker=object(),  # type: ignore[arg-type]
     )
@@ -653,7 +653,7 @@ async def test_listener_records_processed_events(
 
 @pytest.mark.anyio
 async def test_retrieve_commit_pushes_fresh_status() -> None:
-    await _seed_item_with_location(barcode="781", side="left_module", shelf_idx=2, cell_idx=3)
+    await _seed_item_with_location(barcode="781", side="front_module", shelf_idx=2, cell_idx=3)
 
     snapshots: list[bool] = []
 
@@ -667,7 +667,7 @@ async def test_retrieve_commit_pushes_fresh_status() -> None:
             "command": "retrieve_item",
             "message": "success",
             "barcode": "781",
-            "location": {"side": "left_module", "shelf_idx": 2, "cell_idx": 3},
+            "location": {"side": "front_module", "shelf_idx": 2, "cell_idx": 3},
         },
         worker=StatusWorker(),  # type: ignore[arg-type]
     )
@@ -689,7 +689,7 @@ async def test_store_commit_pushes_fresh_status() -> None:
             "command": "store_item",
             "message": "success",
             "barcode": "782",
-            "location": {"side": "right_module", "shelf_idx": 1, "cell_idx": 4},
+            "location": {"side": "back_module", "shelf_idx": 1, "cell_idx": 4},
             "weight": 250.0,
         },
         worker=StatusWorker(),  # type: ignore[arg-type]
@@ -712,7 +712,7 @@ async def test_retrieve_without_removal_does_not_push_status() -> None:
             "command": "retrieve_item",
             "message": "success",
             "barcode": "no-such-barcode",
-            "location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+            "location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
         },
         worker=StatusWorker(),  # type: ignore[arg-type]
     )

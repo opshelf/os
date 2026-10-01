@@ -21,7 +21,7 @@ async def test_upsert_preserves_cycle_zero_and_allows_net_correction(client: Asy
         apply_cycle_mass(item, 0, stored=True, command_id="zero-cycle")
         if in_bin:
             bin_row = StorageBin(
-                barcode="900000000019", side="left_module", shelf_idx=0, cell_idx=0,
+                barcode="900000000019", side="front_module", shelf_idx=0, cell_idx=0,
                 inner_dimensions={"width": 30, "height": 30, "length": 30},
                 max_items=2, status="at_home", active=True,
             )
@@ -316,7 +316,7 @@ async def test_item_location_operations(client: AsyncClient) -> None:
     location_data = {
         "shelf_idx": 1,
         "cell_idx": 2,
-        "side": "left"
+        "side": "front"
     }
 
     response = await client.post(
@@ -348,7 +348,7 @@ async def test_item_location_operations(client: AsyncClient) -> None:
         "/api/storage/items/locations/remove",
         json={
             "barcode": created_item["barcode"],
-            "side": "left_module",
+            "side": "front_module",
             "shelf_idx": 1,
             "cell_idx": 2,
         },
@@ -392,7 +392,7 @@ async def test_add_item_location_occupied_returns_conflict(client: AsyncClient) 
     await client.post("/api/storage/items", json=first_item, headers=headers)
     await client.post("/api/storage/items", json=second_item, headers=headers)
 
-    location_data = {"shelf_idx": 3, "cell_idx": 4, "side": "left"}
+    location_data = {"shelf_idx": 3, "cell_idx": 4, "side": "front"}
 
     first_response = await client.post(
         "/api/storage/items/locations/add",
@@ -426,7 +426,7 @@ async def test_add_item_location_invalid_index_returns_unprocessable(client: Asy
 
     response = await client.post(
         "/api/storage/items/locations/add",
-        json={**{"shelf_idx": -1, "cell_idx": 2, "side": "left"}, "barcode": item_data['barcode']}, headers=headers
+        json={**{"shelf_idx": -1, "cell_idx": 2, "side": "front"}, "barcode": item_data['barcode']}, headers=headers
     )
     assert response.status_code == 422
 

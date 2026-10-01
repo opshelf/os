@@ -15,17 +15,20 @@
 		type Cell,
 		type StorageGrid
 	} from '$lib/api';
+	import { activeVocabulary, activeVocabularyStore, isSideToken, sideIndex, sideLabel } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	interface Props {
-		initialSide?: 'left_module' | 'right_module';
+		// Accepts any side token the device vocabulary may use; normalized below.
+		initialSide?: string;
 		initialShelf?: number;
 		initialCell?: number;
 	}
 
 	interface StoredCellSelection {
-		side?: 'left_module' | 'right_module';
+		// May hold a token from either vocabulary; normalized on restore.
+		side?: string;
 		shelf?: number;
 		cell?: number;
 	}
@@ -35,7 +38,17 @@
 	let storageGrid = $state<StorageGrid | null>(null);
 	let loading = $state<boolean>(true);
 	let loadError = $state<string>('');
-	let selectedSide = $state<'left_module' | 'right_module'>(initialSide ?? 'left_module');
+	let vocabulary = $state(activeVocabulary());
+	$effect(() => activeVocabularyStore.subscribe((v) => {
+		vocabulary = v;
+	}));
+
+	const normalizedInitialSide =
+		initialSide !== undefined && sideIndex(initialSide) !== null
+			? (sideIndex(initialSide) === 1 ? 'back_module' : 'front_module')
+			: 'front_module';
+
+	let selectedSide = $state<'front_module' | 'back_module'>(normalizedInitialSide);
 	let selectedShelf = $state<number>(0);
 	let selectedCell = $state<number>(0);
 	let isRunningQuick = $state<boolean>(false);
@@ -115,8 +128,8 @@
 			return;
 		}
 
-		if (initialSide === undefined && storedSelection.side !== undefined) {
-			selectedSide = storedSelection.side;
+		if (initialSide === undefined && storedSelection.side !== undefined && sideIndex(storedSelection.side) !== null) {
+			selectedSide = sideIndex(storedSelection.side) === 1 ? 'back_module' : 'front_module';
 		}
 
 		if (initialShelf === undefined && storedSelection.shelf !== undefined) {
@@ -163,8 +176,8 @@
 		}
 	}
 
-	function isStorageModuleSide(value: unknown): value is 'left_module' | 'right_module' {
-		return value === 'left_module' || value === 'right_module';
+	function isStorageModuleSide(value: unknown): boolean {
+		return isSideToken(value) === true;
 	}
 
 	function isSelectionIndex(value: unknown): value is number {
@@ -202,16 +215,16 @@
 		}
 	}
 
-	function getShelvesForSide(side: 'left_module' | 'right_module') {
+	function getShelvesForSide(side: 'front_module' | 'back_module') {
 		if (storageGrid === null) {
 			return [];
 		}
 
-		if (side === 'left_module') {
-			return storageGrid.left_module;
+		if (side === 'front_module') {
+			return storageGrid.front_module;
 		}
 
-		return storageGrid.right_module;
+		return storageGrid.back_module;
 	}
 
 	function getShelves() {
@@ -295,7 +308,7 @@
 	function didChangeSide(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
-		selectedSide = target.value as 'left_module' | 'right_module';
+		selectedSide = target.value as 'front_module' | 'back_module';
 		syncSelection();
 		persistSelection();
 		error = '';
@@ -431,8 +444,8 @@
 				<td>
 					<span class="field-label">side</span>
 					<select value={selectedSide} onchange={didChangeSide}>
-						<option value="left_module">left module</option>
-						<option value="right_module">right module</option>
+						<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
+						<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
 					</select>
 				</td>
 				<td>

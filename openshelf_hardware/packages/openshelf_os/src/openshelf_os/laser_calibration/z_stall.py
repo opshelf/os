@@ -523,10 +523,10 @@ async def run_z_stall_anchor(
 	from .angle.capture import enter_capture_mode  # noqa: PLC0415
 	from .angle.robot_ops import probe_z_until_stall  # noqa: PLC0415
 
-	side_name = "left" if side == StorageModuleSide.LEFT else "right"
-	side_number = 0 if side == StorageModuleSide.LEFT else 1
-	rotation_param = "ROTATION_FRONT" if side_name == "left" else "ROTATION_BACK"
-	stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side_name == "left" else "STAGE_EXTENSION_SHELF_BACK"
+	side_name = "front" if side == StorageModuleSide.FRONT else "back"
+	side_number = 0 if side == StorageModuleSide.FRONT else 1
+	rotation_param = "ROTATION_FRONT" if side_name == "front" else "ROTATION_BACK"
+	stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side_name == "front" else "STAGE_EXTENSION_SHELF_BACK"
 
 	rotation_center_value = await tool.get_param(rotation_param)
 	stage_extension_value = await tool.get_param(stage_param)

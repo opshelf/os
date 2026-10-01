@@ -422,45 +422,45 @@ class SnapshotRunnerMixin:
                 key=lambda cell: (cell.side.value, cell.shelf_idx, cell.cell_idx),
             )
             self._snapshot.angle_results = sorted(angle_results, key=lambda result: result.side.value)
-            left_side_state = self._side_states.get("left_module", _SideState())
-            right_side_state = self._side_states.get("right_module", _SideState())
-            self._snapshot.left_scouted_shelf_count = max(
-                len([edge for edge in self._snapshot.shelf_edges if edge.side == "left_module"]),
-                left_side_state.live_shelf_count,
+            front_side_state = self._side_states.get("front_module", _SideState())
+            back_side_state = self._side_states.get("back_module", _SideState())
+            self._snapshot.front_scouted_shelf_count = max(
+                len([edge for edge in self._snapshot.shelf_edges if edge.side == "front_module"]),
+                front_side_state.live_shelf_count,
             )
-            self._snapshot.right_scouted_shelf_count = max(
-                len([edge for edge in self._snapshot.shelf_edges if edge.side == "right_module"]),
-                right_side_state.live_shelf_count,
+            self._snapshot.back_scouted_shelf_count = max(
+                len([edge for edge in self._snapshot.shelf_edges if edge.side == "back_module"]),
+                back_side_state.live_shelf_count,
             )
-            self._snapshot.left_candidate_count = max(
-                len([candidate for candidate in self._snapshot.shelf_candidates if candidate.side == "left_module"]),
-                left_side_state.live_candidate_count,
+            self._snapshot.front_candidate_count = max(
+                len([candidate for candidate in self._snapshot.shelf_candidates if candidate.side == "front_module"]),
+                front_side_state.live_candidate_count,
             )
-            self._snapshot.right_candidate_count = max(
-                len([candidate for candidate in self._snapshot.shelf_candidates if candidate.side == "right_module"]),
-                right_side_state.live_candidate_count,
+            self._snapshot.back_candidate_count = max(
+                len([candidate for candidate in self._snapshot.shelf_candidates if candidate.side == "back_module"]),
+                back_side_state.live_candidate_count,
             )
-            self._snapshot.left_detected_cell_count = max(
-                len([cell for cell in self._snapshot.detected_cells if cell.side == "left_module"]),
-                left_side_state.live_detected_cell_count,
+            self._snapshot.front_detected_cell_count = max(
+                len([cell for cell in self._snapshot.detected_cells if cell.side == "front_module"]),
+                front_side_state.live_detected_cell_count,
             )
-            self._snapshot.right_detected_cell_count = max(
-                len([cell for cell in self._snapshot.detected_cells if cell.side == "right_module"]),
-                right_side_state.live_detected_cell_count,
+            self._snapshot.back_detected_cell_count = max(
+                len([cell for cell in self._snapshot.detected_cells if cell.side == "back_module"]),
+                back_side_state.live_detected_cell_count,
             )
-            self._snapshot.left_stage_extension_mm = left_side_state.stage_extension_mm
-            self._snapshot.right_stage_extension_mm = right_side_state.stage_extension_mm
+            self._snapshot.front_stage_extension_mm = front_side_state.stage_extension_mm
+            self._snapshot.back_stage_extension_mm = back_side_state.stage_extension_mm
             self._snapshot.scouted_shelf_count = max(
                 len(self._snapshot.shelf_edges),
-                self._snapshot.left_scouted_shelf_count + self._snapshot.right_scouted_shelf_count,
+                self._snapshot.front_scouted_shelf_count + self._snapshot.back_scouted_shelf_count,
             )
             self._snapshot.candidate_count = max(
                 len(self._snapshot.shelf_candidates),
-                self._snapshot.left_candidate_count + self._snapshot.right_candidate_count,
+                self._snapshot.front_candidate_count + self._snapshot.back_candidate_count,
             )
             self._snapshot.detected_cell_count = max(
                 len(self._snapshot.detected_cells),
-                self._snapshot.left_detected_cell_count + self._snapshot.right_detected_cell_count,
+                self._snapshot.front_detected_cell_count + self._snapshot.back_detected_cell_count,
             )
             snapshot = self._snapshot.model_copy(deep=True)
 

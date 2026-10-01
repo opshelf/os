@@ -64,7 +64,7 @@ async def test_durable_first_store_failed_retry_and_replay(cycle_session_factory
     async with cycle_session_factory() as db:
         await StorageService(db).create_item('mass-cycle', 'Bottle', None,
             mass_values={'tare_weight': 100, 'net_weight': 250, 'full_net_weight': 500})
-    base = {'barcode': 'mass-cycle', 'location': {'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0}}
+    base = {'barcode': 'mass-cycle', 'location': {'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 0}}
     first = {**base, 'command': 'store_item', 'command_id': 'mass-first', 'message': 'success', 'weight': 345}
     await process_robot_event({**first, 'message': 'failure'})
     async with cycle_session_factory() as db:

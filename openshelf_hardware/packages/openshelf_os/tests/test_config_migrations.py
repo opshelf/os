@@ -15,10 +15,12 @@ from openshelf_os.config.loader import load_config_file
 from openshelf_os.config.exceptions import ConfigValidationError
 from openshelf_os.config.root import RootConfig
 from openshelf_os.config_migrations import (
+    apply,
     cli,
     runner,
     v003_remove_unused_scan_keys as v003,
     v004_promote_scan_constants as v004,
+    v005_module_side_names as v005,
 )
 from openshelf_os.config_migrations.v002_laser_parameter_names import (
     SCAN_KEY_RENAMES,
@@ -113,7 +115,7 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
     original = copy.deepcopy(legacy_config)
     migrated, changes = runner.migrate_config(legacy_config)
     assert legacy_config == original
-    assert migrated["schema_version"] == 4
+    assert migrated["schema_version"] == 5
     assert migrated["version"] == original["version"]
     assert migrated["auth"] == original["auth"]
     assert migrated["unknown_root_setting"] == original["unknown_root_setting"]
@@ -121,7 +123,7 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
     assert migrated["robot"]["grid"]["scan"]["unknown_scan_setting"] == {"preserve": True}
     assert not set(REMOVED_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
     assert not set(UNUSED_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
-    assert changes[-1] == "schema_version: 3 -> 4"
+    assert changes[-1] == "schema_version: 4 -> 5"
     config = RootConfig.model_validate(migrated)
     scan = config.robot.grid.scan
 
@@ -134,8 +136,8 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
         == 120
     )
     for side, expected_xy, expected_z in [
-        (StorageModuleSide.LEFT, (50.2, -3.25), 10 + 1.587 - 0.00285 * 400),
-        (StorageModuleSide.RIGHT, (-48.25, -2.88), 10 + 1.058),
+        (StorageModuleSide.FRONT, (50.2, -3.25), 10 + 1.587 - 0.00285 * 400),
+        (StorageModuleSide.BACK, (-48.25, -2.88), 10 + 1.058),
     ]:
         dx, dy = get_gripper_xy_correction(scan_config=scan, side=side)
         assert (scan.laser_offset_x_mm + dx, -scan.laser_offset_y_mm + dy) == pytest.approx(
@@ -169,9 +171,9 @@ def test_unread_scan_keys_are_removed_without_touching_calibration(legacy_config
     for key in ("angle_calibration_method", "angle_calibration_z_offset_min_mm"):
         assert f"robot.grid.scan.{key} removed (unused)" in changes
     # Calibration values and unknown keys survive unchanged.
-    assert scan["left_gripper_xy_correction_mm"] == {"x_mm": -0.8, "y_mm": -3.25}
+    assert scan["front_gripper_xy_correction_mm"] == {"x_mm": -0.8, "y_mm": -3.25}
     assert scan["unknown_scan_setting"] == {"preserve": True}
-    assert RootConfig.model_validate(migrated).schema_version == 4
+    assert RootConfig.model_validate(migrated).schema_version == 5
 
 
 def test_scan_without_the_unread_keys_is_a_noop_step(legacy_config):
@@ -195,13 +197,13 @@ def test_uniform_scan_tuning_moves_to_code(legacy_config):
         "laser_offset_y_mm",
         "laser_scan_pose_stage_mm",
         "laser_scan_pose_z_delta_from_place_mm",
-        "left_gripper_xy_correction_mm",
-        "right_gripper_xy_correction_mm",
-        "left_wall_depth_to_gripper_z_model",
-        "right_wall_depth_to_gripper_z_model",
+        "front_gripper_xy_correction_mm",
+        "back_gripper_xy_correction_mm",
+        "front_wall_depth_to_gripper_z_model",
+        "back_wall_depth_to_gripper_z_model",
         "unknown_scan_setting",
     }
-    assert RootConfig.model_validate(migrated).schema_version == 4
+    assert RootConfig.model_validate(migrated).schema_version == 5
 
 
 def test_divergent_promoted_values_are_refused_without_printing_them():
@@ -253,7 +255,7 @@ def test_null_spelling_of_stage_stall_target_still_migrates(legacy_config):
     scan["angle_calibration_stage_stall_target_mm"] = None
     scan["angle_calibration_stage_stall_fast_approach_mm"] = 0.0
     migrated, changes = runner.migrate_config(legacy_config)
-    assert migrated["schema_version"] == 4
+    assert migrated["schema_version"] == 5
     for key in (
         "angle_calibration_stage_stall_target_mm",
         "angle_calibration_stage_stall_fast_approach_mm",
@@ -270,7 +272,7 @@ def test_fine_scan_margin_the_fleet_disagrees_on_stays_in_config(
     scan = legacy_config["robot"]["grid"]["scan"]
     scan["fine_cell_scan_y_margin_mm"] = stored_margin
     migrated, changes = runner.migrate_config(legacy_config)
-    assert migrated["schema_version"] == 4
+    assert migrated["schema_version"] == 5
     assert migrated["robot"]["grid"]["scan"]["fine_cell_scan_y_margin_mm"] == stored_margin
     assert not any("fine_cell_scan_y_margin_mm" in change for change in changes)
     config = RootConfig.model_validate(migrated)
@@ -332,9 +334,129 @@ def test_optional_scan_and_models_need_not_exist(legacy_config):
     legacy_config["robot"]["grid"]["scan"] = {"left_z_offset_model": None, "right_xy_offset": None}
     migrated, _ = runner.migrate_config(legacy_config)
     assert migrated["robot"]["grid"]["scan"] == {
-        "left_wall_depth_to_gripper_z_model": None,
-        "right_gripper_xy_correction_mm": None,
+        "front_wall_depth_to_gripper_z_model": None,
+        "back_gripper_xy_correction_mm": None,
     }
+
+
+@pytest.fixture
+def v4_side_config():
+    return {
+        "schema_version": 4,
+        "name": "side-rename-test",
+        "version": "0.1.0",
+        "robot": {
+            "tool": {
+                "parameters": {
+                    "IDLE_POSITION": [0, 0],
+                    "PICKUP_POSITION_L": [0, 0],
+                    "PICKUP_POSITION_H": [0, 0],
+                    "SCAN_POSITION": [0, 0],
+                    "STAGE_EXTENSION_IO_BOX": 0,
+                    "STAGE_NUDGE": 0,
+                    "STAGE_EXTENSION_SHELF_FRONT": 46,
+                    "STAGE_EXTENSION_SHELF_BACK": 47,
+                    "Z_EXTENSION_PICK": 0,
+                    "Z_EXTENSION_PLACE": 160.5,
+                    "Z_EXTENSION_IO": 0,
+                    "Z_MOVE_RPM": 20,
+                    "Z_MOVE_ACCEL": 100,
+                    "ROTATION_FRONT": 182.25,
+                    "ROTATION_BACK": 2.5,
+                },
+                "motors": [],
+                "poe_camera": {"url": ""},
+            },
+            "io": {"motors": []},
+            "grid": {
+                "path": "storage.json",
+                "scan": {
+                    "left_shelf_scout_x_mm": 120.0,
+                    "right_shelf_scout_x_mm": 45.0,
+                    "left_gripper_xy_correction_mm": {"x_mm": -1.0, "y_mm": -2.0},
+                    "right_gripper_xy_correction_mm": None,
+                    "left_wall_depth_to_gripper_z_model": {
+                        "intercept_mm": 1.5,
+                        "x_slope_mm_per_mm": 0.0,
+                        "reference_stage_mm": 46.0,
+                        "reference_z_place_mm": 160.5,
+                    },
+                    "right_wall_depth_to_gripper_z_model": None,
+                    "left_bounds_x_min_mm": 0.0,
+                    "left_bounds_x_max_mm": 950.0,
+                    "left_bounds_y_min_mm": 0.0,
+                    "left_bounds_y_max_mm": 1250.0,
+                    "right_bounds_x_min_mm": 0.0,
+                    "right_bounds_x_max_mm": 950.0,
+                    "right_bounds_y_min_mm": 0.0,
+                    "right_bounds_y_max_mm": 1250.0,
+                },
+            },
+        },
+        "storage": {
+            "bins": [
+                {
+                    "barcode": "bin-front",
+                    "home_location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+                    "inner_dimensions": {"width": 100.0, "height": 100.0, "length": 100.0},
+                    "max_items": 4,
+                },
+                {
+                    "barcode": "bin-back",
+                    "home_location": {"side": "right_module", "shelf_idx": 2, "cell_idx": 3},
+                    "inner_dimensions": {"width": 100.0, "height": 100.0, "length": 100.0},
+                    "max_items": 4,
+                },
+            ]
+        },
+    }
+
+
+def test_v5_renames_module_side_scan_keys_and_bin_sides(v4_side_config):
+    migrated, changes = runner.migrate_config(v4_side_config)
+    assert migrated["schema_version"] == 5
+    scan = migrated["robot"]["grid"]["scan"]
+    assert scan["front_shelf_scout_x_mm"] == 120.0
+    assert scan["back_shelf_scout_x_mm"] == 45.0
+    assert scan["front_gripper_xy_correction_mm"] == {"x_mm": -1.0, "y_mm": -2.0}
+    assert scan["back_gripper_xy_correction_mm"] is None
+    assert scan["front_wall_depth_to_gripper_z_model"]["intercept_mm"] == 1.5
+    assert scan["back_wall_depth_to_gripper_z_model"] is None
+    assert scan["front_bounds_y_max_mm"] == 1250.0
+    assert scan["back_bounds_x_min_mm"] == 0.0
+    for key in v005.SCAN_KEY_RENAMES:
+        assert key not in scan
+    assert migrated["storage"]["bins"][0]["home_location"]["side"] == "front_module"
+    assert migrated["storage"]["bins"][1]["home_location"]["side"] == "back_module"
+    assert "robot.grid.scan.left_gripper_xy_correction_mm -> front_gripper_xy_correction_mm" in changes
+    assert "storage bin home_location.side left_module -> front_module" in changes
+    assert "storage bin home_location.side right_module -> back_module" in changes
+    RootConfig.model_validate(migrated)
+
+
+def test_v5_is_a_noop_on_already_migrated_configs(v4_side_config):
+    migrated, _ = runner.migrate_config(v4_side_config)
+    again, changes = runner.migrate_config(migrated)
+    assert again == migrated
+    assert changes == []
+
+
+def test_v5_without_side_names_is_a_noop_step():
+    config = {
+        "schema_version": 4,
+        "name": "side-rename-noop",
+        "version": "0.1.0",
+        "robot": {
+            "tool": {"parameters": {}, "motors": [], "poe_camera": {"url": ""}},
+            "io": {"motors": []},
+            "grid": {
+                "path": "storage.json",
+                "scan": {"front_gripper_xy_correction_mm": {"x_mm": -1.0, "y_mm": -2.0}},
+            },
+        },
+    }
+    migrated, changes = v005.migrate(config)
+    assert migrated == config and changes == []
 
 
 @pytest.mark.parametrize(
@@ -346,8 +468,13 @@ def test_legacy_grid_path_forms_migrate_without_rewriting(tmp_path, legacy_confi
     original = copy.deepcopy(legacy_config)
     migrated, changes = runner.migrate_config(legacy_config)
     assert legacy_config == original
-    assert migrated == {**original, "schema_version": 4}
-    assert changes == ["schema_version: 1 -> 2", "schema_version: 2 -> 3", "schema_version: 3 -> 4"]
+    assert migrated == {**original, "schema_version": 5}
+    assert changes == [
+        "schema_version: 1 -> 2",
+        "schema_version: 2 -> 3",
+        "schema_version: 3 -> 4",
+        "schema_version: 4 -> 5",
+    ]
     assert RootConfig.model_validate(migrated).robot.grid.path == "storage.json"
 
     path = tmp_path / "config.json"
@@ -379,7 +506,7 @@ def test_chain_runs_in_order_and_advances_only_after_success(legacy_config, monk
     assert "schema_version" not in legacy_config
 
 
-@pytest.mark.parametrize("version", [0, -1, True, "2", 2.0, None, 5])
+@pytest.mark.parametrize("version", [0, -1, True, "2", 2.0, None, 6])
 def test_bad_or_future_versions_are_rejected(legacy_config, version):
     legacy_config["schema_version"] = version
     with pytest.raises(ValueError):
@@ -392,7 +519,7 @@ def test_startup_rejects_unmigrated_config_without_writing(tmp_path, legacy_conf
     path = tmp_path / "config.json"
     raw = json.dumps(legacy_config).encode()
     path.write_bytes(raw)
-    with pytest.raises(ConfigValidationError, match="requires migration to 4"):
+    with pytest.raises(ConfigValidationError, match="requires migration to 5"):
         load_config_file(path)
     assert path.read_bytes() == raw
     assert list(tmp_path.iterdir()) == [path]
@@ -400,7 +527,11 @@ def test_startup_rejects_unmigrated_config_without_writing(tmp_path, legacy_conf
 
 @pytest.mark.parametrize(
     "old",
-    list(SCAN_KEY_RENAMES) + list(REMOVED_SCAN_KEYS) + list(UNUSED_SCAN_KEYS) + list(PROMOTED_SCAN_KEYS),
+    list(SCAN_KEY_RENAMES)
+    + list(REMOVED_SCAN_KEYS)
+    + list(UNUSED_SCAN_KEYS)
+    + list(PROMOTED_SCAN_KEYS)
+    + list(v005.SCAN_KEY_RENAMES),
 )
 def test_marking_old_fields_current_does_not_silently_drop_them(legacy_config, old):
     migrated, _ = runner.migrate_config(legacy_config)
@@ -419,7 +550,7 @@ def test_nested_conflicts_are_rejected_and_matching_names_deduplicated(legacy_co
         runner.migrate_config(legacy_config)
     model[new] = model[old]
     migrated, _ = runner.migrate_config(legacy_config)
-    assert old not in migrated["robot"]["grid"]["scan"]["left_wall_depth_to_gripper_z_model"]
+    assert old not in migrated["robot"]["grid"]["scan"]["front_wall_depth_to_gripper_z_model"]
 
 
 def test_cli_preview_write_backup_permissions_and_idempotency(tmp_path, legacy_config, capsys):
@@ -441,7 +572,7 @@ def test_cli_preview_write_backup_permissions_and_idempotency(tmp_path, legacy_c
     for path in paths:
         assert path.with_name(path.name + ".schema-v1.bak").read_bytes() == originals[path]
         assert stat.S_IMODE(path.stat().st_mode) == 0o640
-        assert load_config_file(path).schema_version == 4
+        assert load_config_file(path).schema_version == 5
     modified_times = [path.stat().st_mtime_ns for path in paths]
     assert cli.main([str(tmp_path), "--write"]) == 0
     assert [path.stat().st_mtime_ns for path in paths] == modified_times
@@ -495,7 +626,7 @@ def test_failed_atomic_replace_keeps_original_and_backup(tmp_path, legacy_config
     def fail_replace(*args):
         raise OSError("simulated replacement failure")
 
-    monkeypatch.setattr(cli.os, "replace", fail_replace)
+    monkeypatch.setattr(apply.os, "replace", fail_replace)
     assert cli.main([str(path), "--write"]) == 1
     assert path.read_text() == raw
     assert path.with_name(path.name + ".schema-v1.bak").read_text() == raw

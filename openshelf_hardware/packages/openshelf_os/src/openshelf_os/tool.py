@@ -38,8 +38,8 @@ Y_STARTUP_HOME_PEAK_CURRENT = 30
 
 
 class RotationHomeOrientation(Enum):
-    LEFT_MODULE = "left_module"
-    RIGHT_MODULE = "right_module"
+    FRONT_MODULE = "front_module"
+    BACK_MODULE = "back_module"
 
 
 def _create_motor_if_enabled(
@@ -98,9 +98,9 @@ def derive_rotation_home_orientation(
         )
 
     if front_distance < back_distance:
-        return RotationHomeOrientation.LEFT_MODULE
+        return RotationHomeOrientation.FRONT_MODULE
 
-    return RotationHomeOrientation.RIGHT_MODULE
+    return RotationHomeOrientation.BACK_MODULE
 
 
 class Tool:
@@ -989,7 +989,7 @@ class Tool:
             orientation = derive_rotation_home_orientation(float(rotation_front), float(rotation_back))
             target_angle = float(rotation_front)
 
-            if orientation == RotationHomeOrientation.RIGHT_MODULE:
+            if orientation == RotationHomeOrientation.BACK_MODULE:
                 target_angle = float(rotation_back)
 
             if await self.is_rotation_at_position(target_angle):

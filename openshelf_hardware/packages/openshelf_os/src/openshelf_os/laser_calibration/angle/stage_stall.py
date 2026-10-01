@@ -141,7 +141,7 @@ def resolve_stage_stall_fast_approach_mm(
 	if requested_fast_approach_mm is not None:
 		return min(probe_target_mm, max(probe_start_mm, float(requested_fast_approach_mm)))
 
-	parameter_name = 'STAGE_EXTENSION_SHELF_FRONT' if side_name == 'left' else 'STAGE_EXTENSION_SHELF_BACK'
+	parameter_name = 'STAGE_EXTENSION_SHELF_FRONT' if side_name == 'front' else 'STAGE_EXTENSION_SHELF_BACK'
 	if isinstance(parameters, dict):
 		stage_extension_mm = parameters.get(parameter_name)
 	else:
@@ -236,7 +236,7 @@ async def run_stage_stall_capture(
 			raise ValueError('x, y, z, stage, and rotation motors are required')
 
 		side_name = args.module
-		side_number = 0 if side_name == 'left' else 1
+		side_number = 0 if side_name == 'front' else 1
 		rotation_center_deg = float(
 			args.rotation_center_deg
 			if args.rotation_center_deg is not None
@@ -369,7 +369,7 @@ async def run_stage_stall_capture(
 				z_move_rpm=float(z_move_rpm),
 				z_move_accel=float(z_move_accel),
 				should_rotate=True,
-				should_use_safe_right_rotation_path=True,
+				should_use_safe_back_rotation_path=True,
 				should_move_z=False,
 			)
 			did_stall, stage_position_mm, status, alarm_code = await probe_stage_until_stall(

@@ -44,7 +44,7 @@ async def test_relay_service_token_is_limited_to_relay_routes(
     locations = await unauthenticated_client.post(
         "/api/storage/items/locations/remove",
         headers=headers,
-        json={"barcode": "not-found", "side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+        json={"barcode": "not-found", "side": "front_module", "shelf_idx": 0, "cell_idx": 0},
     )
     assert locations.status_code == 401
 

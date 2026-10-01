@@ -61,7 +61,7 @@ def build_shelf_scout_x_positions(
 	return build_shared_shelf_scout_x_positions(
 		x_min_mm=resolved_x_min_mm,
 		x_max_mm=resolved_x_max_mm,
-		is_right_side=side_name == 'right',
+		is_back_side=side_name == 'back',
 		scout_x_mm=resolved_scout_x_mm,
 	)
 

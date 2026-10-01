@@ -21,11 +21,13 @@
 		type Position
 	} from '$lib/api';
 	import { robotStatus } from '$lib/stores';
+	import { activeVocabulary, activeVocabularyStore, sideIndex, sideLabel } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
 	interface Props {
-		initialSide?: 'left_module' | 'right_module';
+		// Accepts any side token the device vocabulary may use; normalized below.
+		initialSide?: string;
 		initialShelf?: number;
 		initialCell?: number;
 	}
@@ -36,7 +38,17 @@
 	let loading = $state<boolean>(true);
 	let loadError = $state<string>('');
 
-	let selectedSide = $state<'left_module' | 'right_module'>(initialSide ?? 'left_module');
+	let vocabulary = $state(activeVocabulary());
+	$effect(() => activeVocabularyStore.subscribe((v) => {
+		vocabulary = v;
+	}));
+
+	const normalizedInitialSide =
+		initialSide !== undefined && sideIndex(initialSide) !== null
+			? (sideIndex(initialSide) === 1 ? 'back_module' : 'front_module')
+			: 'front_module';
+
+	let selectedSide = $state<'front_module' | 'back_module'>(normalizedInitialSide);
 	let selectedShelf = $state<number>(0);
 	let selectedCell = $state<number>(0);
 	let currentPosition = $state<Position | null>(null);
@@ -131,16 +143,16 @@
 		lastStreamNeedsHome = streamNeedsHome;
 	});
 
-	function getShelvesForSide(side: 'left_module' | 'right_module') {
+	function getShelvesForSide(side: 'front_module' | 'back_module') {
 		if (storageGrid === null) {
 			return [];
 		}
 
-		if (side === 'left_module') {
-			return storageGrid.left_module;
+		if (side === 'front_module') {
+			return storageGrid.front_module;
 		}
 
-		return storageGrid.right_module;
+		return storageGrid.back_module;
 	}
 
 	function getShelves() {
@@ -219,7 +231,7 @@
 	function didChangeSide(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
-		selectedSide = target.value as 'left_module' | 'right_module';
+		selectedSide = target.value as 'front_module' | 'back_module';
 		syncSelection();
 		currentPosition = null;
 		error = '';
@@ -262,7 +274,7 @@
 
 			const rotationAngles = await getRotationAngles();
 			const targetAngle =
-				selectedSide === 'right_module' ? rotationAngles.back : rotationAngles.front;
+				selectedSide === 'back_module' ? rotationAngles.back : rotationAngles.front;
 
 			await rotateToAngle(targetAngle);
 			await loadStageExtensionForSide();
@@ -281,7 +293,7 @@
 		try {
 			const ext = await getShelfStageExtension();
 
-			stageExtensionValue = selectedSide === 'left_module' ? ext.front : ext.back;
+			stageExtensionValue = selectedSide === 'front_module' ? ext.front : ext.back;
 		} catch {
 			stageExtensionValue = 0;
 		}
@@ -517,8 +529,8 @@
 						<td>
 							<span>side</span>
 							<select value={selectedSide} onchange={didChangeSide}>
-								<option value="left_module">left module</option>
-								<option value="right_module">right module</option>
+								<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
+								<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
 							</select>
 						</td>
 						<td>
