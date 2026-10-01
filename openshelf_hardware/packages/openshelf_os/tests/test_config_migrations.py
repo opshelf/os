@@ -15,6 +15,7 @@ from openshelf_os.config.loader import load_config_file
 from openshelf_os.config.exceptions import ConfigValidationError
 from openshelf_os.config.root import RootConfig
 from openshelf_os.config_migrations import (
+    apply,
     cli,
     runner,
     v003_remove_unused_scan_keys as v003,
@@ -625,7 +626,7 @@ def test_failed_atomic_replace_keeps_original_and_backup(tmp_path, legacy_config
     def fail_replace(*args):
         raise OSError("simulated replacement failure")
 
-    monkeypatch.setattr(cli.os, "replace", fail_replace)
+    monkeypatch.setattr(apply.os, "replace", fail_replace)
     assert cli.main([str(path), "--write"]) == 1
     assert path.read_text() == raw
     assert path.with_name(path.name + ".schema-v1.bak").read_text() == raw
