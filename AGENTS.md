@@ -16,7 +16,7 @@
 - The backend suite is order-dependent by default only because collection order is stable. Before landing test changes, run it shuffled at least once: `cd openshelf_hardware && uv run pytest --random-order`. Use `--random-order-bucket=global` to interleave modules and `--random-order-seed=<seed>` to replay a failing order.
 
 ## Runtime gotchas
-- Never stamp the new config schema version onto unmigrated data or restore an old snapshot without migrating it first.
+- Never stamp the new config schema version onto unmigrated data. Restored old snapshots are auto-migrated by the server on the next startup, but the auto-migration refuses to run when the file's migration backup already exists (e.g. an old snapshot restored over a previously migrated config) — reconcile the backup before retrying.
 - Keep released config migration steps immutable, register new steps in `runner.MIGRATIONS`, and bump `config.schema.CURRENT_SCHEMA_VERSION`.
 - Do not reintroduce digit-only or fixed-length barcode validation, keep grouped display formatting (`formattedNumberString` in `../ui`) display-only, and do not remove the `upca` → `barcode` read-time shim in `CellItem`.
 - Set `limit_switches_enabled` to `false` on the motors that have no switch, and keep the config decision in `openshelf_os` construction (`tool.py` / `iobox.py`) rather than gating inside `hardware.motor.Motor`, which also receives limit inputs from diagnostic scripts that want the read.
