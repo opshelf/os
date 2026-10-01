@@ -6,7 +6,8 @@ import json
 
 import pytest
 
-from openshelf_os.config.exceptions import ConfigError
+from openshelf_os.config.exceptions import ConfigError, ConfigValidationError
+from openshelf_os.config_migrations.runner import migrate_config
 from openshelf_os_server import settings
 
 
@@ -126,6 +127,27 @@ def test_failed_validation_fails_startup_and_leaves_file_untouched(config_file):
     path.write_bytes(broken_raw)
     with pytest.raises(ConfigError, match="failed validation"):
         settings.get_root_config()
+    assert path.read_bytes() == broken_raw
+    assert list(path.parent.glob("config.json.*.bak")) == []
+
+
+def test_current_config_with_model_error_raises_config_validation_error(
+    config_file, v4_config
+):
+    """An already-current file with a model error must not be pre-validated by
+    auto-migration: the detailed ConfigValidationError from the config load is
+    the diagnostic, and the file stays untouched."""
+    path, _ = config_file
+    v5, changes = migrate_config(v4_config)
+    assert changes  # the fixture migrates cleanly, so this is a valid v5 document
+    del v5["robot"]["tool"]["parameters"]["Z_MOVE_RPM"]
+    broken_raw = json.dumps(v5).encode()
+    path.write_bytes(broken_raw)
+    with pytest.raises(ConfigValidationError) as exc_info:
+        settings.get_root_config()
+    message = str(exc_info.value)
+    assert "robot.tool.parameters.Z_MOVE_RPM" in message
+    assert "Migrated config failed validation" not in message
     assert path.read_bytes() == broken_raw
     assert list(path.parent.glob("config.json.*.bak")) == []
 
