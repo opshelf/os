@@ -138,6 +138,9 @@ class HealthResponse(BaseModel):
 
 class SystemInfoResponse(BaseModel):
     device_id: str
+    device_alias: str | None
+    release_sha: str | None
+    release_branch: str | None
     lan_ip: str | None
 
 
