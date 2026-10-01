@@ -50,3 +50,49 @@ def test_get_device_alias_is_empty_without_file(monkeypatch) -> None:
 	monkeypatch.setattr(device, "DEVICE_ALIAS_PATH", pathlib.Path("/missing-device-alias"))
 
 	assert device.get_device_alias() == ""
+
+
+def test_get_release_reads_release_file(tmp_path: pathlib.Path, monkeypatch) -> None:
+	monkeypatch.delenv("RELEASE_SHA", raising=False)
+	monkeypatch.delenv("RELEASE_BRANCH", raising=False)
+
+	release_path = tmp_path / "release"
+	release_path.write_text("7F3A2B1C9D4E5F6A7B8C9D0E1F2A3B4C5D6E7F8A\nmain\n", encoding="utf-8")
+
+	monkeypatch.setattr(device, "RELEASE_PATH", release_path)
+
+	assert device.get_release_sha() == "7f3a2b1c9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a"
+	assert device.get_release_branch() == "main"
+
+
+def test_get_release_prefers_environment(tmp_path: pathlib.Path, monkeypatch) -> None:
+	release_path = tmp_path / "release"
+	release_path.write_text("stale-sha\nstale-branch\n", encoding="utf-8")
+
+	monkeypatch.setattr(device, "RELEASE_PATH", release_path)
+	monkeypatch.setenv("RELEASE_SHA", "E9184E3A")
+	monkeypatch.setenv("RELEASE_BRANCH", "Feat/Status")
+
+	assert device.get_release_sha() == "e9184e3a"
+	assert device.get_release_branch() == "feat/status"
+
+
+def test_get_release_is_empty_without_file(monkeypatch) -> None:
+	monkeypatch.delenv("RELEASE_SHA", raising=False)
+	monkeypatch.delenv("RELEASE_BRANCH", raising=False)
+	monkeypatch.setattr(device, "RELEASE_PATH", pathlib.Path("/missing-release"))
+
+	assert device.get_release_sha() == ""
+	assert device.get_release_branch() == ""
+
+
+def test_get_release_branch_is_empty_with_sha_only_file(tmp_path: pathlib.Path, monkeypatch) -> None:
+	release_path = tmp_path / "release"
+	release_path.write_text("7f3a2b1c\n", encoding="utf-8")
+
+	monkeypatch.delenv("RELEASE_SHA", raising=False)
+	monkeypatch.delenv("RELEASE_BRANCH", raising=False)
+	monkeypatch.setattr(device, "RELEASE_PATH", release_path)
+
+	assert device.get_release_sha() == "7f3a2b1c"
+	assert device.get_release_branch() == ""

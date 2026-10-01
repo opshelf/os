@@ -392,3 +392,27 @@ class TestSystemInfoEndpoint:
 
 		assert response.status_code == 200
 		assert response.json()["device_alias"] is None
+
+	@pytest.mark.anyio
+	async def test_system_info_reports_release_identity(self, client: httpx.AsyncClient) -> None:
+		with patch("openshelf_os_server.main.get_release_sha", return_value="7f3a2b1c"), patch(
+			"openshelf_os_server.main.get_release_branch", return_value="main"
+		):
+			response = await client.get("/api/system/info")
+
+		assert response.status_code == 200
+		body = response.json()
+		assert body["release_sha"] == "7f3a2b1c"
+		assert body["release_branch"] == "main"
+
+	@pytest.mark.anyio
+	async def test_system_info_release_is_null_without_file(self, client: httpx.AsyncClient) -> None:
+		with patch("openshelf_os_server.main.get_release_sha", return_value=""), patch(
+			"openshelf_os_server.main.get_release_branch", return_value=""
+		):
+			response = await client.get("/api/system/info")
+
+		assert response.status_code == 200
+		body = response.json()
+		assert body["release_sha"] is None
+		assert body["release_branch"] is None

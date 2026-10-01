@@ -19,6 +19,9 @@
 
 	let deviceId = '';
 	let deviceAlias = '';
+	let releaseSha = '';
+	let releaseBranch = '';
+	let operatingMode = '';
 	let lanIp = '';
 	let isUnlockingCabinet = false;
 	let isHomingRobot = false;
@@ -291,22 +294,38 @@
 			const data = await apiFetch<{
 				device_id: string;
 				device_alias: string | null;
+				release_sha: string | null;
+				release_branch: string | null;
 				lan_ip: string | null;
 			}>('/system/info');
 
 			deviceId = data.device_id;
 			deviceAlias = data.device_alias ?? '';
+			releaseSha = data.release_sha ?? '';
+			releaseBranch = data.release_branch ?? '';
 			lanIp = data.lan_ip ?? '';
 		} catch {
 			deviceId = '';
 			deviceAlias = '';
+			releaseSha = '';
+			releaseBranch = '';
 			lanIp = '';
+		}
+	}
+
+	async function loadOperatingMode(): Promise<void> {
+		try {
+			const data = await apiFetch<{ mode: string }>('/system/mode');
+			operatingMode = data.mode;
+		} catch {
+			operatingMode = '';
 		}
 	}
 
 	onMount(() => {
 		loadSystemInfo();
 		loadHomeOnInit();
+		loadOperatingMode();
 	});
 </script>
 
@@ -330,6 +349,14 @@
 				<tr>
 					<td>device alias</td>
 					<td>{deviceAlias || '—'}</td>
+				</tr>
+				<tr>
+					<td>release</td>
+					<td>{releaseSha === '' ? '—' : releaseBranch === '' ? releaseSha : `${releaseBranch} @ ${releaseSha}`}</td>
+				</tr>
+				<tr>
+					<td>operating mode</td>
+					<td>{operatingMode || '—'}</td>
 				</tr>
 				<tr>
 					<td>lan ip</td>
