@@ -12,9 +12,16 @@
 		type LaserAutoCalibrationSnapshot,
 		type StorageGrid
 	} from '$lib/api';
+	import { normalizeLaserAutoCalibrationSnapshot } from '$lib/api';
+	import { activeVocabulary, activeVocabularyStore, sideIndex, sideLabel } from '$lib/side';
 	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
+
+	let vocabulary = $state(activeVocabulary());
+	$effect(() => activeVocabularyStore.subscribe((v) => {
+		vocabulary = v;
+	}));
 
 	let snapshot = $state<LaserAutoCalibrationSnapshot | null>(null);
 	let storageGrid = $state<StorageGrid | null>(null);
@@ -275,8 +282,8 @@
 			return;
 		}
 
-		if (requestedScope.side !== undefined) {
-			selectedSide = requestedScope.side;
+		if (requestedScope.side !== undefined && sideIndex(requestedScope.side) !== null) {
+			selectedSide = sideIndex(requestedScope.side) === 1 ? 'back_module' : 'front_module';
 		}
 
 		const nextShelf =
@@ -378,7 +385,7 @@
 		}
 
 		try {
-			snapshot = JSON.parse(event.data) as LaserAutoCalibrationSnapshot;
+			snapshot = normalizeLaserAutoCalibrationSnapshot(JSON.parse(event.data));
 
 			if (snapshot !== null) {
 				if (snapshot.requested_scope !== undefined) {
@@ -579,7 +586,7 @@
 
 	function getRotationValue(side: 'front_module' | 'back_module'): string {
 		const angleResult = getAngleResults().find(function (result) {
-			return result.side === side;
+			return sideIndex(result.side) === sideIndex(side);
 		});
 
 		if (angleResult === undefined) {
@@ -658,8 +665,8 @@
 							disabled={isAllSelected === true || isSelectionDisabled || storageGrid === null}
 						>
 							<option value="">-</option>
-							<option value="front_module">front module</option>
-							<option value="back_module">back module</option>
+							<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
+							<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
 						</select>
 					</div>
 				</td>
@@ -750,8 +757,8 @@
 			<thead>
 				<tr>
 					<th>auto results</th>
-					<th>front / x</th>
-					<th>back / y</th>
+					<th>{sideLabel(0, vocabulary).toLowerCase()} / x</th>
+					<th>{sideLabel(1, vocabulary).toLowerCase()} / y</th>
 				</tr>
 			</thead>
 			<tbody>

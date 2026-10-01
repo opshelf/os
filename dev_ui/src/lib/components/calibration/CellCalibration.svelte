@@ -21,12 +21,15 @@
 		type StorageGrid,
 		type Position
 	} from '$lib/api';
+	import { activeVocabulary, activeVocabularyStore, sideIndex, sideInitial, sideLabel } from '$lib/side';
+	import type { SideIndex, SideVocabulary } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
 
 	interface Props {
-		initialSide?: 'front_module' | 'back_module';
+		// Accepts any side token the device vocabulary may use; normalized below.
+		initialSide?: string;
 		initialShelf?: number;
 		initialCell?: number;
 	}
@@ -37,7 +40,17 @@
 	let loading = $state<boolean>(true);
 	let loadError = $state<string>('');
 
-	let selectedSide = $state<'front_module' | 'back_module'>(initialSide ?? 'front_module');
+	let vocabulary = $state(activeVocabulary());
+	$effect(() => activeVocabularyStore.subscribe((v) => {
+		vocabulary = v;
+	}));
+
+	const normalizedInitialSide =
+		initialSide !== undefined && sideIndex(initialSide) !== null
+			? (sideIndex(initialSide) === 1 ? 'back_module' : 'front_module')
+			: 'front_module';
+
+	let selectedSide = $state<'front_module' | 'back_module'>(normalizedInitialSide);
 	let selectedShelf = $state<number>(0);
 	let selectedCell = $state<number>(0);
 	let currentPosition = $state<Position | null>(null);
@@ -581,7 +594,7 @@
 	}
 
 	function getSideInitial(): string {
-		return selectedSide === 'front_module' ? 'F' : 'B';
+		return sideInitial(sideIndex(selectedSide) as SideIndex, vocabulary);
 	}
 
 	function handleShelfNeedsHome(event: CustomEvent<CalibrationStatus>): void {
@@ -609,8 +622,8 @@
 				<td>
 					<span class="field-label">side</span>
 					<select value={selectedSide} onchange={didChangeSide}>
-						<option value="front_module">front module</option>
-						<option value="back_module">back module</option>
+						<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
+						<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
 					</select>
 				</td>
 				<td>

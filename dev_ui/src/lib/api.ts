@@ -199,6 +199,8 @@ async function readErrorDetail(
 	return { message: text.length <= MAX_ERROR_BODY_LENGTH ? text : fallback };
 }
 
+import { inferVocabularyFromGrid, setActiveVocabulary, toDeviceSide } from './side';
+
 export type StorageModuleSide = 'front_module' | 'back_module';
 
 export interface Position {
@@ -252,32 +254,42 @@ export interface Dimensions {
 
 export async function getStorageGrid(): Promise<StorageGrid> {
 	const timestamp = Date.now();
-	return apiFetch<StorageGrid>(`/storage/grid?_t=${timestamp}`);
+	const raw = await apiFetch<Record<string, Shelf[] | undefined>>(`/storage/grid?_t=${timestamp}`);
+	const inferred = inferVocabularyFromGrid(raw);
+	if (inferred !== null) {
+		setActiveVocabulary(inferred);
+	}
+	// The grid's module keys follow the device vocabulary (v4: left_module /
+	// right_module, v5: front_module / back_module); normalize to the canonical shape.
+	return {
+		front_module: raw.front_module ?? raw.left_module ?? [],
+		back_module: raw.back_module ?? raw.right_module ?? []
+	};
 }
 
 export async function addShelf(side: StorageModuleSide): Promise<{ success: boolean }> {
-	const params = new URLSearchParams({ side });
+	const params = new URLSearchParams({ side: toDeviceSide(side) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/shelf?${params}`, {
 		method: 'POST'
 	});
 }
 
 export async function addCell(side: StorageModuleSide, shelfIdx: number): Promise<{ success: boolean }> {
-	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx) });
+	const params = new URLSearchParams({ side: toDeviceSide(side), shelf_idx: String(shelfIdx) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
 		method: 'POST'
 	});
 }
 
 export async function deleteShelf(side: StorageModuleSide, shelfIdx: number): Promise<{ success: boolean }> {
-	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx) });
+	const params = new URLSearchParams({ side: toDeviceSide(side), shelf_idx: String(shelfIdx) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/shelf?${params}`, {
 		method: 'DELETE'
 	});
 }
 
 export async function deleteCell(side: StorageModuleSide, shelfIdx: number, cellIdx: number): Promise<{ success: boolean }> {
-	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
+	const params = new URLSearchParams({ side: toDeviceSide(side), shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
 		method: 'DELETE'
 	});
@@ -307,7 +319,7 @@ export async function updateGridCell(
 	cellIdx: number,
 	payload: GridCellUpdate
 ): Promise<{ success: boolean }> {
-	const params = new URLSearchParams({ side, shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
+	const params = new URLSearchParams({ side: toDeviceSide(side), shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
@@ -319,7 +331,7 @@ export async function updateGridCells(
 	side: StorageModuleSide,
 	payload: GridCellsBatch
 ): Promise<{ success: boolean }> {
-	const params = new URLSearchParams({ side });
+	const params = new URLSearchParams({ side: toDeviceSide(side) });
 	return apiFetch<{ success: boolean }>(`/storage/grid/cells?${params}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
@@ -336,7 +348,8 @@ export interface StorageBin {
 	id: number;
 	barcode: string;
 	home_location: {
-		side: StorageModuleSide;
+		// The side arrives in the device vocabulary; compare via sideIndex().
+		side: string;
 		shelf_idx: number;
 		cell_idx: number;
 	};
@@ -358,7 +371,7 @@ export async function updateTrayLayout(
 	payload: CompartmentLayout
 ): Promise<{ success: boolean }> {
 	const params = new URLSearchParams({
-		side,
+		side: toDeviceSide(side),
 		shelf_idx: String(shelfIdx),
 		cell_idx: String(cellIdx)
 	});
@@ -376,7 +389,7 @@ export async function assignTray(
 	payload: { barcode: string } & CompartmentLayout
 ): Promise<{ success: boolean }> {
 	const params = new URLSearchParams({
-		side,
+		side: toDeviceSide(side),
 		shelf_idx: String(shelfIdx),
 		cell_idx: String(cellIdx)
 	});
@@ -393,7 +406,7 @@ export async function unassignTray(
 	cellIdx: number
 ): Promise<{ success: boolean }> {
 	const params = new URLSearchParams({
-		side,
+		side: toDeviceSide(side),
 		shelf_idx: String(shelfIdx),
 		cell_idx: String(cellIdx)
 	});
@@ -420,7 +433,7 @@ export async function moveToCell(
 	return apiFetch<Position>('/calibration/move', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
+		body: JSON.stringify({ side: toDeviceSide(side), shelf_idx: shelfIdx, cell_idx: cellIdx })
 	});
 }
 
@@ -433,7 +446,7 @@ export async function moveToPosition(
 	return apiFetch<Position>('/calibration/move/position', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ side, x, y, z_offset: zOffset })
+		body: JSON.stringify({ side: toDeviceSide(side), x, y, z_offset: zOffset })
 	});
 }
 
@@ -449,7 +462,7 @@ export async function testGripper(side: StorageModuleSide, shelfIdx: number, cel
 	await apiFetch('/calibration/test', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
+		body: JSON.stringify({ side: toDeviceSide(side), shelf_idx: shelfIdx, cell_idx: cellIdx })
 	});
 }
 
@@ -469,7 +482,7 @@ export async function runCalibrationCycleTest(
 	await apiFetch('/calibration/test/cycle', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ side, shelf_idx: shelfIdx, cell_idx: cellIdx })
+		body: JSON.stringify({ side: toDeviceSide(side), shelf_idx: shelfIdx, cell_idx: cellIdx })
 	});
 }
 
@@ -492,7 +505,7 @@ export async function storeItem(
 			command: 'store_item',
 			item: {
 				...item,
-				location: { side, shelf_idx: shelfIdx, cell_idx: cellIdx }
+				location: { side: toDeviceSide(side), shelf_idx: shelfIdx, cell_idx: cellIdx }
 			}
 		})
 	});
@@ -508,7 +521,7 @@ export async function retrieveItem(
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			command: 'retrieve_item',
-			location: { side, shelf_idx: shelfIdx, cell_idx: cellIdx }
+			location: { side: toDeviceSide(side), shelf_idx: shelfIdx, cell_idx: cellIdx }
 		})
 	});
 }
@@ -524,7 +537,7 @@ export async function saveCalibration(
 	isManual?: boolean
 ): Promise<void> {
 	const payload: Record<string, unknown> = {
-		side,
+		side: toDeviceSide(side),
 		shelf_idx: shelfIdx,
 		cell_idx: cellIdx,
 		x,
@@ -555,13 +568,15 @@ export interface CalibrationScanBounds {
 }
 
 export interface LaserAutoCalibrationShelfEdge {
-	side: StorageModuleSide;
+		// The side arrives in the device vocabulary; compare via sideIndex().
+		side: string;
 	x_mm: number;
 	y_mm: number;
 }
 
 export interface LaserAutoCalibrationCandidate {
-	side: StorageModuleSide;
+		// The side arrives in the device vocabulary; compare via sideIndex().
+		side: string;
 	shelf_idx: number | null;
 	x_min: number;
 	x_max: number;
@@ -573,7 +588,8 @@ export interface LaserAutoCalibrationCandidate {
 }
 
 export interface LaserAutoCalibrationCell {
-	side: StorageModuleSide;
+		// The side arrives in the device vocabulary; compare via sideIndex().
+		side: string;
 	shelf_idx: number;
 	cell_idx: number;
 	tool_x_mm: number;
@@ -669,12 +685,37 @@ export interface LaserAutoCalibrationRequest {
 	include_extension_calibration?: boolean;
 }
 
+// The per-side snapshot fields followed the device vocabulary until the
+// module-side rename (v4 devices speak left_*/right_*); alias the legacy
+// names so one build reads both.
+const LEGACY_SNAPSHOT_SIDE_FIELDS: Record<string, string> = {
+	left_scouted_shelf_count: 'front_scouted_shelf_count',
+	right_scouted_shelf_count: 'back_scouted_shelf_count',
+	left_candidate_count: 'front_candidate_count',
+	right_candidate_count: 'back_candidate_count',
+	left_detected_cell_count: 'front_detected_cell_count',
+	right_detected_cell_count: 'back_detected_cell_count',
+	left_stage_extension_mm: 'front_stage_extension_mm',
+	right_stage_extension_mm: 'back_stage_extension_mm'
+};
+
+export function normalizeLaserAutoCalibrationSnapshot(raw: Record<string, unknown>): LaserAutoCalibrationSnapshot {
+	const normalized: Record<string, unknown> = { ...raw };
+	for (const [legacy, canonical] of Object.entries(LEGACY_SNAPSHOT_SIDE_FIELDS)) {
+		if (normalized[canonical] === undefined && normalized[legacy] !== undefined) {
+			normalized[canonical] = normalized[legacy];
+		}
+	}
+	return normalized as unknown as LaserAutoCalibrationSnapshot;
+}
+
 export interface LaserAutoCalibrationSnapshot {
 	state: 'idle' | 'starting' | 'running' | 'applying' | 'completed' | 'failed' | 'cancelled';
 	session_id: string | null;
 	run_id: string | null;
 	requested_scope?: LaserAutoCalibrationRequest;
-	current_side: StorageModuleSide | null;
+	// The side arrives in the device vocabulary; compare via sideIndex().
+	current_side: string | null;
 	current_stage: string | null;
 	bounds: CalibrationScanBounds | null;
 	started_at: string | null;
@@ -731,7 +772,7 @@ export function buildLaserAutoCalibrationStreamUrl(
 	}
 
 	if (request.side !== undefined) {
-		url.searchParams.set('side', request.side);
+		url.searchParams.set('side', toDeviceSide(request.side));
 	}
 
 	if (request.shelf_idx !== undefined) {
@@ -770,13 +811,13 @@ export async function getLaserAutoCalibrationStreamError(
 }
 
 export async function getLaserAutoCalibrationStatus(): Promise<LaserAutoCalibrationSnapshot> {
-	return apiFetch<LaserAutoCalibrationSnapshot>('/calibration/laser/status');
+	return normalizeLaserAutoCalibrationSnapshot(await apiFetch<Record<string, unknown>>('/calibration/laser/status'));
 }
 
 export async function abortLaserAutoCalibration(): Promise<LaserAutoCalibrationSnapshot> {
-	return apiFetch<LaserAutoCalibrationSnapshot>('/calibration/laser/abort', {
-		method: 'POST'
-	});
+	return normalizeLaserAutoCalibrationSnapshot(
+		await apiFetch<Record<string, unknown>>('/calibration/laser/abort', { method: 'POST' })
+	);
 }
 
 export interface ScaleStatus {
