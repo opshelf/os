@@ -228,6 +228,14 @@
 		</button>
 	</div>
 
+	{#if statusError !== ''}
+		<ErrorMessage message={statusError} />
+	{/if}
+
+	{#if configError !== ''}
+		<ErrorMessage message={configError} />
+	{/if}
+
 	{#if message !== ''}
 		<StatusMessage {message} />
 	{/if}

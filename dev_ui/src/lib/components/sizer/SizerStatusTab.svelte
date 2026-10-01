@@ -2,6 +2,7 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { getSizerStatus, type SizerConfig, type SizerStatus } from '$lib/api';
+	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
 	let status: SizerStatus | null = $state(null);
 	let statusError = $state('');
@@ -101,6 +102,10 @@
 			{/if}
 		</tbody>
 	</table>
+
+	{#if statusError !== ''}
+		<ErrorMessage message={statusError} />
+	{/if}
 
 	<div class="action-buttons">
 		<button type="button" onclick={didClickRefresh} disabled={isRefreshing === true}>refresh</button>
