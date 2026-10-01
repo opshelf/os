@@ -239,6 +239,15 @@ class MockRobot:
     def register_cabinet_door_listener(self, cb):
         pass
 
+    def register_weight_change_listener(self, cb):
+        pass
+
+    async def start_weight_guard(self):
+        pass
+
+    async def stop_weight_guard(self):
+        pass
+
 
 class FakeEstopInput:
     def __init__(self):

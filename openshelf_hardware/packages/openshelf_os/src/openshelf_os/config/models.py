@@ -513,6 +513,19 @@ class CurtainConfig(BaseModel):
 
 class ScaleConfig(BaseModel):
     enabled: bool = True
+    # Weight change, in grams, that stops y travel while the axis is moving.
+    motion_guard_enabled: bool = True
+    motion_guard_delta_grams: float = Field(10.0, gt=0)
+    # Consecutive over-threshold readings before the interruption fires; 1 reacts
+    # to the first sample, higher values trade latency for immunity to one bad frame.
+    motion_guard_min_samples: int = Field(2, ge=1)
+    # Ignore the first part of a move, where brake release jolts the cell.
+    motion_guard_arm_delay_s: float = Field(0.05, ge=0)
+    # After an acknowledgement the weight is still changed, so track the live
+    # reading for this long before a new delta can trip again.
+    motion_guard_ack_grace_s: float = Field(1.0, ge=0)
+    motion_guard_sample_timeout_s: float = Field(0.25, gt=0)
+    motion_guard_idle_interval_s: float = Field(0.2, gt=0)
 
 
 class LaserConfig(BaseModel):
