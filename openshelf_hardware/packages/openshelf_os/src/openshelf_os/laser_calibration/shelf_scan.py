@@ -927,6 +927,23 @@ async def find_hole_interior_idx_from_seed(
 		else:
 			depth_mm = prefetched_depth_values[position_idx]
 
+			# An empty flying bin is no evidence against an opening; probe it directly so a
+			# sparse pass cannot hide the hole and reject the candidate.
+			if depth_mm is None:
+				depth_mm = await sample_scan_point(
+					tool,
+					x_mm=x_mm,
+					y_mm=y_mm,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					should_abort=should_abort,
+				)
+				prefetched_depth_values[position_idx] = depth_mm
+				print_status(
+					f"{progress_prefix}=resampled idx={position_idx} "
+					f"x={x_mm:.2f} y={y_mm:.2f} depth={depth_to_label(depth_mm)}"
+				)
+
 		set_scan_point(
 			base_scan,
 			x_mm=x_mm,

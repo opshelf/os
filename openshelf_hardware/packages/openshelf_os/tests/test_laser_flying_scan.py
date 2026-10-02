@@ -477,6 +477,37 @@ async def test_scan_axis_flying_breaks_when_the_axis_stalls(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
+async def test_scan_axis_flying_keeps_sampling_when_reads_move_less_than_the_epsilon(
+	monkeypatch,
+) -> None:
+	import openshelf_os.laser_calibration.flying as flying_module
+
+	class SlowLaserTool(FakeFlyingTool):
+		async def get_laser_distance(self) -> float | None:
+			await asyncio.sleep(0.001)
+			return await super().get_laser_distance()
+
+	monkeypatch.setattr(flying_module, "FLYING_SCAN_START_STALL_S", 0.02)
+	tool = SlowLaserTool(depth_mm=5.0)
+	# Each read advances well under FLYING_SCAN_PROGRESS_EPS_MM, as a slow feed does.
+	tool._my.step_mm = 0.005
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=1.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_slow",
+	)
+
+	moving_positions = [sample.position_mm for sample in line.samples[:-1]]
+
+	assert max(moving_positions) == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
 async def test_scan_line_positions_flying_bins_the_moving_samples() -> None:
 	tool = FakeFlyingTool(depth_mm=7.5)
 
@@ -1406,6 +1437,56 @@ async def test_find_hole_interior_idx_from_seed_flying_matches_stepped(monkeypat
 	assert stepped_idx == 5
 	assert flying_idx == stepped_idx
 	assert recorded_lines == ["flying_seek_flying"]
+
+
+@pytest.mark.asyncio
+async def test_find_hole_interior_idx_from_seed_resamples_uncovered_flying_bins(monkeypatch) -> None:
+	positions = [float(value) for value in range(0, 20, 2)]
+	profile = [0.0 if 5 <= index <= 9 else 9.5 for index in range(len(positions))]
+	# The flying pass left the whole opening unobserved.
+	flying_profile = [None if 5 <= index <= 9 else depth for index, depth in enumerate(profile)]
+	resampled_y: list[float] = []
+
+	async def didSampleStepped(tool, *, x_mm, y_mm, settle_ms, samples_per_point, should_abort=None):
+		resampled_y.append(y_mm)
+		return profile[positions.index(y_mm)]
+
+	monkeypatch.setattr(shelf_scan_module, "sample_scan_point", didSampleStepped)
+
+	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
+		return list(flying_profile), FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=[],
+			duration_s=1.0,
+		)
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+
+	flying_scan = GridScanResult(
+		x_positions=[10.0],
+		y_positions=positions,
+		depth_rows=[[None] for _ in positions],
+	)
+	flying_idx = await shelf_scan_module.find_hole_interior_idx_from_seed(
+		SimpleNamespace(_my=SimpleNamespace(_params=SimpleNamespace(mpr=40.0))),
+		base_scan=flying_scan,
+		axis="y",
+		positions=positions,
+		fixed_mm=10.0,
+		start_idx=2,
+		progress_prefix="flying_seek",
+		settle_ms=0,
+		samples_per_point=1,
+		wall_depth_mm=9.5,
+		scan_config=SimpleNamespace(fine_scan_style="flying", fine_scan_feed_mm_s=40.0),
+	)
+
+	assert flying_idx == 5
+	assert resampled_y == [positions[5]]
 
 
 def test_flying_scan_line_metrics_use_travelled_distance() -> None:
