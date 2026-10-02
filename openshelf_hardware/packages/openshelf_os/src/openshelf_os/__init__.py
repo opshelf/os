@@ -36,10 +36,13 @@ def _configure_sentry() -> bool:
 			)
 		)
 
+	# Errors only; batched logs, traces, and release-health sessions made every worker
+	# shutdown wait to flush them.
 	sentry_sdk.init(
 		dsn=sentry_dsn,
-		enable_logs=True,
-		traces_sample_rate=0.1,
+		enable_logs=False,
+		auto_session_tracking=False,
+		traces_sample_rate=0,
 		environment=mode.value,
 		server_name=device_id,
 		integrations=integrations if integrations else None,  # type: ignore[arg-type]
