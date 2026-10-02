@@ -647,6 +647,14 @@ async def run_scan(args: argparse.Namespace) -> int:
 						f'--rescan-shelf {args.rescan_shelf} has no calibration points on {side.value}'
 					)
 
+				# Stored calibration points are gripper coordinates; the scan window is laser
+				# geometry, so convert before centring the bounds on it.
+				center_y_mm = laser_module.convert_stored_y_mm_to_laser_frame(
+					stored_y_mm=center_y_mm,
+					side=side,
+					scan_config=scan_config,
+				)
+
 				bounds = build_single_shelf_rescan_bounds(
 					base_bounds=build_side_scan_bounds(scan_config, side),
 					center_y_mm=center_y_mm,

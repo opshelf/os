@@ -200,11 +200,7 @@ def sample_scan_position_mm(sample: Any) -> float:
 	return float(sample.position_mm)
 
 
-def build_shelf_edge_stop_predicate(
-	*,
-	min_positive_run_length: int = SHELF_EDGE_CONFIRMATION_COUNT,
-	grid_step_mm: float = SHELF_SCOUT_STEP_MM,
-) -> Callable[[list[Any]], bool]:
+class ShelfEdgeStopPredicate:
 	"""Streaming twin of the confirmation rule in detect_shelf_edges_from_line.
 
 	Returns True on the first sample that closes a positive run spanning at least
@@ -215,14 +211,26 @@ def build_shelf_edge_stop_predicate(
 	own samples), so the pass never stops on a run the detector would reject. An unconfirmed
 	run still resets the run, and the confirmation itself is conservative: it can only delay
 	the stop, never skip an edge the detector would have found.
+
+	The tracked run belongs to one pass. Reset it when a pass is restarted and the samples it
+	was following are discarded, otherwise the previous run's span confirms a short new one.
 	"""
-	min_run_span_mm = float(min_positive_run_length) * float(grid_step_mm)
-	run_start_mm: float | None = None
-	run_end_mm: float | None = None
 
-	def didReachConfirmedEdge(samples: list[Any]) -> bool:
-		nonlocal run_start_mm, run_end_mm
+	def __init__(
+		self,
+		*,
+		min_positive_run_length: int = SHELF_EDGE_CONFIRMATION_COUNT,
+		grid_step_mm: float = SHELF_SCOUT_STEP_MM,
+	) -> None:
+		self._min_run_span_mm = float(min_positive_run_length) * float(grid_step_mm)
+		self._run_start_mm: float | None = None
+		self._run_end_mm: float | None = None
 
+	def reset(self) -> None:
+		self._run_start_mm = None
+		self._run_end_mm = None
+
+	def __call__(self, samples: list[Any]) -> bool:
 		if len(samples) == 0:
 			return False
 
@@ -231,22 +239,30 @@ def build_shelf_edge_stop_predicate(
 		if is_positive_depth(depth_mm) is True:
 			position_mm = sample_scan_position_mm(samples[-1])
 
-			if run_start_mm is None:
-				run_start_mm = position_mm
+			if self._run_start_mm is None:
+				self._run_start_mm = position_mm
 
-			run_end_mm = position_mm
+			self._run_end_mm = position_mm
 			return False
 
-		if run_start_mm is None or run_end_mm is None:
+		if self._run_start_mm is None or self._run_end_mm is None:
 			return False
 
-		is_confirmed = abs(run_end_mm - run_start_mm) >= min_run_span_mm
-		run_start_mm = None
-		run_end_mm = None
+		is_confirmed = abs(self._run_end_mm - self._run_start_mm) >= self._min_run_span_mm
+		self.reset()
 
 		return is_confirmed
 
-	return didReachConfirmedEdge
+
+def build_shelf_edge_stop_predicate(
+	*,
+	min_positive_run_length: int = SHELF_EDGE_CONFIRMATION_COUNT,
+	grid_step_mm: float = SHELF_SCOUT_STEP_MM,
+) -> ShelfEdgeStopPredicate:
+	return ShelfEdgeStopPredicate(
+		min_positive_run_length=min_positive_run_length,
+		grid_step_mm=grid_step_mm,
+	)
 
 
 async def scan_shelf_scout_line(

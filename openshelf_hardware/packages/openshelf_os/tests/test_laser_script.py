@@ -259,7 +259,11 @@ def test_main_dispatches_rescan_shelf_with_flying_coarse_scan(
 ) -> None:
 	module = load_laser_script_module()
 	config = build_config()
-	config.robot.grid.scan = LaserScanConfig(laser_offset_x_mm=51.0, laser_offset_y_mm=0.0)
+	config.robot.grid.scan = LaserScanConfig(
+		laser_offset_x_mm=51.0,
+		laser_offset_y_mm=5.0,
+		left_gripper_xy_correction_mm={'x_mm': 1.0, 'y_mm': -2.0},
+	)
 	analysis = build_analysis()
 	run_staged_scan = AsyncMock(return_value=analysis)
 	target_shelf = SimpleNamespace(
@@ -311,8 +315,10 @@ def test_main_dispatches_rescan_shelf_with_flying_coarse_scan(
 	run_staged_scan.assert_awaited_once()
 	scan_kwargs = run_staged_scan.await_args.kwargs
 	assert scan_kwargs['known_shelf_edge_y'] == [318.0]
-	assert scan_kwargs['bounds'].y_min == pytest.approx(402.0 - 92.25)
-	assert scan_kwargs['bounds'].y_max == pytest.approx(402.0 + 92.25)
+	# The window centres on the laser-frame centre: 402mm stored + 5mm laser offset
+	# - (-2mm) gripper correction = 409mm.
+	assert scan_kwargs['bounds'].y_min == pytest.approx(409.0 - 92.25)
+	assert scan_kwargs['bounds'].y_max == pytest.approx(409.0 + 92.25)
 	assert scan_kwargs['scan_config'].coarse_scan_style == 'flying'
 	assert scan_kwargs['scan_config'].coarse_scan_rpm == 45
 

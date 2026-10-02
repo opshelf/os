@@ -1053,6 +1053,28 @@ def resolve_target_shelf(
 	return target_shelf
 
 
+def convert_stored_y_mm_to_laser_frame(
+	*,
+	stored_y_mm: float,
+	side: StorageModuleSide,
+	scan_config: Any,
+) -> float:
+	"""Convert a stored calibration y into the laser frame the scan moves in.
+
+	Stored calibration points already include the fixed laser-to-gripper reference correction,
+	so a stored y is a gripper coordinate. Scan bounds and seeded shelf edges are laser
+	coordinates; use this everywhere a stored y is turned into scan geometry.
+	"""
+	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
+	laser_y_mm = float(stored_y_mm) + float(laser_offset_y_mm)
+
+	if xy_offset is not None:
+		laser_y_mm -= float(xy_offset[1])
+
+	return laser_y_mm
+
+
 def build_single_shelf_known_edge_y(
 	*,
 	grid: StorageGrid,
@@ -1065,23 +1087,19 @@ def build_single_shelf_known_edge_y(
 		side=side,
 		shelf_idx=shelf_idx,
 	)
-	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
-	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	candidate_center_y_values: list[float] = []
 
 	for cell in target_shelf.cells:
 		if cell.calibration_point is None:
 			continue
 
-		candidate_center_y_mm = float(cell.calibration_point.y) + laser_offset_y_mm
-
-		# Stored calibration points already include the fixed laser-to-gripper reference
-		# correction. Convert them back into the laser frame before seeding a shelf scan,
-		# just as build_single_cell_rescan_candidate does for a cell-scoped scan.
-		if xy_offset is not None:
-			candidate_center_y_mm -= float(xy_offset[1])
-
-		candidate_center_y_values.append(candidate_center_y_mm)
+		candidate_center_y_values.append(
+			convert_stored_y_mm_to_laser_frame(
+				stored_y_mm=float(cell.calibration_point.y),
+				side=side,
+				scan_config=scan_config,
+			)
+		)
 
 	if len(candidate_center_y_values) == 0:
 		raise ValueError(f"Shelf {shelf_idx} has no calibration points on {side.value}")

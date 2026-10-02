@@ -103,6 +103,24 @@ async def probe_line_from_center(
 		else:
 			depth_mm = prefetched_depth_values[position_idx]
 
+			# A sparse flying pass leaves grid positions with no sample, and the decision
+			# walk reads an empty bin as wall, which truncates the hole and shifts its
+			# centre. Probe the position directly and keep the value for edge refinement.
+			if depth_mm is None:
+				depth_mm = await sample_scan_point(
+					tool,
+					x_mm=x_mm,
+					y_mm=y_mm,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					should_abort=should_abort,
+				)
+				prefetched_depth_values[position_idx] = depth_mm
+				print_status(
+					f"{progress_prefix}=resampled idx={position_idx} "
+					f"x={x_mm:.2f} y={y_mm:.2f} depth={depth_to_label(depth_mm)}"
+				)
+
 		set_scan_point(
 			base_scan,
 			x_mm=x_mm,
@@ -222,7 +240,7 @@ async def probe_line_from_center(
 			f"assumed_span_mm={float(expected_span_mm):.2f}"
 		)
 
-		return didRefineSegment(
+		refined_segment = didRefineSegment(
 			LineGapSegment(
 				start_idx=left_gap_idx,
 				end_idx=right_gap_idx,
@@ -231,6 +249,18 @@ async def probe_line_from_center(
 				width_mm=float(inferred_end_mm - inferred_start_mm),
 				center_mm=float((inferred_start_mm + inferred_end_mm) / 2.0),
 			)
+		)
+
+		# The far edge was inferred, not measured, so the refined near edge has to move it:
+		# keeping the pre-refinement end would shrink the span by the near-edge correction and
+		# shift the centre by only half of it.
+		return LineGapSegment(
+			start_idx=refined_segment.start_idx,
+			end_idx=refined_segment.end_idx,
+			start_mm=float(refined_segment.start_mm),
+			end_mm=float(refined_segment.start_mm) + float(expected_span_mm),
+			width_mm=float(expected_span_mm),
+			center_mm=float(refined_segment.start_mm) + (float(expected_span_mm) / 2.0),
 		)
 
 	start_mm = positions[left_gap_idx] - (step_mm / 2.0)
