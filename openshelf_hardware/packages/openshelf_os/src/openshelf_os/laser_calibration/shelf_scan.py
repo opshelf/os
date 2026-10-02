@@ -113,7 +113,7 @@ async def capture_shelf_candidates(
 		print_status(
 			f"coarse_scan_style=flying rpm={coarse_scan_rpm} bin_mode={coarse_scan_bin_mode} "
 			f"settle_ms={settle_ms} samples_per_point={samples_per_point} "
-			"(settle and sample count are unused while flying)"
+			"(settle and sample count apply only to resampled bins while flying)"
 		)
 
 	if known_shelf_edge_y is not None:
@@ -248,6 +248,26 @@ async def capture_shelf_candidates(
 					label=f"shelf_{shelf_idx}_offset_{offset_idx}",
 					line=sweep_line,
 				)
+
+				# Gap detection reads an empty bin as material, so one missing bin would split
+				# an opening into rejected segments; probe each one as the stepped sweep would.
+				for position_idx, x_mm in enumerate(hole_sweep_x_positions):
+					if sweep_depth_values[position_idx] is not None:
+						continue
+
+					depth_mm = await sample_scan_point(
+						tool,
+						x_mm=x_mm,
+						y_mm=sweep_y_mm,
+						settle_ms=settle_ms,
+						samples_per_point=samples_per_point,
+						should_abort=should_abort,
+					)
+					sweep_depth_values[position_idx] = depth_mm
+					print_status(
+						f"shelf_{shelf_idx}_offset_{offset_idx}=resampled idx={position_idx} "
+						f"x={x_mm:.2f} y={sweep_y_mm:.2f} depth={depth_to_label(depth_mm)}"
+					)
 			else:
 				sweep_depth_values = await scan_line_positions(
 					tool,
