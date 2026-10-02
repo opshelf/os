@@ -4,7 +4,6 @@ import pytest
 from httpx import AsyncClient
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from openshelf_os.operating_mode import OperatingMode
 
 
 def _mock_settings():
@@ -406,7 +405,7 @@ async def test_home_rotate_motor_extends_stage_before_rotation(client: AsyncClie
 
 
 @pytest.mark.anyio
-async def test_home_y_motor_can_skip_pre_home_approach_in_development(client: AsyncClient) -> None:
+async def test_home_y_motor_homes_without_overrides(client: AsyncClient) -> None:
 	y_motor = _mock_motor(50.0)
 	motors = {
 		"door": _mock_motor(50.0),
@@ -420,17 +419,11 @@ async def test_home_y_motor_can_skip_pre_home_approach_in_development(client: As
 
 	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
 		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
-			with patch(
-				"openshelf_os_server.routers.robot.get_operating_mode",
-				return_value=OperatingMode.development,
-			):
-				response = await client.post(
-					"/api/robot/debug/motors/y_axis/home?skip_pre_home_approach=true"
-				)
+			response = await client.post("/api/robot/debug/motors/y_axis/home")
 
 	assert response.status_code == 200
 	y_motor.clear_alarm.assert_awaited_once()
-	y_motor.home.assert_awaited_once_with(skip_pre_home_approach=True)
+	y_motor.home.assert_awaited_once_with()
 
 
 @pytest.mark.anyio

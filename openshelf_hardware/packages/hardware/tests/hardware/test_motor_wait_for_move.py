@@ -521,7 +521,7 @@ async def test_wait_for_move_does_not_resume_when_terminal_status_arrives_while_
     "terminal_status",
     [MotorStatus.ERROR, MotorStatus.FAULT, MotorStatus.TIMEOUT],
 )
-async def test_homing_limit_stop_returns_terminal_status_created_during_stop(
+async def test_homing_completion_returns_terminal_status_created_during_stop(
     mock_controller,
     terminal_status,
 ):
@@ -535,10 +535,8 @@ async def test_homing_limit_stop_returns_terminal_status_created_during_stop(
 
     motor.stop = AsyncMock(side_effect=stop_with_terminal_status)
     state = MotionWaitState(start_time=0.0, last_movement_time=0.0)
-    snapshot = MotionSnapshot(status_word=0x40, is_complete=False, has_fault_bit=False)
-    alarm_state = MotionAlarmState(alarm_code=32, is_active=False)
 
-    status = await motor._finish_homing_limit_stop(snapshot, alarm_state, state)
+    status = await motor._finish_completed_move(True, state)
 
     assert status is terminal_status
     assert motor._status is terminal_status

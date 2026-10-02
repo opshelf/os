@@ -41,6 +41,9 @@ class Motor(BaseModel):
     accel: int = Field(..., gt=0)
     ret_rpm: int = Field(..., gt=0)
     home_rpm: Optional[int] = Field(default=None, gt=0)
+    # Drive torque homing: stall current as % of Ip, and hold time before zeroing.
+    home_torque_pct: int = Field(default=30, ge=1, le=100)
+    home_torque_ms: int = Field(default=200, ge=1, le=65535)
     lim: Union[int, float] = Field(..., gt=0)
     lower_lim: Union[int, float] = Field(default=0, ge=0)
     phys_at_zero: Optional[Union[int, float]] = Field(default=None)
