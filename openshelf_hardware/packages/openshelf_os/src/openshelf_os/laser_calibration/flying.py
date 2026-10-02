@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from .core import (
 	COARSE_SCAN_STYLE_FLYING,
@@ -19,10 +19,12 @@ from .core import (
 	raise_if_cancelled,
 )
 from .defaults import FLYING_CAPTURE_LATENCY_MS
+from .motion import sample_laser_depth
 from .shelf_scout import (
 	SHELF_EDGE_CONFIRMATION_COUNT,
+	SampleDepth,
 	ShelfSurfaceEdge,
-	detect_shelf_edges_from_line,
+	walk_shelf_edges_from_line,
 )
 
 FLYING_SCAN_BIN_NEAREST = "nearest"
@@ -937,6 +939,9 @@ async def scan_shelf_scout_line_flying(
 	capture_latency_s: Optional[float] = None,
 	stop_after_first_edge: bool = False,
 	stop_when: Optional[Callable[[list[FlyingScanSample]], bool]] = None,
+	sample_depth: SampleDepth = sample_laser_depth,
+	settle_ms: int = 0,
+	samples_per_point: int = 1,
 ) -> tuple[list[Optional[float]], list[ShelfSurfaceEdge], FlyingScanLine]:
 	depth_values, line = await scan_line_positions_flying(
 		tool,
@@ -957,10 +962,31 @@ async def scan_shelf_scout_line_flying(
 	if brim_height_mm is not None:
 		brim_height_kwargs["brim_height_mm"] = float(brim_height_mm)
 
-	edges = detect_shelf_edges_from_line(
+	printer = progress_printer if progress_printer is not None else print_status
+
+	async def didResampleDepth(y_mm: float) -> Optional[float]:
+		raise_if_cancelled(should_abort)
+		await tool._mx.move_to_position_no_wait(x_mm)
+		await tool._my.move_to_position_no_wait(y_mm)
+		await tool.gantry_wait(should_abort=should_abort)
+		raise_if_cancelled(should_abort)
+		depth_mm = await sample_depth(
+			tool,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+		)
+		printer(
+			f"{progress_label}=resampled x={x_mm:.2f} y={y_mm:.2f} "
+			f"depth={depth_to_label(depth_mm)}"
+		)
+
+		return depth_mm
+
+	edges = await resolve_shelf_edges_from_line(
 		x_mm=x_mm,
 		y_positions=y_positions,
 		depth_values=depth_values,
+		resample_depth=didResampleDepth,
 		post_edge_skip_mm=post_edge_skip_mm,
 		min_positive_run_length=min_positive_run_length,
 		stop_after_first_edge=stop_after_first_edge,
@@ -968,3 +994,40 @@ async def scan_shelf_scout_line_flying(
 	)
 
 	return depth_values, edges, line
+
+
+async def resolve_shelf_edges_from_line(
+	*,
+	x_mm: float,
+	y_positions: list[float],
+	depth_values: list[Optional[float]],
+	resample_depth: Callable[[float], Awaitable[Optional[float]]],
+	**walk_kwargs: Any,
+) -> list[ShelfSurfaceEdge]:
+	"""Detect shelf edges on a binned flying line, probing the grid bins the pass left empty.
+
+	An empty bin holds no measurement, and the detector would otherwise read it as a gap that
+	closes the positive run, inventing an edge whose post-edge skip can hide a real shelf. Only
+	bins the stepped walk would read are probed, so skipped positions and the unflown tail of an
+	early-stopped pass stay empty. Probed depths are written back into `depth_values`; a probe
+	that still reads nothing counts as a measured non-positive depth, as in the stepped scan.
+	"""
+	resampled_indices: set[int] = set()
+
+	def isUnobserved(position_idx: int) -> bool:
+		return depth_values[position_idx] is None and position_idx not in resampled_indices
+
+	while True:
+		edges, unobserved_idx = walk_shelf_edges_from_line(
+			x_mm=x_mm,
+			y_positions=y_positions,
+			depth_values=depth_values,
+			is_unobserved=isUnobserved,
+			**walk_kwargs,
+		)
+
+		if unobserved_idx is None:
+			return edges
+
+		depth_values[unobserved_idx] = await resample_depth(y_positions[unobserved_idx])
+		resampled_indices.add(unobserved_idx)

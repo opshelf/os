@@ -20,7 +20,6 @@ from openshelf_os.laser_calibration import (
 	ShelfSurfaceEdge,
 	StorageModuleSide,
 	bin_samples_to_positions,
-	detect_shelf_edges_from_line,
 	estimate_axis_feed_mm_s,
 	estimate_sample_velocity_mm_s,
 	find_depth_threshold_crossings,
@@ -37,6 +36,7 @@ from openshelf_os.laser_calibration import (
 	scan_shelf_scout_line,
 )
 from openshelf_os.laser_calibration.scan import ScanBounds, build_axis_positions
+from openshelf_os.laser_calibration.shelf_scout import detect_shelf_edges_from_line
 import openshelf_os.laser_calibration.flying as flying_module
 import openshelf_os.laser_calibration.shelf_scan as shelf_scan_module
 
@@ -1786,3 +1786,90 @@ async def test_estimate_seeded_candidate_wall_depths_flies_when_configured(monke
 	assert any(
 		value is not None for row in coarse_scan.depth_rows for value in row
 	)
+
+
+async def _scan_scout_line_with_flying_bins(
+	monkeypatch,
+	*,
+	y_positions: list[float],
+	binned_depths: list[float | None],
+	profile: dict[float, float],
+	post_edge_skip_mm: float = 40.0,
+) -> tuple[list[float | None], list[ShelfSurfaceEdge], list[float]]:
+	resample_requests: list[float] = []
+
+	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
+		return list(binned_depths), FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=[],
+			duration_s=1.0,
+		)
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+	tool = FakeFlyingTool()
+
+	async def didSampleStepped(tool, *, settle_ms, samples_per_point):
+		y_mm = tool._my.position_mm
+		resample_requests.append(y_mm)
+		return profile[y_mm]
+
+	depth_values, edges, _ = await flying_module.scan_shelf_scout_line_flying(
+		tool,
+		x_mm=25.0,
+		y_positions=y_positions,
+		rpm=30,
+		progress_label="shelf_scout_resample",
+		post_edge_skip_mm=post_edge_skip_mm,
+		sample_depth=didSampleStepped,
+		progress_printer=lambda message: None,
+	)
+
+	return depth_values, edges, resample_requests
+
+
+@pytest.mark.asyncio
+async def test_flying_shelf_scout_resamples_an_uncovered_bin_instead_of_reading_an_edge(
+	monkeypatch,
+) -> None:
+	y_positions = [float(y_mm) for y_mm in range(200, 98, -2)]
+	profile = {y_mm: 9.5 for y_mm in y_positions}
+	binned_depths = [None if y_mm == 192.0 else 9.5 for y_mm in y_positions]
+
+	depth_values, edges, resample_requests = await _scan_scout_line_with_flying_bins(
+		monkeypatch,
+		y_positions=y_positions,
+		binned_depths=binned_depths,
+		profile=profile,
+	)
+
+	# A constant brim never closes its run; the empty bin after three positives is probed
+	# instead of read as the gap that would confirm an edge.
+	assert edges == []
+	assert resample_requests == [192.0]
+	assert depth_values[y_positions.index(192.0)] == 9.5
+
+
+@pytest.mark.asyncio
+async def test_flying_shelf_scout_leaves_skipped_bins_unprobed(monkeypatch) -> None:
+	y_positions = [float(y_mm) for y_mm in range(200, 98, -2)]
+	profile = {y_mm: (9.5 if y_mm > 170.0 else 0.0) for y_mm in y_positions}
+	uncovered_y_mm = {160.0, 120.0}
+	binned_depths = [None if y_mm in uncovered_y_mm else profile[y_mm] for y_mm in y_positions]
+
+	depth_values, edges, resample_requests = await _scan_scout_line_with_flying_bins(
+		monkeypatch,
+		y_positions=y_positions,
+		binned_depths=binned_depths,
+		profile=profile,
+	)
+
+	# 160mm sits inside the post-edge skip after the 170mm edge, so the stepped walk would
+	# never read it; only 120mm is probed.
+	assert edges == [ShelfSurfaceEdge(x_mm=25.0, y_mm=163.0)]
+	assert resample_requests == [120.0]
+	assert depth_values[y_positions.index(160.0)] is None
+	assert depth_values[y_positions.index(120.0)] == 0.0
