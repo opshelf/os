@@ -26,7 +26,13 @@ WORKDIR /app/openshelf_hardware
 # resolves only the root project, and the `uv pip install -e` follow-up then picked
 # the newest release of each member dependency, so images shipped versions the lock
 # never recorded (PyJWT 2.13 against a lock pinning 2.10).
-RUN uv sync --frozen --all-packages --no-group dev \
+#
+# Ship bytecode: without it every new container compiles ~2,800 modules on its first
+# start (about 26s of a 39s import on a Pi 4), and each deploy recreates the container.
+# UV_COMPILE_BYTECODE covers site-packages; the editable workspace members are
+# compiled separately.
+RUN UV_COMPILE_BYTECODE=1 uv sync --frozen --all-packages --no-group dev \
+	&& .venv/bin/python -m compileall -q -j0 packages \
 	&& rm -rf "$UV_CACHE_DIR"
 
 FROM ghcr.io/astral-sh/uv:debian-slim as runtime
