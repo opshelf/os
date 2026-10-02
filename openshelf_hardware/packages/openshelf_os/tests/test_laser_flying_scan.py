@@ -934,6 +934,7 @@ async def test_capture_shelf_candidates_flying_style_uses_the_flying_scan(
 	monkeypatch.setattr(shelf_scan_module, "scan_line_positions_flying", sweep)
 	monkeypatch.setattr(shelf_scan_module, "scan_shelf_scout_line", stepped)
 	monkeypatch.setattr(shelf_scan_module, "scan_line_positions", stepped)
+	monkeypatch.setattr(shelf_scan_module, "sample_scan_point", AsyncMock(return_value=None))
 
 	tool = SimpleNamespace(
 		_my=SimpleNamespace(
@@ -973,6 +974,85 @@ async def test_capture_shelf_candidates_flying_style_uses_the_flying_scan(
 	assert shelf_edges[0].y_mm == pytest.approx(90.0)
 	assert len(coarse_scan.depth_rows) > 0
 	assert (tmp_path / "flying_samples.jsonl").exists()
+
+
+@pytest.mark.asyncio
+async def test_capture_shelf_candidates_resamples_uncovered_flying_sweep_bins(
+	monkeypatch,
+	tmp_path: Path,
+) -> None:
+	sweep_x_positions = build_axis_positions(0.0, 100.0, 4.0)
+	opening_indices = range(10, 17)
+	missing_idx = 13
+	sweep_depth_values: list[float | None] = [
+		0.0 if idx in opening_indices else 30.0
+		for idx in range(len(sweep_x_positions))
+	]
+	sweep_depth_values[missing_idx] = None
+	line = FlyingScanLine(
+		axis="x",
+		fixed_mm=90.0,
+		start_mm=0.0,
+		end_mm=100.0,
+		rpm=45,
+		samples=[],
+		duration_s=1.0,
+	)
+	scout = AsyncMock(
+		return_value=(
+			[None for _ in build_axis_positions(0.0, 100.0, 2.0)],
+			[ShelfSurfaceEdge(x_mm=40.0, y_mm=90.0)],
+			line,
+		)
+	)
+	sweep = AsyncMock(side_effect=lambda *args, **kwargs: (list(sweep_depth_values), line))
+	resample_requests: list[float] = []
+
+	async def didSampleStepped(tool, *, x_mm, y_mm, **kwargs):
+		resample_requests.append(x_mm)
+		return 0.0
+
+	monkeypatch.setattr(shelf_scan_module, "scan_shelf_scout_line_flying", scout)
+	monkeypatch.setattr(shelf_scan_module, "scan_line_positions_flying", sweep)
+	monkeypatch.setattr(shelf_scan_module, "sample_scan_point", didSampleStepped)
+
+	tool = SimpleNamespace(
+		_my=SimpleNamespace(
+			get_brake_output_diagnostics=AsyncMock(
+				return_value={"register_function": 0x24, "output_state": 0x0000}
+			)
+		)
+	)
+	recorder = SimpleNamespace(
+		run_id="flying-test-run",
+		coarse_depth_path=tmp_path / "coarse_depth.npy",
+		progress_path=tmp_path / "progress.json",
+		run_dir=tmp_path,
+	)
+
+	_, _, candidates, _ = await shelf_scan_module.capture_shelf_candidates(
+		tool,
+		side=StorageModuleSide.LEFT,
+		bounds=ScanBounds(x_min=0.0, x_max=100.0, y_min=0.0, y_max=100.0),
+		settle_ms=0,
+		samples_per_point=1,
+		scan_config=SimpleNamespace(
+			coarse_scan_style=COARSE_SCAN_STYLE_FLYING,
+			coarse_scan_rpm=45,
+			coarse_scan_bin_mode=COARSE_SCAN_BIN_NEAREST,
+		),
+		recorder=recorder,
+		shelf_scout_only=False,
+		known_shelf_edge_y=None,
+	)
+
+	assert sweep.await_count >= 1
+	assert resample_requests == [sweep_x_positions[missing_idx]] * sweep.await_count
+	assert len(candidates) == sweep.await_count
+
+	for candidate in candidates:
+		assert candidate.x_min == pytest.approx(sweep_x_positions[opening_indices[0]])
+		assert candidate.x_max == pytest.approx(sweep_x_positions[opening_indices[-1]])
 
 
 @pytest.mark.asyncio
