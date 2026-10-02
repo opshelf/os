@@ -21,6 +21,7 @@ from hardware.motor import (
 )
 from hardware.exceptions import MotorConfigError, MotorError, MotorLimitError, MotorTimeoutError
 from hardware.servo import Servo
+from openshelf_os.config.models import Motor as MotorConfig
 
 def make_motor_params(**overrides):
     params = {
@@ -623,12 +624,26 @@ async def test_wait_for_move_homing_completes_on_homed_bit_after_start(mock_cont
 
 
 @pytest.mark.asyncio
-async def test_wait_for_move_homing_ignores_a_stale_homed_bit(mock_controller):
+@pytest.mark.parametrize(
+    "positions",
+    [
+        pytest.param([0.0], id="constant"),
+        pytest.param([0.0, 0.008], id="one-pulse-jitter"),
+    ],
+)
+async def test_wait_for_move_homing_ignores_a_stale_homed_bit(mock_controller, positions):
     motor = Motor(mock_controller, make_motor_params())
     motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.get_position = AsyncMock(return_value=0.0)
+    readings = iter(positions)
+
+    async def get_position() -> float:
+        motor._cur_pos = next(readings, positions[-1])
+        return motor._cur_pos
+
+    motor.get_position = AsyncMock(side_effect=get_position)
     motor.get_param = AsyncMock(return_value=0)
-    # Bit6 left over from an earlier home; the drive never starts.
+    # Bit6 left over from an earlier home; the drive never starts, and encoder
+    # jitter of a single pulse must not count as a homing run.
     mock_controller.read_holding_registers.return_value = 1 << 6
 
     status = await motor.wait_for_move(timeout=0.1, homing=True)
@@ -1028,6 +1043,33 @@ async def test_home_uses_custom_torque_and_seeks_far_end_when_inverted(mock_cont
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("phys_at_zero", "phys_at_max"),
+    [
+        pytest.param(0.0, 57.0, id="non-inverted"),
+        pytest.param(57.0, 0.0, id="inverted"),
+    ],
+)
+async def test_home_overtravel_covers_the_full_travel_despite_lower_lim(
+    mock_controller, phys_at_zero, phys_at_max
+):
+    motor = home_motor(
+        mock_controller,
+        lim=57.0,
+        lower_lim=15.0,
+        phys_at_zero=phys_at_zero,
+        phys_at_max=phys_at_max,
+    )
+    echo_registers(mock_controller, {})
+
+    await motor.home()
+
+    # A start at the far end is 57 mm from the stop: 57 / 80 * 10 * 1.25 = 8.9 -> 9 (0.1 rev),
+    # not (57 - 15) / 80 * 10 * 1.25 = 6.6 -> 7, which faults before the stop.
+    assert (0x6015, 9) in writes(mock_controller)
+
+
+@pytest.mark.asyncio
 async def test_home_retriggers_drive_homing_on_safety_resume(mock_controller):
     motor = home_motor(mock_controller)
     echo_registers(mock_controller, {})
@@ -1079,6 +1121,72 @@ async def test_home_fails_when_the_drive_does_not_zero(mock_controller, monkeypa
 
     assert motor.is_homed() is False
     assert registers[0x016D] == 0x07
+    motor._park.assert_not_awaited()
+
+
+def mapped_home_motor(mock_controller, phys_at_zero: float, phys_at_max: float) -> Motor:
+    """home_motor with the config model's real logical/physical mapping."""
+    config = MotorConfig(
+        motor_name="z_axis", motor_id=1, Ip=10, rpm=300, dr=0, mpr=80.0, accel=100,
+        ret_rpm=200, lim=100.0, phys_at_zero=phys_at_zero, phys_at_max=phys_at_max,
+    )
+    return home_motor(
+        mock_controller,
+        phys_at_zero=phys_at_zero,
+        phys_at_max=phys_at_max,
+        physical_to_logical=config.physical_to_logical,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("phys_at_zero", "phys_at_max", "logical_at_drive_zero"),
+    [
+        pytest.param(100.0, 0.0, 100.0, id="inverted"),
+        pytest.param(10.0, 100.0, -100.0 / 9, id="offset"),
+    ],
+)
+async def test_home_checks_the_drive_zero_not_the_logical_position(
+    mock_controller, phys_at_zero, phys_at_max, logical_at_drive_zero
+):
+    motor = mapped_home_motor(mock_controller, phys_at_zero, phys_at_max)
+    echo_registers(mock_controller, {0x602C: 0, 0x602D: 0})
+
+    await motor.home()
+
+    assert motor.is_homed() is True
+    assert motor._cur_pos == pytest.approx(logical_at_drive_zero)
+
+
+@pytest.mark.asyncio
+async def test_home_fails_when_an_inverted_drive_counter_sits_at_logical_zero(
+    mock_controller, monkeypatch
+):
+    monkeypatch.setattr("hardware.motor.ZERO_SETTLE_TIMEOUT_S", 0.0)
+    motor = mapped_home_motor(mock_controller, 100.0, 0.0)
+    motor._park = AsyncMock()
+    # 12500 pulses at 80 mm/rev = physical 100 mm, which is logical 0.
+    echo_registers(mock_controller, {0x602D: 12500})
+
+    with pytest.raises(MotorError, match="zero did not take: position=100.000 mm"):
+        await motor.home()
+
+    assert motor.is_homed() is False
+    motor._park.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_home_fails_when_the_drive_position_is_unreadable(mock_controller, monkeypatch):
+    monkeypatch.setattr("hardware.motor.ZERO_SETTLE_TIMEOUT_S", 0.0)
+    motor = home_motor(mock_controller)
+    motor._park = AsyncMock()
+    # 0x01000000 pulses is far outside the axis, so get_position falls back to its cache.
+    echo_registers(mock_controller, {0x602C: 0x0100, 0x602D: 0})
+
+    with pytest.raises(MotorError, match="zero did not take: position=unreadable"):
+        await motor.home()
+
+    assert motor.is_homed() is False
     motor._park.assert_not_awaited()
 
 
