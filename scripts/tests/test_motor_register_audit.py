@@ -86,6 +86,20 @@ def test_di1_still_live_after_si1_change_reports_power_cycle() -> None:
 	assert any("pwr_out0" in f for f in report["findings"])
 
 
+def test_enable_on_another_input_is_reported() -> None:
+	audit = load_audit()
+	drive = healthy_drive(audit, y_params())
+	drive.registers[audit.STATUS] = 0x0032
+	drive.registers[0x0149] = 0x0088  # SI3 = ENABLE N.C.
+
+	report = asyncio.run(audit.audit_motor(drive, y_params()))
+	rows = {r["register"]: r for r in report["rows"]}
+
+	assert rows["0x0149"]["decode"] == "ENABLE N.C. 10ms"
+	assert any(f.startswith("SI3 carries ENABLE") for f in report["findings"])
+	assert not any("pwr_out0" in f for f in report["findings"])
+
+
 def test_runtime_registers_differ_without_counting_as_mismatch() -> None:
 	audit = load_audit()
 	drive = healthy_drive(audit, y_params())
