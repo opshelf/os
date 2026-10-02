@@ -1538,7 +1538,7 @@ class Motor():
 
     def _is_completion_stable(self, state: MotionWaitState, homing: bool = False) -> bool:
         if homing:
-            return state.homing_started or state.has_moved
+            return state.homing_started
         return state.has_moved or time.monotonic() - state.start_time > 0.5
 
     def _clear_pending_motion(self) -> None:
@@ -1977,8 +1977,10 @@ class Motor():
         return 1 if self._is_physical_mapping_inverted() is True else 0
 
     def _homing_overtravel(self) -> int:
-        """Pr8.21 in 0.1 rev: the axis travel plus margin, so a missed stop fails."""
-        travel_mm = float(self._params.lim) - float(getattr(self._params, "lower_lim", 0.0))
+        """Pr8.21 in 0.1 rev: the farthest start from the drive zero plus margin, so a missed stop fails."""
+        p0 = self._params.phys_at_zero if self._params.phys_at_zero is not None else 0
+        pm = self._params.phys_at_max if self._params.phys_at_max is not None else self._params.lim
+        travel_mm = float(max(p0, pm))
         value = round(travel_mm / self._params.mpr * 10 * HOMING_OVERTRAVEL_MARGIN)
         return max(1, min(value, 0xFFFF))
 
@@ -2023,17 +2025,24 @@ class Motor():
             return None
 
     async def _verify_zero_position(self) -> None:
-        """Fail homing if the drive did not zero at the stop."""
+        """Fail homing if the drive did not zero its own counter at the stop.
+
+        The check is on the drive's physical position: the logical mapping puts
+        the drive's zero at lim on an inverted axis and off zero on an offset one.
+        """
+        ppr = getattr(self._params, "ppr", 10000)
         deadline = time.monotonic() + ZERO_SETTLE_TIMEOUT_S
         while True:
-            position = await self.get_position()
-            if abs(position) <= ZERO_TOLERANCE_MM:
+            # Also refreshes the cached logical position; the raw count is the drive's.
+            await self.get_position()
+            raw_position = self._last_raw_position
+            position = None if raw_position is None else (raw_position / ppr) * self._params.mpr
+            if position is not None and abs(position) <= ZERO_TOLERANCE_MM:
                 return
 
             if time.monotonic() > deadline:
-                raise MotorError(
-                    f"Motor {self._motor_id} zero did not take: position={position:.3f} mm"
-                )
+                shown = "unreadable" if position is None else f"{position:.3f} mm"
+                raise MotorError(f"Motor {self._motor_id} zero did not take: position={shown}")
 
             await asyncio.sleep(ZERO_SETTLE_POLL_S)
 
