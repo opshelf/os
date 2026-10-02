@@ -132,6 +132,36 @@ def detect_shelf_edges_from_line(
 	reproduces what the stepped pass would have probed (the stepped pass skips those positions
 	rather than sampling them).
 	"""
+	detected_edges, _ = walk_shelf_edges_from_line(
+		x_mm=x_mm,
+		y_positions=y_positions,
+		depth_values=depth_values,
+		brim_height_mm=brim_height_mm,
+		min_positive_run_length=min_positive_run_length,
+		post_edge_skip_mm=post_edge_skip_mm,
+		stop_after_first_edge=stop_after_first_edge,
+	)
+
+	return detected_edges
+
+
+def walk_shelf_edges_from_line(
+	*,
+	x_mm: float,
+	y_positions: list[float],
+	depth_values: list[float | None],
+	brim_height_mm: float = SHELF_BRIM_HEIGHT_MM,
+	min_positive_run_length: int = SHELF_EDGE_CONFIRMATION_COUNT,
+	post_edge_skip_mm: float = 0.0,
+	stop_after_first_edge: bool = False,
+	is_unobserved: Callable[[int], bool] | None = None,
+) -> tuple[list[ShelfSurfaceEdge], int | None]:
+	"""Walk the line like detect_shelf_edges_from_line, pausing on unobserved positions.
+
+	Returns the edges found so far and the index of the first position the walk would read
+	that `is_unobserved` rejects, or None once the walk completes. Positions the post-edge skip
+	jumps over, or that lie past the first edge when stopping there, are never reported.
+	"""
 	if len(depth_values) != len(y_positions):
 		raise ValueError("depth_values length does not match y_positions")
 
@@ -143,6 +173,9 @@ def detect_shelf_edges_from_line(
 
 	while position_idx < len(y_positions):
 		y_mm = y_positions[position_idx]
+
+		if is_unobserved is not None and is_unobserved(position_idx) is True:
+			return detected_edges, position_idx
 
 		if is_positive_depth(depth_values[position_idx]) is True:
 			if run_start_idx is None:
@@ -187,7 +220,7 @@ def detect_shelf_edges_from_line(
 		run_start_idx = None
 		run_end_idx = None
 
-	return detected_edges
+	return detected_edges, None
 
 
 def sample_scan_position_mm(sample: Any) -> float:

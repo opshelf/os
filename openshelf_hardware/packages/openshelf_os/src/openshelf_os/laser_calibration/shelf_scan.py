@@ -151,6 +151,8 @@ async def capture_shelf_candidates(
 						post_edge_skip_mm=post_edge_skip_mm,
 						should_abort=should_abort,
 						bin_mode=coarse_scan_bin_mode,
+						settle_ms=settle_ms,
+						samples_per_point=samples_per_point,
 					)
 					write_flying_line_samples(
 						run_dir=getattr(recorder, "run_dir", None),

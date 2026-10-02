@@ -108,6 +108,9 @@ async def scan_shelf_scout_line(
 			progress_every=progress_every,
 			stop_after_first_edge=stop_after_first_edge,
 			stop_when=stop_when,
+			sample_depth=sample_laser_depth,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
 		)
 
 		return depth_values, edges
