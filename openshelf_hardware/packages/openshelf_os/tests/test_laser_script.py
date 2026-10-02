@@ -599,7 +599,13 @@ def test_main_continue_restores_recorded_scan_style(
 ) -> None:
 	module = load_laser_script_module()
 	config = build_config()
-	config.robot.grid.scan = LaserScanConfig(laser_offset_x_mm=51.0, laser_offset_y_mm=0.0)
+	# The current config flies both phases, so a legacy recording must not inherit it.
+	config.robot.grid.scan = LaserScanConfig(
+		laser_offset_x_mm=51.0,
+		laser_offset_y_mm=0.0,
+		coarse_scan_style='flying',
+		fine_scan_style='flying',
+	)
 	analysis = build_analysis()
 	run_staged_scan = AsyncMock(return_value=analysis)
 	recorder = SimpleNamespace(
