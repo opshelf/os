@@ -1637,6 +1637,41 @@ def build_detected_cell_from_saved_fine_scan(
 	)
 
 
+def apply_recorded_cell_geometry(
+	*,
+	detected_cell: ScanDetectedCell,
+	recorded_cell: ScanDetectedCell,
+	scan_config: Any,
+) -> ScanDetectedCell:
+	"""Keep the laser-frame geometry the capture measured instead of the grid-quantized replay.
+
+	A flying fine scan interpolates its edges between samples, so the recorded centre and size
+	are finer than the saved grid the replay reads back. Re-deriving the cell from the .npy grid
+	alone drops that refinement and shifts the applied point by up to half a step. Acceptance
+	stays grid-based, so the current code constants still decide whether an opening is a hole,
+	and the tool coordinates are recomputed from the current laser offsets; only the measured
+	laser-frame geometry is carried over.
+	"""
+	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
+	center_x_mm = float(recorded_cell.center_x_mm)
+	center_y_mm = float(recorded_cell.center_y_mm)
+
+	return detected_cell.model_copy(
+		update={
+			"center_x_mm": center_x_mm,
+			"center_y_mm": center_y_mm,
+			"tool_x_mm": center_x_mm + float(laser_offset_x_mm),
+			"tool_y_mm": center_y_mm - float(laser_offset_y_mm),
+			"width_mm": float(recorded_cell.width_mm),
+			"height_mm": float(recorded_cell.height_mm),
+			"bbox_x_min": float(recorded_cell.bbox_x_min),
+			"bbox_x_max": float(recorded_cell.bbox_x_max),
+			"bbox_y_min": float(recorded_cell.bbox_y_min),
+			"bbox_y_max": float(recorded_cell.bbox_y_max),
+		}
+	)
+
+
 def load_staged_scan_analysis(
     path: Path | str,
     *,
@@ -1700,6 +1735,17 @@ def load_staged_scan_analysis(
             wall_depth_mm=candidate_wall_depth_mm,
             scan_config=scan_config,
         )
+        recorded_cells = fine_entry.get("detected_cells", [])
+
+        # The capture returns at most one cell per fine entry, so its recorded geometry is the
+        # measurement of the opening the grid walk just accepted. Reusing it keeps the
+        # interpolated edges a flying pass measured that the quantized grid cannot express.
+        if detected_cell is not None and len(recorded_cells) > 0:
+            detected_cell = apply_recorded_cell_geometry(
+                detected_cell=detected_cell,
+                recorded_cell=ScanDetectedCell.model_validate(recorded_cells[0]),
+                scan_config=scan_config,
+            )
 
         if detected_cell is not None:
             detected_cells.append(detected_cell)
