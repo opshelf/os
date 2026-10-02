@@ -507,8 +507,13 @@ async def run_scan(args: argparse.Namespace) -> int:
 		known_shelf_edge_y = run_parameters.get('cli', {}).get('known_shelf_edge_y')
 		# The earlier portion of the run already moved with the recorded style/feed,
 		# so the resumed portion restores them instead of the current config values.
+		# Recordings that predate the style fields were necessarily stepped.
 		resolved_scan_settings = run_parameters.get('resolved', {})
 		scan_overrides = {
+			'coarse_scan_style': laser_module.COARSE_SCAN_STYLE_STEPPED,
+			'fine_scan_style': laser_module.COARSE_SCAN_STYLE_STEPPED,
+		}
+		scan_overrides.update({
 			key: resolved_scan_settings[key]
 			for key in (
 				'coarse_scan_style',
@@ -518,18 +523,16 @@ async def run_scan(args: argparse.Namespace) -> int:
 				'fine_scan_feed_mm_s',
 			)
 			if key in resolved_scan_settings
-		}
-
-		if len(scan_overrides) > 0:
-			scan_config = scan_config.model_copy(update=scan_overrides)
-			coarse_style = scan_overrides.get('coarse_scan_style')
-			coarse_rpm = scan_overrides.get('coarse_scan_rpm')
-			fine_style = scan_overrides.get('fine_scan_style')
-			fine_feed_mm_s = scan_overrides.get('fine_scan_feed_mm_s')
-			laser_module.print_status(
-				f'resume_scan_style=coarse:{coarse_style} coarse_rpm:{coarse_rpm} '
-				f'fine:{fine_style} fine_feed_mm_s:{fine_feed_mm_s}'
-			)
+		})
+		scan_config = scan_config.model_copy(update=scan_overrides)
+		coarse_style = scan_overrides.get('coarse_scan_style')
+		coarse_rpm = scan_overrides.get('coarse_scan_rpm')
+		fine_style = scan_overrides.get('fine_scan_style')
+		fine_feed_mm_s = scan_overrides.get('fine_scan_feed_mm_s')
+		laser_module.print_status(
+			f'resume_scan_style=coarse:{coarse_style} coarse_rpm:{coarse_rpm} '
+			f'fine:{fine_style} fine_feed_mm_s:{fine_feed_mm_s}'
+		)
 		resumed_rescan_shelf = run_parameters.get('cli', {}).get('rescan_shelf')
 
 		if resumed_rescan_shelf is not None:
