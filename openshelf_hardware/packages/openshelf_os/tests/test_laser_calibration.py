@@ -230,6 +230,100 @@ def test_load_staged_scan_analysis_replays_copied_raw_fine_scan(tmp_path: Path) 
 	assert analysis.total_points == 17
 
 
+def write_flying_replay_run(tmp_path: Path) -> Path:
+	"""A 1mm-grid run whose recorded cell carries edges a flying pass interpolated."""
+	np = pytest.importorskip("numpy")
+	run_dir = tmp_path / "flying-run"
+	run_dir.mkdir()
+	step_mm = 1.0
+	x_min, x_max = 8.2, 34.2
+	y_min, y_max = 5.2, 35.2
+	positions = [float(value) for value in range(0, 41)]
+	fine_depth = np.full((len(positions), len(positions)), 10.0, dtype=np.float32)
+
+	for row_idx, y_mm in enumerate(positions):
+		for col_idx, x_mm in enumerate(positions):
+			if x_min < x_mm < x_max and y_min < y_mm < y_max:
+				fine_depth[row_idx, col_idx] = 0.0
+
+	fine_path = run_dir / "fine_00.npy"
+	np.save(fine_path, fine_depth)
+	metadata = {
+		"run_id": "flying-run",
+		"status": "completed",
+		"side": StorageModuleSide.LEFT.value,
+		"bounds": {"x_min": 0.0, "x_max": 40.0, "y_min": 0.0, "y_max": 40.0},
+		"fine_step_mm": step_mm,
+		"coarse_step_mm": 4.0,
+		"samples_per_point": 1,
+		"settle_ms": 0,
+		"wall_depth_mm": 10.0,
+		"coarse_scan": {"raw_scan_path": "coarse_depth.npy"},
+		"candidates": [
+			{
+				"x_min": 8.0,
+				"x_max": 34.0,
+				"y_min": 5.0,
+				"y_max": 35.0,
+				"row_count": 1,
+				"wall_depth_mm": 10.0,
+				"wall_sample_count": 1,
+			}
+		],
+		"fine_scans": [
+			{
+				"candidate_index": 0,
+				"status": "completed",
+				"bounds": {"x_min": 0.0, "x_max": 40.0, "y_min": 0.0, "y_max": 40.0},
+				"raw_scan_path": str(fine_path),
+				"detected_cells": [
+					{
+						"shelf_idx": 0,
+						"cell_idx": 0,
+						"center_x_mm": (x_min + x_max) / 2.0,
+						"center_y_mm": (y_min + y_max) / 2.0,
+						"tool_x_mm": (x_min + x_max) / 2.0 + 1.0,
+						"tool_y_mm": (y_min + y_max) / 2.0 - 2.0,
+						"width_mm": x_max - x_min,
+						"height_mm": y_max - y_min,
+						"point_count": 26,
+						"bbox_x_min": x_min + (step_mm / 2.0),
+						"bbox_x_max": x_max - (step_mm / 2.0),
+						"bbox_y_min": y_min + (step_mm / 2.0),
+						"bbox_y_max": y_max - (step_mm / 2.0),
+					}
+				],
+			}
+		],
+	}
+	(run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+	return run_dir
+
+
+def test_load_staged_scan_analysis_keeps_the_measured_flying_cell_geometry(
+	tmp_path: Path,
+) -> None:
+	run_dir = write_flying_replay_run(tmp_path)
+
+	analysis = load_staged_scan_analysis(
+		run_dir,
+		scan_config=build_replay_scan_config(),
+	)
+
+	assert len(analysis.shelves) == 1
+	assert len(analysis.shelves[0].cells) == 1
+	cell = analysis.shelves[0].cells[0]
+
+	# The grid quantizes the 1mm rows to 21.5/20.5; the flying pass measured 21.2/20.2.
+	assert cell.center_x_mm == pytest.approx(21.2)
+	assert cell.center_y_mm == pytest.approx(20.2)
+	assert cell.width_mm == pytest.approx(26.0)
+	assert cell.height_mm == pytest.approx(30.0)
+	# Tool coordinates still come from the current config's laser offsets.
+	assert cell.tool_x_mm == pytest.approx(21.2 + 1.0)
+	assert cell.tool_y_mm == pytest.approx(20.2 - 2.0)
+
+
 def test_find_gap_segments_in_line_matches_expected_hole_width() -> None:
 	positions = [float(idx * 4) for idx in range(12)]
 	values = [10.0, 10.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0]
