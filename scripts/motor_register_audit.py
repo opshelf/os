@@ -41,7 +41,7 @@ INPUT_REGS = range(0x0145, 0x0152, 2)
 OUTPUT_REGS = range(0x0157, 0x015C, 2)
 # Rewritten by every move or home, so a difference at idle is expected.
 RUNTIME_REGS = frozenset({0x0007, 0x6200, 0x6201, 0x6202, 0x6203, 0x6204, 0x6205})
-CONTEXT_REGS = (SI1, PR0_07, SO2)
+CONTEXT_REGS = (PR0_07, *INPUT_REGS, *OUTPUT_REGS)
 STATUS_REGS = (STATUS, ALARM, DI_STATE, DO_STATE, BUS_VOLTAGE, DIP)
 HEX_REGS = frozenset({*INPUT_REGS, *OUTPUT_REGS, 0x6000, 0x6200, STATUS, ALARM, DI_STATE, DO_STATE, DIP})
 
@@ -56,6 +56,7 @@ OUTPUT_FUNCS = {
     0x22: "HOME_OK", 0x23: "INP", 0x24: "BRAKE", 0x25: "ALM",
 }
 BRAKE_FUNCS = frozenset({0x24, 0xA4})
+ENABLE_FUNCTION = 0x08
 STATUS_BITS = {0: "FAULT", 1: "ENABLED", 2: "RUNNING", 4: "CMD_DONE", 5: "PATH_DONE", 6: "HOME_DONE"}
 ALARMS = {
     0x01: "overcurrent", 0x02: "overvoltage", 0x08: "encoder disconnected",
@@ -142,11 +143,18 @@ def findings(params: Any, actual: dict[int, int | None]) -> list[str]:
 
     if parked_axis and si1 is not None and si1 != ENABLE_INPUT_INERT:
         out.append(f"SI1=0x{si1:04X}, expected 0x{ENABLE_INPUT_INERT:04X}: boot repair has not run or failed.")
-    if si1 == ENABLE_INPUT_INERT and pr007 == 0 and enabled:
+    enable_inputs = [
+        f"SI{(a - SI1) // 2 + 1}"
+        for a in INPUT_REGS
+        if actual.get(a) is not None and actual[a] & 0x7F == ENABLE_FUNCTION
+    ]
+    if parked_axis and enable_inputs:
+        out.append(f"{', '.join(enable_inputs)} carries ENABLE: Pr0.07=0 falls back to it, so the axis cannot park.")
+    if pr007 == 0 and enabled and not enable_inputs:
         out.append(
-            "SI1 is inert and Pr0.07=0, yet the drive reports ENABLED: DI1 still carries "
-            "ENABLE in drive RAM (input function changes need a restart). Power-cycle "
-            "pwr_out0 (dev UI Power page), then re-home."
+            "Pr0.07=0 and no input carries ENABLE, yet the drive reports ENABLED. Either an "
+            "input function change is not live yet (needs a drive restart: power-cycle "
+            "pwr_out0), or this drive enables itself when no input carries ENABLE."
         )
     if parked_axis and pr007 == 1 and not running:
         out.append("Pr0.07=1 while idle: the axis did not park (fault/cancel/failed home, or no clean move since boot).")
