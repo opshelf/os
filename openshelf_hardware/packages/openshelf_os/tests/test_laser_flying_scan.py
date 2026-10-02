@@ -37,6 +37,7 @@ from openshelf_os.laser_calibration import (
 	scan_shelf_scout_line,
 )
 from openshelf_os.laser_calibration.scan import ScanBounds, build_axis_positions
+import openshelf_os.laser_calibration.flying as flying_module
 import openshelf_os.laser_calibration.shelf_scan as shelf_scan_module
 
 
@@ -587,6 +588,172 @@ async def test_scan_axis_flying_stops_the_axis_when_aborted() -> None:
 
 	assert tool._my.is_moving is False
 	assert tool._my.stop_count >= 1
+
+
+class FakeGuardInterlock:
+	"""Engages once the laser has been read trip_after times, then clears after a few checks."""
+
+	def __init__(self, tool: FakeFlyingTool, trip_after: int, blocked_checks: int) -> None:
+		self.tool = tool
+		self.trip_after = trip_after
+		self.blocked_checks = blocked_checks
+		self.has_tripped = False
+		self.moving_when_tripped: bool | None = None
+
+	@property
+	def blocked(self) -> bool:
+		if self.has_tripped is False and self.tool.depth_reads >= self.trip_after:
+			self.has_tripped = True
+			self.moving_when_tripped = self.tool._my.is_moving
+
+		if self.has_tripped is False or self.blocked_checks <= 0:
+			return False
+
+		self.blocked_checks -= 1
+		return True
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_stops_and_restarts_the_pass_when_a_guard_engages(
+	monkeypatch,
+) -> None:
+	monkeypatch.setattr(flying_module, "FLYING_SCAN_SAFETY_POLL_S", 0.0)
+	tool = FakeFlyingTool(depth_mm=5.0)
+	interlock = FakeGuardInterlock(tool, trip_after=3, blocked_checks=5)
+	tool._mx._safety = interlock
+	tool._my._safety = interlock
+	printed: list[str] = []
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=20.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_guard",
+		progress_printer=printed.append,
+	)
+
+	assert interlock.moving_when_tripped is True
+	assert tool._my.stop_count >= 1
+	assert any("safety_guard=stopped" in message for message in printed)
+	# The interrupted pass is discarded: the kept line starts again from start_mm and has no
+	# samples from before the stop.
+	assert [value for value, _ in tool._my.moves].count(0.0) == 2
+	assert line.samples[0].position_mm == pytest.approx(0.0)
+	assert line.samples[-1].position_mm == pytest.approx(20.0)
+	assert all(
+		later.position_mm >= earlier.position_mm
+		for earlier, later in zip(line.samples, line.samples[1:])
+	)
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_waits_for_the_guard_to_clear_until_aborted(monkeypatch) -> None:
+	monkeypatch.setattr(flying_module, "FLYING_SCAN_SAFETY_POLL_S", 0.0)
+	tool = FakeFlyingTool(depth_mm=5.0)
+	interlock = FakeGuardInterlock(tool, trip_after=3, blocked_checks=10_000)
+	tool._my._safety = interlock
+
+	def should_abort() -> bool:
+		return interlock.blocked_checks < 9_000
+
+	with pytest.raises(asyncio.CancelledError):
+		await scan_axis_flying(
+			tool=tool,
+			axis="y",
+			start_mm=0.0,
+			end_mm=1000.0,
+			fixed_mm=0.0,
+			rpm=30,
+			progress_label="flying_guard_abort",
+			should_abort=should_abort,
+		)
+
+	assert tool._my.is_moving is False
+
+
+class FakeVelocityAxisMotor(FakeAxisMotor):
+	"""Records Velocity writes the way Motor persists a move's rpm in the drive register."""
+
+	def __init__(self, configured_rpm: int) -> None:
+		super().__init__()
+		self._params = SimpleNamespace(rpm=configured_rpm)
+		self.velocity_rpm = configured_rpm
+		self.velocity_writes: list[int] = []
+
+	async def move_to_position_no_wait(self, value: float, rpm: int | None = None) -> bool:
+		if rpm is not None:
+			await self.set_param("Velocity", rpm)
+
+		return await super().move_to_position_no_wait(value, rpm=rpm)
+
+	async def set_param(self, register: str, value: int) -> None:
+		assert register == "Velocity"
+		self.velocity_rpm = int(value)
+		self.velocity_writes.append(int(value))
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_restores_the_configured_velocity_after_the_pass() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+	tool._my = FakeVelocityAxisMotor(configured_rpm=300)
+
+	await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=20.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_velocity",
+	)
+
+	assert tool._my.velocity_writes == [30, 300]
+	assert tool._my.velocity_rpm == 300
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_restores_the_configured_velocity_when_aborted() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+	tool._my = FakeVelocityAxisMotor(configured_rpm=300)
+
+	def should_abort() -> bool:
+		return tool.depth_reads >= 3
+
+	with pytest.raises(asyncio.CancelledError):
+		await scan_axis_flying(
+			tool=tool,
+			axis="y",
+			start_mm=0.0,
+			end_mm=1000.0,
+			fixed_mm=0.0,
+			rpm=30,
+			progress_label="flying_velocity_abort",
+			should_abort=should_abort,
+		)
+
+	assert tool._my.velocity_rpm == 300
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_restores_the_configured_velocity_after_an_early_stop() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+	tool._my = FakeVelocityAxisMotor(configured_rpm=300)
+
+	await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=100.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_velocity_stop_when",
+		stop_when=lambda samples: len(samples) >= 3,
+	)
+
+	assert tool._my.velocity_rpm == 300
 
 
 def test_estimate_axis_feed_mm_s_uses_the_axis_mm_per_revolution() -> None:

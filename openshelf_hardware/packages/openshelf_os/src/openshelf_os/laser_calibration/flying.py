@@ -52,6 +52,9 @@ FLYING_SCAN_START_STALL_S = 2.0
 # the drive to settle before the next move is issued.
 FLYING_SCAN_EARLY_STOP_SETTLE_S = 2.0
 FLYING_SCAN_EARLY_STOP_POLL_S = 0.05
+# A pass interrupted by a safety guard is restarted once the guard clears; the sampler polls the
+# interlock at this interval so session cancellation still lands while it waits.
+FLYING_SCAN_SAFETY_POLL_S = 0.1
 # Tolerance when matching an interpolated crossing to the grid interval an edge sits in.
 FLYING_EDGE_INTERVAL_EPS_MM = 0.01
 
@@ -480,6 +483,48 @@ async def _stop_axis_early(scan_motor: Any) -> None:
 		await asyncio.sleep(FLYING_SCAN_EARLY_STOP_POLL_S)
 
 
+class FlyingScanSafetyInterrupted(Exception):
+	"""A safety guard engaged while a pass was sampling, so its samples were discarded."""
+
+
+def _is_safety_blocked(*motors: Any) -> bool:
+	# Motor.wait_for_move only pauses for the guard while something waits on the move, and a
+	# flying pass defers that wait until acquisition ends, so the sampler checks the interlock.
+	for motor in motors:
+		safety = getattr(motor, "_safety", None)
+
+		if safety is not None and getattr(safety, "blocked", False) is True:
+			return True
+
+	return False
+
+
+async def _wait_for_safety_clear(
+	*motors: Any,
+	should_abort: Optional[Callable[[], bool]] = None,
+) -> None:
+	while _is_safety_blocked(*motors) is True:
+		raise_if_cancelled(should_abort)
+		await asyncio.sleep(FLYING_SCAN_SAFETY_POLL_S)
+
+	raise_if_cancelled(should_abort)
+
+
+async def _restore_axis_velocity(scan_motor: Any) -> None:
+	"""Write the configured feed back after a pass commanded its own rpm.
+
+	Motor writes a move's rpm into the drive's persistent Velocity register, and later moves with
+	rpm=None reuse whatever the register holds, so a pass left unrestored slows every move after it.
+	"""
+	set_param = getattr(scan_motor, "set_param", None)
+	configured_rpm = getattr(getattr(scan_motor, "_params", None), "rpm", None)
+
+	if set_param is None or not isinstance(configured_rpm, (int, float)):
+		return
+
+	await set_param("Velocity", int(configured_rpm))
+
+
 async def _stop_flying_axes(tool: Any, scan_motor: Any, hold_motor: Any) -> None:
 	# The drive can already be triggered while the motor has not registered its pending move yet,
 	# so a plain stop goes out first; gantry_wait then clears the pending state it may know about.
@@ -516,6 +561,56 @@ async def scan_axis_flying(
 	should_abort: Optional[Callable[[], bool]] = None,
 	capture_latency_s: Optional[float] = None,
 	stop_when: Optional[Callable[[list[FlyingScanSample]], bool]] = None,
+) -> FlyingScanLine:
+	"""Fly one line, restarting it from start_mm whenever a safety guard interrupts the pass.
+
+	A stepped move pauses at the guard and resumes toward the same target, but a flying pass
+	cannot splice samples taken across a stop into one latency-corrected line, so the interrupted
+	pass is discarded and flown again after the guard clears.
+	"""
+	printer = progress_printer if progress_printer is not None else print_status
+
+	while True:
+		try:
+			return await _scan_axis_flying_pass(
+				tool=tool,
+				axis=axis,
+				start_mm=start_mm,
+				end_mm=end_mm,
+				fixed_mm=fixed_mm,
+				rpm=rpm,
+				progress_label=progress_label,
+				progress_positions=progress_positions,
+				progress_every=progress_every,
+				progress_printer=printer,
+				should_abort=should_abort,
+				capture_latency_s=capture_latency_s,
+				stop_when=stop_when,
+			)
+		except FlyingScanSafetyInterrupted:
+			printer(f"flying_line={progress_label} safety_guard=stopped restart=after_clear")
+			await _wait_for_safety_clear(
+				getattr(tool, "_mx", None),
+				getattr(tool, "_my", None),
+				should_abort=should_abort,
+			)
+
+
+async def _scan_axis_flying_pass(
+	*,
+	tool: Any,
+	axis: str,
+	start_mm: float,
+	end_mm: float,
+	fixed_mm: float,
+	rpm: int,
+	progress_label: str,
+	progress_positions: Optional[list[float]],
+	progress_every: int,
+	progress_printer: Callable[[str], None],
+	should_abort: Optional[Callable[[], bool]],
+	capture_latency_s: Optional[float],
+	stop_when: Optional[Callable[[list[FlyingScanSample]], bool]],
 ) -> FlyingScanLine:
 	if axis not in ("x", "y"):
 		raise ValueError("flying scan axis must be 'x' or 'y'")
@@ -558,7 +653,7 @@ async def scan_axis_flying(
 				f"{FLYING_SCAN_MAX_LINE_SECONDS:.0f}s; raise the rpm or shorten the bounds"
 			)
 
-	printer = progress_printer if progress_printer is not None else print_status
+	printer = progress_printer
 	raise_if_cancelled(should_abort)
 
 	await hold_motor.move_to_position_no_wait(fixed_mm)
@@ -606,6 +701,10 @@ async def scan_axis_flying(
 
 		while did_start is True:
 			raise_if_cancelled(should_abort)
+
+			if _is_safety_blocked(scan_motor, hold_motor) is True:
+				raise FlyingScanSafetyInterrupted()
+
 			depth_mm = await tool.get_laser_distance()
 			position_mm = float(await scan_motor.get_position())
 			sampled_at = time.monotonic()
@@ -696,7 +795,15 @@ async def scan_axis_flying(
 			)
 	except BaseException:
 		await _stop_flying_axes(tool, scan_motor, hold_motor)
+
+		try:
+			await _restore_axis_velocity(scan_motor)
+		except Exception:
+			pass
+
 		raise
+
+	await _restore_axis_velocity(scan_motor)
 
 	line = FlyingScanLine(
 		axis=axis,
