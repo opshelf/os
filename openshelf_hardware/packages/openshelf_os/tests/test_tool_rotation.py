@@ -8,8 +8,6 @@ from openshelf_os.tool import (
     ROTATION_HOME_SAFE_X_MM,
     RotationHomeOrientation,
     Tool,
-    Y_STARTUP_HOME_CLEARANCE_MM,
-    Y_STARTUP_HOME_PEAK_CURRENT,
     derive_rotation_home_orientation,
 )
 
@@ -80,38 +78,23 @@ async def test_home_moves_rotate_to_back_after_homing_for_right_facing_device() 
 
 
 @pytest.mark.asyncio
-async def test_startup_home_moves_y_away_before_direct_home() -> None:
-    events: list[str] = []
-
-    class FakeYMotor:
-        async def home(
-            self,
-            pre_home_clearance_mm: float | None = None,
-            *,
-            skip_pre_home_approach: bool = False,
-            homing_peak_current: int | None = None,
-        ) -> None:
-            events.append(
-                f"home:{pre_home_clearance_mm}:skip={skip_pre_home_approach}:"
-                f"current={homing_peak_current}"
-            )
-
+async def test_startup_home_homes_y_without_overrides() -> None:
+    y_motor = SimpleNamespace(home=AsyncMock())
     tool = Tool.__new__(Tool)
     tool._ms = None
     tool._mg = None
     tool._mr = None
     tool._mx = None
-    tool._my = FakeYMotor()
+    tool._my = y_motor
     tool._handle_fault = AsyncMock()
 
-    await tool.home(y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM)
+    await tool.home()
 
-    assert events == ["home:10.0:skip=True:current=30"]
-    assert Y_STARTUP_HOME_PEAK_CURRENT == 30
+    y_motor.home.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
-async def test_configure_requests_y_clearance_only_for_startup_home() -> None:
+async def test_configure_homes_only_when_home_on_init() -> None:
     tool = Tool.__new__(Tool)
     tool._params = SimpleNamespace(gripper=SimpleNamespace(enabled=False))
     tool._ms = None
@@ -126,11 +109,7 @@ async def test_configure_requests_y_clearance_only_for_startup_home() -> None:
 
     await tool.configure(isolate=True, home_on_init=True)
 
-    tool.home.assert_awaited_once_with(
-        isolate=True,
-        failed_config_motors=[],
-        y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM,
-    )
+    tool.home.assert_awaited_once_with(isolate=True, failed_config_motors=[])
 
     tool.home.reset_mock()
 
