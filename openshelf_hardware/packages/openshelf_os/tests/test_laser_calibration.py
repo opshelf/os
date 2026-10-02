@@ -21,6 +21,7 @@ from openshelf_os.laser_calibration import (
 	build_shelves_from_scan,
 	build_single_shelf_known_edge_y,
 	build_single_cell_rescan_candidate,
+	convert_stored_y_mm_to_laser_frame,
 	build_run_parameters,
 	capture_shelf_candidates,
 	enter_scan_mode,
@@ -868,6 +869,31 @@ def test_build_single_shelf_known_edge_y_converts_fixed_offset_back_to_laser_fra
 	# The shelf sweep adds the 12.25mm probe offset back, placing the laser at
 	# 692.75mm rather than at the already corrected 688.5mm gripper coordinate.
 	assert known_shelf_edge_y == [pytest.approx(680.5)]
+
+
+def test_convert_stored_y_mm_to_laser_frame_applies_offset_and_gripper_correction() -> None:
+	stored_y_mm = 100.0
+	scan_config = SimpleNamespace(
+		laser_offset_y_mm=4.0,
+		left_gripper_xy_correction_mm=SimpleNamespace(x_mm=-0.8, y_mm=-2.5),
+		right_gripper_xy_correction_mm=SimpleNamespace(x_mm=0.0, y_mm=0.0),
+	)
+
+	assert convert_stored_y_mm_to_laser_frame(
+		stored_y_mm=stored_y_mm,
+		side=StorageModuleSide.LEFT,
+		scan_config=scan_config,
+	) == pytest.approx(106.5)
+	assert convert_stored_y_mm_to_laser_frame(
+		stored_y_mm=stored_y_mm,
+		side=StorageModuleSide.RIGHT,
+		scan_config=scan_config,
+	) == pytest.approx(104.0)
+	assert convert_stored_y_mm_to_laser_frame(
+		stored_y_mm=stored_y_mm,
+		side=StorageModuleSide.LEFT,
+		scan_config=SimpleNamespace(laser_offset_y_mm=4.0, left_gripper_xy_correction_mm=None),
+	) == pytest.approx(104.0)
 
 
 def test_apply_single_cell_rescan_updates_target_cell_and_saves_grid() -> None:

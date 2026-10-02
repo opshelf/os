@@ -650,6 +650,43 @@ async def test_scan_axis_flying_stops_and_restarts_the_pass_when_a_guard_engages
 
 
 @pytest.mark.asyncio
+async def test_scan_axis_flying_resets_a_stateful_stop_predicate_on_restart(monkeypatch) -> None:
+	from openshelf_os.laser_calibration.shelf_scout import build_shelf_edge_stop_predicate
+
+	monkeypatch.setattr(flying_module, "FLYING_SCAN_SAFETY_POLL_S", 0.0)
+
+	class SequencedDepthTool(FakeFlyingTool):
+		async def get_laser_distance(self) -> float | None:
+			await asyncio.sleep(0)
+			self.depth_reads += 1
+			# Positive through the interrupted pass, then non-positive right after the restart.
+			return 9.5 if self.depth_reads <= 10 else 0.0
+
+	tool = SequencedDepthTool(depth_mm=9.5)
+	interlock = FakeGuardInterlock(tool, trip_after=9, blocked_checks=5)
+	tool._mx._safety = interlock
+	tool._my._safety = interlock
+	stop_when = build_shelf_edge_stop_predicate(min_positive_run_length=3, grid_step_mm=2.0)
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=20.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_predicate_reset",
+		stop_when=stop_when,
+	)
+
+	# The interrupted pass's run spanned ~7mm. The restarted pass's first moving sample is
+	# non-positive, so it would confirm that stale run and stop the line at ~1mm if the
+	# predicate's state survived the restart.
+	assert interlock.has_tripped is True
+	assert line.samples[-1].position_mm == pytest.approx(20.0)
+
+
+@pytest.mark.asyncio
 async def test_scan_axis_flying_waits_for_the_guard_to_clear_until_aborted(monkeypatch) -> None:
 	monkeypatch.setattr(flying_module, "FLYING_SCAN_SAFETY_POLL_S", 0.0)
 	tool = FakeFlyingTool(depth_mm=5.0)
@@ -1060,6 +1097,160 @@ async def test_probe_line_from_center_flying_prefetch_matches_stepped(monkeypatc
 	assert flying_segment.width_mm == pytest.approx(stepped_segment.width_mm)
 	assert flying_requests == [{"axis": "x", "rpm": 30, "label": "flying_probe_flying"}]
 	assert recorded_lines == ["flying_probe_flying"]
+
+
+@pytest.mark.asyncio
+async def test_probe_line_from_center_resamples_uncovered_flying_bins(monkeypatch) -> None:
+	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
+	import openshelf_os.laser_calibration.flying as flying_module
+
+	step_mm = 2.0
+	positions = [float(value) for value in range(0, 50, 2)]
+	hole_positions = {float(value) for value in range(20, 46, 2)}
+	profile = [0.0 if position in hole_positions else 9.5 for position in positions]
+	center_idx = positions.index(32.0)
+	uncovered_position_mm = 22.0
+	prefetched = [
+		None if position_mm == uncovered_position_mm else depth_mm
+		for position_mm, depth_mm in zip(positions, profile)
+	]
+	stepped_requests: list[float] = []
+
+	async def didSampleStepped(tool, *, x_mm, y_mm, settle_ms, samples_per_point, should_abort=None):
+		stepped_requests.append(x_mm)
+		return profile[positions.index(x_mm)]
+
+	monkeypatch.setattr(fine_scan_module, "sample_scan_point", didSampleStepped)
+
+	async def didScanLineFlying(
+		tool,
+		*,
+		axis,
+		positions,
+		fixed_mm,
+		rpm,
+		progress_label,
+		should_abort=None,
+		**kwargs,
+	):
+		return list(prefetched), FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=[
+				FlyingScanSample(position_mm=position_mm, depth_mm=depth_mm, elapsed_s=index * 0.02)
+				for index, (position_mm, depth_mm) in enumerate(zip(positions, profile))
+			],
+			duration_s=1.0,
+		)
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+
+	flying_scan = GridScanResult(
+		x_positions=positions,
+		y_positions=[10.0],
+		depth_rows=[[None for _ in positions]],
+	)
+	segment = await fine_scan_module.probe_line_from_center(
+		SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0))),
+		base_scan=flying_scan,
+		axis="x",
+		positions=positions,
+		fixed_mm=10.0,
+		center_idx=center_idx,
+		step_mm=step_mm,
+		progress_prefix="flying_resample",
+		settle_ms=0,
+		samples_per_point=1,
+		wall_depth_mm=9.5,
+		expected_span_mm=26.0,
+		scan_config=SimpleNamespace(fine_scan_style="flying", fine_scan_feed_mm_s=40.0),
+	)
+
+	# The hole spans 20..44mm. The empty bin at 22mm must not be read as wall, which would
+	# truncate the segment's near edge to 24mm and shift its centre by 2mm.
+	assert segment is not None
+	assert segment.start_mm == pytest.approx(19.0)
+	assert segment.end_mm == pytest.approx(45.0)
+	assert stepped_requests == [uncovered_position_mm]
+
+
+@pytest.mark.asyncio
+async def test_probe_line_from_center_rebuilds_the_inferred_far_edge_from_the_refined_near_edge(
+	monkeypatch,
+) -> None:
+	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
+	import openshelf_os.laser_calibration.flying as flying_module
+
+	step_mm = 2.0
+	positions = [float(value) for value in range(0, 50, 2)]
+	# The topmost opening runs off the end of the window, so its far edge has to be inferred.
+	profile = [0.0 if position >= 20.0 else 9.5 for position in positions]
+	center_idx = positions.index(40.0)
+	refined_near_edge_mm = 19.25
+	samples = [
+		FlyingScanSample(
+			position_mm=0.5 * index,
+			depth_mm=9.5 if 0.5 * index < refined_near_edge_mm else 0.0,
+			elapsed_s=index * 0.01,
+		)
+		for index in range(0, 97)
+	]
+
+	async def didScanLineFlying(
+		tool,
+		*,
+		axis,
+		positions,
+		fixed_mm,
+		rpm,
+		progress_label,
+		should_abort=None,
+		**kwargs,
+	):
+		return list(profile), FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=samples,
+			duration_s=1.0,
+		)
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+
+	flying_scan = GridScanResult(
+		x_positions=positions,
+		y_positions=[10.0],
+		depth_rows=[[None for _ in positions]],
+	)
+	segment = await fine_scan_module.probe_line_from_center(
+		SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0))),
+		base_scan=flying_scan,
+		axis="x",
+		positions=positions,
+		fixed_mm=10.0,
+		center_idx=center_idx,
+		step_mm=step_mm,
+		progress_prefix="inferred_far_edge",
+		settle_ms=0,
+		samples_per_point=1,
+		wall_depth_mm=9.5,
+		expected_span_mm=26.0,
+		should_infer_far_edge=True,
+		scan_config=SimpleNamespace(fine_scan_style="flying", fine_scan_feed_mm_s=40.0),
+	)
+
+	# The far edge was inferred from the expected span, so refining the near edge has to move
+	# it too. Keeping the pre-refinement end would give 25.75mm and centre 32.125mm.
+	assert segment is not None
+	assert segment.start_mm == pytest.approx(refined_near_edge_mm)
+	assert segment.width_mm == pytest.approx(26.0)
+	assert segment.end_mm == pytest.approx(refined_near_edge_mm + 26.0)
+	assert segment.center_mm == pytest.approx(refined_near_edge_mm + 13.0)
 
 
 def test_refine_segment_edges_from_samples_uses_interpolated_crossings() -> None:

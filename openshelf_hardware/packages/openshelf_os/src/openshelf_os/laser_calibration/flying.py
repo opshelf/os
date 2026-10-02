@@ -621,6 +621,14 @@ async def _scan_axis_flying_pass(
 	if capture_latency_s is None:
 		capture_latency_s = FLYING_CAPTURE_LATENCY_MS / 1000.0
 
+	# A stateful stop predicate carries the run it was tracking. Every pass starts with a new
+	# sample list, so reset the predicate too, or an interrupted pass's run confirms the
+	# restarted one and the line stops early.
+	didResetStopPredicate = getattr(stop_when, "reset", None)
+
+	if didResetStopPredicate is not None:
+		didResetStopPredicate()
+
 	scan_motor = getattr(tool, "_mx" if axis == "x" else "_my", None)
 	hold_motor = getattr(tool, "_my" if axis == "x" else "_mx", None)
 
