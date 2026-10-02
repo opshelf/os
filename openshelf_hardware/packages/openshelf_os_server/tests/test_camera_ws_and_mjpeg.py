@@ -472,3 +472,24 @@ async def test_mjpeg_generator_stall_gate_tracks_mjpeg_path() -> None:
 
 	with pytest.raises(StopAsyncIteration):
 		await asyncio.wait_for(generator.__anext__(), timeout=1.0)
+
+
+@pytest.mark.anyio
+async def test_mjpeg_generator_ends_on_server_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
+	# The stream never ends on its own while a client watches, so without this the
+	# shutdown drain always ran out and cancelled in-flight hardware requests with it.
+	from sse_starlette.sse import AppStatus
+
+	from openshelf_os_server.routers.camera import mjpeg_stream_generator_for_camera
+
+	manager = _make_mjpeg_manager()
+	manager._state.latest_frame = _solid_jpeg(100)
+	request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+	generator = mjpeg_stream_generator_for_camera(manager, request)
+
+	first = await asyncio.wait_for(generator.__anext__(), timeout=5.0)
+	assert first
+
+	monkeypatch.setattr(AppStatus, "should_exit", True)
+	with pytest.raises(StopAsyncIteration):
+		await asyncio.wait_for(generator.__anext__(), timeout=5.0)

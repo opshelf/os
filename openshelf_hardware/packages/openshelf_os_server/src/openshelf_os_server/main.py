@@ -506,9 +506,13 @@ def _configure_sentry() -> bool:
 		logger.warning("sentry_not_configured", reason="SENTRY_DSN_API not set", mode=mode.value)
 		return False
 
+	# Errors only: each one is sent the moment it is captured. Sentry logs, traces, and
+	# release-health sessions are batched or sent at exit, so a shutdown always found
+	# some pending and waited out shutdown_timeout.
 	sentry_sdk.init(
 		dsn=sentry_dsn,
-		enable_logs=True,
+		enable_logs=False,
+		auto_session_tracking=False,
 		integrations=[
 			StarletteIntegration(transaction_style="endpoint"),
 			FastApiIntegration(transaction_style="endpoint"),
@@ -518,7 +522,7 @@ def _configure_sentry() -> bool:
 				event_level=logging.ERROR,
 			),
 		],
-		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0")),
 		environment=mode.value,
 		release=os.getenv("APP_VERSION", "0.1.0"),
 		server_name=device_id,
@@ -1317,5 +1321,9 @@ def start() -> None:
 		reload_includes=reload_includes,
 		reload_excludes=reload_excludes,
 		log_config=log_config,
+		# Room for in-flight hardware operations (a rail power cycle holds power off for
+		# 3s). Persistent streams end on the shutdown signal themselves (SSE through
+		# sse-starlette, MJPEG through AppStatus), so the drain stops as soon as the
+		# ordinary requests do.
 		timeout_graceful_shutdown=5,
 	)
