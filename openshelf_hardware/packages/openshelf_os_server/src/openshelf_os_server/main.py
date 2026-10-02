@@ -1321,8 +1321,9 @@ def start() -> None:
 		reload_includes=reload_includes,
 		reload_excludes=reload_excludes,
 		log_config=log_config,
-		# The robot status SSE stream and camera MJPEG streams stay open while a client
-		# is connected, so a longer drain only delays every shutdown; ordinary requests
-		# finish well within it.
-		timeout_graceful_shutdown=1,
+		# Room for in-flight hardware operations (a rail power cycle holds power off for
+		# 3s). Persistent streams end on the shutdown signal themselves (SSE through
+		# sse-starlette, MJPEG through AppStatus), so the drain stops as soon as the
+		# ordinary requests do.
+		timeout_graceful_shutdown=5,
 	)
