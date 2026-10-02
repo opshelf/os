@@ -11,12 +11,6 @@ if [[ ! -f "$repo_root/openshelf_hardware/data/.mode" ]]; then
   exit 1
 fi
 
-compose_files=(
-  -f "$repo_root/docker-compose.yml"
-  -f "$repo_root/docker-compose.dev.yml"
-  -f "$repo_root/docker-compose.hardware.yml"
-)
-
 mode="$(tr -d '[:space:]' < "$repo_root/openshelf_hardware/data/.mode")"
 case "$mode" in
   development) config_name=config.development.json ;;
@@ -26,6 +20,13 @@ case "$mode" in
     exit 1
     ;;
 esac
+
+# Match scripts/start: only development mode layers the dev overlay.
+compose_files=(-f "$repo_root/docker-compose.yml")
+if [[ "$mode" == "development" ]]; then
+  compose_files+=(-f "$repo_root/docker-compose.dev.yml")
+fi
+compose_files+=(-f "$repo_root/docker-compose.hardware.yml")
 
 config_host_path="$repo_root/openshelf_hardware/data/$config_name"
 config_container_path="/app/openshelf_hardware/data/$config_name"
@@ -62,5 +63,5 @@ docker compose \
   "${compose_files[@]}" \
   run --pull never --no-deps --rm --entrypoint sh \
   -v "$repo_root/scripts:/app/scripts:ro" \
-  api -lc "cd /app/openshelf_hardware && uv run python /app/scripts/motor_register_audit.py --config $config_container_path${quoted_args}" \
+  api -lc "cd /app/openshelf_hardware && /app/openshelf_hardware/.venv/bin/python /app/scripts/motor_register_audit.py --config $config_container_path${quoted_args}" \
   | tee "$out_path"
