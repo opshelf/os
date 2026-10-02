@@ -764,11 +764,13 @@ async def _scan_axis_flying_pass(
 			if direction * (position_mm - motion_end_mm) >= 0.0:
 				break
 
+			# Move the anchor only once motion clears the epsilon: at low feeds consecutive
+			# reads differ by less than it, and re-anchoring every read would never register
+			# the axis as moving.
 			if abs(position_mm - last_position_mm) > FLYING_SCAN_PROGRESS_EPS_MM:
 				has_moved = True
 				last_progress_at = sampled_at
-
-			last_position_mm = position_mm
+				last_position_mm = position_mm
 
 			if has_moved is True and (sampled_at - last_progress_at) > FLYING_SCAN_STALL_S:
 				break
