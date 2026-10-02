@@ -54,7 +54,9 @@ def configure_readback_registers(
         0x0233: 4000,
         0x0191: 10,
         0x0145: 0x80,  # SI1 inert, so the persistent audit matches by default
+        **{address: 0 for address in range(0x0147, 0x0152, 2)},  # SI2-SI7 unassigned
         0x000F: 0,  # Pr0.07, parked
+        0x1003: 0,  # motion status: disabled, so the boot park confirms at once
         0x1901: 0x5555,  # EEPROM save status: OK
     }
     if overrides is not None:
@@ -230,13 +232,12 @@ async def test_mismatched_persistent_brake_config_repairs_in_order_and_saves(
         "si1": calls.index(call(1, 0x0145, 0x80)),
         "save": calls.index(call(1, 0x1801, 0x2211)),
     }
-    # Energise first, sequencing before SO2, DI1 inert last, then commit.
+    # Energise first, sequencing before SO2, DI1 inert, park, then commit.
     assert order["enable_on"] < order["release"] < order["so2"]
     assert order["engage"] < order["so2"]
     assert order["speed"] < order["so2"]
-    assert order["so2"] < order["si1"] < order["save"]
-    # Parked deliberately once the save is confirmed.
-    assert calls.index(call(1, 0x000F, 0)) > order["save"]
+    # Pr0.07 is back at 0 before the save, so the EEPROM never stores a forced enable.
+    assert order["so2"] < order["si1"] < calls.index(call(1, 0x000F, 0)) < order["save"]
     mock_controller.read_holding_registers.assert_any_call(1, 0x1901)
 
 
@@ -257,6 +258,55 @@ async def test_repairing_di1_demands_a_drive_power_cycle(mock_controller, caplog
     await motor.configure()
 
     assert "POWER-CYCLE THE DRIVE" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_enable_on_another_input_is_cleared_keeping_polarity(mock_controller, caplog):
+    """An unwired N.C. ENABLE on any input holds the drive enabled when Pr0.07=0."""
+    motor = Motor(mock_controller, y_axis_params())
+    registers = echo_registers(mock_controller, persistent_brake_registers({0x0149: 0x0388}))
+
+    await motor.configure()
+
+    calls = mock_controller.write_single_register.await_args_list
+    assert registers[0x0149] == 0x0380  # SI3 inert, N.C. and 20 ms filter kept
+    assert calls.index(call(1, 0x0149, 0x0380)) < calls.index(call(1, 0x1801, 0x2211))
+    assert not any(c.args[1] in (0x0147, 0x014B, 0x014D, 0x014F, 0x0151) for c in calls)
+    assert "POWER-CYCLE THE DRIVE" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_non_parked_axis_leaves_other_enable_inputs_alone(mock_controller):
+    motor = Motor(mock_controller, make_motor_params(motor_name="z_axis", brake_output_function=0x24))
+    echo_registers(mock_controller, persistent_brake_registers({0x0191: 10, 0x0149: 0x88}))
+
+    await motor.configure()
+
+    calls = mock_controller.write_single_register.await_args_list
+    assert not any(c.args[1] in (0x0145, 0x0149, 0x000F) for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_configure_parks_a_parked_axis(mock_controller):
+    """A drive restored from an EEPROM holding Pr0.07=1 comes up on its brake."""
+    motor = Motor(mock_controller, y_axis_params())
+    registers = echo_registers(mock_controller, persistent_brake_registers({0x000F: 1, 0x1003: 1 << 1}))
+
+    await motor.configure()
+
+    assert enable_writes(mock_controller) == [0]
+    assert registers[0x000F] == 0
+    assert call(1, 0x1801, 0x2211) not in mock_controller.write_single_register.await_args_list
+
+
+@pytest.mark.asyncio
+async def test_configure_never_parks_an_unparked_axis(mock_controller):
+    motor = Motor(mock_controller, make_motor_params(motor_name="x_axis"))
+    echo_registers(mock_controller, configure_readback_registers())
+
+    await motor.configure()
+
+    assert enable_writes(mock_controller) == []
 
 
 @pytest.mark.asyncio

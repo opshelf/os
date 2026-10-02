@@ -68,6 +68,12 @@ PARKED_AXES = frozenset({"y_axis"})
 # what makes a software disable mean anything -- Pr0.07 is a *forced* enable and
 # at 0 it falls back to whichever input holds ENABLE.
 ENABLE_INPUT_INERT = 0x0080
+# Any other input carrying ENABLE (low 7 bits 0x08) defeats the park the same
+# way -- an unwired N.C. ENABLE reads active forever -- so on a parked axis its
+# function is cleared too, keeping its polarity and filter bits.
+SECONDARY_INPUT_FUNCTIONS = tuple(f"SI{n} input function" for n in range(2, 8))
+INPUT_FUNCTION_MASK = 0x7F
+ENABLE_INPUT_FUNCTION = 0x08
 SOFTWARE_ENABLE_ON = 1
 SOFTWARE_ENABLE_OFF = 0
 MOTION_STATUS_ENABLE_BIT = 1
@@ -352,6 +358,9 @@ class Motor():
 
             # Configure movement parameters
             await self.move_config()
+
+            # A parked axis comes up on its brake, not on holding current.
+            await self._park()
         except Exception as e:
             self._emit_init("failed", detail="configure", reason=str(e))
             self._logger.error(
@@ -808,6 +817,7 @@ class Motor():
         return actual_settings
 
     async def _audit_persistent_brake_config(self) -> dict[str, int]:
+        """Return {register name: value read} for every register that disagrees."""
         expected = self._expected_persistent_brake_config()
         mismatches: dict[str, int] = {}
 
@@ -815,6 +825,12 @@ class Motor():
             actual_value = await self.get_param(parameter_name)
             if actual_value != expected_value:
                 mismatches[parameter_name] = actual_value
+
+        if self._park_when_idle:
+            for parameter_name in SECONDARY_INPUT_FUNCTIONS:
+                actual_value = await self.get_param(parameter_name)
+                if actual_value & INPUT_FUNCTION_MASK == ENABLE_INPUT_FUNCTION:
+                    mismatches[parameter_name] = actual_value
 
         return mismatches
 
@@ -838,14 +854,16 @@ class Motor():
             f"{EEPROM_SAVE_POLL_ATTEMPTS * EEPROM_SAVE_POLL_DELAY_S:.2f}s"
         )
 
-    async def _repair_persistent_brake_config(self) -> None:
+    async def _repair_persistent_brake_config(self, mismatches: dict[str, int]) -> None:
         """Write the persistent brake config, then commit it to EEPROM.
 
         The write order matters for a suspended load. Pr0.07 goes high first so
         the motor stays energised across the transition; the sequencing delays
         land before SO2 becomes a brake output, because assigning SO2 can change
-        the physical brake state immediately; DI1 is made inert last, since from
-        that point Pr0.07 is the only thing that can enable the drive.
+        the physical brake state immediately; the ENABLE inputs are made inert
+        last, since from that point Pr0.07 is the only thing that can enable the
+        drive. Pr0.07 drops back to 0 before the save so the EEPROM never powers
+        the drive up force-enabled.
         """
         if self._park_when_idle:
             await self.set_param("Forced enable by software", SOFTWARE_ENABLE_ON)
@@ -860,6 +878,11 @@ class Motor():
 
         if self._park_when_idle:
             await self.set_param("SI1 input function", ENABLE_INPUT_INERT)
+            for parameter_name in SECONDARY_INPUT_FUNCTIONS:
+                if parameter_name in mismatches:
+                    await self.set_param(
+                        parameter_name, mismatches[parameter_name] & ~INPUT_FUNCTION_MASK
+                    )
 
         remaining = await self._audit_persistent_brake_config()
         if remaining:
@@ -870,12 +893,12 @@ class Motor():
                 )
             )
 
-        await self._save_parameters_to_eeprom()
-
         if self._park_when_idle:
             # Deliberate park: the brake sets through Pr4.20 / Pr4.21.
             await self.set_param("Forced enable by software", SOFTWARE_ENABLE_OFF)
             self._disabled_at = time.monotonic()
+
+        await self._save_parameters_to_eeprom()
 
     async def _configure_brake_control(self) -> None:
         """Audit the drive's persistent brake config; repair and save only if wrong.
@@ -903,13 +926,16 @@ class Motor():
                 "motor_id": self._motor_id,
                 "motor_name": getattr(self._params, "motor_name", None),
                 "mismatches": {
-                    name: {"expected": expected[name], "read": value}
+                    name: {
+                        "expected": expected.get(name, value & ~INPUT_FUNCTION_MASK),
+                        "read": value,
+                    }
                     for name, value in mismatches.items()
                 },
             },
         )
 
-        await self._repair_persistent_brake_config()
+        await self._repair_persistent_brake_config(mismatches)
 
         self._logger.warning(
             "Persistent brake configuration repaired and saved to EEPROM",
@@ -919,19 +945,21 @@ class Motor():
             },
         )
 
-        if "SI1 input function" in mismatches:
-            # Manual 4.3.2 note 2: an input function change only takes effect
-            # after the drive restarts. Until then DI1 still carries ENABLE and
-            # Pr0.07=0 falls back to it, so the axis will not park.
+        changed_inputs = {
+            name: value for name, value in mismatches.items() if name.startswith("SI")
+        }
+        if changed_inputs:
+            # An input function change only takes effect after the drive
+            # restarts. Until then the old ENABLE input is live and Pr0.07=0
+            # falls back to it, so the axis will not park.
             self._logger.warning(
-                "DI1 function changed; POWER-CYCLE THE DRIVE for it to take "
+                "Input function changed; POWER-CYCLE THE DRIVE for it to take "
                 "effect. Until then the software disable will not de-energise "
                 "this axis and the load stays on motor current",
                 extra={
                     "motor_id": self._motor_id,
                     "motor_name": getattr(self._params, "motor_name", None),
-                    "previous_function": mismatches["SI1 input function"],
-                    "configured_function": ENABLE_INPUT_INERT,
+                    "previous_functions": changed_inputs,
                 },
             )
 
