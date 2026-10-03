@@ -8,6 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import delete, select
 
 from openshelf_os.operating_mode import OperatingMode
+from openshelf_os.storage import Shelf
 from openshelf_os_server.core import mock_robot as mock_core
 from openshelf_os_server.core.mock_robot import MockRobotRuntime
 from openshelf_os_server.database.models import Item, ItemLocation, MockRobotCommand
@@ -49,6 +50,17 @@ async def _wait_for_status(client: AsyncClient, command_id: str, expected: str) 
 
 def test_mock_runtime_defaults_to_hardware_execution_delay() -> None:
 	assert MockRobotRuntime().execution_seconds == 30.0
+
+
+@pytest.mark.anyio
+async def test_mock_status_storage_matches_the_shelf_wire_model(mock_runtime: MockRobotRuntime) -> None:
+	storage = json.loads(await mock_runtime.status_payload())["robot_status"]["storage"]
+
+	for side in ("front_module", "back_module"):
+		for shelf in storage[side]:
+			Shelf.model_validate(shelf)
+			for cell in shelf["cells"]:
+				assert "calibration_point" in cell
 
 
 @pytest.mark.anyio

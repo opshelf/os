@@ -528,6 +528,8 @@ class MockRobotRuntime:
 						{
 							"cell_idx": cell_idx,
 							"status": "occupied" if (side, shelf_idx, cell_idx) in occupied else "available",
+							"item": None,
+							"calibration_point": None,
 							"dimensions": MOCK_CELL_DIMENSIONS,
 						}
 						for cell_idx in range(MOCK_CELLS_PER_SHELF)
