@@ -225,7 +225,6 @@ export interface StorageGrid {
 
 export interface Shelf {
 	shelf_idx: number;
-	shelf_width: number;
 	cells: Cell[];
 	divider_width: number;
 }

@@ -30,7 +30,6 @@ def build_grid(tmp_path) -> StorageGrid:
 		front_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_width=480.0,
 				divider_width=12.0,
 				cells=[
 					Cell(
@@ -70,7 +69,6 @@ async def test_add_grid_shelf(client: AsyncClient, tmp_path) -> None:
 	new_shelf = grid.front_module[1]
 	assert new_shelf.shelf_idx == 1
 	# geometry is cloned from the existing shelf
-	assert new_shelf.shelf_width == 480.0
 	assert new_shelf.divider_width == 12.0
 	assert [cell.cell_idx for cell in new_shelf.cells] == [0]
 	assert new_shelf.cells[0].dimensions == grid.front_module[0].cells[1].dimensions

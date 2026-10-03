@@ -60,7 +60,6 @@ def build_grid(tmp_path) -> StorageGrid:
 		front_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_width=480.0,
 				divider_width=12.0,
 				cells=[
 					Cell(
@@ -95,7 +94,6 @@ def build_grid_with_empty_shelf(tmp_path) -> StorageGrid:
 		front_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_width=480.0,
 				divider_width=12.0,
 				cells=[],
 			)
@@ -160,7 +158,6 @@ async def test_save_calibration_creates_missing_shelf_and_cell_from_templates(cl
 	new_shelf = grid.front_module[1]
 
 	assert new_shelf.shelf_idx == 1
-	assert new_shelf.shelf_width == pytest.approx(grid.front_module[0].shelf_width)
 	assert new_shelf.divider_width == pytest.approx(grid.front_module[0].divider_width)
 	assert len(new_shelf.cells) == 1
 	assert new_shelf.cells[0].dimensions == grid.front_module[0].cells[0].dimensions
@@ -292,7 +289,6 @@ async def test_save_calibration_bootstraps_first_shelf_and_cell_on_empty_grid(cl
 	new_shelf = grid.front_module[0]
 
 	assert new_shelf.shelf_idx == 0
-	assert new_shelf.shelf_width == pytest.approx(480.0)
 	assert new_shelf.divider_width == pytest.approx(12.0)
 	assert len(new_shelf.cells) == 1
 	assert new_shelf.cells[0].dimensions == Dimensions(width=480.0, height=200.0, length=400.0)

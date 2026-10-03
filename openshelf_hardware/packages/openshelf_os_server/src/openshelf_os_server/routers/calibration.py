@@ -104,7 +104,7 @@ async def get_robot_worker_or_503():
 			detail="Robot is not initialized",
 		) from exc
 _DEFAULT_CELL_HEIGHT = 200.0
-_DEFAULT_SHELF_WIDTH = 480.0
+_DEFAULT_CELL_WIDTH = 480.0
 _DEFAULT_DIVIDER_WIDTH = 12.0
 _DEFAULT_CELL_LENGTH = 400.0
 
@@ -550,20 +550,19 @@ def _find_cell(shelf, cell_idx: int):
 def _build_default_shelf_template() -> Shelf:
 	return Shelf(
 		shelf_idx=0,
-		shelf_width=_DEFAULT_SHELF_WIDTH,
 		cells=[],
 		divider_width=_DEFAULT_DIVIDER_WIDTH,
 	)
 
 
-def _build_default_cell_template(shelf) -> Cell:
+def _build_default_cell_template() -> Cell:
 	return Cell(
 		cell_idx=0,
 		status=CellStatus.AVAILABLE,
 		item=None,
 		calibration_point=None,
 		dimensions=Dimensions(
-			width=max(float(shelf.shelf_width), 1.0),
+			width=_DEFAULT_CELL_WIDTH,
 			height=_DEFAULT_CELL_HEIGHT,
 			length=_DEFAULT_CELL_LENGTH,
 		),
@@ -598,7 +597,7 @@ def _get_cell_template(grid, side: StorageModuleSide, shelf) -> Cell:
 		if len(candidate_shelf.cells) > 0:
 			return candidate_shelf.cells[-1]
 
-	return _build_default_cell_template(shelf)
+	return _build_default_cell_template()
 
 
 def _ensure_shelf(grid, side: StorageModuleSide, shelf_idx: int):
@@ -610,7 +609,6 @@ def _ensure_shelf(grid, side: StorageModuleSide, shelf_idx: int):
 	template = _get_shelf_template(grid, side)
 	new_shelf = Shelf(
 		shelf_idx=shelf_idx,
-		shelf_width=template.shelf_width,
 		cells=[],
 		divider_width=template.divider_width,
 	)

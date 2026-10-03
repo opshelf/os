@@ -845,17 +845,9 @@ def build_shelves_from_scan(
 				for detected_cell in detected_shelf.cells
 			]
 
-		output_shelf_width = detected_shelf.shelf_width_mm
-		if existing_shelves is not None:
-			for existing_shelf in existing_shelves:
-				if existing_shelf.shelf_idx == detected_shelf.shelf_idx:
-					output_shelf_width = existing_shelf.shelf_width
-					break
-
 		shelves.append(
 			Shelf(
 				shelf_idx=detected_shelf.shelf_idx,
-				shelf_width=output_shelf_width,
 				cells=cells,
 			)
 		)

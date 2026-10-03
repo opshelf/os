@@ -16,7 +16,6 @@ def test_find_best_slot_prefers_small_footprint_over_shorter_medium_tray() -> No
 		front_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_width=400.0,
 				cells=[
 					build_cell(0, width=115.0, length=145.0, height=135.0),
 					build_cell(1, width=85.0, length=145.0, height=185.0),
@@ -40,7 +39,6 @@ def test_find_best_slot_prefers_shortest_height_within_same_footprint() -> None:
 		front_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_width=400.0,
 				cells=[
 					build_cell(0, width=85.0, length=145.0, height=235.0),
 					build_cell(1, width=85.0, length=145.0, height=185.0),
@@ -65,7 +63,6 @@ def test_find_best_slot_prefers_smaller_footprint_area_over_narrower_width() -> 
 		back_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_width=400.0,
 				cells=[
 					build_cell(0, width=90.0, length=200.0, height=200.0),
 					build_cell(1, width=100.0, length=90.0, height=50.0),
@@ -88,7 +85,6 @@ def test_find_best_slot_excludes_server_reserved_home_even_when_available() -> N
 		front_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_width=400.0,
 				cells=[
 					build_cell(0, width=85.0, length=145.0, height=135.0),
 					build_cell(1, width=90.0, length=150.0, height=140.0),
