@@ -87,10 +87,8 @@ def test_streaming_and_development_operations_are_explicit():
     ]:
         assert set(paths[path]["get"]["responses"]["200"]["content"]) == {media}
     assert "subscribe_only=true" in paths["/api/calibration/laser/stream"]["get"]["description"]
-    assert (
-        "development mode"
-        in paths["/api/robot/debug/motors/{motor_name}/home"]["post"]["description"]
-    )
+    home = paths["/api/robot/debug/motors/{motor_name}/home"]["post"]
+    assert "skip_pre_home_approach" not in {p["name"] for p in home["parameters"]}
 
 
 @pytest.mark.asyncio
