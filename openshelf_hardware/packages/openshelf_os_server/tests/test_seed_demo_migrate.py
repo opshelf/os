@@ -37,7 +37,6 @@ def make_test_grid() -> StorageGrid:
 		return [
 			{
 				"shelf_idx": shelf_idx,
-				"shelf_width": 400.0,
 				"cells": [
 					{
 						"cell_idx": cell_idx,

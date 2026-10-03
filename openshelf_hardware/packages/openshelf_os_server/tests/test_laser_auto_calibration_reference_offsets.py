@@ -58,7 +58,6 @@ def _build_source_grid(*, is_manual: bool = True, include_second_shelf: bool = F
 	shelves = [
 		Shelf(
 			shelf_idx=0,
-			shelf_width=200.0,
 			cells=[
 				_build_cell(cell_idx=0, x=MANUAL_X_MM, y=MANUAL_Y_MM, is_manual=is_manual),
 				_build_cell(
@@ -75,7 +74,6 @@ def _build_source_grid(*, is_manual: bool = True, include_second_shelf: bool = F
 		shelves.append(
 			Shelf(
 				shelf_idx=SECOND_SHELF_IDX,
-				shelf_width=200.0,
 				cells=[
 					_build_cell(
 						cell_idx=0,

@@ -15,7 +15,6 @@ def test_storage_grid_assigns_missing_indices_from_payload() -> None:
 		{
 			"front_module": [
 				{
-					"shelf_width": 200.0,
 					"cells": [
 						{
 							"status": "available",
@@ -39,7 +38,6 @@ def test_storage_grid_resolves_sparse_indices_by_explicit_ids() -> None:
 		front_module=[
 			Shelf(
 				shelf_idx=5,
-				shelf_width=220.0,
 				cells=[
 					Cell(
 						cell_idx=7,

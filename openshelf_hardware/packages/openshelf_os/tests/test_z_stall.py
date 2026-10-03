@@ -296,7 +296,6 @@ def test_excluded_probe_cells_drops_only_disabled_cells_and_datums() -> None:
 	grid.front_module = [
 		Shelf(
 			shelf_idx=0,
-			shelf_width=200.0,
 			cells=[
 				build_cell(cell_idx=0, tool_x=350.0, tool_y=40.0),
 				build_cell(cell_idx=1, tool_x=455.0, tool_y=40.0),
@@ -326,7 +325,6 @@ def test_excluded_probe_cells_keeps_a_datum_only_scope_probeable() -> None:
 	grid.front_module = [
 		Shelf(
 			shelf_idx=0,
-			shelf_width=200.0,
 			cells=[
 				build_cell(cell_idx=0, tool_x=350.0, tool_y=40.0),
 				build_cell(cell_idx=1, tool_x=455.0, tool_y=40.0),
@@ -877,7 +875,6 @@ def test_grid_built_analysis_feeds_the_reference_derivation() -> None:
 	grid.front_module = [
 		Shelf(
 			shelf_idx=0,
-			shelf_width=200.0,
 			cells=[
 				Cell(
 					cell_idx=0,

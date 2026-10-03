@@ -156,7 +156,6 @@ def build_grid() -> StorageGrid:
         front_module=[
             Shelf(
                 shelf_idx=0,
-                shelf_width=480.0,
                 divider_width=12.0,
                 cells=[
                     Cell(

@@ -51,7 +51,6 @@ EMPTY_GRID = {"front_module": [], "back_module": []}
 GRID_WITH_SHELVES = {
 	"front_module": [
 		{
-			"shelf_width": 400.0,
 			"cells": [
 				{
 					"status": "available",
@@ -64,7 +63,6 @@ GRID_WITH_SHELVES = {
 	],
 	"back_module": [
 		{
-			"shelf_width": 400.0,
 			"cells": [
 				{
 					"status": "occupied",
@@ -146,7 +144,6 @@ class TestLegacyUpcaItem:
 			"front_module": [],
 			"back_module": [
 				{
-					"shelf_width": 400.0,
 					"cells": [
 						{
 							"status": "occupied",
@@ -221,7 +218,6 @@ class TestSideRenameMigration:
 		f.write_text(json.dumps({
 			"left_module": [
 				{
-					"shelf_width": 400.0,
 					"cells": [
 						{
 							"status": "available",
@@ -234,7 +230,6 @@ class TestSideRenameMigration:
 			],
 			"right_module": [
 				{
-					"shelf_width": 400.0,
 					"cells": [
 						{
 							"status": "occupied",

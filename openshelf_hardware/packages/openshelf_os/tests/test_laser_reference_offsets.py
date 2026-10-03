@@ -49,7 +49,7 @@ def build_cell(
 
 def build_grid(cells: list[Cell]) -> StorageGrid:
 	grid = StorageGrid(filename="storage.json")
-	grid.front_module = [Shelf(shelf_idx=0, shelf_width=200.0, cells=cells)]
+	grid.front_module = [Shelf(shelf_idx=0, cells=cells)]
 	return grid
 
 
@@ -194,7 +194,7 @@ def test_reference_datum_needs_the_bottom_left_cell() -> None:
 
 	elsewhere = StorageGrid(filename="storage.json")
 	elsewhere.front_module = [
-		Shelf(shelf_idx=5, shelf_width=200.0, cells=[build_cell(cell_idx=0, x=354.0, y=641.0)])
+		Shelf(shelf_idx=5, cells=[build_cell(cell_idx=0, x=354.0, y=641.0)])
 	]
 	assert select_reference_datum_cell(grid=elsewhere, side=StorageModuleSide.FRONT) is None
 

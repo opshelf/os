@@ -69,7 +69,6 @@ def _store_grid(occupied: set[int] | None = None) -> StorageGrid:
 		front_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_width=400.0,
 				cells=[
 					Cell(
 						cell_idx=cell_idx,

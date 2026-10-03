@@ -1012,7 +1012,6 @@ def _detected_scan_shelf(shelf_idx: int, tool_xs: list[float]) -> SimpleNamespac
 def _existing_calibrated_shelf(shelf_idx: int, xs: list[float]) -> Shelf:
 	return Shelf(
 		shelf_idx=shelf_idx,
-		shelf_width=200.0,
 		divider_width=13.0,
 		cells=[
 			Cell(
@@ -1354,7 +1353,6 @@ def test_apply_single_shelf_analysis_keeps_the_manual_datum_and_its_stamp(tmp_pa
 def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) -> None:
 	target_shelf = Shelf(
 		shelf_idx=1,
-		shelf_width=200.0,
 		divider_width=13.0,
 		cells=[
 			Cell(
@@ -1371,13 +1369,11 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 		front_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_width=20.0,
 				cells=[],
 			),
 			target_shelf,
 			Shelf(
 				shelf_idx=2,
-				shelf_width=40.0,
 				cells=[],
 			),
 		],
@@ -1387,7 +1383,6 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 	grid.save()
 
 	scanned_shelf = target_shelf.model_copy(deep=True, update={'shelf_idx': 0})
-	scanned_shelf.shelf_width = 777.0
 	scanned_shelf.divider_width = 99.0
 	analysis = SimpleNamespace(
 		shelves=[SimpleNamespace()],
@@ -1415,7 +1410,6 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 
 	assert updated_grid.front_module[0].shelf_idx == 0
 	assert updated_grid.front_module[1].shelf_idx == 1
-	assert updated_grid.front_module[1].shelf_width == pytest.approx(777.0)
 	assert updated_grid.front_module[1].divider_width == pytest.approx(13.0)
 	assert updated_grid.front_module[2].shelf_idx == 2
 
@@ -1423,7 +1417,6 @@ def test_apply_single_shelf_analysis_replaces_only_target_shelf(tmp_path: Path) 
 def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_rescan(tmp_path: Path) -> None:
 	target_shelf = Shelf(
 		shelf_idx=1,
-		shelf_width=200.0,
 		divider_width=13.0,
 		cells=[
 			Cell(
@@ -1474,7 +1467,6 @@ def test_apply_single_shelf_analysis_aligns_to_existing_shelf_without_reference_
 def test_apply_single_shelf_analysis_reference_less_uses_offset_and_stall_delta(tmp_path: Path) -> None:
 	target_shelf = Shelf(
 		shelf_idx=1,
-		shelf_width=200.0,
 		divider_width=13.0,
 		cells=[
 			Cell(
@@ -1534,7 +1526,6 @@ def test_apply_single_shelf_analysis_keeps_analysis_frame_during_z_apply(tmp_pat
 	def make_shelf(idx: int) -> Shelf:
 		return Shelf(
 			shelf_idx=idx,
-			shelf_width=200.0,
 			divider_width=13.0,
 			cells=[
 				Cell(
@@ -1713,7 +1704,6 @@ def test_disable_unreachable_cells_disables_only_cells_past_the_x_axis_limit() -
 	# lands past the 950mm X-axis travel limit and the tool can never reach it.
 	shelf = Shelf(
 		shelf_idx=3,
-		shelf_width=200.0,
 		divider_width=13.0,
 		cells=[
 			_reachability_cell(4, 746.0),
@@ -1733,7 +1723,6 @@ def test_disable_unreachable_cells_disables_only_cells_past_the_x_axis_limit() -
 def test_disable_unreachable_cells_noop_when_all_reachable() -> None:
 	shelf = Shelf(
 		shelf_idx=0,
-		shelf_width=200.0,
 		divider_width=13.0,
 		cells=[_reachability_cell(0, 340.0), _reachability_cell(1, 880.0)],
 	)
