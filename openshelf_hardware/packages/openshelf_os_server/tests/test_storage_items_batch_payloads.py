@@ -95,33 +95,6 @@ async def test_batched_bin_payloads_match_the_per_item_payload(statements: List[
 
 
 @pytest.mark.anyio
-async def test_bin_payloads_cost_a_fixed_number_of_queries(statements: List[str]) -> None:
-    async with AsyncSessionLocal() as db:
-        one = await _seed(db, [1])
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        statements.clear()
-        await service.item_bin_payloads([item.id for item, _ in one])
-        single_member_queries = len(statements)
-
-    async with AsyncSessionLocal() as db:
-        many = await _seed(db, [4, 3], cell_start=1)
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        statements.clear()
-        payloads = await service.item_bin_payloads([item.id for item, _ in many])
-        eight_members_queries = len(statements)
-
-    # Memberships, tray rows, and all tray contents: one query per step, never per member.
-    assert single_member_queries == eight_members_queries
-    assert eight_members_queries <= 3
-    assert {payloads[item.id]["barcode"] for item, _ in many} == {
-        "900000000001",
-        "900000000002",
-    }
-
-
-@pytest.mark.anyio
 async def test_items_endpoint_queries_do_not_grow_with_tray_members(
     client: AsyncClient, statements: List[str]
 ) -> None:

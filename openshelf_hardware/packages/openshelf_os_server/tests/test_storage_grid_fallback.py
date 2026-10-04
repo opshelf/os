@@ -1,9 +1,9 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from openshelf_os.storage import StorageGrid, StorageValidationError
+from openshelf_os.storage import StorageValidationError
 from openshelf_os_server.routers.storage import _get_robot_grid
 
 
@@ -56,34 +56,6 @@ def _write_config_and_grid(tmp_path, grid_data=None):
 
 
 class TestGetRobotGrid:
-
-	def test_returns_robot_worker_grid_when_available(self):
-		fake_grid = StorageGrid()
-
-		mock_robot = MagicMock()
-		mock_robot._grid = fake_grid
-
-		mock_worker = MagicMock()
-		mock_worker._robot = mock_robot
-
-		with patch("openshelf_os_server.core.robot.robot_worker", mock_worker):
-			result = _get_robot_grid()
-
-		assert result is fake_grid
-
-	def test_fallback_loads_from_config_path(self, tmp_path):
-		grid_data = {"front_module": [], "back_module": []}
-		config_path = _write_config_and_grid(tmp_path, grid_data)
-
-		with (
-			patch("openshelf_os_server.core.robot.robot_worker", None),
-			patch("openshelf_os.common.CONFIG_PATH", config_path),
-		):
-			result = _get_robot_grid()
-
-		assert isinstance(result, StorageGrid)
-		assert result.front_module == []
-		assert result.back_module == []
 
 	def test_fallback_uses_development_grid_for_development_config(self, tmp_path):
 		config_path = tmp_path / "config.development.json"

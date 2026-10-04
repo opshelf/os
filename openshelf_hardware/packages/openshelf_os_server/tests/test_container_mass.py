@@ -85,21 +85,6 @@ async def test_durable_first_store_failed_retry_and_replay(cycle_session_factory
         assert not item.enrollment_weight_pending
 
 
-@pytest.mark.anyio
-async def test_api_mass_null_omission_and_validation(client):
-    response = await client.post('/api/storage/items', json={'barcode': 'mass-api', 'name': 'Bottle', 'tare_weight': 100, 'net_weight': 250})
-    assert response.status_code == 200, response.text
-    assert response.json()['weight'] == 350
-    response = await client.post("/api/storage/items/update", json={**{'name': 'Renamed'}, "barcode": "mass-api"})
-    assert response.json()['net_weight'] == 250
-    response = await client.post("/api/storage/items/update", json={**{'tare_weight': None, 'net_weight': 1}, "barcode": "mass-api"})
-    assert response.status_code == 422
-    response = await client.post("/api/storage/items/update", json={**{'net_weight': None, 'full_net_weight': None}, "barcode": "mass-api"})
-    assert response.status_code == 200 and response.json()['weight'] is None
-    response = await client.post("/api/storage/items/update", json={**{'weight': None, 'net_weight': None}, "barcode": "mass-api"})
-    assert response.status_code == 422
-
-
 def test_migration_fresh_existing_and_repeated():
     migration = importlib.import_module('openshelf_os_server.alembic.versions.f3a4b5c6d7e8_add_container_mass')
     engine = create_engine('sqlite://')

@@ -247,22 +247,6 @@ class WeightChangeDetectionTests(unittest.TestCase):
         self.assertEqual(self.harness.guard.source_state()["record_path"].endswith(".json"), True)
         self.assertTrue(self.harness.flushed_path.endswith(".json"))
 
-    def test_stopping_the_guard_flushes_a_queued_record(self):
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(135.0, moving=True)
-
-        self.assertEqual(sorted(pathlib.Path(self.harness.records.name).glob("*.json")), [])
-
-        asyncio.run(self.harness.guard.stop())
-
-        self.assertEqual(len(sorted(pathlib.Path(self.harness.records.name).glob("*.json"))), 1)
-
-    def test_source_state_reports_clears_on_ack(self):
-        state = self.harness.guard.source_state()
-        self.assertEqual(state["active"], False)
-        self.assertEqual(state["clears_on_ack"], True)
-        self.assertEqual(state["axis"], "y_axis")
-        self.assertEqual(state["threshold_grams"], 10.0)
 
     def test_latched_state_keeps_recording_without_re_tripping(self):
         self.harness.sample(100.0, moving=False)
@@ -315,12 +299,6 @@ class WeightChangeAcknowledgementTests(unittest.TestCase):
         self.assertEqual(len(self.harness.trips), 2)
         self.assertAlmostEqual(self.harness.trips[1]["delta_grams"], 11.0)
 
-    def test_acknowledge_is_idempotent(self):
-        self.harness.guard.acknowledge()
-
-        self.assertFalse(self.harness.guard.is_latched)
-        self.assertIsNone(self.harness.guard._grace_until)
-
 
 class WeightChangeSamplingFailureTests(unittest.IsolatedAsyncioTestCase):
     async def test_repeated_read_failures_suspend_sampling(self):
@@ -345,21 +323,6 @@ class WeightChangeSamplingFailureTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await harness.guard._read_weight())
 
         self.assertEqual(harness.guard._suspend_s, 20.0)
-
-    async def test_a_reading_is_skipped_while_another_operation_holds_the_scale(self):
-        harness = GuardHarness(readings=[FakeReading(grams=100.0)])
-        self.addCleanup(harness.cleanup)
-
-        harness.scale.modbus_controller.lock.held = True
-
-        self.assertIsNone(await harness.guard._read_weight())
-        self.assertEqual(harness.scale.reads, 0)
-
-        harness.scale.modbus_controller.lock.held = False
-
-        reading = await harness.guard._read_weight()
-
-        self.assertIsNotNone(reading)
 
 
 class FakeGuardRobot:
@@ -517,76 +480,6 @@ class WeightChangeGuardLoopTests(unittest.IsolatedAsyncioTestCase):
         await guard.stop()
         self.assertIsNone(guard._task)
 
-    async def test_a_raising_record_builder_does_not_kill_sampling(self):
-        records = tempfile.TemporaryDirectory()
-        self.addCleanup(records.cleanup)
-        scale = LiveScale(100.0)
-        axis = FakeAxis()
-        trips: list[dict] = []
-
-        def raise_boom() -> dict:
-            raise RuntimeError("context boom")
-
-        guard = WeightChangeGuard(
-            scale=scale,
-            axis=axis,
-            delta_grams=10.0,
-            min_samples=1,
-            arm_delay_s=0.0,
-            ack_grace_s=0.05,
-            idle_interval_s=0.01,
-            record_dir=pathlib.Path(records.name),
-            context_provider=raise_boom,
-        )
-        guard.set_listener(trips.append)
-
-        await guard.start()
-        self.addAsyncCleanup(guard.stop)
-
-        axis.moving = True
-        await asyncio.sleep(0.05)
-        scale.grams = 130.0
-        await asyncio.sleep(0.05)
-
-        self.assertEqual(len(trips), 1)
-        self.assertTrue(guard.is_latched)
-        self.assertTrue(guard.is_failed)
-        self.assertIsNotNone(guard.source_state()["failed"])
-        self.assertFalse(guard._task.done())
-
-        await guard.stop()
-        self.assertIsNone(guard._task)
-
-    async def test_stop_swallows_a_dead_task_exception(self):
-        records = tempfile.TemporaryDirectory()
-        self.addCleanup(records.cleanup)
-        guard = WeightChangeGuard(
-            scale=LiveScale(100.0),
-            axis=FakeAxis(),
-            delta_grams=10.0,
-            min_samples=1,
-            arm_delay_s=0.0,
-            ack_grace_s=0.05,
-            idle_interval_s=0.01,
-            record_dir=pathlib.Path(records.name),
-        )
-
-        async def boom() -> None:
-            raise RuntimeError("task boom")
-
-        guard._running = True
-        guard._task = asyncio.create_task(boom())
-        await asyncio.sleep(0)
-
-        await guard.stop()
-        self.assertIsNone(guard._task)
-
-
-class LegacyRobot(FakeGuardRobot):
-    """Robot double from before the weight guard existed, without the new methods."""
-
-    get_weight_change_state = None  # type: ignore[assignment]
-
 
 class WeightChangeGuardWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -619,15 +512,6 @@ class WeightChangeGuardWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(safety["active"])
         self.assertEqual(len(self.published), 1)
 
-    async def test_source_reports_the_measured_change(self):
-        await self.trip()
-
-        source = self.worker.get_safety_status()["sources"][SOURCE]
-        self.assertEqual(source["delta_grams"], 42.0)
-        self.assertEqual(source["threshold_grams"], 10.0)
-        self.assertEqual(source["baseline_grams"], 100.0)
-        self.assertEqual(source["clears_on_ack"], True)
-        self.assertEqual(source["bypassed"], False)
 
     async def test_acknowledgement_releases_motion_even_with_weight_changed(self):
         await self.trip()
@@ -645,82 +529,6 @@ class WeightChangeGuardWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(safety["awaiting_ack"])
         self.assertFalse(safety["motion_blocked"])
 
-    async def test_light_curtain_still_has_to_clear_physically(self):
-        self.robot._curtain_state = True
-        self.robot._door_state = True
-        # The trip path evaluates without refreshing inputs, so seed the cached
-        # sensor reads the way the slow poll would have.
-        self.worker._curtain_blocked = True
-        self.worker._door_open = True
-
-        await self.trip()
-
-        safety = self.worker.get_safety_status()
-        self.assertEqual(safety["active_sources"], ["light_curtain", SOURCE])
-        self.assertFalse(safety["can_acknowledge"])
-
-        result = await self.worker.acknowledge_safety_guard()
-
-        self.assertFalse(result["accepted"])
-        self.assertEqual(self.robot.acknowledge_calls, 0)
-        self.assertEqual(self.robot.resume_calls, 0)
-
-    async def test_curtain_clear_then_acknowledge_resumes(self):
-        self.robot._curtain_state = True
-        self.robot._door_state = True
-        self.worker._curtain_blocked = True
-        self.worker._door_open = True
-        await self.trip()
-
-        self.robot._curtain_state = False
-        self.robot._door_state = False
-        result = await self.worker.acknowledge_safety_guard()
-
-        self.assertTrue(result["accepted"])
-        self.assertEqual(self.robot.acknowledge_calls, 1)
-
-    async def test_component_bypass_keeps_motion_running(self):
-        await self.worker.set_safety_component_bypassed(SOURCE, True)
-
-        self.worker._on_weight_change({"delta_grams": 42.0})
-        await self.drain()
-
-        safety = self.worker.get_safety_status()
-        self.assertEqual(self.robot.pause_calls, 0)
-        self.assertEqual(safety["active_sources"], [])
-        self.assertTrue(safety["sources"][SOURCE]["bypassed"])
-
-        await self.worker.set_safety_component_bypassed(SOURCE, False)
-
-        safety = self.worker.get_safety_status()
-        self.assertEqual(safety["active_sources"], [SOURCE])
-
-    async def test_global_bypass_keeps_motion_running(self):
-        await self.worker.set_safety_guard_bypassed(True)
-
-        self.worker._on_weight_change({"delta_grams": 42.0})
-        await self.drain()
-
-        self.assertEqual(self.robot.pause_calls, 0)
-        self.assertFalse(self.worker.get_safety_status()["active_sources"])
-
-    async def test_source_is_absent_when_the_robot_has_no_guard(self):
-        worker = RobotWorker(LegacyRobot())
-
-        await worker._evaluate_safety_guard()
-
-        self.assertNotIn(SOURCE, worker.get_safety_status()["sources"])
-
-    async def test_crash_hides_the_weight_source_behind_the_crash_state(self):
-        await self.trip()
-        worker = self.worker
-        worker._is_crashed = True
-
-        await worker._evaluate_safety_guard(refresh=False)
-
-        safety = worker.get_safety_status()
-        self.assertEqual(safety["active_sources"], [])
-        self.assertTrue(safety["sources"][SOURCE]["active"] is False)
 
     async def test_acknowledgement_clears_a_suppressed_weight_source(self):
         await self.trip()

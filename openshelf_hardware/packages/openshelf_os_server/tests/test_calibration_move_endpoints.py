@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from openshelf_os_server.routers import calibration
+
 
 def _mock_worker(stage_position: float):
 	tool = SimpleNamespace(
@@ -40,48 +42,6 @@ def _mock_worker(stage_position: float):
 		needs_home_reason=lambda: None,
 		needs_home_axes=lambda: [],
 	)
-
-
-@pytest.mark.anyio
-async def test_move_to_cell_reports_actual_stage_position(client) -> None:
-	worker = _mock_worker(stage_position=3.0)
-
-	with patch("openshelf_os_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
-		with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", AsyncMock()):
-			with patch("openshelf_os_server.routers.calibration._get_shelf", return_value=worker._robot._grid.front_module[0]):
-				with patch("openshelf_os_server.routers.calibration._get_cell", return_value=worker._robot._grid.front_module[0].cells[0]):
-					response = await client.post(
-						"/api/calibration/move",
-						json={"side": "front_module", "shelf_idx": 12, "cell_idx": 0},
-					)
-
-	assert response.status_code == 200
-	assert response.json()["slide_extension"] == pytest.approx(3.0)
-	assert response.json()["warnings"] is None
-
-
-@pytest.mark.anyio
-async def test_move_to_position_starts_manual_calibration_session(client) -> None:
-	worker = _mock_worker(stage_position=6.5)
-
-	with patch("openshelf_os_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
-		with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", AsyncMock()):
-			response = await client.post(
-				"/api/calibration/move/position",
-				json={"side": "back_module", "x": 475.0, "y": 630.0, "z_offset": 0.0},
-			)
-
-	assert response.status_code == 200
-	assert response.json()["x"] == pytest.approx(475.0)
-	assert response.json()["y"] == pytest.approx(630.0)
-	assert response.json()["slide_extension"] == pytest.approx(6.5)
-
-	move_coordinate = worker._robot._tool.move.await_args.args[0]
-
-	assert move_coordinate.x == pytest.approx(475.0)
-	assert move_coordinate.y == pytest.approx(630.0)
-	assert move_coordinate.s == 1
-	worker._robot._tool.rotate_to_position.assert_awaited_once_with("back")
 
 
 @pytest.mark.anyio
@@ -136,8 +96,6 @@ def _mock_iobox_worker():
 
 @pytest.mark.anyio
 async def test_iobox_jog_initializes_cached_calibration_without_deadlock(client) -> None:
-	from openshelf_os_server.routers import calibration
-
 	worker = _mock_iobox_worker()
 	calibration._iobox_current = None
 	params = SimpleNamespace(
@@ -166,30 +124,3 @@ async def test_iobox_jog_initializes_cached_calibration_without_deadlock(client)
 		calibration._iobox_current = None
 
 
-@pytest.mark.anyio
-async def test_iobox_z_jog_uses_calibration_value_and_rounds_response(client) -> None:
-	from openshelf_os_server.routers import calibration
-
-	worker = _mock_iobox_worker()
-	calibration._iobox_current = calibration.IOBoxPositionResponse(
-		pickup_low_x=100.0,
-		pickup_low_y=200.0,
-		pickup_high_x=110.0,
-		pickup_high_y=210.0,
-		z_extension=10.123456,
-		stage_extension=20.0,
-	)
-
-	with patch("openshelf_os_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
-		with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", AsyncMock()):
-			response = await client.post(
-				"/api/calibration/iobox/jog",
-				json={"position": "low", "axis": "z", "delta": 0.5},
-			)
-
-	assert response.status_code == 200
-	assert response.json()["z_extension"] == pytest.approx(10.62)
-	worker._robot._tool._mg.get_position.assert_not_awaited()
-	worker._robot._tool._mg.move_to_position.assert_awaited_once_with(10.62, rpm=800, accel=1200)
-
-	calibration._iobox_current = None

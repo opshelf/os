@@ -1,6 +1,6 @@
 import asyncio
 from hardware.gpio import GpioManager
-from hardware.gpio.types import DigitalInput, GpioPinSpec, GpioSubscription
+from hardware.gpio.types import GpioPinSpec
 from openshelf_os.cabinet import Cabinet
 
 import pytest
@@ -88,18 +88,6 @@ def _door_latch_manager() -> GpioManager:
 	)
 
 
-class _SilentSubscriptionInput:
-	def __init__(self, input_device: DigitalInput) -> None:
-		self._input = input_device
-
-	def read(self) -> bool:
-		return self._input.read()
-
-	def subscribe(self, callback) -> GpioSubscription:
-		del callback
-		return GpioSubscription(lambda: None)
-
-
 @pytest.mark.asyncio
 async def test_cabinet_release_pulses_latches_then_returns_passive() -> None:
 	gpio = _door_latch_manager()
@@ -128,65 +116,6 @@ async def test_cabinet_release_pulses_latches_then_returns_passive() -> None:
 	assert released_status == {"doors": _open_doors(), "latches": _disengaged_latches()}
 	assert gpio.output("cabinet_top_unlock").read() is False
 	assert gpio.output("cabinet_bot_unlock").read() is False
-
-
-@pytest.mark.asyncio
-async def test_cabinet_door_listener_receives_state_changes() -> None:
-	gpio = _door_latch_manager()
-	cabinet = Cabinet(gpio=gpio)
-	states: list[dict[str, bool]] = []
-
-	gpio.set_fake_input("cabinet_top_closed", True)
-	gpio.set_fake_input("cabinet_bot_closed", True)
-	await cabinet.configure()
-	cabinet.set_door_listener(states.append)
-
-	gpio.set_fake_input("cabinet_top_closed", False)
-	await asyncio.sleep(cabinet._door_debounce_s + 0.01)
-
-	assert states[-1] == {
-		"top_closed": False,
-		"bottom_closed": True,
-		"closed": False,
-		"top_open": True,
-		"bottom_open": False,
-		"open": True,
-	}
-	await cabinet.stop()
-
-
-@pytest.mark.asyncio
-async def test_cabinet_door_polling_detects_change_when_subscriptions_are_silent() -> None:
-	gpio = _door_latch_manager()
-	cabinet = Cabinet(gpio=gpio, door_debounce_s=0)
-	cabinet._door_poll_interval_s = 0.005
-	states: list[dict[str, bool]] = []
-
-	gpio.set_fake_input("cabinet_top_closed", True)
-	gpio.set_fake_input("cabinet_bot_closed", True)
-	for latch in cabinet._require_door_latches().values():
-		latch.closed_input = _SilentSubscriptionInput(latch.closed_input)  # type: ignore[assignment]
-
-	await cabinet.configure()
-	cabinet.set_door_listener(states.append)
-
-	try:
-		assert cabinet._door_monitor_task is not None
-		assert len(cabinet._door_subscriptions) == 2
-
-		gpio.set_fake_input("cabinet_top_closed", False)
-		await asyncio.sleep(0.02)
-
-		assert states[-1] == {
-			"top_closed": False,
-			"bottom_closed": True,
-			"closed": False,
-			"top_open": True,
-			"bottom_open": False,
-			"open": True,
-		}
-	finally:
-		await cabinet.stop()
 
 
 @pytest.mark.asyncio

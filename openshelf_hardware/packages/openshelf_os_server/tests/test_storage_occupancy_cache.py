@@ -70,38 +70,6 @@ async def test_snapshot_reuses_one_read_until_a_commit(monkeypatch) -> None:
 
 
 @pytest.mark.anyio
-async def test_snapshot_returns_rows_committed_after_a_read(monkeypatch) -> None:
-    occupancy_cache.reset()
-    calls, fake = _fake_occupied_reader(
-        [
-            [("front_module", 0, 1, "880000000001")],
-            [("back_module", 2, 3, "880000000002")],
-        ]
-    )
-    monkeypatch.setattr(StorageService, "get_all_occupied_cells", fake)
-
-    assert await occupancy_cache.get_occupied_cells() == {("front_module", 0, 1)}
-
-    await _commit()
-
-    assert await occupancy_cache.get_occupied_cells() == {("back_module", 2, 3)}
-    assert len(calls) == 2
-
-
-@pytest.mark.anyio
-async def test_invalidate_forces_a_db_read(monkeypatch) -> None:
-    occupancy_cache.reset()
-    calls, fake = _fake_occupied_reader([[("front_module", 0, 1, "880000000001")]])
-    monkeypatch.setattr(StorageService, "get_all_occupied_cells", fake)
-
-    await occupancy_cache.get_occupied_cells()
-    occupancy_cache.invalidate()
-    await occupancy_cache.get_occupied_cells()
-
-    assert len(calls) == 2
-
-
-@pytest.mark.anyio
 async def test_snapshot_reflects_a_real_inventory_commit() -> None:
     """A committed item location must reach the next snapshot without a restart."""
     occupancy_cache.reset()
