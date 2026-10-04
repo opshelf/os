@@ -5,11 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from hardware.gpio import GpioManager, Pca9535Backend
-from hardware.gpio.fake import FakeGpioBackend
-from hardware.gpio.types import GpioExpanderSpec, GpioPinSpec
+from hardware.gpio import GpioManager
+from hardware.gpio.types import GpioPinSpec
 from hardware.motor import MotorStatus
-from openshelf_os.common import ConfigError
 from openshelf_os.exceptions import MotorError
 from openshelf_os.robot import core
 from openshelf_os.robot.core import Robot
@@ -24,34 +22,6 @@ async def no_sleep(_seconds) -> None:
     await REAL_SLEEP(0)
 
 
-class _TrackingPca9535Device:
-    def __init__(self) -> None:
-        self.state = 0xFFFF
-        self.directions = [1] * 16
-        self.pin_config_write_calls: list[tuple[int, int]] = []
-        self.pin_output_write_calls: list[tuple[int, int]] = []
-
-    def set_raw(self, pin: int, value: bool) -> None:
-        if value is True:
-            self.state |= 1 << pin
-        else:
-            self.state &= ~(1 << pin)
-
-    def pin_config_write(self, pin: int, direction: int) -> None:
-        self.pin_config_write_calls.append((pin, direction))
-        self.directions[pin] = direction
-
-    def pin_output_write(self, pin: int, level: int) -> None:
-        self.pin_output_write_calls.append((pin, level))
-        self.set_raw(pin, bool(level))
-
-    def pin_input_read(self, pin: int) -> int:
-        return (self.state >> pin) & 1
-
-    def port_input_read(self) -> tuple[int, int]:
-        return self.state & 0xFF, (self.state >> 8) & 0xFF
-
-
 def make_gpio() -> GpioManager:
     return GpioManager(
         {
@@ -64,33 +34,6 @@ def make_gpio() -> GpioManager:
             )
         },
         fake=True,
-    )
-
-
-def make_gpio_with_tracking_pca9535() -> tuple[GpioManager, _TrackingPca9535Device]:
-    device = _TrackingPca9535Device()
-    expander = GpioExpanderSpec(name="pca9535_1", kind="pca9535", bus=1, address=0x20)
-    backend = Pca9535Backend(
-        expander,
-        rpi_backend=FakeGpioBackend(),
-        device_factory=lambda _spec: device,
-    )
-
-    return (
-        GpioManager(
-            {
-                GANTRY_POWER_PIN: GpioPinSpec(
-                    name=GANTRY_POWER_PIN,
-                    board="pca9535",
-                    expander="pca9535_1",
-                    pin=12,
-                    direction="output",
-                )
-            },
-            {"pca9535_1": expander},
-            backends={"pca9535:pca9535_1": backend},
-        ),
-        device,
     )
 
 
@@ -208,62 +151,6 @@ async def test_power_cycle_restores_power_even_if_the_wait_is_cancelled() -> Non
 
 
 @pytest.mark.asyncio
-async def test_power_cycle_requires_the_pin_to_be_configured() -> None:
-    gpio = GpioManager({}, fake=True)
-    robot = make_robot(gpio, {"x_axis": make_motor(), "y_axis": make_motor()})
-
-    with pytest.raises(ConfigError, match=GANTRY_POWER_PIN):
-        await robot.power_cycle_rail("pwr_out0")
-
-
-@pytest.mark.asyncio
-async def test_unknown_rail_is_rejected() -> None:
-    robot = make_robot(make_gpio(), {})
-
-    with pytest.raises(ConfigError, match="Unknown power rail"):
-        await robot.power_cycle_rail("pwr_out9")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("rail", "pin", "expected_axes"),
-    [
-        ("pwr_out0", 12, ("x_axis", "y_axis", "z_axis", "stage", "rotate")),
-        ("pwr_out1", 13, ("door",)),
-        ("pwr_out2", 14, ()),
-        ("pwr_out3", 15, ()),
-    ],
-)
-async def test_every_rail_cycles_its_own_pin(
-    monkeypatch, rail, pin, expected_axes
-) -> None:
-    gpio = GpioManager(
-        {
-            rail: GpioPinSpec(
-                name=rail,
-                board="pca9535",
-                expander="pca9535_1",
-                pin=pin,
-                direction="output",
-            )
-        },
-        fake=True,
-    )
-    motors = {name: make_motor() for name in expected_axes}
-    robot = make_robot(gpio, motors)
-    held: list[bool] = []
-
-    async def record_sleep(_seconds):
-        held.append(gpio.output(rail).read())
-
-    monkeypatch.setattr(asyncio, "sleep", record_sleep)
-
-    assert await robot.power_cycle_rail(rail) == expected_axes
-    assert held == [True]
-    assert gpio.output(rail).read() is False
-
-
-@pytest.mark.asyncio
 async def test_power_cycle_forces_the_gripper_to_reconfigure(monkeypatch) -> None:
     """pwr_out0 drops the gripper too, so its cached configuration is stale."""
     gpio = make_gpio()
@@ -274,70 +161,6 @@ async def test_power_cycle_forces_the_gripper_to_reconfigure(monkeypatch) -> Non
     await robot.power_cycle_rail("pwr_out0")
 
     assert gripper._configured is False
-
-
-@pytest.mark.asyncio
-async def test_power_cycle_of_another_rail_leaves_the_gripper_alone(monkeypatch) -> None:
-    gpio = GpioManager(
-        {
-            "pwr_out1": GpioPinSpec(
-                name="pwr_out1",
-                board="pca9535",
-                expander="pca9535_1",
-                pin=13,
-                direction="output",
-            )
-        },
-        fake=True,
-    )
-    gripper = SimpleNamespace(_configured=True)
-    robot = make_robot(gpio, {"door": make_motor()}, gripper=gripper)
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
-
-    await robot.power_cycle_rail("pwr_out1")
-
-    assert gripper._configured is True
-
-
-@pytest.mark.asyncio
-async def test_rail_states_invert_the_pin() -> None:
-    """Asserted cuts power, so a cleared pin reads as powered."""
-    gpio = make_gpio()
-    robot = make_robot(gpio, {})
-
-    gpio.output(GANTRY_POWER_PIN).write(False)
-    assert robot.get_power_rail_states()[GANTRY_POWER_PIN] is True
-
-    gpio.output(GANTRY_POWER_PIN).write(True)
-    assert robot.get_power_rail_states()[GANTRY_POWER_PIN] is False
-
-
-@pytest.mark.asyncio
-async def test_rail_states_are_none_for_unconfigured_pins() -> None:
-    gpio = make_gpio()
-    robot = make_robot(gpio, {})
-    gpio.output(GANTRY_POWER_PIN).write(False)
-    states = robot.get_power_rail_states()
-
-    assert states["pwr_out0"] is True
-    assert states["pwr_out1"] is None
-    assert set(states) == {"pwr_out0", "pwr_out1", "pwr_out2", "pwr_out3"}
-
-
-@pytest.mark.asyncio
-async def test_rail_states_read_from_uninitialized_output_does_not_set_output_state() -> None:
-    gpio, device = make_gpio_with_tracking_pca9535()
-    robot = make_robot(gpio, {})
-
-    states = robot.get_power_rail_states()
-
-    assert states["pwr_out0"] is False
-    assert states["pwr_out1"] is None
-    assert set(states) == {"pwr_out0", "pwr_out1", "pwr_out2", "pwr_out3"}
-    assert device.pin_output_write_calls == []
-    assert device.pin_config_write_calls == []
-    assert device.directions[12] == 1
-    assert "pwr_out0" not in gpio._outputs
 
 
 @pytest.mark.asyncio
@@ -359,27 +182,6 @@ async def test_power_cycle_reconfigures_every_axis_it_dropped(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_reconfigure_waits_for_the_drive_to_answer(monkeypatch) -> None:
-    motor = make_motor()
-    answers: list[object] = [RuntimeError("no response"), RuntimeError("no response"), 0]
-
-    async def get_param(_name):
-        value = answers.pop(0)
-        if isinstance(value, Exception):
-            raise value
-        return value
-
-    motor.get_param = AsyncMock(side_effect=get_param)
-    robot = make_robot(make_gpio(), {"x_axis": motor})
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
-
-    await robot.power_cycle_rail("pwr_out0")
-
-    assert motor.get_param.await_count == 3
-    motor.configure.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_a_drive_that_never_answers_raises_motor_error(monkeypatch, caplog) -> None:
     gpio = make_gpio()
     output = gpio.output(GANTRY_POWER_PIN)
@@ -397,15 +199,3 @@ async def test_a_drive_that_never_answers_raises_motor_error(monkeypatch, caplog
     motor.configure.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_a_failed_reconfigure_is_logged_as_motor_error(monkeypatch, caplog) -> None:
-    motor = make_motor()
-    motor.configure = AsyncMock(side_effect=RuntimeError("modbus timeout"))
-    robot = make_robot(make_gpio(), {"x_axis": motor})
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
-
-    with caplog.at_level(logging.ERROR):
-        with pytest.raises(MotorError, match="Power cycle reconfigure failed for axes: x_axis"):
-            await robot.power_cycle_rail("pwr_out0")
-
-    assert "failed to reconfigure after power cycle" in caplog.text

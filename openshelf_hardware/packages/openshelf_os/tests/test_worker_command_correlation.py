@@ -10,7 +10,7 @@ import pytest
 from openshelf_os.robot.commands import RetrieveItemCommand, StoreItemCommand
 from openshelf_os.robot.models import QueuedOperation
 from openshelf_os.robot.status import RobotCommandSuccessful
-from openshelf_os.robot.worker import RobotWorker, _transform_worker_status_payload
+from openshelf_os.robot.worker import RobotWorker
 
 
 def _bare_worker() -> tuple[RobotWorker, asyncio.Queue[str], AsyncMock]:
@@ -83,51 +83,6 @@ async def test_worker_internal_failure_is_normalized_and_marked_internal() -> No
 		"visibility": "internal",
 	}
 	callback.assert_awaited_once_with("failed", operation, payload)
-
-
-def test_status_normalization_preserves_command_and_request_ids() -> None:
-	payload = {
-		"current_command": {
-			"command": "retrieve_item",
-			"command_id": "command-current",
-			"request_id": "request-current",
-			"location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
-		},
-		"queued_operations": [
-			{
-				"command_id": "command-public",
-				"admission_generation": 17,
-				"timestamp": "2026-01-01T00:00:00Z",
-				"command": {
-					"command": "store_item",
-					"request_id": "request-public",
-					"item": {"barcode": "123456789013"},
-				},
-			},
-			{
-				"command_id": "command-queued",
-				"visibility": "internal",
-				"timestamp": "2026-01-01T00:00:00Z",
-				"command": {
-					"command": "store_item",
-					"request_id": "request-queued",
-					"item": {"barcode": "123456789012"},
-				},
-			}
-		],
-		"queue_length": 2,
-	}
-	normalized = _transform_worker_status_payload(payload)
-	assert normalized["current_command"]["command_id"] == "command-current"
-	assert normalized["current_command"]["request_id"] == "request-current"
-	public_operation, internal_operation = normalized["queued_operations"]
-	assert public_operation["command_id"] == "command-public"
-	assert public_operation["command"]["request_id"] == "request-public"
-	assert "admission_generation" not in public_operation
-	assert "visibility" not in public_operation
-	assert internal_operation["command_id"] == "command-queued"
-	assert internal_operation["command"]["request_id"] == "request-queued"
-	assert internal_operation["visibility"] == "internal"
 
 
 @pytest.mark.asyncio

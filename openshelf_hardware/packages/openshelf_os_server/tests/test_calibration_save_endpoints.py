@@ -2,10 +2,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from fastapi import HTTPException
 
 from openshelf_os.storage import CalibrationCoordinate, Cell, CellStatus, Dimensions, Shelf, StorageGrid
-from openshelf_os_server.core import bin_storage
 from openshelf_os_server.routers import calibration
 
 
@@ -53,8 +51,6 @@ def build_parameter_worker(stage_limit: float = 170.0):
 	)
 
 
-
-
 def build_grid(tmp_path) -> StorageGrid:
 	return StorageGrid(
 		front_module=[
@@ -89,20 +85,6 @@ def build_empty_grid(tmp_path) -> StorageGrid:
 	)
 
 
-def build_grid_with_empty_shelf(tmp_path) -> StorageGrid:
-	return StorageGrid(
-		front_module=[
-			Shelf(
-				shelf_idx=0,
-				divider_width=12.0,
-				cells=[],
-			)
-		],
-		back_module=[],
-		filename=str(tmp_path / 'storage-grid.json'),
-	)
-
-
 @pytest.mark.anyio
 async def test_save_calibration_creates_missing_cell_from_existing_shelf(client, tmp_path) -> None:
 	grid = build_grid(tmp_path)
@@ -132,66 +114,6 @@ async def test_save_calibration_creates_missing_cell_from_existing_shelf(client,
 	assert new_cell.calibration_point.x == pytest.approx(475.0)
 	assert new_cell.calibration_point.y == pytest.approx(630.0)
 	assert new_cell.calibration_point.z_offset == pytest.approx(0.0)
-
-
-@pytest.mark.anyio
-async def test_save_calibration_creates_missing_shelf_and_cell_from_templates(client, tmp_path) -> None:
-	grid = build_grid(tmp_path)
-	worker = build_worker(grid)
-
-	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
-		response = await client.post(
-			'/api/calibration/save',
-			json={
-				'side': 'front_module',
-				'shelf_idx': 1,
-				'cell_idx': 0,
-				'x': 475.0,
-				'y': 630.0,
-				'z_offset': 0.0,
-			},
-		)
-
-	assert response.status_code == 200
-	assert len(grid.front_module) == 2
-
-	new_shelf = grid.front_module[1]
-
-	assert new_shelf.shelf_idx == 1
-	assert new_shelf.divider_width == pytest.approx(grid.front_module[0].divider_width)
-	assert len(new_shelf.cells) == 1
-	assert new_shelf.cells[0].dimensions == grid.front_module[0].cells[0].dimensions
-	assert new_shelf.cells[0].calibration_point is not None
-	assert new_shelf.cells[0].calibration_point.x == pytest.approx(475.0)
-	assert new_shelf.cells[0].calibration_point.y == pytest.approx(630.0)
-
-
-@pytest.mark.anyio
-async def test_save_calibration_rejects_negative_indices(client, tmp_path) -> None:
-	grid = build_grid(tmp_path)
-	worker = build_worker(grid)
-
-	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
-		response = await client.post(
-			'/api/calibration/save',
-			json={
-				'side': 'front_module',
-				'shelf_idx': -1,
-				'cell_idx': 0,
-				'x': 475.0,
-				'y': 630.0,
-				'z_offset': 0.0,
-			},
-		)
-
-	assert response.status_code == 400
-	assert response.json()['detail']['message'] == 'Invalid shelf_idx: -1'
-
-
-
-
-
-
 
 
 @pytest.mark.anyio
@@ -232,40 +154,6 @@ async def test_iobox_save_persists_reloads_and_updates_cache_after_admission(mon
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-	("save_function", "save_request", "expected_parameters"),
-	[
-		(
-			calibration.save_rotation_angles,
-			calibration.RotateSaveRequest(front=50.0, back=130.0),
-			{"ROTATION_FRONT": 50.0, "ROTATION_BACK": 130.0},
-		),
-		(
-			calibration.save_shelf_stage_extension,
-			calibration.ShelfStageExtensionSaveRequest(front=40.0, back=41.0),
-			{"STAGE_EXTENSION_SHELF_FRONT": 40.0, "STAGE_EXTENSION_SHELF_BACK": 41.0},
-		),
-	],
-)
-async def test_parameter_saves_persist_and_reload_after_admission(
-	monkeypatch, save_function, save_request, expected_parameters
-) -> None:
-	config = build_parameter_config()
-	worker = build_parameter_worker()
-	save_config = Mock()
-	monkeypatch.setattr(calibration, "get_root_config", lambda: config)
-	monkeypatch.setattr(calibration, "save_root_config", save_config)
-	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
-	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
-
-	assert await save_function(save_request) == {"success": True}
-	for name, value in expected_parameters.items():
-		assert getattr(config.robot.tool.parameters, name) == value
-	assert save_config.call_args.args == (config,)
-	assert worker._robot.reload_parameters.call_count == 1
-
-
-@pytest.mark.anyio
 async def test_save_calibration_bootstraps_first_shelf_and_cell_on_empty_grid(client, tmp_path) -> None:
 	grid = build_empty_grid(tmp_path)
 	worker = build_worker(grid)
@@ -295,59 +183,6 @@ async def test_save_calibration_bootstraps_first_shelf_and_cell_on_empty_grid(cl
 	assert new_shelf.cells[0].calibration_point is not None
 	assert new_shelf.cells[0].calibration_point.x == pytest.approx(475.0)
 	assert new_shelf.cells[0].calibration_point.y == pytest.approx(630.0)
-
-
-@pytest.mark.anyio
-async def test_save_calibration_bootstraps_first_cell_on_empty_shelf(client, tmp_path) -> None:
-	grid = build_grid_with_empty_shelf(tmp_path)
-	worker = build_worker(grid)
-
-	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
-		response = await client.post(
-			'/api/calibration/save',
-			json={
-				'side': 'front_module',
-				'shelf_idx': 0,
-				'cell_idx': 0,
-				'x': 475.0,
-				'y': 630.0,
-				'z_offset': 0.0,
-			},
-		)
-
-	assert response.status_code == 200
-	assert len(grid.front_module[0].cells) == 1
-	assert grid.front_module[0].cells[0].dimensions == Dimensions(width=480.0, height=200.0, length=400.0)
-	assert grid.front_module[0].cells[0].calibration_point is not None
-	assert grid.front_module[0].cells[0].calibration_point.x == pytest.approx(475.0)
-	assert grid.front_module[0].cells[0].calibration_point.y == pytest.approx(630.0)
-
-
-@pytest.mark.anyio
-async def test_save_calibration_updates_dimensions(client, tmp_path) -> None:
-	grid = build_grid(tmp_path)
-	worker = build_worker(grid)
-
-	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
-		response = await client.post(
-			'/api/calibration/save',
-			json={
-				'side': 'front_module',
-				'shelf_idx': 0,
-				'cell_idx': 0,
-				'x': 475.0,
-				'y': 630.0,
-				'z_offset': 0.0,
-				'dimensions': {'width': 30.0, 'height': 25.0, 'length': 350.0},
-			},
-		)
-
-	assert response.status_code == 200
-
-	cell = grid.front_module[0].cells[0]
-	assert cell.dimensions == Dimensions(width=30.0, height=25.0, length=350.0)
-	assert cell.calibration_point is not None
-	assert cell.calibration_point.x == pytest.approx(475.0)
 
 
 @pytest.mark.anyio

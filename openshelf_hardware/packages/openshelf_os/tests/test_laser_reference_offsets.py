@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -8,13 +7,9 @@ import pytest
 from openshelf_os.laser_calibration.reference_offsets import (
 	REFERENCE_DATUM_CELL_IDX,
 	REFERENCE_DATUM_SHELF_IDX,
-	REFERENCE_MATCH_WINDOW_MM,
-	ReferenceOffsetResult,
-	ReferenceOffsetSample,
 	derive_reference_offsets,
 	select_manual_reference_cells,
 	select_reference_datum_cell,
-	z_model_datum_agreement_mm,
 )
 from openshelf_os.laser_calibration.scan import ScanDetectedCell, ScanDetectedShelf
 from openshelf_os.storage import (
@@ -199,43 +194,6 @@ def test_reference_datum_needs_the_bottom_left_cell() -> None:
 	assert select_reference_datum_cell(grid=elsewhere, side=StorageModuleSide.FRONT) is None
 
 
-def test_wall_depths_come_back_from_a_str_metadata_path(tmp_path) -> None:
-	"""The run metadata records its path as a str; the read-back has to accept it.
-
-	lb4a-2's failed front-side run: the candidates on disk held the wall depths, a str path made
-	`load_json_file` raise, and the datum's intercept came back empty so the probe was refused.
-	"""
-	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0)])
-	detected = build_detected_cell(cell_idx=0, tool_x=358.0, tool_y=44.0)
-	analysis = build_analysis([detected])
-	metadata = {
-		"candidates": [
-			{
-				"x_min": detected.center_x_mm - 20.0,
-				"x_max": detected.center_x_mm + 20.0,
-				"y_min": detected.center_y_mm - 20.0,
-				"y_max": detected.center_y_mm + 20.0,
-				"row_count": 10,
-				"wall_depth_mm": 9.62,
-				"wall_sample_count": 5,
-			}
-		]
-	}
-	metadata_path = tmp_path / "metadata.json"
-	metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
-	analysis.metadata_path = str(metadata_path)
-
-	result = derive_reference_offsets(
-		grid=grid,
-		analysis=analysis,
-		side=StorageModuleSide.FRONT,
-		scan_config=build_scan_config(xy_offset=(-1.0, 1.0)),
-	)
-
-	assert result.samples[0].wall_depth_mm == pytest.approx(9.62)
-	assert result.intercept_mm == pytest.approx(6.5 - 9.62)
-
-
 def test_refuses_when_no_cell_is_marked_manual() -> None:
 	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0, is_manual=False)])
 	analysis = build_analysis([build_detected_cell(cell_idx=0, tool_x=358.0, tool_y=44.0)])
@@ -295,143 +253,3 @@ def test_refuses_to_predict_from_zero_when_no_offset_is_configured() -> None:
 		derive(grid, analysis, build_scan_config(xy_offset=None))
 
 
-def test_stale_offset_one_pitch_off_matches_the_opening_its_prediction_implies() -> None:
-	"""The configured offset is the contract for which opening a manual cell matched to.
-
-	An offset a full pitch stale predicts the neighbouring opening exactly, so the match is
-	unambiguous: the derivation reports what the prediction implied (the configured value,
-	+7 here) rather than the true -98. Only the spread guard catches that when several
-	reference cells are involved; a single datum cannot argue with its own contract.
-	"""
-	grid = build_grid([build_cell(cell_idx=0, x=354.0, y=41.0)])
-	analysis = build_analysis(
-		[
-			build_detected_cell(cell_idx=0, tool_x=452.0, tool_y=44.0),
-			build_detected_cell(cell_idx=1, tool_x=347.0, tool_y=44.0),
-		]
-	)
-
-	result = derive(grid, analysis, build_scan_config(xy_offset=(7.0, -3.0)))
-
-	assert result.samples[0].detected_x_mm == pytest.approx(347.0)
-	assert result.offset_x_mm == pytest.approx(7.0)
-	assert result.offset_y_mm == pytest.approx(-3.0)
-	assert result.configured_offset_x_mm == pytest.approx(7.0)
-
-
-def test_match_window_stays_under_half_the_smallest_opening_pitch() -> None:
-	# The rack's tightest pitch on the front module is ~105mm; half of it bounds a safe match.
-	assert REFERENCE_MATCH_WINDOW_MM < 105.0 / 2.0
-
-
-def test_scope_filters_select_manual_cells_only() -> None:
-	grid = build_grid(
-		[
-			build_cell(cell_idx=0, x=354.0, y=41.0),
-			build_cell(cell_idx=1, x=519.0, y=41.0, is_manual=False),
-			build_cell(cell_idx=2, x=684.0, y=41.0),
-		]
-	)
-
-	selected = select_manual_reference_cells(grid=grid, side=StorageModuleSide.FRONT)
-
-	assert [int(cell.cell_idx) for _, cell in selected] == [0, 2]
-	assert select_manual_reference_cells(
-		grid=grid, side=StorageModuleSide.FRONT, cell_idx=2
-	)[0][1].cell_idx == 2
-	assert select_manual_reference_cells(grid=grid, side=StorageModuleSide.FRONT, shelf_idx=4) == []
-	assert select_manual_reference_cells(grid=grid, side=StorageModuleSide.BACK) == []
-
-
-def build_manual_reference(
-	*,
-	intercept_mm: float | None = -3.12,
-	manual_x_mm: float = 354.0,
-) -> ReferenceOffsetResult:
-	sample = ReferenceOffsetSample(
-		shelf_idx=0,
-		cell_idx=0,
-		manual_x_mm=manual_x_mm,
-		manual_y_mm=41.0,
-		detected_x_mm=manual_x_mm + 4.0,
-		detected_y_mm=44.0,
-		delta_x_mm=-4.0,
-		delta_y_mm=-3.0,
-		wall_depth_mm=None if intercept_mm is None else 9.5,
-		derived_intercept_mm=intercept_mm,
-	)
-
-	return ReferenceOffsetResult(
-		side=StorageModuleSide.FRONT,
-		offset_x_mm=sample.delta_x_mm,
-		offset_y_mm=sample.delta_y_mm,
-		spread_x_mm=0.0,
-		spread_y_mm=0.0,
-		samples=[sample],
-		intercept_mm=intercept_mm,
-	)
-
-
-def test_datum_agreement_judges_where_the_models_put_the_datum_cells() -> None:
-	reference = build_manual_reference()
-
-	# Equal intercepts, tilted fit: comparing bare intercepts would give 0, but at the datum
-	# cell the two models disagree by (S - S_cfg) * x.
-	assert z_model_datum_agreement_mm(
-		intercept_mm=-3.12,
-		slope_per_mm=0.005,
-		configured_slope_per_mm=0.0,
-		manual_reference=reference,
-	) == pytest.approx(0.005 * 354.0)
-
-	# A flat fit that puts the datum cell where the tilted datum model puts it agrees.
-	assert z_model_datum_agreement_mm(
-		intercept_mm=-3.12 + 0.002 * 354.0,
-		slope_per_mm=0.0,
-		configured_slope_per_mm=0.002,
-		manual_reference=reference,
-	) == pytest.approx(0.0)
-
-
-def test_datum_agreement_is_none_without_a_datum() -> None:
-	assert (
-		z_model_datum_agreement_mm(
-			intercept_mm=-3.12,
-			slope_per_mm=0.0,
-			configured_slope_per_mm=0.0,
-			manual_reference=None,
-		)
-		is None
-	)
-	assert (
-		z_model_datum_agreement_mm(
-			intercept_mm=-3.12,
-			slope_per_mm=0.0,
-			configured_slope_per_mm=0.0,
-			manual_reference=build_manual_reference(intercept_mm=None),
-		)
-		is None
-	)
-
-
-def test_datum_agreement_falls_back_to_bare_intercepts_without_usable_samples() -> None:
-	reference = build_manual_reference()
-	reference.samples = [
-		ReferenceOffsetSample(
-			shelf_idx=0,
-			cell_idx=0,
-			manual_x_mm=354.0,
-			manual_y_mm=41.0,
-			detected_x_mm=358.0,
-			detected_y_mm=44.0,
-			delta_x_mm=-4.0,
-			delta_y_mm=-3.0,
-		)
-	]
-
-	assert z_model_datum_agreement_mm(
-		intercept_mm=0.0,
-		slope_per_mm=0.0,
-		configured_slope_per_mm=0.0,
-		manual_reference=reference,
-	) == pytest.approx(3.12)

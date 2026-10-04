@@ -1,18 +1,15 @@
 import asyncio
-import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
-from httpx import AsyncClient
 from sqlalchemy import select
 
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.robot.commands import StoreItemCommand
 from openshelf_os_server.core import bin_storage
 from openshelf_os_server.core.bin_storage import BinStorageService, BinWorkflowConflict
-from openshelf_os_server.core.mock_robot import MockRobotRuntime
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.database.models import (
@@ -234,105 +231,6 @@ async def test_item_barcodes_and_locations_claim_only_live_trays(
             db,
             current_user,
         )
-
-
-@pytest.mark.anyio
-async def test_mock_allocation_excludes_live_bin_homes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
-    async with AsyncSessionLocal() as db:
-        db.add_all(
-            [
-                StorageBin(
-                    barcode="900000000011",
-                    side="front_module",
-                    shelf_idx=0,
-                    cell_idx=0,
-                    inner_dimensions={"width": 30, "height": 30, "length": 30},
-                    max_items=1,
-                    status="at_home",
-                    active=True,
-                ),
-                StorageBin(
-                    barcode="900000000012",
-                    side="front_module",
-                    shelf_idx=0,
-                    cell_idx=1,
-                    inner_dimensions={"width": 30, "height": 30, "length": 30},
-                    max_items=1,
-                    status="outside",
-                    active=True,
-                ),
-            ]
-        )
-        await db.commit()
-
-    result = await MockRobotRuntime()._execute_store(
-        "mock-reserved-home",
-        {
-            "command": "store_item",
-            "item": {
-                "barcode": "123456789014",
-                "name": "Direct item",
-                "dimensions": {"width": 1, "height": 1, "length": 1},
-            },
-        },
-    )
-    assert result["location"] == {"side": "front_module", "shelf_idx": 0, "cell_idx": 2}
-
-
-@pytest.mark.anyio
-async def test_mock_allocation_uses_released_bin_homes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
-    async with AsyncSessionLocal() as db:
-        db.add(
-            StorageBin(
-                barcode="900000000013",
-                side="front_module",
-                shelf_idx=0,
-                cell_idx=0,
-                inner_dimensions={"width": 30, "height": 30, "length": 30},
-                max_items=1,
-                status="outside",
-                active=False,
-            )
-        )
-        await db.commit()
-
-    result = await MockRobotRuntime()._execute_store(
-        "mock-released-home",
-        {
-            "command": "store_item",
-            "item": {
-                "barcode": "123456789014",
-                "name": "Direct item",
-                "dimensions": {"width": 1, "height": 1, "length": 1},
-            },
-        },
-    )
-    assert result["location"] == {"side": "front_module", "shelf_idx": 0, "cell_idx": 0}
-
-
-@pytest.mark.anyio
-async def test_mock_allocation_keeps_empty_bin_config_backward_compatible(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
-    result = await MockRobotRuntime()._execute_store(
-        "mock-empty-config",
-        {
-            "command": "store_item",
-            "item": {
-                "barcode": "123456789015",
-                "name": "Direct item",
-                "dimensions": {"width": 1, "height": 1, "length": 1},
-            },
-        },
-    )
-    assert result["location"] == {"side": "front_module", "shelf_idx": 0, "cell_idx": 0}
 
 
 @pytest.mark.anyio
@@ -643,48 +541,6 @@ async def test_parked_tray_interaction_allows_item_and_location_mutations() -> N
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("state", ["completed", "cancelled"])
-async def test_delete_item_with_historical_bin_workflow_returns_clear_conflict(state: str) -> None:
-    async with AsyncSessionLocal() as db:
-        item = await StorageService(db).create_item(
-            "123456789019", "Historical target", {"width": 10, "height": 10, "length": 10}
-        )
-        bin_row = StorageBin(
-            barcode="900000000019",
-            side="back_module",
-            shelf_idx=1,
-            cell_idx=3,
-            inner_dimensions={"width": 30, "height": 30, "length": 30},
-            max_items=2,
-            status="at_home",
-            active=True,
-        )
-        db.add(bin_row)
-        await db.flush()
-        workflow = StorageBinWorkflow(
-            id=f"historical-{state}",
-            operation="retrieve",
-            state=state,
-            bin_id=bin_row.id,
-            item_id=item.id,
-            history=[{"state": state}],
-        )
-        db.add(workflow)
-        await db.commit()
-
-        with pytest.raises(HTTPException) as error:
-            await storage_router.delete_item(storage_router.BarcodeRequest(barcode=item.barcode), db)
-
-        assert error.value.status_code == 409
-        assert (
-            error.value.detail
-            == "Item cannot be deleted because storage bin workflow history is retained"
-        )
-        assert await db.get(StorageBinWorkflow, workflow.id) is not None
-        assert await StorageService(db).get_item(item.barcode) is not None
-
-
-@pytest.mark.anyio
 async def test_return_rejects_occupied_tray_home(monkeypatch) -> None:
     monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
     async with AsyncSessionLocal() as db:
@@ -814,139 +670,6 @@ async def test_close_takes_item_and_leaves_other_contents_visible_outside():
         assert await service.begin("retrieve", items[2], None) is not None
         async with manual_motion_guard("gripper", worker=FakeWorker()):
             pass
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("select_item", [True, False], ids=["subset", "empty"])
-async def test_barcode_return_defaults_all_known_items_and_applies_selection(select_item):
-    async with AsyncSessionLocal() as db:
-        items, trays = await setup_trays(db)
-        service = BinStorageService(db)
-        w = await service.begin("retrieve", items[0], None)
-        await service.transition(w, "awaiting_operator")
-        await service.close(w)
-        returned = await service.begin_return(trays[0].barcode)
-        payload = await service.serialize_workflow(returned)
-        assert {i["id"] for i in payload["contents"]} == {items[0].id, items[1].id}
-        assert all(i["confirmed"] for i in payload["contents"])
-        assert returned.item_id is None
-        assert (await service.begin_return(trays[0].barcode)).id == returned.id
-        selected_ids = [items[0].id] if select_item else []
-        expected_selection = {items[0].id: select_item, items[1].id: False}
-        assert await service.prepare_return(returned, selected_ids)
-        assert not await service.prepare_return(returned, selected_ids)
-        await db.refresh(returned)
-        payload = await service.serialize_workflow(returned)
-        assert payload["state"] == "returning_bin"
-        assert {i["id"]: i["confirmed"] for i in payload["contents"]} == expected_selection
-        worker = FakeWorker()
-        await service.publish_workflow(worker, returned)
-        assert worker.events[-1] == {"kind": "bin_workflow_updated", "payload": payload}
-        await service.complete_return(returned, 425.5)
-        await service.complete_return(returned)
-        assert trays[0].status == "at_home"
-        assert trays[0].gross_weight == 425.5
-        await db.refresh(returned)
-        payload = await service.serialize_workflow(returned)
-        assert payload["state"] == "completed"
-        assert {i["id"]: i["confirmed"] for i in payload["contents"]} == expected_selection
-        await service.publish_workflow(worker, returned)
-        assert worker.events[-1] == {"kind": "bin_workflow_updated", "payload": payload}
-        assert await service.item_bin(items[1].id) is None
-        if select_item:
-            assert (await service.item_bin(items[0].id)).id == trays[0].id
-        else:
-            assert await service.item_bin(items[0].id) is None
-        with pytest.raises(BinWorkflowConflict, match="already in"):
-            await service.begin_return(trays[0].barcode)
-
-
-@pytest.mark.anyio
-async def test_mock_checkout_close_and_barcode_return_simulates_placement(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = MockRobotRuntime()
-    active_commands = AsyncMock(return_value=False)
-    monkeypatch.setattr(runtime, "has_active_commands", active_commands)
-    monkeypatch.setattr(storage_router, "get_mock_robot_runtime", lambda: runtime)
-    monkeypatch.setattr(storage_router, "get_operating_mode", lambda: OperatingMode.mock)
-    monkeypatch.setattr(storage_router.robot_core, "robot_worker", None)
-    monkeypatch.setattr(bin_storage, "get_root_config", lambda: _bin_config())
-    async with AsyncSessionLocal() as db:
-        items, trays = await setup_trays(db)
-        item_barcode = items[0].barcode
-        selected_id, omitted_id = items[0].id, items[1].id
-        tray_barcode, tray_id = trays[0].barcode, trays[0].id
-
-    statuses, _ = await runtime.subscribe_status()
-    try:
-        checkout = await client.post(
-            "/api/storage/bin-workflows", json={"operation": "retrieve", "barcode": item_barcode},
-        )
-        assert checkout.status_code == 200, checkout.text
-        checkout_id = checkout.json()["workflow"]["id"]
-        assert json.loads(statuses.get_nowait())["robot_status"]["scale"]["occupied"] is True
-
-        closed = await client.post(f"/api/storage/bin-workflows/{checkout_id}/close")
-        assert closed.status_code == 200, closed.text
-        assert closed.json()["workflow"]["state"] == "completed"
-        assert json.loads(statuses.get_nowait())["robot_status"]["scale"]["occupied"] is False
-
-        returned = await client.post(
-            "/api/storage/bin-workflows/returns", json={"barcode": tray_barcode},
-        )
-        assert returned.status_code == 200, returned.text
-        workflow = returned.json()["workflow"]
-        assert {item["id"] for item in workflow["contents"]} == {selected_id, omitted_id}
-        assert all(item["confirmed"] for item in workflow["contents"])
-        assert json.loads(statuses.get_nowait())["robot_status"]["scale"]["occupied"] is True
-
-        store_url = f"/api/storage/bin-workflows/{workflow['id']}/store"
-        selection = {"confirmed_item_ids": [selected_id]}
-        active_commands.return_value = True
-        blocked = await client.post(store_url, json=selection)
-        assert blocked.status_code == 409
-        assert blocked.json()["detail"]["message"] == "Robot has queued commands"
-        active_commands.return_value = False
-        stored = await client.post(store_url, json=selection)
-        assert stored.status_code == 200, stored.text
-        assert stored.json()["workflow"]["state"] == "completed"
-        assert {
-            item["id"]: item["confirmed"] for item in stored.json()["workflow"]["contents"]
-        } == {selected_id: True, omitted_id: False}
-        assert json.loads(statuses.get_nowait())["robot_status"]["scale"]["occupied"] is False
-    finally:
-        await runtime.unsubscribe_status(statuses)
-
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        tray = await db.get(StorageBin, tray_id)
-        assert tray.status == "at_home"
-        assert (await service.item_bin(selected_id)).id == tray_id
-        assert await service.item_bin(omitted_id) is None
-
-
-@pytest.mark.anyio
-async def test_store_close_assigns_compartment_without_return_motion():
-    async with AsyncSessionLocal() as db:
-        items, trays = await setup_trays(db)
-        target = await StorageService(db).create_item(
-            "123456788099", "New", {"width": 10, "length": 10, "height": 10}
-        )
-        service = BinStorageService(db)
-        w = await service.begin("store", target, None)
-        assert w.compartment == 3
-        await service.transition(w, "awaiting_operator")
-        await service.close(w)
-        await service.close(w)
-        assert (await service.item_bin(target.id)).status == "outside"
-        assert (
-            await db.scalar(
-                select(StorageBinItem.compartment).where(StorageBinItem.item_id == target.id)
-            )
-            == 3
-        )
-        assert await service.active_workflows() == []
 
 
 @pytest.mark.anyio

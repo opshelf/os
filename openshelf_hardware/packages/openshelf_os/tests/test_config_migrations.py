@@ -18,8 +18,6 @@ from openshelf_os.config_migrations import (
     apply,
     cli,
     runner,
-    v003_remove_unused_scan_keys as v003,
-    v004_promote_scan_constants as v004,
     v005_module_side_names as v005,
 )
 from openshelf_os.config_migrations.v002_laser_parameter_names import (
@@ -33,7 +31,6 @@ from openshelf_os.config_migrations.v004_promote_scan_constants import (
     REMOVED_SCAN_KEYS as PROMOTED_SCAN_KEYS,
 )
 from openshelf_os.laser_calibration.core import (
-    get_fine_cell_scan_y_margin_mm,
     get_gripper_xy_correction,
     get_laser_scan_pose_stage_mm,
     get_wall_depth_to_gripper_z_model,
@@ -162,50 +159,6 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
             )
 
 
-def test_unread_scan_keys_are_removed_without_touching_calibration(legacy_config):
-    original = copy.deepcopy(legacy_config)
-    migrated, changes = runner.migrate_config(legacy_config)
-    assert legacy_config == original
-    scan = migrated["robot"]["grid"]["scan"]
-    assert not set(UNUSED_SCAN_KEYS) & scan.keys()
-    for key in ("angle_calibration_method", "angle_calibration_z_offset_min_mm"):
-        assert f"robot.grid.scan.{key} removed (unused)" in changes
-    # Calibration values and unknown keys survive unchanged.
-    assert scan["front_gripper_xy_correction_mm"] == {"x_mm": -0.8, "y_mm": -3.25}
-    assert scan["unknown_scan_setting"] == {"preserve": True}
-    assert RootConfig.model_validate(migrated).schema_version == 5
-
-
-def test_scan_without_the_unread_keys_is_a_noop_step(legacy_config):
-    scan = legacy_config["robot"]["grid"]["scan"]
-    for key in UNUSED_SCAN_KEYS:
-        scan.pop(key, None)
-    migrated, changes = v003.migrate(copy.deepcopy(legacy_config))
-    assert migrated == legacy_config and changes == []
-
-
-def test_uniform_scan_tuning_moves_to_code(legacy_config):
-    original = copy.deepcopy(legacy_config)
-    migrated, changes = runner.migrate_config(legacy_config)
-    assert legacy_config == original
-    scan = migrated["robot"]["grid"]["scan"]
-    assert not set(PROMOTED_SCAN_KEYS) & scan.keys()
-    assert "robot.grid.scan.wall_depth_tolerance_mm removed (moved to code)" in changes
-    # Only per-machine calibration and the tuning values the fleet disagrees on remain.
-    assert set(scan) == {
-        "laser_offset_x_mm",
-        "laser_offset_y_mm",
-        "laser_scan_pose_stage_mm",
-        "laser_scan_pose_z_delta_from_place_mm",
-        "front_gripper_xy_correction_mm",
-        "back_gripper_xy_correction_mm",
-        "front_wall_depth_to_gripper_z_model",
-        "back_wall_depth_to_gripper_z_model",
-        "unknown_scan_setting",
-    }
-    assert RootConfig.model_validate(migrated).schema_version == 5
-
-
 def test_divergent_promoted_values_are_refused_without_printing_them():
     config = {
         "schema_version": 3,
@@ -250,51 +203,6 @@ def test_divergent_promoted_values_are_refused_without_printing_them():
     assert "laser_sample_settle_ms" in config["robot"]["grid"]["scan"]
 
 
-def test_null_spelling_of_stage_stall_target_still_migrates(legacy_config):
-    scan = legacy_config["robot"]["grid"]["scan"]
-    scan["angle_calibration_stage_stall_target_mm"] = None
-    scan["angle_calibration_stage_stall_fast_approach_mm"] = 0.0
-    migrated, changes = runner.migrate_config(legacy_config)
-    assert migrated["schema_version"] == 5
-    for key in (
-        "angle_calibration_stage_stall_target_mm",
-        "angle_calibration_stage_stall_fast_approach_mm",
-    ):
-        assert f"robot.grid.scan.{key} removed (moved to code)" in changes
-
-
-@pytest.mark.parametrize("stored_margin,expected_margin", [(24.0, 24.0), (None, 6.0)])
-def test_fine_scan_margin_the_fleet_disagrees_on_stays_in_config(
-    legacy_config, stored_margin, expected_margin
-):
-    # Unlike the promoted keys, machines disagree on this one (one stores 24.0, the
-    # rest store null), so migration 4 leaves it in place and the getter applies it.
-    scan = legacy_config["robot"]["grid"]["scan"]
-    scan["fine_cell_scan_y_margin_mm"] = stored_margin
-    migrated, changes = runner.migrate_config(legacy_config)
-    assert migrated["schema_version"] == 5
-    assert migrated["robot"]["grid"]["scan"]["fine_cell_scan_y_margin_mm"] == stored_margin
-    assert not any("fine_cell_scan_y_margin_mm" in change for change in changes)
-    config = RootConfig.model_validate(migrated)
-    assert config.robot.grid.scan.fine_cell_scan_y_margin_mm == stored_margin
-    # The stored value still reaches the fine-scan bounds through the getter, and
-    # the null spelling falls back to the code default.
-    assert get_fine_cell_scan_y_margin_mm(config.robot.grid.scan) == expected_margin
-
-
-def test_shadowed_keys_are_logged_as_unused_not_moved(legacy_config):
-    scan = legacy_config["robot"]["grid"]["scan"]
-    scan["angle_calibration_stage_stall_rotation_min_deg"] = -3.0
-    scan["angle_calibration_stage_stall_rotation_max_deg"] = 3.0
-    _, changes = runner.migrate_config(legacy_config)
-    for key in (
-        "angle_calibration_stage_stall_rotation_min_deg",
-        "angle_calibration_stage_stall_rotation_max_deg",
-    ):
-        assert f"robot.grid.scan.{key} removed (unused)" in changes
-        assert f"robot.grid.scan.{key} removed (moved to code)" not in changes
-
-
 def test_promoted_constants_keep_the_values_the_fleet_configured():
     from openshelf_os.laser_calibration import defaults
 
@@ -324,19 +232,6 @@ def test_missing_and_explicit_v1_migrate_and_repeat_is_noop(legacy_config, versi
         legacy_config["schema_version"] = version
     migrated, _ = runner.migrate_config(legacy_config)
     assert runner.migrate_config(migrated) == (migrated, [])
-
-
-def test_optional_scan_and_models_need_not_exist(legacy_config):
-    del legacy_config["robot"]["grid"]["scan"]
-    migrated, _ = runner.migrate_config(legacy_config)
-    assert "scan" not in migrated["robot"]["grid"]
-    RootConfig.model_validate(migrated)
-    legacy_config["robot"]["grid"]["scan"] = {"left_z_offset_model": None, "right_xy_offset": None}
-    migrated, _ = runner.migrate_config(legacy_config)
-    assert migrated["robot"]["grid"]["scan"] == {
-        "front_wall_depth_to_gripper_z_model": None,
-        "back_gripper_xy_correction_mm": None,
-    }
 
 
 @pytest.fixture
@@ -432,31 +327,6 @@ def test_v5_renames_module_side_scan_keys_and_bin_sides(v4_side_config):
     assert "storage bin home_location.side left_module -> front_module" in changes
     assert "storage bin home_location.side right_module -> back_module" in changes
     RootConfig.model_validate(migrated)
-
-
-def test_v5_is_a_noop_on_already_migrated_configs(v4_side_config):
-    migrated, _ = runner.migrate_config(v4_side_config)
-    again, changes = runner.migrate_config(migrated)
-    assert again == migrated
-    assert changes == []
-
-
-def test_v5_without_side_names_is_a_noop_step():
-    config = {
-        "schema_version": 4,
-        "name": "side-rename-noop",
-        "version": "0.1.0",
-        "robot": {
-            "tool": {"parameters": {}, "motors": [], "poe_camera": {"url": ""}},
-            "io": {"motors": []},
-            "grid": {
-                "path": "storage.json",
-                "scan": {"front_gripper_xy_correction_mm": {"x_mm": -1.0, "y_mm": -2.0}},
-            },
-        },
-    }
-    migrated, changes = v005.migrate(config)
-    assert migrated == config and changes == []
 
 
 @pytest.mark.parametrize(

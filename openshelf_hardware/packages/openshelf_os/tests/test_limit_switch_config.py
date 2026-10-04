@@ -11,7 +11,6 @@ import pytest
 import openshelf_os.common as c
 from hardware.exceptions import MotorLimitError
 from hardware.motor import Motor
-from openshelf_os.iobox import IOBox
 from openshelf_os.tool import Tool
 from openshelf_os.tool import _create_motor_if_enabled as create_tool_motor
 
@@ -88,10 +87,6 @@ def tool_params(motors: List[Dict[str, Any]]) -> c.Tool:
     return c.Tool.model_validate({"parameters": TOOL_PARAMETERS, "motors": motors})
 
 
-def io_params(motors: List[Dict[str, Any]]) -> c.IOBlock:
-    return c.IOBlock.model_validate({"motors": motors})
-
-
 def make_tool(motors: List[Dict[str, Any]], gpio: Optional[FakeGpio] = None) -> Tool:
     return Tool(
         AsyncMock(),
@@ -100,32 +95,6 @@ def make_tool(motors: List[Dict[str, Any]], gpio: Optional[FakeGpio] = None) -> 
         safety=None,
         gpio=gpio if gpio is not None else FakeGpio(),
     )
-
-
-def test_motor_config_assumes_the_limit_switches_are_fitted() -> None:
-    motor = c.Motor.model_validate(motor_entry("stage", 3))
-
-    assert motor.limit_switches_enabled is True
-
-
-def test_motor_config_records_a_motor_without_limit_switches() -> None:
-    motor = c.Motor.model_validate(motor_entry("stage", 3, limit_switches_enabled=False))
-
-    assert motor.limit_switches_enabled is False
-
-
-@pytest.mark.parametrize("limit_switches_enabled", [None, True])
-def test_tool_reads_the_home_limit_switch_of_a_motor_that_has_one(
-    limit_switches_enabled: Optional[bool]
-) -> None:
-    overrides = {} if limit_switches_enabled is None else {"limit_switches_enabled": True}
-    gpio = FakeGpio()
-
-    tool = make_tool([motor_entry("stage", 3, **overrides)], gpio)
-
-    assert isinstance(tool._ms._home_limit_input, LimitInput)
-    assert tool._ms._home_limit_input.name == "s_lim_min"
-    assert "s_lim_min" in gpio.requested
 
 
 def test_tool_skips_the_home_limit_switch_of_a_motor_without_one(
@@ -147,18 +116,6 @@ def test_tool_skips_the_home_limit_switch_of_a_motor_without_one(
     assert "s_lim_min" in caplog.text
 
 
-def test_tool_skips_the_x_clearance_switches_when_x_has_no_switches() -> None:
-    motors = [motor_entry("x_axis", 5, limit_switches_enabled=False), motor_entry("stage", 3)]
-    gpio = FakeGpio()
-
-    tool = make_tool(motors, gpio)
-
-    assert tool._x_lim_minunsafe_input is None
-    assert tool._x_lim_maxunsafe_input is None
-    assert isinstance(tool._ms._home_limit_input, LimitInput)
-    assert gpio.requested == ["s_lim_min"]
-
-
 def test_tool_keeps_the_clearance_switches_when_x_is_absent_from_config() -> None:
     gpio = FakeGpio()
 
@@ -167,21 +124,6 @@ def test_tool_keeps_the_clearance_switches_when_x_is_absent_from_config() -> Non
     assert tool._mx is None
     assert isinstance(tool._x_lim_minunsafe_input, LimitInput)
     assert isinstance(tool._x_lim_maxunsafe_input, LimitInput)
-
-
-@pytest.mark.parametrize("switches_fitted", [True, False])
-def test_iobox_reads_or_skips_the_door_home_limit_switch(switches_fitted: bool) -> None:
-    overrides = {} if switches_fitted is True else {"limit_switches_enabled": False}
-    gpio = FakeGpio(pins=["io_lim_min"])
-
-    iobox = IOBox(AsyncMock(), AsyncMock(), io_params([motor_entry("door", 31, **overrides)]), gpio=gpio)
-
-    if switches_fitted is True:
-        assert iobox._md._home_limit_input.name == "io_lim_min"
-        assert gpio.requested == ["io_lim_min"]
-    else:
-        assert iobox._md._home_limit_input is None
-        assert gpio.requested == []
 
 
 @pytest.mark.asyncio

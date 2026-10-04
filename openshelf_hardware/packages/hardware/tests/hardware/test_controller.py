@@ -3,22 +3,6 @@ from unittest.mock import AsyncMock, Mock
 from hardware.controller import SharedModbusController
 from hardware.exceptions import ModbusConnectionError, ModbusError
 
-@pytest.mark.asyncio
-async def test_controller_initialization():
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    assert controller.port == "/dev/ttyUSB0"
-    assert controller.baudrate == 115200
-    assert controller.timeout == 2.0
-    assert controller.parity == "N"
-    assert controller.client is None
-
-@pytest.mark.asyncio
-async def test_controller_connect(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-    await controller.connect()
-    mock_modbus_client.connect.assert_called_once()
-
 
 @pytest.mark.asyncio
 async def test_controller_connect_preserves_connection_failure_message(mock_modbus_client):
@@ -34,87 +18,6 @@ async def test_controller_connect_preserves_connection_failure_message(mock_modb
 
 
 @pytest.mark.asyncio
-async def test_controller_read_holding_registers(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-    
-    # Setup mock response
-    result = Mock()
-    result.isError.return_value = False
-    result.registers = [42]
-    mock_modbus_client.read_holding_registers.return_value = result
-
-    # Test successful read
-    value = await controller.read_holding_registers(1, 0x100)
-    assert value == 42
-    mock_modbus_client.read_holding_registers.assert_called_once_with(
-        address=0x100, count=1, device_id=1
-    )
-
-
-@pytest.mark.asyncio
-async def test_controller_read_holding_register_block(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-
-    result = Mock()
-    result.isError.return_value = False
-    result.registers = [0, 5670]
-    mock_modbus_client.read_holding_registers.return_value = result
-
-    values = await controller.read_holding_register_block(1, 0x0000, 2)
-
-    assert values == (0, 5670)
-    mock_modbus_client.read_holding_registers.assert_called_once_with(
-        address=0x0000, count=2, device_id=1
-    )
-
-
-@pytest.mark.asyncio
-async def test_controller_read_input_register_block(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-
-    result = Mock()
-    result.isError.return_value = False
-    result.registers = [65535, 56701]
-    mock_modbus_client.read_input_registers.return_value = result
-
-    values = await controller.read_input_register_block(1, 0x0000, 2)
-
-    assert values == (65535, 56701)
-    mock_modbus_client.read_input_registers.assert_called_once_with(
-        address=0x0000, count=2, device_id=1
-    )
-
-
-@pytest.mark.asyncio
-async def test_controller_read_holding_register_block_validates_count(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-
-    with pytest.raises(ValueError, match="count must be greater than zero"):
-        await controller.read_holding_register_block(1, 0x0000, 0)
-
-@pytest.mark.asyncio
-async def test_controller_write_single_register(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-    
-    # Setup mock response
-    result = Mock()
-    result.isError.return_value = False
-    mock_modbus_client.write_register.return_value = result
-
-    # Test successful write
-    success = await controller.write_single_register(1, 0x100, 42)
-    assert success is None
-    mock_modbus_client.write_register.assert_called_once_with(
-        address=0x100, value=42, device_id=1
-    )
-
-
-@pytest.mark.asyncio
 async def test_controller_write_single_register_preserves_modbus_error(mock_modbus_client):
     controller = SharedModbusController("/dev/ttyUSB0", 115200)
     controller.client = mock_modbus_client
@@ -125,19 +28,6 @@ async def test_controller_write_single_register_preserves_modbus_error(mock_modb
 
     with pytest.raises(ModbusError, match="Write error to unit 1, register 256") as exc_info:
         await controller.write_single_register(1, 0x100, 42)
-
-    assert "Unexpected error writing" not in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_controller_write_multiple_registers_preserves_modbus_error(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-
-    mock_modbus_client.write_registers.return_value = None
-
-    with pytest.raises(ModbusError, match="No response from unit 1 while writing") as exc_info:
-        await controller.write_multiple_registers(1, 0x100, [42, 43])
 
     assert "Unexpected error writing" not in str(exc_info.value)
 

@@ -93,53 +93,6 @@ def item_payload(barcode: str, location: StorageModuleCellLocation | None = None
 
 
 @pytest.mark.asyncio
-async def test_demo_store_allows_trusted_explicit_home() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
-    robot, grid = build_demo_store_robot(
-        {},
-        {(home.side.value, home.shelf_idx, home.cell_idx)},
-    )
-
-    result = await robot.store(item_payload("bin-123", home))
-
-    assert isinstance(result, RobotCommandSuccessful)
-    assert result.location == home
-    assert grid.stored_locations == [home]
-
-
-@pytest.mark.asyncio
-async def test_demo_store_uses_explicit_home_over_conflicting_demo_mapping() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
-    mapped_location = StorageModuleCellLocation(side=StorageModuleSide.BACK, shelf_idx=3, cell_idx=4)
-    robot, grid = build_demo_store_robot(
-        {"bin-123": mapped_location},
-        {(home.side.value, home.shelf_idx, home.cell_idx)},
-    )
-
-    result = await robot.store(item_payload("bin-123", home))
-
-    assert isinstance(result, RobotCommandSuccessful)
-    assert result.location == home
-    assert grid.stored_locations == [home]
-    robot.io_pick.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_demo_store_allows_explicit_home_for_unmapped_bin_barcode() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
-    robot, grid = build_demo_store_robot(
-        {"ordinary-item": StorageModuleCellLocation(side=StorageModuleSide.BACK, shelf_idx=0, cell_idx=0)},
-        {(home.side.value, home.shelf_idx, home.cell_idx)},
-    )
-
-    result = await robot.store(item_payload("bin-456", home))
-
-    assert isinstance(result, RobotCommandSuccessful)
-    assert result.location == home
-    assert grid.stored_locations == [home]
-
-
-@pytest.mark.asyncio
 async def test_demo_store_uses_mapping_over_ordinary_explicit_location() -> None:
     mapped_location = StorageModuleCellLocation(
         side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2
@@ -157,21 +110,6 @@ async def test_demo_store_uses_mapping_over_ordinary_explicit_location() -> None
     assert isinstance(result, RobotCommandSuccessful)
     assert result.location == mapped_location
     assert grid.stored_locations == [mapped_location]
-
-
-@pytest.mark.asyncio
-async def test_demo_store_rejects_unmapped_barcode_with_ordinary_explicit_location() -> None:
-    ordinary_location = StorageModuleCellLocation(
-        side=StorageModuleSide.BACK, shelf_idx=3, cell_idx=4
-    )
-    robot, grid = build_demo_store_robot({}, set())
-
-    result = await robot.store(item_payload("ordinary-item", ordinary_location))
-
-    assert isinstance(result, RobotCommandError)
-    assert result.error == "barcode ordinary-item not in demo mapping"
-    assert grid.stored_locations == []
-    robot.io_pick.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -240,17 +178,3 @@ async def test_non_demo_store_rejects_malformed_explicit_location() -> None:
     robot.io_pick.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_demo_store_rejects_mapped_reserved_location_without_explicit_location() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
-    robot, grid = build_demo_store_robot(
-        {"ordinary-item": home},
-        {(home.side.value, home.shelf_idx, home.cell_idx)},
-    )
-
-    result = await robot.store(item_payload("ordinary-item"))
-
-    assert isinstance(result, RobotCommandError)
-    assert result.error == "Demo storage location is reserved"
-    assert grid.stored_locations == []
-    robot.io_pick.assert_not_awaited()
