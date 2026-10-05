@@ -283,7 +283,9 @@ async def test_explicit_storage_mode_controls_new_item_flow(
         assert selected_bin["storage_mode"] == "bin"
         assert selected_bin["workflow"]["item"]["id"] == bin_item.id
         assert selected_bin["workflow"]["state"] == "failed"
-        assert bin_row.status == "outside"
+        # Without a worker nothing moved, so the claimed tray is released back home.
+        await db.refresh(bin_row)
+        assert bin_row.status == "at_home"
 
 
 @pytest.mark.anyio
@@ -957,3 +959,107 @@ async def test_mock_direct_admission_excludes_overlapping_tray_start(monkeypatch
         finally:
             release.set()
             await command
+
+
+def _motion_failure(workflow, command, code):
+    return {
+        "request_id": workflow.id,
+        "command": command,
+        "message": "failed",
+        "error": "Motor stalled",
+        "code": code,
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "code,is_recovered",
+    [("execution_error", True), ("command_interrupted", True), ("execution_failed", False)],
+)
+async def test_crash_reset_returns_only_crash_interrupted_trays_home(code, is_recovered):
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        w = await service.begin("retrieve", items[0], None)
+        await service.handle_robot_result(_motion_failure(w, "retrieve_item", code), FakeWorker())
+        assert w.state == "failed"
+        assert trays[0].status == "outside"
+        interrupted = [workflow.id for workflow in await service.crash_interrupted_workflows()]
+        assert interrupted == ([w.id] if is_recovered else [])
+
+        results = await service.recover_crash_interrupted()
+
+        assert [(workflow.id, error) for workflow, error in results] == (
+            [(w.id, None)] if is_recovered else []
+        )
+        await db.refresh(trays[0])
+        assert trays[0].status == ("at_home" if is_recovered else "outside")
+        assert await service.has_unfinished_motion() is (is_recovered is False)
+        # The delivery never reached the operator, so the item is still in the tray.
+        assert (await service.item_bin(items[0].id)).id == trays[0].id
+
+
+@pytest.mark.anyio
+async def test_crash_reset_records_contents_confirmed_for_an_interrupted_return():
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        taken = await service.begin("retrieve", items[0], None)
+        await service.transition(taken, "awaiting_operator")
+        await service.close(taken)
+        returned = await service.begin_return(trays[0].barcode)
+        # The operator put the item back and removed the other one before the return crashed.
+        assert await service.prepare_return(returned, [items[0].id])
+        await service.handle_robot_result(
+            _motion_failure(returned, "store_item", "execution_error"), FakeWorker()
+        )
+        assert returned.state == "failed"
+
+        [(workflow, error)] = await service.recover_crash_interrupted()
+
+        assert (workflow.id, error) == (returned.id, None)
+        await db.refresh(trays[0])
+        assert trays[0].status == "at_home"
+        members = await db.execute(
+            select(StorageBinItem.item_id, StorageBinItem.compartment).where(
+                StorageBinItem.bin_id == trays[0].id
+            )
+        )
+        assert members.all() == [(items[0].id, 1)]
+
+
+@pytest.mark.anyio
+async def test_crash_recovery_endpoint_leaves_conflicting_return_outside(monkeypatch):
+    monkeypatch.setattr(storage_router.robot_core, "robot_worker", None)
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        returned = await service.begin_return((await _checked_out_tray(service, items, trays)).barcode)
+        assert await service.prepare_return(returned, [items[1].id])
+        await service.handle_robot_result(
+            _motion_failure(returned, "store_item", "command_interrupted"), FakeWorker()
+        )
+        listed = await storage_router.get_crash_interrupted_bin_workflows(db)
+        assert [entry["bin"]["barcode"] for entry in listed["workflows"]] == [trays[0].barcode]
+        occupant = await StorageService(db).create_item(
+            "123456788098", "Home occupant", {"width": 10, "length": 10, "height": 10}
+        )
+        await StorageService(db).add_item_location(
+            occupant.barcode, trays[0].side, trays[0].shelf_idx, trays[0].cell_idx
+        )
+
+        response = await storage_router.recover_crash_interrupted_bin_workflows(db)
+
+        assert response["recovered"] == []
+        assert [entry["error"] for entry in response["unresolved"]] == [
+            "Tray home cell is occupied by an item"
+        ]
+        await db.refresh(trays[0])
+        assert trays[0].status == "outside"
+
+
+async def _checked_out_tray(service, items, trays):
+    checkout = await service.begin("retrieve", items[0], None)
+    await service.transition(checkout, "awaiting_operator")
+    await service.close(checkout)
+    return trays[0]
