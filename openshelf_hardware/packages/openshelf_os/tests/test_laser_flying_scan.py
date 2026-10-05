@@ -239,6 +239,67 @@ async def test_scan_axis_flying_stops_the_axis_when_aborted() -> None:
 	assert tool._my.stop_count >= 1
 
 
+def test_estimate_axis_ramp_mm_derives_the_ramp_from_accel_and_rpm() -> None:
+	# 40mm/rev at 60rpm is 40mm/s; 500ms per 1000rpm ramps to 60rpm in 30ms, covering 0.6mm.
+	motor = SimpleNamespace(_params=SimpleNamespace(mpr=40.0, accel=500))
+
+	assert flying_module.estimate_axis_ramp_mm(motor, 60) == pytest.approx(0.6)
+	assert flying_module.estimate_axis_ramp_mm(SimpleNamespace(_params=SimpleNamespace(mpr=40.0)), 60) is None
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_starts_before_the_grid_and_arms_the_stop_after_the_lead_in() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+	tool._my = FakeTimedAxisMotor(feed_mm_s=40.0)
+	tool._my._params = SimpleNamespace(mpr=40.0, accel=500, lower_lim=0.0, lim=100.0)
+	lead_in_mm = 0.6 + flying_module.FLYING_SCAN_LEAD_IN_MARGIN_MM
+	seen_positions: list[float] = []
+
+	def stop_when(samples: list[FlyingScanSample]) -> bool:
+		seen_positions.append(flying_module.sample_depth_position_mm(samples[-1]))
+		return False
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=20.0,
+		end_mm=30.0,
+		fixed_mm=25.0,
+		rpm=60,
+		progress_label="flying_lead_in",
+		capture_latency_s=0.0,
+		stop_when=stop_when,
+	)
+
+	assert tool._my.moves[0] == (pytest.approx(20.0 - lead_in_mm), None)
+	# No stationary sample is taken at the lead-in start; the first sample is a moving one.
+	assert line.samples[0].position_mm > 20.0 - lead_in_mm
+	assert len(seen_positions) > 0
+	assert all(position_mm >= 20.0 for position_mm in seen_positions)
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_keeps_the_stationary_start_when_the_limit_clamps_the_lead_in() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+	tool._my = FakeTimedAxisMotor(feed_mm_s=40.0)
+	tool._my._params = SimpleNamespace(mpr=40.0, accel=500, lower_lim=0.0, lim=100.0)
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=10.0,
+		fixed_mm=25.0,
+		rpm=60,
+		progress_label="flying_clamped_lead_in",
+		capture_latency_s=0.0,
+	)
+
+	assert tool._my.moves[0] == (pytest.approx(0.0), None)
+	assert line.samples[0].position_mm == pytest.approx(0.0)
+	assert line.samples[0].velocity_mm_s is None
+
+
 class FakeGuardInterlock:
 	"""Engages once the laser has been read trip_after times, then clears after a few checks."""
 
