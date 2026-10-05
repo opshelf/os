@@ -448,6 +448,86 @@ async def test_capture_shelf_candidates_default_style_keeps_the_stepped_scan(
 
 
 @pytest.mark.asyncio
+async def test_alternating_flying_hole_sweeps_reverse_every_other_line_and_log_resamples(
+	monkeypatch,
+	tmp_path: Path,
+) -> None:
+	import json
+
+	x_positions = build_axis_positions(0.0, 40.0, 4.0)
+	# Ascending-x profile with one bin the pass leaves empty, at x=8.
+	profile = {x_mm: 9.5 for x_mm in x_positions}
+	flown_directions: list[str] = []
+	merged_rows: list[list[float | None]] = []
+	resampled_x: list[float] = []
+
+	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
+		flown_directions.append("up" if positions[-1] > positions[0] else "down")
+		depth_values = [None if x_mm == 8.0 else profile[x_mm] for x_mm in positions]
+		return depth_values, FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=[FlyingScanSample(position_mm=float(positions[0]), depth_mm=9.5, elapsed_s=0.0)],
+			duration_s=1.0,
+		)
+
+	async def didSampleScanPoint(tool, *, x_mm, y_mm, settle_ms, samples_per_point, should_abort=None):
+		resampled_x.append(x_mm)
+		return 7.0
+
+	def didMergeLine(coarse_scan, *, axis, positions, fixed_mm, depth_values):
+		assert positions == x_positions
+		merged_rows.append(list(depth_values))
+
+	monkeypatch.setattr(shelf_scan_module, "scan_line_positions_flying", didScanLineFlying)
+	monkeypatch.setattr(shelf_scan_module, "sample_scan_point", didSampleScanPoint)
+	monkeypatch.setattr(shelf_scan_module, "merge_line_scan_into_sparse_scan", didMergeLine)
+
+	recorder = SimpleNamespace(
+		run_id="flying-alternate-run",
+		coarse_depth_path=tmp_path / "coarse_depth.npy",
+		progress_path=tmp_path / "progress.json",
+		run_dir=tmp_path,
+	)
+
+	await shelf_scan_module.capture_shelf_candidates(
+		SimpleNamespace(),
+		side=StorageModuleSide.FRONT,
+		bounds=ScanBounds(x_min=0.0, x_max=40.0, y_min=0.0, y_max=200.0),
+		settle_ms=0,
+		samples_per_point=1,
+		scan_config=SimpleNamespace(
+			coarse_scan_style="flying",
+			coarse_scan_alternate_direction=True,
+			shelf_hole_probe_y_offsets_mm=[10.0, 20.0],
+		),
+		recorder=recorder,
+		shelf_scout_only=False,
+		known_shelf_edge_y=[150.0, 50.0],
+	)
+
+	# Direction alternates across offsets and shelves alike, so each pass starts where the last
+	# one ended; the reversed passes are flipped back before gap detection and merging.
+	assert flown_directions == ["up", "down", "up", "down"]
+	assert resampled_x == [8.0, 8.0, 8.0, 8.0]
+	expected_row = [7.0 if x_mm == 8.0 else 9.5 for x_mm in x_positions]
+	assert merged_rows == [expected_row] * 4
+
+	records = [
+		json.loads(line)
+		for line in (tmp_path / flying_module.FLYING_SAMPLES_FILENAME).read_text().splitlines()
+	]
+	resampled_records = [record for record in records if record["source"] == "resampled"]
+	assert [record["source"] for record in records].count("flown") == 4
+	assert [(record["position_mm"], record["depth_mm"]) for record in resampled_records] == [
+		(8.0, 7.0)
+	] * 4
+
+
+@pytest.mark.asyncio
 async def test_probe_line_from_center_flying_prefetch_matches_stepped(monkeypatch) -> None:
 	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
 	import openshelf_os.laser_calibration.flying as flying_module

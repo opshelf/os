@@ -56,9 +56,53 @@ async def probe_line_from_center(
 		if prefetched is not None:
 			prefetched_depth_values, flying_line = prefetched
 
-			if on_flying_line is not None:
-				on_flying_line(f"{progress_prefix}_flying", flying_line)
+	try:
+		return await _walk_line_from_center(
+			tool,
+			base_scan=base_scan,
+			axis=axis,
+			positions=positions,
+			fixed_mm=fixed_mm,
+			center_idx=center_idx,
+			step_mm=step_mm,
+			progress_prefix=progress_prefix,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			wall_depth_mm=wall_depth_mm,
+			expected_span_mm=expected_span_mm,
+			on_update=on_update,
+			should_abort=should_abort,
+			should_infer_far_edge=should_infer_far_edge,
+			prefetched_depth_values=prefetched_depth_values,
+			flying_line=flying_line,
+		)
+	finally:
+		# Report the line once the walk has probed the bins the pass left empty, so the sample
+		# log carries those resamples; a cancelled walk still reports what it measured.
+		if flying_line is not None and on_flying_line is not None:
+			on_flying_line(f"{progress_prefix}_flying", flying_line)
 
+
+async def _walk_line_from_center(
+	tool: Any,
+	*,
+	base_scan: GridScanResult,
+	axis: str,
+	positions: list[float],
+	fixed_mm: float,
+	center_idx: int,
+	step_mm: float,
+	progress_prefix: str,
+	settle_ms: int,
+	samples_per_point: int,
+	wall_depth_mm: float,
+	expected_span_mm: float,
+	on_update: Optional[Callable[[GridScanResult, str, float], None]],
+	should_abort: Callable[[], bool] | None,
+	should_infer_far_edge: bool,
+	prefetched_depth_values: Optional[list[Optional[float]]],
+	flying_line: Any,
+) -> Optional[LineGapSegment]:
 	def didRefineSegment(segment: LineGapSegment) -> LineGapSegment:
 		if flying_line is None or prefetched_depth_values is None:
 			return segment
@@ -116,6 +160,7 @@ async def probe_line_from_center(
 					should_abort=should_abort,
 				)
 				prefetched_depth_values[position_idx] = depth_mm
+				flying_line.record_resample(position_mm, depth_mm)
 				print_status(
 					f"{progress_prefix}=resampled idx={position_idx} "
 					f"x={x_mm:.2f} y={y_mm:.2f} depth={depth_to_label(depth_mm)}"

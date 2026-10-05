@@ -90,6 +90,14 @@ class FlyingScanSample:
 	velocity_mm_s: Optional[float] = None
 
 
+@dataclass
+class FlyingScanResample:
+	"""A grid position the pass left empty, probed afterwards by stopping on it."""
+
+	position_mm: float
+	depth_mm: Optional[float]
+
+
 def sample_depth_position_mm(sample: FlyingScanSample) -> float:
 	"""Position the depth belongs to; corrected when the capture measured a velocity."""
 	if sample.depth_position_mm is not None:
@@ -294,6 +302,17 @@ class FlyingScanLine:
 	duration_s: float = 0.0
 	# Moving reads discarded because the laser transaction ran past the slow-read cap.
 	dropped_slow_reads: int = 0
+	# Bins filled by a stepped probe after the pass. They update the grid values but are not
+	# samples of the pass, so they stay out of `samples` and are logged with their own source.
+	resamples: list[FlyingScanResample] = field(default_factory=list)
+
+	def record_resample(self, position_mm: float, depth_mm: Optional[float]) -> None:
+		self.resamples.append(
+			FlyingScanResample(
+				position_mm=float(position_mm),
+				depth_mm=None if depth_mm is None else float(depth_mm),
+			)
+		)
 
 	def median_sample_spacing_mm(self) -> Optional[float]:
 		if len(self.samples) < 2:
@@ -468,29 +487,54 @@ def write_flying_line_samples(
 	label: str,
 	line: FlyingScanLine,
 ) -> Optional[str]:
-	"""Keep the raw moving samples so cadence, feed and edge sharpness can be reviewed."""
+	"""Keep the raw moving samples so cadence, feed and edge sharpness can be reviewed.
+
+	Bins probed by stepping after the pass are appended with `source="resampled"`, so an offline
+	look at a run can tell a flown bin from a resampled one. Call it after resampling.
+	"""
 	if run_dir is None:
 		return None
 
 	output_path = Path(run_dir) / FLYING_SAMPLES_FILENAME
 	output_path.parent.mkdir(parents=True, exist_ok=True)
+	line_fields = {
+		"label": label,
+		"axis": line.axis,
+		"fixed_mm": line.fixed_mm,
+		"start_mm": line.start_mm,
+		"end_mm": line.end_mm,
+		"rpm": line.rpm,
+	}
 
 	with output_path.open("a", encoding="utf-8") as output_file:
 		for sample in line.samples:
 			output_file.write(
 				json.dumps(
 					{
-						"label": label,
-						"axis": line.axis,
-						"fixed_mm": line.fixed_mm,
-						"start_mm": line.start_mm,
-						"end_mm": line.end_mm,
-						"rpm": line.rpm,
+						**line_fields,
+						"source": "flown",
 						"position_mm": sample.position_mm,
 						"depth_position_mm": sample.depth_position_mm,
 						"velocity_mm_s": sample.velocity_mm_s,
 						"depth_mm": sample.depth_mm,
 						"elapsed_s": sample.elapsed_s,
+					}
+				)
+				+ "\n"
+			)
+
+		# A stopped probe has no velocity or latency shift: its depth sits at the grid position.
+		for resample in line.resamples:
+			output_file.write(
+				json.dumps(
+					{
+						**line_fields,
+						"source": "resampled",
+						"position_mm": resample.position_mm,
+						"depth_position_mm": resample.position_mm,
+						"velocity_mm_s": 0.0,
+						"depth_mm": resample.depth_mm,
+						"elapsed_s": None,
 					}
 				)
 				+ "\n"
@@ -1075,6 +1119,7 @@ async def scan_shelf_scout_line_flying(
 			f"{progress_label}=resampled x={x_mm:.2f} y={y_mm:.2f} "
 			f"depth={depth_to_label(depth_mm)}"
 		)
+		line.record_resample(y_mm, depth_mm)
 
 		return depth_mm
 
