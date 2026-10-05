@@ -17,6 +17,7 @@ from hardware.motor import (
     _prune_motion_fault_dumps,
 )
 from hardware.exceptions import MotorConfigError, MotorError, MotorLimitError, MotorTimeoutError
+from hardware.servo import GripObject, Servo
 from openshelf_os.config.models import Motor as MotorConfig
 
 def make_motor_params(**overrides):
@@ -88,6 +89,52 @@ def persistent_brake_registers(overrides: dict[int, int] | None = None) -> dict[
             **(overrides or {}),
         }
     )
+
+
+def _configured_servo(controller, *blocks):
+    controller.read_holding_register_block.side_effect = list(blocks)
+    servo = Servo(controller)
+    servo._configured = True
+    return servo
+
+
+@pytest.mark.asyncio
+async def test_servo_open_reports_contact(mock_controller):
+    state = await _configured_servo(mock_controller, (0x31, 0, 0), (0x71, 0xAE00, 0xFE00)).open()
+    assert state.obj is GripObject.INNER and state.gripped
+    assert (state.position, state.current) == (0xAE, 0xFE)
+
+
+@pytest.mark.asyncio
+async def test_servo_open_without_contact_is_not_gripped(mock_controller):
+    state = await _configured_servo(mock_controller, (0x31, 0, 0), (0xF1, 0x2000, 0)).open()
+    assert state.obj is GripObject.NONE and not state.gripped
+
+
+@pytest.mark.asyncio
+async def test_servo_ignores_stale_result_until_motion_seen(mock_controller):
+    # Previous move's NONE persists, then MOVING, then contact.
+    servo = _configured_servo(mock_controller, (0xF1, 0, 0), (0x39, 0, 0), (0x71, 0x9000, 0x4000))
+    state = await servo.open()
+    assert state.obj is GripObject.INNER and state.position == 0x90
+
+
+@pytest.mark.asyncio
+async def test_servo_drop_flag_is_not_gripped(mock_controller):
+    state = await _configured_servo(mock_controller, (0x31, 0, 0), (0x73, 0x9000, 0)).open()
+    assert state.dropped and not state.gripped
+
+
+@pytest.mark.asyncio
+async def test_servo_fault_raises(mock_controller):
+    with pytest.raises(MotorError, match="fault=0x08"):
+        await _configured_servo(mock_controller, (0x31, 0x0008, 0)).open()
+
+
+@pytest.mark.asyncio
+async def test_servo_ignores_comm_loss_fault(mock_controller):
+    state = await _configured_servo(mock_controller, (0x31, 0x0004, 0), (0x71, 0x9004, 0)).open()
+    assert state.gripped
 
 
 @pytest.mark.asyncio
