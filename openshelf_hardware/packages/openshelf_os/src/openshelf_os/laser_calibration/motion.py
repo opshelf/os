@@ -57,7 +57,7 @@ async def enter_scan_mode(tool: Any, side: StorageModuleSide, scan_config: Any) 
 	side_number = 0
 	target_position = "front"
 
-	if side == StorageModuleSide.RIGHT:
+	if side == StorageModuleSide.BACK:
 		side_number = 1
 		target_position = "back"
 
@@ -84,9 +84,9 @@ async def enter_scan_mode(tool: Any, side: StorageModuleSide, scan_config: Any) 
 
 	await tool.retract()
 
-	if side == StorageModuleSide.RIGHT:
+	if side == StorageModuleSide.BACK:
 		await tool.move(
-			AxisCoordinate(x=RIGHT_MODULE_ROTATION_SAFE_X_MM, y=scan_y_mm, s=side_number)
+			AxisCoordinate(x=BACK_MODULE_ROTATION_SAFE_X_MM, y=scan_y_mm, s=side_number)
 		)
 
 		rotation_before = await tool._mr.get_position()

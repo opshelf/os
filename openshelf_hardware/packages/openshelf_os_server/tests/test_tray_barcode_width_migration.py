@@ -64,7 +64,7 @@ def _bin_schema(connection, *, barcode_length: int = 12) -> None:
         bins.insert().values(
             id=1,
             barcode="TRAY-0001",
-            side="left_module",
+            side="front_module",
             shelf_idx=0,
             cell_idx=0,
             inner_dimensions="{}",

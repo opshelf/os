@@ -6,16 +6,20 @@
 	import CellCalibrationTest from '$lib/components/calibration/CellCalibrationTest.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
+	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
 	import { devicePath } from '$lib/nav';
+	import { sideIndex } from '$lib/side';
 
-	type CalibrationView = 'layout' | 'cell_auto' | 'cell_manual' | 'io' | 'rotation' | 'test';
+	type CalibrationView = 'layout' | 'cell_auto' | 'cell_manual' | 'stage' | 'io' | 'rotation' | 'test';
 
 	let { selectedView = 'layout' }: { selectedView?: CalibrationView } = $props();
 
 	const sideParam = page.url.searchParams.get('side');
 
+	// Accepts any side token the device vocabulary may use; the child
+	// components normalize it to their canonical state.
 	const initialSide =
-		sideParam === 'left_module' || sideParam === 'right_module' ? sideParam : undefined;
+		sideParam !== null && sideIndex(sideParam) !== null ? sideParam : undefined;
 
 	const initialShelf = page.url.searchParams.has('shelf')
 		? parseInt(page.url.searchParams.get('shelf')!, 10)
@@ -34,10 +38,11 @@
 	<a class:selected={selectedView === 'layout'} href={tabHref('/storage/layout')}>layout</a>
 	<a class:selected={selectedView === 'cell_auto'} href={tabHref('/storage/auto')}>auto</a>
 	<a class:selected={selectedView === 'cell_manual'} href={tabHref('/storage/cells')}>manual</a>
-	<a class:selected={selectedView === 'io'} href={tabHref('/storage/io-box')}>io box</a>
+	<a class:selected={selectedView === 'stage'} href={tabHref('/storage/stage')}>stage</a>
 	<a class:selected={selectedView === 'rotation'} href={tabHref('/storage/tool-rotation')}>
 		rotation
 	</a>
+	<a class:selected={selectedView === 'io'} href={tabHref('/storage/io-box')}>io box</a>
 	<a class:selected={selectedView === 'test'} href={tabHref('/storage/test')}>test</a>
 </div>
 
@@ -45,6 +50,8 @@
 	<StorageLayoutEditor />
 {:else if selectedView === 'cell_manual'}
 	<CellCalibration {initialSide} {initialShelf} {initialCell} />
+{:else if selectedView === 'stage'}
+	<ShelfCalibration />
 {:else if selectedView === 'cell_auto'}
 	<CellAutoCalibration />
 {:else if selectedView === 'test'}

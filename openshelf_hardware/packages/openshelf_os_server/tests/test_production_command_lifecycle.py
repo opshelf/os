@@ -66,11 +66,9 @@ def _store(request_id: str, *, name: str = "Lifecycle item") -> StoreItemCommand
 def _store_grid(occupied: set[int] | None = None) -> StorageGrid:
 	occupied = occupied or set()
 	return StorageGrid(
-		left_module=[
+		front_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_height=250.0,
-				shelf_width=400.0,
 				cells=[
 					Cell(
 						cell_idx=cell_idx,
@@ -83,7 +81,7 @@ def _store_grid(occupied: set[int] | None = None) -> StorageGrid:
 				],
 			)
 		],
-		right_module=[],
+		back_module=[],
 	)
 
 
@@ -104,7 +102,7 @@ async def test_demo_store_admits_occupied_requested_cell_for_mapped_barcode(
 		_grid=_store_grid(occupied={1}),
 		_demo_cell_map={
 			"880000000200": StorageModuleCellLocation(
-				side=StorageModuleSide.LEFT, shelf_idx=0, cell_idx=0,
+				side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0,
 			),
 		},
 	)
@@ -117,7 +115,7 @@ async def test_demo_store_admits_occupied_requested_cell_for_mapped_barcode(
 		response = await client.post("/api/robot/commands", json={
 			"command": "store_item",
 			"request_id": "demo-mapped-occupied-request",
-			"location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+			"location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
 			"item": {
 				"barcode": "880000000200",
 				"name": "Mapped item",
@@ -272,13 +270,8 @@ async def test_new_store_preserves_valid_and_unspecified_gross(
 	{}, {"barcode": None}, {"barcode": ""}, {"barcode": "  "}, {"barcode": 123},
 	{"barcode": True}, {"barcode": {}}, {"barcode": []}, {"barcode": "x" * 256},
 ])
-@pytest.mark.parametrize("mass", [
-	{key: value}
-	for key in ("tare_weight", "net_weight", "full_net_weight")
-	for value in (None, 100)
-])
 async def test_mass_store_requires_explicit_identity_before_mutation(
-	monkeypatch: pytest.MonkeyPatch, identity: dict, mass: dict,
+	monkeypatch: pytest.MonkeyPatch, identity: dict,
 ) -> None:
 	await _clear_production_commands()
 	worker = RecordingWorker()
@@ -289,7 +282,11 @@ async def test_mass_store_requires_explicit_identity_before_mutation(
 	item_data = {
 		"name": "Identity required bottle",
 		"dimensions": {"width": 100, "height": 100, "length": 100},
-		**identity, **mass,
+		**identity,
+		# One mass key is enough: enrollment is triggered by any of them, and the
+		# full mass-with-identity persistence is owned by
+		# test_mass_store_with_identity_persists_baseline_and_replays_before_validation.
+		"tare_weight": 100,
 	}
 	async with AsyncSessionLocal() as db:
 		items_before = (await db.execute(select(Item.__table__))).all()
@@ -564,7 +561,7 @@ async def test_production_requested_location_is_validated_and_canonicalized(
 	worker._robot = SimpleNamespace(_grid=_store_grid(occupied={1}))  # type: ignore[attr-defined]
 	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
 	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-	location = {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
+	location = {"side": "front_module", "shelf_idx": 0, "cell_idx": 0}
 
 	async with AsyncSessionLocal() as db:
 		accepted = await robot_router.robot_commands(
@@ -597,7 +594,7 @@ async def test_production_requested_location_is_validated_and_canonicalized(
 				_store_with_location(
 					"requested-cell",
 					"880000000111",
-					{"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+					{"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
 				),
 				worker=worker,  # type: ignore[arg-type]
 				current_user=SimpleNamespace(id=1),
@@ -610,7 +607,7 @@ async def test_production_requested_location_is_validated_and_canonicalized(
 				_store_with_location(
 					"occupied-cell",
 					"880000000112",
-					{"side": "left_module", "shelf_idx": 0, "cell_idx": 1},
+					{"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
 				),
 				worker=worker,  # type: ignore[arg-type]
 				current_user=SimpleNamespace(id=1),
@@ -624,7 +621,7 @@ async def test_production_requested_location_is_validated_and_canonicalized(
 				_store_with_location(
 					"missing-cell",
 					"880000000113",
-					{"side": "left_module", "shelf_idx": 5, "cell_idx": 0},
+					{"side": "front_module", "shelf_idx": 5, "cell_idx": 0},
 				),
 				worker=worker,  # type: ignore[arg-type]
 				current_user=SimpleNamespace(id=1),
@@ -635,7 +632,7 @@ async def test_production_requested_location_is_validated_and_canonicalized(
 
 		with pytest.raises(HTTPException) as too_small:
 			request = _store_with_location(
-				"too-large-item", "880000000114", {"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
+				"too-large-item", "880000000114", {"side": "front_module", "shelf_idx": 0, "cell_idx": 0}
 			)
 			item = dict(request.item or {})
 			item["dimensions"] = {"width": 1000, "height": 20, "length": 30}
@@ -817,7 +814,7 @@ async def test_internal_bin_motion_is_durable_and_marked_internal() -> None:
 	command = RetrieveItemCommand(
 		request_id="bin-workflow-correlation",
 		barcode="990000000001",
-		location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+		location={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
 	)
 	row = await enqueue_internal(worker, command)
 	assert row.runtime == "production"

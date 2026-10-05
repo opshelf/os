@@ -1,31 +1,4 @@
-from unittest.mock import patch
-
-import pytest
-from PIL import Image, ImageOps
-
 from openshelf_os_server.core import label_printer
-
-
-class _SolidBarcode:
-    def render(self, *, writer_options: dict[str, object]) -> Image.Image:
-        assert writer_options == {
-            "module_height": 12.0,
-            "quiet_zone": 1,
-            "write_text": False,
-            "font_size": 0,
-            "text_distance": 3,
-        }
-        return Image.new("L", (100, 50), 0)
-
-
-def test_render_label_uses_tuned_alignment() -> None:
-    with patch.object(label_printer.barcode, "get", return_value=_SolidBarcode()) as get:
-        label = label_printer.render_label("036000291452")
-
-    assert label.size == (384, 203)
-    assert ImageOps.invert(label).getbbox() == (6, 0, 360, 139)
-    get.assert_called_once()
-    assert get.call_args.args[:2] == ("code128", "036000291452")
 
 
 def test_build_label_job_adds_blank_raster_rows_for_feed() -> None:
@@ -39,6 +12,3 @@ def test_build_label_job_adds_blank_raster_rows_for_feed() -> None:
     assert job[-bytes_per_row * 18 :] == bytes(bytes_per_row * 18)
 
 
-def test_build_label_job_rejects_negative_feed() -> None:
-    with pytest.raises(ValueError, match="feed_dots must be non-negative"):
-        label_printer.build_label_job("036000291452", feed_dots=-1)

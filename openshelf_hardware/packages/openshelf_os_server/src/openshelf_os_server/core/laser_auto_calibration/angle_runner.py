@@ -271,7 +271,7 @@ class AngleRunnerMixin:
 
         side_name = _side_to_short_name(side)
         side_module_name = _side_to_module_name(side)
-        side_number = 0 if side == StorageModuleSide.LEFT else 1
+        side_number = 0 if side == StorageModuleSide.FRONT else 1
         rotation_param = _side_to_rotation_param_name(side)
         previous_rotation_value = await tool.get_param(rotation_param)
 
@@ -408,7 +408,7 @@ class AngleRunnerMixin:
                                 z_move_rpm=float(z_move_rpm),
                                 z_move_accel=float(z_move_accel),
                                 should_rotate=True,
-                                should_use_safe_right_rotation_path=True,
+                                should_use_safe_back_rotation_path=True,
                                 should_move_z=False,
                                 should_abort=self._should_abort_work,
                             )

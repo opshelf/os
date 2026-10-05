@@ -1678,7 +1678,6 @@ async def update_grid_cell(
     try:
         grid = _get_robot_grid()
         cell = grid.get_cell(StorageModuleCellLocation(side=side, shelf_idx=shelf_idx, cell_idx=cell_idx))
-        shelf = grid.get_shelf(side, shelf_idx)
     except IndexError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -1687,7 +1686,7 @@ async def update_grid_cell(
             detail=f"Failed to load storage grid: {exc}",
         ) from exc
 
-    _validate_grid_cell_update(payload, shelf.shelf_height)
+    _validate_grid_cell_update(payload)
     _apply_grid_cell_update(cell, payload, side)
 
     grid.save()
@@ -1695,7 +1694,7 @@ async def update_grid_cell(
     return {"success": True}
 
 
-def _validate_grid_dimensions(dims: DimensionsPayload, shelf_height: Optional[float] = None) -> None:
+def _validate_grid_dimensions(dims: DimensionsPayload) -> None:
     for field, value in (
         ("width", dims.width),
         ("height", dims.height),
@@ -1707,14 +1706,8 @@ def _validate_grid_dimensions(dims: DimensionsPayload, shelf_height: Optional[fl
                 detail=f"Dimension {field} must be greater than zero",
             )
 
-    if shelf_height is not None and dims.height > shelf_height:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cell height {dims.height} mm exceeds the containing shelf height {shelf_height} mm",
-        )
 
-
-def _validate_grid_cell_update(payload: GridCellUpdate, shelf_height: Optional[float] = None) -> None:
+def _validate_grid_cell_update(payload: GridCellUpdate) -> None:
     if (
         payload.x is None
     ) != (payload.y is None) or (
@@ -1735,7 +1728,7 @@ def _validate_grid_cell_update(payload: GridCellUpdate, shelf_height: Optional[f
             )
 
     if payload.dimensions is not None:
-        _validate_grid_dimensions(payload.dimensions, shelf_height)
+        _validate_grid_dimensions(payload.dimensions)
 
 
 def _apply_grid_cell_update(cell: Cell, payload: GridCellUpdate, side: StorageModuleSide) -> None:
@@ -1796,10 +1789,9 @@ async def update_grid_cells(
             cell = grid.get_cell(
                 StorageModuleCellLocation(side=side, shelf_idx=item.shelf_idx, cell_idx=item.cell_idx)
             )
-            shelf = grid.get_shelf(side, item.shelf_idx)
         except IndexError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
-        _validate_grid_cell_update(item, shelf.shelf_height)
+        _validate_grid_cell_update(item)
         resolved.append((cell, item))
 
     for cell, item in resolved:

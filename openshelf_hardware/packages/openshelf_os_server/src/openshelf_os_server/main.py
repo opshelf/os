@@ -33,11 +33,23 @@ from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.pool import NullPool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from openshelf_os.device import get_device_id
+from openshelf_os.device import get_device_alias, get_device_id, get_release_branch, get_release_sha
+from openshelf_os import (
+    DOOR_MOTOR_RECOVERY_EVENT,
+    _redact_sensitive_mapping,
+    _sentry_event_has_door_motor_recovery_failure,
+    _sentry_event_has_message,
+    _sentry_event_has_suppressed_pymodbus_message,
+    _sentry_log_has_door_motor_recovery_failure,
+    _sentry_log_has_message,
+    _sentry_log_is_suppressed_pymodbus_message,
+    _strip_pymodbus_frame_dump,
+)
 from openshelf_os.common import CONFIG_PATH, OperatingMode
 from openshelf_os.operating_mode import should_enable_sentry
 from openshelf_os.runtime_state import RuntimeStatePaths
 from openshelf_os_server.core.logging_config import configure_logging, get_logger, get_correlation_id
+from openshelf_os_server.core.migrations import rename_module_side_values
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, stop_robot_worker
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
@@ -81,7 +93,6 @@ from openshelf_os_server.utils.cors_policy import allows_credentials, resolve_al
 configure_logging()
 logger = get_logger(__name__)
 
-SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
 PYMODBUS_NO_RESPONSE_RETRY_PREFIX = "No response received after "
 PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
@@ -90,7 +101,6 @@ PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
 # no-response retry is the log text plus that trailer. Every appended line
 # carries the marker prefix; a deduplicated frame shows up as
 # ">>>>> Repeating....".
-PYMODBUS_FRAME_DUMP_LINE_PREFIX = ">>>>> "
 ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 TOOL_FAULT_LOG_EVENT = "Tool fault detected - manual intervention required"
 # The message uvicorn hands to Task.cancel() for every request task that is still running when
@@ -117,7 +127,6 @@ ASGI_REQUEST_CANCEL_TASKS = (
 	"cancel_on_finish",
 	"starlette.middleware.base.BaseHTTPMiddleware",
 )
-DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
 DOOR_MOTOR_RECOVERY_FAILED_PREFIX = "Door motor recovery failed:"
 # The log line uvicorn writes when the drain window given to it in start()
 # (`timeout_graceful_shutdown`) expires. uvicorn.Server.shutdown logs it through its own
@@ -134,50 +143,10 @@ ROBOT_UNAVAILABLE_REQUEST_PATH_PREFIXES = (
 )
 
 
-def _redact_sensitive_mapping(value: Any) -> Any:
-	if isinstance(value, dict) is True:
-		redacted: dict[str, Any] = {}
-
-		for key, item in value.items():
-			if isinstance(key, str) is True and key.lower() in SENSITIVE_HEADER_NAMES:
-				redacted[key] = "[Filtered]"
-				continue
-
-			redacted[key] = _redact_sensitive_mapping(item)
-
-		return redacted
-
-	if isinstance(value, list) is True:
-		return [_redact_sensitive_mapping(item) for item in value]
-
-	return value
-
 
 def _is_pymodbus_request_id_mismatch(message: Any) -> bool:
 	return isinstance(message, str) is True and message.startswith(PYMODBUS_REQUEST_ID_MISMATCH_PREFIX)
 
-
-def _strip_pymodbus_frame_dump(message: str) -> str:
-	"""Drop the frame dump pymodbus appends to its error messages.
-
-	``Log.error``/``Log.critical`` add the last frames as ``>>>>> send:`` /
-	``>>>>> recv:`` lines when DEBUG logging is off, so only the first line
-	carries the log text. Anything else after a newline is left untouched.
-	"""
-	log_text, separator, trailer = message.partition("\n")
-	if separator == "":
-		return message
-
-	trailer_lines = [line for line in trailer.split("\n") if line.strip() != ""]
-	if trailer_lines == []:
-		return message
-
-	if any(
-		line.startswith(PYMODBUS_FRAME_DUMP_LINE_PREFIX) is False for line in trailer_lines
-	):
-		return message
-
-	return log_text
 
 
 def _is_pymodbus_no_response_retry(message: Any) -> bool:
@@ -219,18 +188,6 @@ def _is_door_motor_recovery_failure(message: Any) -> bool:
 	return isinstance(message, str) is True and message.startswith(DOOR_MOTOR_RECOVERY_FAILED_PREFIX)
 
 
-def _sentry_log_is_suppressed_pymodbus_message(log: dict[str, Any]) -> bool:
-	for key in ("body", "message"):
-		if _is_suppressed_pymodbus_log_message(log.get(key)) is True:
-			return True
-
-	attributes_value = log.get("attributes")
-	if isinstance(attributes_value, dict) is False:
-		return False
-
-	attributes = cast(dict[str, Any], attributes_value)
-	return any(_is_suppressed_pymodbus_log_message(value) is True for value in attributes.values())
-
 
 def _sentry_log_is_uvicorn_shutdown_drain(log: dict[str, Any]) -> bool:
 	for key in ("body", "message"):
@@ -245,33 +202,6 @@ def _sentry_log_is_uvicorn_shutdown_drain(log: dict[str, Any]) -> bool:
 	return any(_is_uvicorn_shutdown_drain_message(value) is True for value in attributes.values())
 
 
-def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
-	for key in ("body", "message"):
-		if log.get(key) == target:
-			return True
-
-	attributes_value = log.get("attributes")
-	if isinstance(attributes_value, dict) is False:
-		return False
-
-	attributes = cast(dict[str, Any], attributes_value)
-	return any(value == target for value in attributes.values())
-
-
-def _sentry_log_has_door_motor_recovery_failure(log: dict[str, Any]) -> bool:
-	# Drop the whole recovery-failure class: the IO-box door recovery is a
-	# best-effort self-healing path, and its failure message is logged without a
-	# stacktrace, so it would only create log-only Sentry issues.
-	for key in ("body", "message"):
-		if _is_door_motor_recovery_failure(log.get(key)) is True:
-			return True
-
-	attributes_value = log.get("attributes")
-	if isinstance(attributes_value, dict) is False:
-		return False
-
-	attributes = cast(dict[str, Any], attributes_value)
-	return any(_is_door_motor_recovery_failure(value) is True for value in attributes.values())
 
 
 def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:
@@ -288,82 +218,7 @@ def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]
 	return [value for value in values_list if isinstance(value, dict) is True]
 
 
-def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
-	if event.get("message") == target:
-		return True
 
-	logentry_value = event.get("logentry")
-	if isinstance(logentry_value, dict) is True:
-		logentry = cast(dict[str, Any], logentry_value)
-		if any(logentry.get(key) == target for key in ("message", "formatted")) is True:
-			return True
-
-	entries_value = event.get("entries", [])
-	entries = cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
-	for entry in entries:
-		if isinstance(entry, dict) is False:
-			continue
-
-		data = entry.get("data")
-		if isinstance(data, dict) is False:
-			continue
-
-		if any(data.get(key) == target for key in ("message", "formatted")) is True:
-			return True
-
-	return False
-
-
-def _sentry_event_has_door_motor_recovery_failure(event: dict[str, Any]) -> bool:
-	if _is_door_motor_recovery_failure(event.get("message")) is True:
-		return True
-
-	logentry_value = event.get("logentry")
-	if isinstance(logentry_value, dict) is True:
-		logentry = cast(dict[str, Any], logentry_value)
-		if any(_is_door_motor_recovery_failure(logentry.get(key)) is True for key in ("message", "formatted")):
-			return True
-
-	entries_value = event.get("entries", [])
-	entries = cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
-	for entry in entries:
-		if isinstance(entry, dict) is False:
-			continue
-
-		data = entry.get("data")
-		if isinstance(data, dict) is False:
-			continue
-
-		if any(_is_door_motor_recovery_failure(data.get(key)) is True for key in ("message", "formatted")):
-			return True
-
-	return False
-
-
-def _sentry_event_has_suppressed_pymodbus_message(event: dict[str, Any]) -> bool:
-	if _is_suppressed_pymodbus_log_message(event.get("message")) is True:
-		return True
-
-	logentry_value = event.get("logentry")
-	if isinstance(logentry_value, dict) is True:
-		logentry = cast(dict[str, Any], logentry_value)
-		if any(_is_suppressed_pymodbus_log_message(logentry.get(key)) is True for key in ("message", "formatted")):
-			return True
-
-	entries_value = event.get("entries", [])
-	entries = cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
-	for entry in entries:
-		if isinstance(entry, dict) is False:
-			continue
-
-		data = entry.get("data")
-		if isinstance(data, dict) is False:
-			continue
-
-		if any(_is_suppressed_pymodbus_log_message(data.get(key)) is True for key in ("message", "formatted")):
-			return True
-
-	return False
 
 
 def _sentry_event_is_uvicorn_shutdown_drain(event: dict[str, Any]) -> bool:
@@ -651,9 +506,13 @@ def _configure_sentry() -> bool:
 		logger.warning("sentry_not_configured", reason="SENTRY_DSN_API not set", mode=mode.value)
 		return False
 
+	# Errors only: each one is sent the moment it is captured. Sentry logs, traces, and
+	# release-health sessions are batched or sent at exit, so a shutdown always found
+	# some pending and waited out shutdown_timeout.
 	sentry_sdk.init(
 		dsn=sentry_dsn,
-		enable_logs=True,
+		enable_logs=False,
+		auto_session_tracking=False,
 		integrations=[
 			StarletteIntegration(transaction_style="endpoint"),
 			FastApiIntegration(transaction_style="endpoint"),
@@ -663,7 +522,7 @@ def _configure_sentry() -> bool:
 				event_level=logging.ERROR,
 			),
 		],
-		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0")),
 		environment=mode.value,
 		release=os.getenv("APP_VERSION", "0.1.0"),
 		server_name=device_id,
@@ -763,6 +622,25 @@ def _schema_state(database_url: str) -> _SchemaState:
 		sync_engine.dispose()
 
 
+def _apply_module_side_rename(database_url: str) -> None:
+	"""Re-run the idempotent side-value rename that a baseline stamp skips.
+
+	`_schema_state` compares table and column names only, so the data-only
+	revision f9a0b1c2d3e4 (left/right to front/back in `item_locations` and
+	`storage_bins`) is invisible to it: a field database stamped onto head
+	would keep its old side values under code that no longer matches them.
+	The UPDATEs only touch rows that still carry the old values, so re-running
+	them after every startup path is a no-op in steady state.
+	"""
+	sync_engine = create_engine(database_url, poolclass=NullPool)
+
+	try:
+		with sync_engine.begin() as connection:
+			rename_module_side_values(connection, forward=True)
+	finally:
+		sync_engine.dispose()
+
+
 def _run_migrations() -> None:
 	"""Bring the database to revision head, or baseline it when it is already there.
 
@@ -803,6 +681,7 @@ def _run_migrations() -> None:
 				model_tables=len(Base.metadata.tables),
 			)
 			command.stamp(alembic_cfg, "head")
+			_apply_module_side_rename(db_url)
 			logger.info("database_migrations_complete", action="baseline_stamp")
 			return
 
@@ -820,6 +699,7 @@ def _run_migrations() -> None:
 
 		logger.info("running_database_migrations", script_location=str(Path(__file__).parent / "alembic"))
 		command.upgrade(alembic_cfg, "head")
+		_apply_module_side_rename(db_url)
 		logger.info("database_migrations_complete")
 	except Exception as e:
 		logger.error("migration_failed", error=str(e), exc_info=True)
@@ -1358,10 +1238,14 @@ async def health() -> JSONResponse:
     responses=response_docs(model=SystemInfoResponse),
 )
 async def system_info() -> dict[str, str | None]:
-	"""Read device identity and network address.
+	"""Read device identity, alias, release, and network address.
 
-	Public device discovery information. `lan_ip` is the IPv4 address of `wlan0`, or null
-	when that interface cannot be read. This endpoint does not establish robot readiness.
+	Public device discovery information. `device_alias` is the operator-assigned alias
+	staged by provisioning, or null when the device has none. `release_sha` and
+	`release_branch` identify the release the device is running, staged by the
+	on-device sync scripts, or null when unknown. `lan_ip` is the IPv4 address of
+	`wlan0`, or null when that interface cannot be read. This endpoint does not
+	establish robot readiness.
 	"""
 	lan_ip: str | None = None
 	try:
@@ -1373,7 +1257,13 @@ async def system_info() -> dict[str, str | None]:
 	except OSError:
 		pass
 
-	return {"device_id": get_device_id(), "lan_ip": lan_ip}
+	return {
+		"device_id": get_device_id(),
+		"device_alias": get_device_alias() or None,
+		"release_sha": get_release_sha() or None,
+		"release_branch": get_release_branch() or None,
+		"lan_ip": lan_ip,
+	}
 
 
 app.include_router(auth.router)
@@ -1431,5 +1321,9 @@ def start() -> None:
 		reload_includes=reload_includes,
 		reload_excludes=reload_excludes,
 		log_config=log_config,
+		# Room for in-flight hardware operations (a rail power cycle holds power off for
+		# 3s). Persistent streams end on the shutdown signal themselves (SSE through
+		# sse-starlette, MJPEG through AppStatus), so the drain stops as soon as the
+		# ordinary requests do.
 		timeout_graceful_shutdown=5,
 	)
