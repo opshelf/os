@@ -69,7 +69,7 @@ class LaserScanConfig(BaseModel):
     # a POC: keep it unset until a run on the machine has been compared against a stepped one.
     coarse_scan_style: Literal["stepped", "flying"] = "stepped"
     coarse_scan_rpm: Optional[int] = Field(default=None, gt=0)
-    coarse_scan_bin_mode: Literal["nearest", "median"] = "nearest"
+    coarse_scan_bin_mode: Literal["nearest", "median", "median3"] = "nearest"
     # Fly alternate hole-sweep lines in opposite directions instead of returning to x_min before
     # each one. Off until the capture latency has been fitted in both directions: backlash is
     # direction-dependent and FLYING_CAPTURE_LATENCY_MS was fitted in one direction only.
