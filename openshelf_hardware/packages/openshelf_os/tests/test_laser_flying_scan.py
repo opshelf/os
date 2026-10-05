@@ -1,4 +1,6 @@
+import argparse
 import asyncio
+import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +17,10 @@ from openshelf_os.laser_calibration import (
 	scan_axis_flying,
 	scan_line_positions_flying,
 )
+from openshelf_os.config.laser_scan import LaserScanConfig, LaserScanXYOffsetConfig
+from openshelf_os.laser_calibration.core import get_flying_capture_latency_ms
+from openshelf_os.laser_calibration.defaults import FLYING_CAPTURE_LATENCY_MS
+from openshelf_os.laser_calibration.recording import build_run_parameters
 from openshelf_os.laser_calibration.scan import ScanBounds, build_axis_positions
 import openshelf_os.laser_calibration.flying as flying_module
 import openshelf_os.laser_calibration.shelf_scan as shelf_scan_module
@@ -695,3 +701,106 @@ async def test_flying_shelf_scout_resamples_an_uncovered_bin_instead_of_reading_
 	assert depth_values[y_positions.index(192.0)] == 9.5
 
 
+def test_flying_capture_latency_falls_back_to_the_default_and_rejects_negative_values() -> None:
+	assert get_flying_capture_latency_ms(LaserScanConfig()) == FLYING_CAPTURE_LATENCY_MS
+	assert get_flying_capture_latency_ms(LaserScanConfig(flying_capture_latency_ms=37.5)) == 37.5
+	assert get_flying_capture_latency_ms(LaserScanConfig(flying_capture_latency_ms=0.0)) == 0.0
+
+	with pytest.raises(ValueError, match="flying_capture_latency_ms"):
+		get_flying_capture_latency_ms(SimpleNamespace(flying_capture_latency_ms=-1.0))
+
+
+@pytest.mark.asyncio
+async def test_prefetch_line_depth_values_corrects_with_the_configured_capture_latency(
+	monkeypatch,
+) -> None:
+	captured_latencies: list[float | None] = []
+
+	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
+		captured_latencies.append(kwargs.get("capture_latency_s"))
+		return [None for _ in positions], FlyingScanLine(
+			axis=axis, fixed_mm=fixed_mm, start_mm=positions[0], end_mm=positions[-1], rpm=rpm
+		)
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+
+	await flying_module.prefetch_line_depth_values(
+		SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0))),
+		scan_config=SimpleNamespace(
+			fine_scan_style="flying",
+			fine_scan_feed_mm_s=40.0,
+			flying_capture_latency_ms=37.5,
+		),
+		axis="x",
+		positions=[0.0, 1.0, 2.0],
+		fixed_mm=10.0,
+		progress_label="latency_prefetch",
+	)
+
+	assert captured_latencies == [pytest.approx(0.0375)]
+
+
+@pytest.mark.asyncio
+async def test_flying_line_samples_record_the_capture_latency_they_were_corrected_with(
+	tmp_path: Path,
+) -> None:
+	line = await scan_axis_flying(
+		tool=FakeFlyingTool(depth_mm=5.0),
+		axis="y",
+		start_mm=0.0,
+		end_mm=10.0,
+		fixed_mm=25.0,
+		rpm=30,
+		progress_label="flying_latency_record",
+		capture_latency_s=0.0375,
+	)
+	output_path = flying_module.write_flying_line_samples(
+		run_dir=tmp_path,
+		label="flying_latency_record",
+		line=line,
+	)
+
+	assert line.capture_latency_s == pytest.approx(0.0375)
+	rows = [json.loads(row) for row in Path(output_path).read_text(encoding="utf-8").splitlines()]
+	assert len(rows) > 0
+	assert all(row["capture_latency_s"] == pytest.approx(0.0375) for row in rows)
+
+
+def test_run_parameters_record_the_resolved_capture_latency() -> None:
+	scan_config = LaserScanConfig(
+		laser_offset_x_mm=0.0,
+		laser_offset_y_mm=0.0,
+		front_gripper_xy_correction_mm=LaserScanXYOffsetConfig(x_mm=0.0, y_mm=0.0),
+		flying_capture_latency_ms=37.5,
+	)
+	args = argparse.Namespace(
+		module="front",
+		x=None,
+		y=None,
+		y_offset=0.0,
+		settle_ms=None,
+		samples_per_point=None,
+		known_shelf_edge_y=None,
+		npy=None,
+		scans_dir="scans",
+		config="config.json",
+		apply=False,
+		shelf_scout_only=False,
+		rescan_cell=None,
+		flying_capture_latency_ms=None,
+	)
+
+	run_parameters = build_run_parameters(
+		args=args,
+		side=StorageModuleSide.FRONT,
+		bounds=ScanBounds(x_min=0.0, x_max=100.0, y_min=0.0, y_max=100.0),
+		step_mm=1.0,
+		settle_ms=0,
+		samples_per_point=1,
+		coarse_settle_ms=0,
+		coarse_samples_per_point=1,
+		scan_config=scan_config,
+	)
+
+	assert run_parameters["resolved"]["flying_capture_latency_ms"] == 37.5
+	assert run_parameters["cli"]["flying_capture_latency_ms"] is None

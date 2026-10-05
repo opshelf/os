@@ -7,6 +7,7 @@ from openshelf_os.laser_calibration.core import (
 	get_coarse_scan_bin_mode,
 	get_coarse_scan_rpm,
 	get_coarse_scan_style,
+	get_flying_capture_latency_s,
 )
 from openshelf_os.laser_calibration.flying import scan_shelf_scout_line_flying
 from openshelf_os.laser_calibration.shelf_scout import (
@@ -105,6 +106,7 @@ async def scan_shelf_scout_line(
 			should_abort=should_abort,
 			bin_mode=get_coarse_scan_bin_mode(scan_config),
 			progress_every=progress_every,
+			capture_latency_s=get_flying_capture_latency_s(scan_config),
 			stop_after_first_edge=stop_after_first_edge,
 			stop_when=stop_when,
 			sample_depth=sample_laser_depth,

@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.laser_calibration.defaults import (
+	FLYING_CAPTURE_LATENCY_MS,
 	LASER_SAMPLES_PER_POINT,
 	LASER_SAMPLE_SETTLE_MS,
 )
@@ -407,6 +408,27 @@ def get_fine_scan_feed_mm_s(scan_config: Any) -> float:
 		raise ValueError("robot.grid.scan.fine_scan_feed_mm_s must be greater than zero")
 
 	return validated_feed
+
+
+def get_flying_capture_latency_ms(scan_config: Any) -> float:
+	configured_latency_ms = getattr(scan_config, "flying_capture_latency_ms", None)
+
+	if configured_latency_ms is None:
+		return float(FLYING_CAPTURE_LATENCY_MS)
+
+	validated_latency_ms = validate_finite_value(
+		configured_latency_ms,
+		"robot.grid.scan.flying_capture_latency_ms",
+	)
+
+	if validated_latency_ms < 0.0:
+		raise ValueError("robot.grid.scan.flying_capture_latency_ms must be zero or greater")
+
+	return validated_latency_ms
+
+
+def get_flying_capture_latency_s(scan_config: Any) -> float:
+	return get_flying_capture_latency_ms(scan_config) / 1000.0
 
 
 def get_coarse_scan_rpm(scan_config: Any) -> int:

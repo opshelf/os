@@ -88,6 +88,7 @@ async def capture_shelf_candidates(
 	coarse_scan_style = get_coarse_scan_style(scan_config)
 	coarse_scan_rpm = get_coarse_scan_rpm(scan_config)
 	coarse_scan_bin_mode = get_coarse_scan_bin_mode(scan_config)
+	capture_latency_s = get_flying_capture_latency_s(scan_config)
 	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds, side=side, scan_config=scan_config)
 	scout_y_positions = list(reversed(build_axis_positions(bounds.y_min, bounds.y_max, SHELF_SCOUT_STEP_MM)))
 	hole_sweep_x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
@@ -151,6 +152,7 @@ async def capture_shelf_candidates(
 						post_edge_skip_mm=post_edge_skip_mm,
 						should_abort=should_abort,
 						bin_mode=coarse_scan_bin_mode,
+						capture_latency_s=capture_latency_s,
 						settle_ms=settle_ms,
 						samples_per_point=samples_per_point,
 					)
@@ -242,6 +244,7 @@ async def capture_shelf_candidates(
 					progress_label=f"shelf_{shelf_idx}_offset_{offset_idx}",
 					should_abort=should_abort,
 					bin_mode=coarse_scan_bin_mode,
+					capture_latency_s=capture_latency_s,
 				)
 				write_flying_line_samples(
 					run_dir=getattr(recorder, "run_dir", None),

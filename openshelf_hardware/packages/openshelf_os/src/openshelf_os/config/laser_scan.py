@@ -81,6 +81,10 @@ class LaserScanConfig(BaseModel):
     # the same rpm is a different speed on x and y.
     fine_scan_style: Literal["stepped", "flying"] = "stepped"
     fine_scan_feed_mm_s: float = Field(40.0, gt=0)
+    # Laser-to-encoder read delay that flying passes correct each depth by (feed x latency).
+    # Unset falls back to `defaults.FLYING_CAPTURE_LATENCY_MS`, which was fit on one machine;
+    # store this sensor's own stopped-vs-moving edge measurement here. 0 disables the correction.
+    flying_capture_latency_ms: Optional[float] = Field(default=None, ge=0)
     front_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     back_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     shelf_scout_post_edge_skip_mm: float = Field(40.0, ge=0)
