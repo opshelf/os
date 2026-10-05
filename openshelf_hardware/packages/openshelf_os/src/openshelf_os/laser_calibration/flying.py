@@ -4,6 +4,7 @@ import asyncio
 import bisect
 import json
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
@@ -42,6 +43,15 @@ FLYING_SCAN_PROGRESS_EPS_MM = 0.02
 # Velocity for the depth-to-position correction is a median over the trailing deltas so a single
 # jittered timestamp cannot move a sample.
 FLYING_SCAN_VELOCITY_WINDOW = 8
+# The latency correction assumes every laser read takes about as long as the last ones. A
+# retried Modbus read can take seconds, and the encoder read that follows it lands far past
+# where the beam was, so a moving read slower than this multiple of the trailing median span is
+# dropped. The cap never falls below the floor, so scheduler jitter on a fast bus keeps its samples,
+# and it is only applied once the window holds enough spans to give a meaningful median.
+FLYING_SCAN_SLOW_READ_FACTOR = 3.0
+FLYING_SCAN_SLOW_READ_FLOOR_S = 0.025
+FLYING_SCAN_SLOW_READ_WINDOW = 16
+FLYING_SCAN_SLOW_READ_MIN_SPANS = 4
 # The correction shifts every depth backwards by feed * capture_latency_s, so a pass that stops at
 # end_mm never captures the raw samples the final grid positions would bin from. The pass flies the
 # latency shift plus this margin past the grid; the margin covers the half-step binning tolerance of
@@ -107,6 +117,17 @@ def estimate_sample_velocity_mm_s(
 		return None
 
 	return float(median(velocities))
+
+
+def resolve_slow_read_cap_s(read_spans_s: "deque[float] | list[float]") -> Optional[float]:
+	"""Longest laser read whose depth can still be placed by the fixed latency correction."""
+	if len(read_spans_s) < FLYING_SCAN_SLOW_READ_MIN_SPANS:
+		return None
+
+	return max(
+		FLYING_SCAN_SLOW_READ_FACTOR * float(median(read_spans_s)),
+		FLYING_SCAN_SLOW_READ_FLOOR_S,
+	)
 
 
 @dataclass
@@ -265,6 +286,8 @@ class FlyingScanLine:
 	rpm: int
 	samples: list[FlyingScanSample] = field(default_factory=list)
 	duration_s: float = 0.0
+	# Moving reads discarded because the laser transaction ran past the slow-read cap.
+	dropped_slow_reads: int = 0
 
 	def median_sample_spacing_mm(self) -> Optional[float]:
 		if len(self.samples) < 2:
@@ -298,7 +321,8 @@ class FlyingScanLine:
 			f"start_mm={self.start_mm:.2f} end_mm={self.end_mm:.2f} rpm={self.rpm} "
 			f"samples={len(self.samples)} duration_s={self.duration_s:.2f} "
 			f"feed_mm_s={feed_mm_s:.2f} "
-			f"median_spacing_mm={'none' if spacing_mm is None else f'{spacing_mm:.3f}'}"
+			f"median_spacing_mm={'none' if spacing_mm is None else f'{spacing_mm:.3f}'} "
+			f"dropped_slow_reads={self.dropped_slow_reads}"
 		)
 
 
@@ -705,6 +729,10 @@ async def _scan_axis_flying_pass(
 	last_position_mm = start_position_mm
 	last_progress_at = started_at
 	stopped_early = False
+	# Span of each laser transaction alone; the history includes dropped reads so a bus that
+	# slows down for good raises the cap instead of discarding the rest of the line.
+	read_spans_s: deque[float] = deque(maxlen=FLYING_SCAN_SLOW_READ_WINDOW)
+	dropped_slow_reads = 0
 
 	try:
 		did_start = await scan_motor.move_to_position_no_wait(motion_end_mm, rpm=rpm)
@@ -715,23 +743,35 @@ async def _scan_axis_flying_pass(
 			if _is_safety_blocked(scan_motor, hold_motor) is True:
 				raise FlyingScanSafetyInterrupted()
 
+			read_started_at = time.monotonic()
 			depth_mm = await tool.get_laser_distance()
+			read_span_s = time.monotonic() - read_started_at
 			position_mm = float(await scan_motor.get_position())
 			sampled_at = time.monotonic()
-			sample = FlyingScanSample(
-				position_mm=position_mm,
-				depth_mm=None if depth_mm is None else float(depth_mm),
-				elapsed_s=sampled_at - started_at,
-			)
-			samples.append(sample)
-			velocity_mm_s = estimate_sample_velocity_mm_s(samples)
+			slow_read_cap_s = resolve_slow_read_cap_s(read_spans_s)
+			read_spans_s.append(read_span_s)
+			# A slow read's depth belongs well before this encoder position, and no fixed
+			# correction can say where. Keep the read for the motion checks below but leave it
+			# out of the samples, so it neither bins nor feeds the velocity or stop predicate.
+			is_slow_read = slow_read_cap_s is not None and read_span_s > slow_read_cap_s
 
-			if velocity_mm_s is not None:
-				sample.velocity_mm_s = velocity_mm_s
-				sample.depth_position_mm = position_mm - velocity_mm_s * capture_latency_s
+			if is_slow_read is True:
+				dropped_slow_reads += 1
+			else:
+				sample = FlyingScanSample(
+					position_mm=position_mm,
+					depth_mm=None if depth_mm is None else float(depth_mm),
+					elapsed_s=sampled_at - started_at,
+				)
+				samples.append(sample)
+				velocity_mm_s = estimate_sample_velocity_mm_s(samples)
 
-			if find_progress_index is not None:
-				covered_indices.add(find_progress_index(sample_depth_position_mm(sample)))
+				if velocity_mm_s is not None:
+					sample.velocity_mm_s = velocity_mm_s
+					sample.depth_position_mm = position_mm - velocity_mm_s * capture_latency_s
+
+				if find_progress_index is not None:
+					covered_indices.add(find_progress_index(sample_depth_position_mm(sample)))
 
 			is_due = (sampled_at - last_print_at) >= FLYING_SCAN_PROGRESS_INTERVAL_S
 
@@ -759,7 +799,7 @@ async def _scan_axis_flying_pass(
 						f"position={position_mm:.2f} depth={depth_to_label(depth_mm)}"
 					)
 
-			if stop_when is not None and stop_when(samples) is True:
+			if is_slow_read is False and stop_when is not None and stop_when(samples) is True:
 				stopped_early = True
 				break
 
@@ -825,6 +865,7 @@ async def _scan_axis_flying_pass(
 		rpm=int(rpm),
 		samples=samples,
 		duration_s=time.monotonic() - started_at,
+		dropped_slow_reads=dropped_slow_reads,
 	)
 	printer(f"flying_line={progress_label} {line.metrics_text()}")
 
