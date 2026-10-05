@@ -70,6 +70,10 @@ class LaserScanConfig(BaseModel):
     coarse_scan_style: Literal["stepped", "flying"] = "stepped"
     coarse_scan_rpm: Optional[int] = Field(default=None, gt=0)
     coarse_scan_bin_mode: Literal["nearest", "median"] = "nearest"
+    # Fly alternate hole-sweep lines in opposite directions instead of returning to x_min before
+    # each one. Off until the capture latency has been fitted in both directions: backlash is
+    # direction-dependent and FLYING_CAPTURE_LATENCY_MS was fitted in one direction only.
+    coarse_scan_alternate_direction: bool = False
     # Scan pose: absolute stage position and Z delta relative to Z_EXTENSION_PLACE.
     laser_scan_pose_stage_mm: Optional[float] = Field(default=None, ge=0)
     laser_scan_pose_z_delta_from_place_mm: Optional[float] = None
