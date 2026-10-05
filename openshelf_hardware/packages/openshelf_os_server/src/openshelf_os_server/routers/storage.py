@@ -262,7 +262,7 @@ class BinResponse(BaseModel):
         default=None, description="Equal-sized compartment rows and columns; null for an undivided bin.",
     )
     compartment_dimensions: StorageBinDimensionsSettings | None = Field(
-        default=None, description="Compartment dimensions in millimeters: inner width divided by columns, inner length divided by rows, and full inner height; null for an undivided bin.",
+        default=None, description="Compartment dimensions in millimeters: the inner width and length less the outer walls and dividers, split evenly by columns and rows, less placement leeway, and the full inner height; null for an undivided bin.",
     )
     item_count: int
     used_volume: float = Field(description="Occupied volume in cubic millimeters")
