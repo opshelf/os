@@ -2,7 +2,7 @@
 
 from typing import Any
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 MIGRATION_COMMAND = (
     "cd openshelf_hardware && uv run --no-sync python ../scripts/migrate_config.py data --write"
 )
@@ -25,7 +25,8 @@ def require_current_schema(config: dict[str, Any]) -> None:
     if version < CURRENT_SCHEMA_VERSION:
         raise ValueError(
             f"Config schema {version} requires migration to {CURRENT_SCHEMA_VERSION}. "
-            f"Stop the application, then run from the checkout: {MIGRATION_COMMAND}"
+            f"The server auto-migrates on startup; in this context run from the checkout: "
+            f"{MIGRATION_COMMAND}"
         )
 
 

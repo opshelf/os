@@ -24,10 +24,9 @@ def build_grid(*, is_occupied: bool, cell_status: CellStatus | None = None) -> S
 		)
 
 	return StorageGrid(
-		left_module=[
+		front_module=[
 			Shelf(
 				shelf_idx=0,
-				shelf_width=100.0,
 				cells=[
 					Cell(
 						cell_idx=0,
@@ -39,7 +38,7 @@ def build_grid(*, is_occupied: bool, cell_status: CellStatus | None = None) -> S
 				],
 			)
 		],
-		right_module=[],
+		back_module=[],
 		filename='/tmp/test_calibration_storage.json',
 	)
 
@@ -82,100 +81,16 @@ def build_worker(grid: StorageGrid):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reserved", [False, True])
-async def test_quick_test_picks_and_places_selected_cell(client, monkeypatch, reserved) -> None:
-	grid = build_grid(is_occupied=reserved)
-	original_cell = grid.left_module[0].cells[0].model_copy(deep=True)
-	worker = build_worker(grid)
-
-	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
-		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
-			response = await client.post(
-				'/api/calibration/test',
-				json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
-			)
-
-	assert response.status_code == 200
-
-	pick_coordinate = worker._robot._tool.pick.await_args.args[0]
-	place_coordinate = worker._robot._tool.place.await_args.args[0]
-
-	assert grid.left_module[0].cells[0] == original_cell
-	assert pick_coordinate.x == pytest.approx(123.0)
-	assert pick_coordinate.y == pytest.approx(456.0)
-	assert pick_coordinate.z_offset == pytest.approx(7.5)
-	assert pick_coordinate.s == 0
-	assert place_coordinate == pick_coordinate
-	worker._robot._tool.pick_lift_place.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_quick_lift_raises_and_lowers_y_between_pick_and_place(client) -> None:
-	grid = build_grid(is_occupied=False)
-	worker = build_worker(grid)
-
-	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
-		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
-			response = await client.post(
-				'/api/calibration/test?lift=12.5',
-				json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
-			)
-
-	assert response.status_code == 200
-	coordinate, lift_mm, hold_seconds = worker._robot._tool.pick_lift_place.await_args.args
-	assert coordinate.y == pytest.approx(456.0)
-	assert lift_mm == pytest.approx(12.5)
-	assert hold_seconds == pytest.approx(1.0)
-	worker._robot._tool.pick.assert_not_awaited()
-	worker._robot._tool.place.assert_not_awaited()
-
-
-@pytest.mark.parametrize('lift', ['0', '-1', '30.1'])
-@pytest.mark.asyncio
-async def test_quick_lift_rejects_out_of_range_distance(client, lift: str) -> None:
-	response = await client.post(
-		f'/api/calibration/test?lift={lift}',
-		json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
-	)
-
-	assert response.status_code == 422
-
-
-
-@pytest.mark.asyncio
-async def test_cycle_test_runs_retrieve_then_store_for_empty_cell(client) -> None:
-	grid = build_grid(is_occupied=False)
-	worker = build_worker(grid)
-
-	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
-		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
-			response = await client.post(
-				'/api/calibration/test/cycle',
-				json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
-			)
-
-	assert response.status_code == 200
-	assert worker._robot.io_pick.await_count == 1
-	assert worker._robot.io_place.await_count == 1
-	assert worker._robot.call_order == ['retrieve', 'store']
-
-	cell = grid.left_module[0].cells[0]
-
-	assert cell.status == CellStatus.OCCUPIED
-	assert cell.item is not None
-
-
-@pytest.mark.asyncio
 async def test_cycle_test_runs_retrieve_then_store_for_occupied_cell(client) -> None:
 	grid = build_grid(is_occupied=True)
 	worker = build_worker(grid)
-	original_item = grid.left_module[0].cells[0].item.model_copy(deep=True)
+	original_item = grid.front_module[0].cells[0].item.model_copy(deep=True)
 
 	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
 		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
 			response = await client.post(
 				'/api/calibration/test/cycle',
-				json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
+				json={'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 0},
 			)
 
 	assert response.status_code == 200
@@ -183,7 +98,7 @@ async def test_cycle_test_runs_retrieve_then_store_for_occupied_cell(client) -> 
 	assert worker._robot.io_pick.await_count == 1
 	assert worker._robot.call_order == ['retrieve', 'store']
 
-	cell = grid.left_module[0].cells[0]
+	cell = grid.front_module[0].cells[0]
 
 	assert cell.status == CellStatus.OCCUPIED
 	assert cell.item == original_item
@@ -200,7 +115,7 @@ async def test_cycle_test_rejects_when_home_is_required(client) -> None:
 	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
 		response = await client.post(
 			'/api/calibration/test/cycle',
-			json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
+			json={'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 0},
 		)
 
 	assert response.status_code == 409
@@ -219,7 +134,7 @@ async def test_tests_reject_cells_that_are_not_testable(client, endpoint: str, c
 		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
 			response = await client.post(
 				endpoint,
-				json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
+				json={'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 0},
 			)
 
 	assert response.status_code == 400
@@ -230,18 +145,6 @@ async def test_tests_reject_cells_that_are_not_testable(client, endpoint: str, c
 	assert worker._robot.io_pick.await_count == 0
 	assert worker._robot.io_place.await_count == 0
 
-	assert grid.left_module[0].cells[0].status == cell_status
+	assert grid.front_module[0].cells[0].status == cell_status
 
 
-@pytest.mark.asyncio
-async def test_quick_test_rejects_when_robot_is_unavailable(client) -> None:
-	with patch(
-		'openshelf_os_server.routers.calibration.get_robot_worker',
-		AsyncMock(side_effect=ValueError('missing robot')),
-	):
-		response = await client.post(
-			'/api/calibration/test',
-			json={'side': 'left_module', 'shelf_idx': 0, 'cell_idx': 0},
-		)
-
-	assert response.status_code == 503

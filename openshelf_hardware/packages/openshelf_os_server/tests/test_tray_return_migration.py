@@ -123,7 +123,7 @@ async def _seed_legacy_return(engine, operation, resolution, state, *, physical=
             StorageBin(
                 id=1,
                 barcode="900000000001",
-                side="left_module",
+                side="front_module",
                 shelf_idx=0,
                 cell_idx=0,
                 inner_dimensions={"width": 30, "height": 30, "length": 30},

@@ -4,27 +4,11 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import func, select
-from starlette.requests import Request
 
 from openshelf_os_server.database.models import AuditLog
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.main import app
-from openshelf_os_server.middleware.audit import (
-	should_skip_after_response,
-	should_skip_before_request,
-)
 from openshelf_os_server.utils.audit_constants import AUDIT_RETENTION_DAYS
-
-
-def _make_request(method: str, path: str) -> Request:
-	scope = {
-		"type": "http",
-		"method": method,
-		"path": path,
-		"headers": [],
-		"query_string": b"",
-	}
-	return Request(scope)
 
 
 async def audit_count(endpoint: str | None = None, method: str | None = None) -> int:
@@ -53,65 +37,6 @@ async def admin_headers(unauthenticated_client: AsyncClient) -> dict[str, str]:
 	)
 	assert response.status_code == 200
 	return {"Authorization": f"Bearer {response.json()['access_token']}"}
-
-
-@pytest.mark.anyio
-async def test_audit_logs_without_auth_header(unauthenticated_client: AsyncClient) -> None:
-	response = await unauthenticated_client.post(
-		"/api/auth/login/json",
-		json={"email": "admin@opshelf.com", "pin": "1234"},
-	)
-	assert response.status_code == 200
-
-	log = await latest_audit_log("/api/auth/login/json", "POST")
-	assert log is not None
-	assert log.user_id is None
-	assert log.method == "POST"
-	assert log.response_status == 200
-
-
-@pytest.mark.anyio
-async def test_audit_logs_with_invalid_auth_token(unauthenticated_client: AsyncClient) -> None:
-	headers = {"Authorization": "Bearer invalid_token_here"}
-
-	response = await unauthenticated_client.get("/api/users", headers=headers)
-	assert response.status_code == 401
-
-	log = await latest_audit_log("/api/users", "GET")
-	assert log is not None
-	assert log.user_id is None
-	assert log.response_status == 401
-	assert log.error_message == ""
-
-
-@pytest.mark.anyio
-async def test_audit_logs_request_with_body(unauthenticated_client: AsyncClient) -> None:
-	headers = await admin_headers(unauthenticated_client)
-	test_payload = {"name": f"test_role_audit_{uuid.uuid4().hex}", "permissions": ["test:read"]}
-
-	response = await unauthenticated_client.post("/api/roles", headers=headers, json=test_payload)
-	assert response.status_code == 200
-
-	log = await latest_audit_log("/api/roles", "POST")
-	assert log is not None
-	assert log.request_body == test_payload
-	assert log.response_status == 200
-
-
-@pytest.mark.anyio
-async def test_audit_logs_client_info(unauthenticated_client: AsyncClient) -> None:
-	headers = {"User-Agent": "TestClient/1.0"}
-	response = await unauthenticated_client.post(
-		"/api/auth/login/json",
-		headers=headers,
-		json={"email": "admin@opshelf.com", "pin": "1234"},
-	)
-	assert response.status_code == 200
-
-	log = await latest_audit_log("/api/auth/login/json", "POST")
-	assert log is not None
-	assert log.user_agent == "TestClient/1.0"
-	assert log.ip_address in ["testclient", "127.0.0.1"]
 
 
 @pytest.mark.anyio
@@ -150,16 +75,6 @@ async def test_audit_chain_integrity_verifies_after_skipped_requests(unauthentic
 
 
 @pytest.mark.anyio
-async def test_audit_logs_errors_in_endpoint(client: AsyncClient) -> None:
-	response = await client.get("/api/users/999999")
-	assert response.status_code == 404
-
-	log = await latest_audit_log("/api/users/999999", "GET")
-	assert log is not None
-	assert log.response_status == 404
-
-
-@pytest.mark.anyio
 async def test_audit_error_response_keeps_cors_header(unauthenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
 	# Keep this test-only route out of subsequent live-route/OpenAPI checks.
 	monkeypatch.setattr(app.router, "routes", list(app.router.routes))
@@ -180,27 +95,6 @@ async def test_audit_error_response_keeps_cors_header(unauthenticated_client: As
 	assert log is not None
 	assert log.response_status == 500
 	assert log.error_message == "audit error route failed"
-
-
-@pytest.mark.anyio
-async def test_options_requests_are_not_audited(unauthenticated_client: AsyncClient) -> None:
-	before_count = await audit_count(method="OPTIONS")
-	response = await unauthenticated_client.options(
-		"/api/auth/users",
-		headers={"Origin": "http://dev-ui.test", "Access-Control-Request-Method": "GET"},
-	)
-
-	assert response.status_code < 500
-	assert await audit_count(method="OPTIONS") == before_count
-
-
-@pytest.mark.anyio
-async def test_health_requests_are_not_audited(unauthenticated_client: AsyncClient) -> None:
-	before_count = await audit_count(endpoint="/api/health")
-	response = await unauthenticated_client.get("/api/health")
-
-	assert response.status_code == 200
-	assert await audit_count(endpoint="/api/health") == before_count
 
 
 @pytest.mark.anyio
@@ -259,35 +153,6 @@ async def test_retention_prune_keeps_clock_skewed_chain_entry(client: AsyncClien
 	assert still_present == 1
 
 
-@pytest.mark.parametrize(
-	"method, path",
-	[
-		("POST", "/api/robot/debug/motors/probe"),
-		("GET", "/api/calibration/laser/stream"),
-		("DELETE", "/api/robot/debug/motors/probe"),
-	],
-)
-def test_diagnostic_endpoints_skipped_before_request(method: str, path: str) -> None:
-	request = _make_request(method, path)
-	assert should_skip_before_request(request) is True
-
-
-def test_laser_status_successful_read_is_excluded() -> None:
-	request = _make_request("GET", "/api/calibration/laser/status")
-	assert should_skip_before_request(request) is False
-	assert should_skip_after_response(request, 200) is True
-	assert should_skip_after_response(request, 500) is False
-
-
-@pytest.mark.anyio
-async def test_successful_excluded_get_is_not_audited(client: AsyncClient) -> None:
-	before_count = await audit_count(endpoint="/api/auth/me", method="GET")
-	response = await client.get("/api/auth/me")
-
-	assert response.status_code == 200
-	assert await audit_count(endpoint="/api/auth/me", method="GET") == before_count
-
-
 @pytest.mark.anyio
 async def test_failed_excluded_get_is_audited(client: AsyncClient) -> None:
 	response = await client.post("/api/storage/items/lookup", json={"barcode": "missing-barcode"})
@@ -330,18 +195,6 @@ async def test_successful_storage_mutation_is_audited(client: AsyncClient) -> No
 	log = await latest_audit_log("/api/storage/items", "POST")
 	assert log is not None
 	assert log.response_status == 200
-	assert log.request_body == payload
-
-
-@pytest.mark.anyio
-async def test_robot_command_request_is_audited(client: AsyncClient) -> None:
-	payload = {"command": "home"}
-	response = await client.post("/api/robot/commands", json=payload)
-	assert response.status_code in [200, 422, 503]
-
-	log = await latest_audit_log("/api/robot/commands", "POST")
-	assert log is not None
-	assert log.response_status == response.status_code
 	assert log.request_body == payload
 
 

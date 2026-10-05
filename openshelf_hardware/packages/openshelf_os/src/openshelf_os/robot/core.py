@@ -11,6 +11,7 @@ from hardware.curtain import MotionSafetyInterlock
 from hardware.motor import MotorStatus
 from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
+from openshelf_os.demo_side_rename import DEMO_SIDE_RENAME_BACKUP_SUFFIX, migrate_demo_side_rename
 from openshelf_os.config.models import compare_gpio_pins_to_defaults
 from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORT,
@@ -35,6 +36,7 @@ from openshelf_os.robot.status import (
     RobotResponse, RobotCommandSuccessful, RobotCommandError,
     RobotStatus, GantryStatus, ToolAxisStatus, RobotState, AxisTelemetry, CabinetDoorState,
 )
+from openshelf_os.robot.weight_guard import WeightChangeGuard
 from openshelf_os.storage import (
     StorageGrid, Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation, CellStatus,
     StorageValidationError,
@@ -139,6 +141,8 @@ class Robot:
         self._operation_context_listener: Callable[[dict[str, Any] | None], None] | None = None
         self._last_fault_context: dict[str, Any] | None = None
         self._motor_time_accumulator: float = 0.0
+
+        self._weight_guard = self._build_weight_guard()
 
         self._demo_cell_map: dict[str, StorageModuleCellLocation] | None = None
         self._demo_nudge_map: dict[tuple[str, int, int], float] = {}
@@ -280,6 +284,15 @@ class Robot:
         if gpio is not None:
             gpio.apply_initial_outputs()
             gpio.observe_all_inputs()
+
+        # The pre-home clearance jog happens during tool.configure, before the
+        # worker exists, so the guard has to start sampling here or the boot-time
+        # crush scenario goes unguarded. The worker replaces the listener when it
+        # connects; start() is idempotent so its later start is a no-op.
+        weight_guard = getattr(self, "_weight_guard", None)
+        if weight_guard is not None:
+            weight_guard.set_listener(self._stop_motion_on_weight_change)
+            await weight_guard.start()
 
         await self._tool.configure(isolate=isolate, home_on_init=home_on_init)
         await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready, home_on_init=home_on_init)
@@ -785,13 +798,32 @@ class Robot:
     #  Demo cell mapping
     # ------------------------------------------------------------------ #
 
+    # One-time on-disk migration of the demo mapping files written before the front/back
+    # cutover, which keyed their cell locations under the L/R side letters. The shared
+    # implementation lives in openshelf_os.demo_side_rename so other demo.json readers
+    # (e.g. scripts/seed_demo.py) migrate on load with the same semantics.
+    # Kept as a class attribute alias of the shared constant for existing references.
+    DEMO_SIDE_RENAME_BACKUP_SUFFIX = DEMO_SIDE_RENAME_BACKUP_SUFFIX
+
+    @classmethod
+    def _migrate_demo_side_rename(cls, target_path: str, raw_content: str, data: Any) -> Any:
+        """Rename the pre-cutover side letters in a demo mapping file, in place and idempotently.
+
+        Files written before the front/back cutover keep their cell locations under the
+        L/R side letters. Rename them in the loaded data and rewrite the file with an
+        exclusive-created backup of the original bytes, so a device picks the new letters
+        up on its next load and the old file is recoverable. Files that already carry
+        the new letters are left untouched.
+        """
+        return migrate_demo_side_rename(target_path, raw_content, data)
+
     @staticmethod
     def _parse_demo_location(value: str) -> StorageModuleCellLocation:
         side_map = {
-            "L": StorageModuleSide.LEFT,
-            "R": StorageModuleSide.RIGHT,
-            "LEFT_MODULE": StorageModuleSide.LEFT,
-            "RIGHT_MODULE": StorageModuleSide.RIGHT,
+            "F": StorageModuleSide.FRONT,
+            "B": StorageModuleSide.BACK,
+            "FRONT_MODULE": StorageModuleSide.FRONT,
+            "BACK_MODULE": StorageModuleSide.BACK,
         }
         parts = value.split(":")
         if len(parts) != 3:
@@ -813,7 +845,9 @@ class Robot:
             self._logger.warning("demo_cell_map_missing: %s", path)
             return None
 
-        raw = _json.loads(file_path.read_text(encoding="utf-8"))
+        raw_content = file_path.read_text(encoding="utf-8")
+        raw = _json.loads(raw_content)
+        raw = self._migrate_demo_side_rename(str(file_path), raw_content, raw)
         if isinstance(raw, dict) is False:
             raise ValueError("demo mapping must be a JSON object")
 
@@ -992,6 +1026,76 @@ class Robot:
     def release_motion_safety(self) -> None:
         self._motion_safety.unblock()
         self._logger.info("Safety guard cleared")
+
+    def _build_weight_guard(self) -> Optional[WeightChangeGuard]:
+        """Watch the scale during y travel so a crash into the cell stops motion.
+
+        Returns None when the scale or the y axis is absent, or when the guard is
+        switched off in config, in which case the safety sources simply omit it.
+        """
+        scale_cfg = self._config.get("robot.io.scale", None)
+
+        if scale_cfg is None or getattr(scale_cfg, "enabled", True) is not True:
+            return None
+
+        if getattr(scale_cfg, "motion_guard_enabled", True) is not True:
+            self._logger.info("weight_guard_disabled")
+
+            return None
+
+        scale = getattr(self._io, "_scale", None)
+        y_motor = getattr(self._tool, "_my", None)
+
+        if scale is None or y_motor is None:
+            self._logger.info("weight_guard_unavailable: scale or y axis not configured")
+
+            return None
+
+        return WeightChangeGuard(
+            scale=scale,
+            axis=y_motor,
+            delta_grams=float(getattr(scale_cfg, "motion_guard_delta_grams", 10.0)),
+            min_samples=int(getattr(scale_cfg, "motion_guard_min_samples", 2)),
+            arm_delay_s=float(getattr(scale_cfg, "motion_guard_arm_delay_s", 0.05)),
+            ack_grace_s=float(getattr(scale_cfg, "motion_guard_ack_grace_s", 1.0)),
+            sample_timeout_s=float(getattr(scale_cfg, "motion_guard_sample_timeout_s", 0.25)),
+            idle_interval_s=float(getattr(scale_cfg, "motion_guard_idle_interval_s", 0.2)),
+            context_provider=lambda: dict(self.get_operation_context() or {}),
+        )
+
+    def register_weight_change_listener(self, listener) -> None:
+        if self._weight_guard is not None:
+            self._weight_guard.set_listener(listener)
+
+    def _stop_motion_on_weight_change(self, info: dict[str, Any]) -> None:
+        """Trip listener for the window before the worker takes over.
+
+        Only the drive has to stop here; the worker latches the safety state and
+        publishes the event once it connects and replaces this listener.
+        """
+        self.block_motion_for_safety()
+        self._logger.warning(
+            "Weight change guard tripped during configuration",
+            extra=info,
+        )
+
+    async def start_weight_guard(self) -> None:
+        if self._weight_guard is not None:
+            await self._weight_guard.start()
+
+    async def stop_weight_guard(self) -> None:
+        if self._weight_guard is not None:
+            await self._weight_guard.stop()
+
+    def acknowledge_weight_change(self) -> None:
+        if self._weight_guard is not None:
+            self._weight_guard.acknowledge()
+
+    def get_weight_change_state(self) -> Optional[dict[str, Any]]:
+        if self._weight_guard is None:
+            return None
+
+        return self._weight_guard.source_state()
 
     def get_curtain_state(self) -> Optional[bool]:
         if self._io:
@@ -1583,10 +1687,10 @@ class Robot:
         if isinstance(side, str):
             side = StorageModuleSide(side)
 
-        side_number = 0 if side == StorageModuleSide.LEFT else 1
+        side_number = 0 if side == StorageModuleSide.FRONT else 1
 
         if stage_extension_mm is None:
-            stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.LEFT else "STAGE_EXTENSION_SHELF_BACK"
+            stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.FRONT else "STAGE_EXTENSION_SHELF_BACK"
             stage_value = await self._tool.get_param(stage_param)
             if stage_value is not None:
                 stage_extension_mm = float(stage_value)
@@ -1638,19 +1742,19 @@ class Robot:
             existing_shelves=existing_shelves,
         )
 
-        current_left = [] if self._grid is None else self._grid.left_module
-        current_right = [] if self._grid is None else self._grid.right_module
+        current_front = [] if self._grid is None else self._grid.front_module
+        current_back = [] if self._grid is None else self._grid.back_module
 
-        if side == StorageModuleSide.LEFT:
-            left_module = scanned_shelves
-            right_module = current_right
+        if side == StorageModuleSide.FRONT:
+            front_module = scanned_shelves
+            back_module = current_back
         else:
-            left_module = current_left
-            right_module = scanned_shelves
+            front_module = current_front
+            back_module = scanned_shelves
 
         storage_grid = StorageGrid(
-            left_module=left_module,
-            right_module=right_module,
+            front_module=front_module,
+            back_module=back_module,
             filename=self._grid_path,
         )
         storage_grid.save()
