@@ -67,28 +67,6 @@ class LocationValidator:
         LocationValidator.validate_cell_idx(cell_idx)
 
 
-class StorageCellValidator:
-    """Validator for storage cell data."""
-
-    @staticmethod
-    def validate_capacity(capacity: str) -> None:
-        """Validate storage capacity."""
-        if not isinstance(capacity, str):
-            raise ValidationError("Capacity must be a string")
-        if len(capacity.strip()) == 0:
-            raise ValidationError("Capacity cannot be empty")
-        if len(capacity) > 50:
-            raise ValidationError("Capacity cannot exceed 50 characters")
-
-    @staticmethod
-    def validate_status(status: str) -> None:
-        """Validate storage cell status."""
-        if not isinstance(status, str):
-            raise ValidationError("Status must be a string")
-        valid_statuses = ["available", "occupied", "maintenance", "disabled"]
-        if status.lower() not in valid_statuses:
-            raise ValidationError(f"Status must be one of: {', '.join(valid_statuses)}")
-
 
 class StorageValidator:
     """Main storage validator combining all validation logic."""

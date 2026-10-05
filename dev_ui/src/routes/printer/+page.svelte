@@ -188,11 +188,6 @@
 					<td class:status-error={status.error !== null}>{status.error ?? '-'}</td>
 				</tr>
 			{/if}
-			{#if statusError !== ''}
-				<tr>
-					<td colspan="2"><ErrorMessage message={statusError} /></td>
-				</tr>
-			{/if}
 		</tbody>
 
 		<thead>
@@ -207,11 +202,6 @@
 					<input id="feed-dots" type="number" min="0" max="128" step="1" bind:value={feedDots} />
 				</td>
 			</tr>
-			{#if configError !== ''}
-				<tr>
-					<td colspan="2"><ErrorMessage message={configError} /></td>
-				</tr>
-			{/if}
 		</tbody>
 
 		<thead>
@@ -237,6 +227,14 @@
 			print label
 		</button>
 	</div>
+
+	{#if statusError !== ''}
+		<ErrorMessage message={statusError} />
+	{/if}
+
+	{#if configError !== ''}
+		<ErrorMessage message={configError} />
+	{/if}
 
 	{#if message !== ''}
 		<StatusMessage {message} />

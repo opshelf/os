@@ -16,9 +16,10 @@ fi
 
 # Ensure serial_asyncio is available (needed by robot worker). Install only when the
 # image environment is missing it: an unconditional unpinned install replaces the
-# version the image was built and locked with.
+# version the image was built and locked with. Checked on disk rather than by import,
+# since every interpreter launch here delays the API start.
 if [ -n "$PYTHON_BIN" ]; then
-	if ! "$PYTHON_BIN" -c 'import serial_asyncio' >/dev/null 2>&1; then
+	if ! ls -d "$ENV_PATH"/lib/python3*/site-packages/serial_asyncio >/dev/null 2>&1; then
 		echo "serial_asyncio missing from the image environment, installing it"
 		uv pip install --python "$PYTHON_BIN" pyserial-asyncio >/dev/null 2>&1 || true
 	fi

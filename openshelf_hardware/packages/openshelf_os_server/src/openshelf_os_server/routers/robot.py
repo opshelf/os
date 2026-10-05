@@ -265,7 +265,7 @@ def overlay_db_occupancy(payload_json: str, occupied: set[tuple[str, int, int]])
     payload = json.loads(payload_json)
     storage = payload.get("robot_status", {}).get("storage", {})
 
-    for side in ("left_module", "right_module"):
+    for side in ("front_module", "back_module"):
         for shelf_position, shelf in enumerate(storage.get(side, [])):
             shelf_idx_raw = shelf.get("shelf_idx", shelf_position)
 
@@ -330,7 +330,7 @@ class SafetyGuardOverrideRequest(BaseModel):
 
 
 class SafetyComponentOverrideRequest(BaseModel):
-    component: Literal["light_curtain", "cabinet_doors"]
+    component: Literal["light_curtain", "cabinet_doors", "weight_change"]
     bypass: bool
 
 
@@ -708,7 +708,7 @@ async def robot_commands(
     failure.
 
     To choose the destination cell, add a top-level `location`
-    (`{"side":"left_module","shelf_idx":0,"cell_idx":0}`). The cell must exist in the
+    (`{"side":"front_module","shelf_idx":0,"cell_idx":0}`). The cell must exist in the
     storage grid, be available, and fit the item; a live bin home stays reserved and is
     reported unavailable. Omitting `location` keeps automatic allocation, and demo mode
     keeps its configured cell mapping.
@@ -1130,9 +1130,11 @@ async def acknowledge_safety_guard(
 ) -> SuccessResponse:
     """Acknowledge a cleared safety interruption.
 
-    Acknowledges the worker safety guard only after all interruption sources are clear.
-    Returns `409` with `active_sources` while an interruption remains active. This does not
-    bypass sensors or home the robot.
+    Acknowledges the worker safety guard once every interruption source is either
+    clear or one an acknowledgement is enough to clear, such as a weight change
+    that leaves the scale reading permanently shifted. Returns `409` with
+    `active_sources` while a source that has to clear physically remains active.
+    This does not bypass sensors or home the robot.
     """
     result = await worker.acknowledge_safety_guard()
 
@@ -1189,9 +1191,9 @@ async def override_safety_component(
 ) -> dict[str, Any]:
     """Set a component safety bypass.
 
-    Engineering control requiring `robot:control`. Changes bypass for `light_curtain` or
-    `cabinet_doors` and returns the resulting safety state. Restore the component after the
-    controlled diagnostic procedure.
+    Engineering control requiring `robot:control`. Changes bypass for `light_curtain`,
+    `cabinet_doors` or `weight_change` and returns the resulting safety state. Restore the
+    component after the controlled diagnostic procedure.
     """
     return await worker.set_safety_component_bypassed(request.component, request.bypass)
 
@@ -1598,28 +1600,15 @@ async def clear_motor_alarm(
 )
 async def home_motor(
     motor_name: str,
-    skip_pre_home_approach: bool = False,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Home one motor.
 
     Runs the selected motor's homing operation with manual-motion guards. This moves
-    hardware and may also position the tool for safe rotation. `skip_pre_home_approach=true`
-    is restricted to the Y axis in development mode. Unknown names return `404`; motion that
-    another operation already holds returns `409`.
+    hardware and may also position the tool for safe rotation. Unknown names return `404`;
+    motion that another operation already holds returns `409`.
     """
-    if skip_pre_home_approach is True:
-        if get_operating_mode() != OperatingMode.development:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Skipping the pre-home approach is only available in development mode",
-            )
-        if motor_name != "y_axis":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Skipping the pre-home approach is only supported for y_axis diagnostics",
-            )
 
     motor = worker._robot._get_motor_by_name(motor_name)
 
@@ -1641,10 +1630,7 @@ async def home_motor(
                     await worker._robot._tool.restore_safe_rotation_x_position(original_x)
             else:
                 await motor.clear_alarm()
-                if skip_pre_home_approach is True:
-                    await motor.home(skip_pre_home_approach=True)
-                else:
-                    await motor.home()
+                await motor.home()
             if motor_name == "rotate":
                 await worker._robot._tool.rotate_to_home_orientation(
                     should_ensure_safe_stage_extension=False,
@@ -2040,7 +2026,7 @@ async def stream_sse() -> EventSourceResponse:
         existing=stream_docs(
             "text/event-stream",
             "Live JSON robot events in SSE data frames; command, scanner, safety and workflow events share this stream.",
-            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"left_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
+            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"front_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
         ),
     ),
     response_class=Response,

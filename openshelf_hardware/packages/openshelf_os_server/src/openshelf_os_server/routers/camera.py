@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from sqlalchemy import select
+from sse_starlette.sse import AppStatus
 from sqlalchemy.orm import selectinload
 
 from openshelf_os_server.documentation import response_docs, stream_docs
@@ -77,6 +78,12 @@ async def mjpeg_stream_generator_for_camera(
 	try:
 		while True:
 			if await request.is_disconnected() is True:
+				break
+
+			# sse-starlette flags uvicorn's shutdown signal. SSE streams end on it by
+			# themselves; end this one too, so the shutdown drain only waits for
+			# ordinary requests instead of running out on an endless stream.
+			if AppStatus.should_exit is True:
 				break
 
 			if manager.unregistered.is_set() is True:

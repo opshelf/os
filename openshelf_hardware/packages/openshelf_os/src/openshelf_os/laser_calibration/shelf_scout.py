@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Callable
 
 SHELF_SCOUT_STEP_MM = 2.0
 SHELF_SCOUT_X_OFFSETS_MM = [0.0]
-RIGHT_MODULE_SHELF_SCOUT_X_MM = 0.0
+BACK_MODULE_SHELF_SCOUT_X_MM = 0.0
 SHELF_EDGE_CONFIRMATION_COUNT = 3
 SHELF_BRIM_MIN_HEIGHT_MM = 8.0
 SHELF_BRIM_MAX_HEIGHT_MM = 13.0
@@ -55,14 +55,14 @@ def build_shelf_scout_x_positions(
 	*,
 	x_min_mm: float,
 	x_max_mm: float,
-	is_right_side: bool,
+	is_back_side: bool,
 	scout_x_mm: float | None = None,
 ) -> list[float]:
 	if scout_x_mm is not None:
 		return [float(scout_x_mm)]
 
-	if is_right_side is True:
-		return [RIGHT_MODULE_SHELF_SCOUT_X_MM]
+	if is_back_side is True:
+		return [BACK_MODULE_SHELF_SCOUT_X_MM]
 
 	positions: list[float] = []
 

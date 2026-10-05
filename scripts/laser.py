@@ -33,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(
 		description='Run tray scan, single-cell rescan, or validation.'
 	)
-	parser.add_argument('--module', choices=['left', 'right'])
+	parser.add_argument('--module', choices=['front', 'back'])
 	parser.add_argument('--x', nargs=2, metavar=('MIN', 'MAX'), type=float)
 	parser.add_argument('--y', nargs=2, metavar=('MIN', 'MAX'), type=float)
 	parser.add_argument('--y-offset', type=float, default=0.0)
@@ -73,10 +73,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def normalize_module(raw_module: str) -> StorageModuleSide:
-	if raw_module == 'left':
-		return StorageModuleSide.LEFT
+	if raw_module == 'front':
+		return StorageModuleSide.FRONT
 
-	return StorageModuleSide.RIGHT
+	return StorageModuleSide.BACK
 
 
 def parse_single_cell_rescan_target(
@@ -151,7 +151,7 @@ def apply_scan_config_overrides(scan_config: Any, args: argparse.Namespace) -> A
 
 
 def build_side_scan_bounds(scan_config: Any, side: StorageModuleSide) -> ScanBounds:
-	prefix = 'left' if side == StorageModuleSide.LEFT else 'right'
+	prefix = 'front' if side == StorageModuleSide.FRONT else 'back'
 
 	return ScanBounds(
 		x_min=float(getattr(scan_config, f'{prefix}_bounds_x_min_mm')),

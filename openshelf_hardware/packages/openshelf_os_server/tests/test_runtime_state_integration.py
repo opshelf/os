@@ -35,7 +35,7 @@ def test_bootstrap_selects_and_clones_development_runtime_files(tmp_path: Path) 
         json.dumps(_build_minimal_config({})),
         encoding="utf-8",
     )
-    (data_dir / "storage.json").write_text('{"left_module": [], "right_module": []}', encoding="utf-8")
+    (data_dir / "storage.json").write_text('{"front_module": [], "back_module": []}', encoding="utf-8")
     with sqlite3.connect(data_dir / "base.db") as connection:
         connection.execute("CREATE TABLE state (value TEXT NOT NULL)")
         connection.execute("INSERT INTO state VALUES ('production')")
@@ -108,7 +108,7 @@ def _write_production_workspace(data_dir: Path, mode: str) -> None:
         json.dumps(_build_minimal_config({"description": "production-calibration"})),
         encoding="utf-8",
     )
-    (data_dir / "storage.json").write_text('{"left_module": [], "right_module": []}', encoding="utf-8")
+    (data_dir / "storage.json").write_text('{"front_module": [], "back_module": []}', encoding="utf-8")
     with sqlite3.connect(data_dir / "base.db") as connection:
         connection.execute("CREATE TABLE state (value TEXT NOT NULL)")
         connection.execute("INSERT INTO state VALUES ('production')")
@@ -157,14 +157,14 @@ def test_server_entry_keeps_existing_mode_state(tmp_path: Path) -> None:
     )
     development_config_bytes = development_config.read_bytes()
     development_storage = data_dir / "storage.development.json"
-    development_storage.write_text('{"left_module": [], "right_module": [1]}', encoding="utf-8")
+    development_storage.write_text('{"front_module": [], "back_module": [1]}', encoding="utf-8")
     marker = tmp_path / "serve_marker"
 
     _run_server_entry(data_dir, marker, development_config)
 
     assert marker.read_text(encoding="utf-8") == "forked"
     assert development_config.read_bytes() == development_config_bytes
-    assert development_storage.read_text(encoding="utf-8") == '{"left_module": [], "right_module": [1]}'
+    assert development_storage.read_text(encoding="utf-8") == '{"front_module": [], "back_module": [1]}'
 
 
 def test_server_entry_without_production_state_keeps_defaults(tmp_path: Path) -> None:

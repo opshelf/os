@@ -31,7 +31,7 @@ def build_shelf_scout_x_positions(
 	side: StorageModuleSide,
 	scan_config: Any | None = None,
 ) -> list[float]:
-	side_name = 'right' if side == StorageModuleSide.RIGHT else 'left'
+	side_name = 'back' if side == StorageModuleSide.BACK else 'front'
 	scout_x_mm = None
 
 	if scan_config is not None:
@@ -40,7 +40,7 @@ def build_shelf_scout_x_positions(
 	return build_shared_shelf_scout_x_positions(
 		x_min_mm=bounds.x_min,
 		x_max_mm=bounds.x_max,
-		is_right_side=side == StorageModuleSide.RIGHT,
+		is_back_side=side == StorageModuleSide.BACK,
 		scout_x_mm=scout_x_mm,
 	)
 
@@ -56,7 +56,7 @@ def resolve_lower_boundary_shelf_edge(
 
 	edge_x_mm = bounds.x_max
 
-	if side == StorageModuleSide.RIGHT:
+	if side == StorageModuleSide.BACK:
 		edge_x_mm = bounds.x_min
 
 	seed_y_mm = bounds.y_min
@@ -119,7 +119,7 @@ async def capture_shelf_candidates(
 	if known_shelf_edge_y is not None:
 		edge_x_mm = bounds.x_max
 
-		if side == StorageModuleSide.RIGHT:
+		if side == StorageModuleSide.BACK:
 			edge_x_mm = bounds.x_min
 
 		shelf_edges = [
@@ -377,7 +377,6 @@ def build_detected_shelves_from_edges(
 			ScanDetectedShelf(
 				shelf_idx=shelf_idx,
 				center_y_mm=edge.y_mm,
-				shelf_height_mm=0.0,
 				shelf_width_mm=float(bounds.x_max - bounds.x_min),
 				cells=[],
 			)
@@ -629,21 +628,21 @@ def build_fine_scan_retry_bounds(
 
 
 def scan_bounds_match(
-	left: ScanBounds,
-	right: ScanBounds,
+	front: ScanBounds,
+	back: ScanBounds,
 ) -> bool:
 	tolerance_mm = 0.0001
 
-	if abs(left.x_min - right.x_min) > tolerance_mm:
+	if abs(front.x_min - back.x_min) > tolerance_mm:
 		return False
 
-	if abs(left.x_max - right.x_max) > tolerance_mm:
+	if abs(front.x_max - back.x_max) > tolerance_mm:
 		return False
 
-	if abs(left.y_min - right.y_min) > tolerance_mm:
+	if abs(front.y_min - back.y_min) > tolerance_mm:
 		return False
 
-	if abs(left.y_max - right.y_max) > tolerance_mm:
+	if abs(front.y_max - back.y_max) > tolerance_mm:
 		return False
 
 	return True
@@ -709,7 +708,7 @@ def build_single_cell_rescan_candidate(
 	grab_y_mm = float(target_cell.calibration_point.y)
 
 	if xy_offset is None:
-		if side == StorageModuleSide.RIGHT:
+		if side == StorageModuleSide.BACK:
 			candidate_center_x_mm = grab_x_mm + laser_offset_x_mm
 		else:
 			candidate_center_x_mm = grab_x_mm - laser_offset_x_mm

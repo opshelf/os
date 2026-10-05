@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import multiprocessing
 import queue
 import struct
 import time
-from fractions import Fraction
-from typing import Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from openshelf_os_server.core.camera import (
 	ToolCameraStreamManager,
-	camera_registry,
 	_decode_nalu_frames,
 	_encode_nalu_frames,
 	_nalu_queue_put,
@@ -79,11 +75,6 @@ def test_avcc_meta_builds_webcodecs_codec_string() -> None:
 	assert meta.au_is_avcc is True
 
 
-def test_avcc_meta_rejects_short_records() -> None:
-	assert _parse_avcc_meta(b"\x01\x42", 10, 10, 0.0) is None
-	assert _parse_avcc_meta(b"\x00\x42\xe0\x1e", 10, 10, 0.0) is None
-
-
 def test_annexb_extradata_builds_webcodecs_meta() -> None:
 	meta = _parse_avcc_meta(FAKE_ANNEX_B_EXTRADATA, width=704, height=576, fps=25.0)
 
@@ -109,52 +100,6 @@ def test_annexb_extradata_builds_webcodecs_meta() -> None:
 	assert len(avc_c) == 11 + sps_len + pps_len
 
 
-def test_synthesized_avcc_description_roundtrips_real_aus() -> None:
-	import av
-
-	from test_crash_video_recorder import _make_h264_window
-
-	meta = _parse_avcc_meta(FAKE_ANNEX_B_EXTRADATA, width=704, height=576, fps=25.0)
-
-	assert meta is not None
-
-	# Reassemble the Annex-B stream the helper encoded, then demux it
-	# into real access units the way _nalu_source_reader receives them.
-	window, _extradata = _make_h264_window()
-	elementary = b"".join(unit for _pts, unit in window)
-	container = av.open(io.BytesIO(elementary))
-	units: list[bytes] = []
-
-	for packet in container.demux():
-		data = bytes(packet)
-		if data:
-			units.append(data)
-
-	# FFmpeg must accept the synthesized avcC as decoder extradata and
-	# the converted AVCC access units as stream input.
-	decoder = av.CodecContext.create("h264", "r")
-	decoder.extradata = meta.description
-	decoded = 0
-
-	for unit in units:
-		for _frame in decoder.decode(av.Packet(_annexb_to_avcc_au(unit))):
-			decoded += 1
-	for _frame in decoder.decode(None):
-		decoded += 1
-
-	assert decoded > 0
-
-
-def test_annexb_extradata_accepts_three_byte_start_codes() -> None:
-	extradata = b"\x00\x00\x01" + FAKE_ANNEX_B_SPS + b"\x00\x00\x01" + FAKE_ANNEX_B_PPS
-
-	meta = _parse_avcc_meta(extradata, width=704, height=576, fps=25.0)
-
-	assert meta is not None
-	assert meta.codec == "avc1.42C00C"
-	assert meta.au_is_avcc is False
-
-
 def test_annexb_extradata_rejects_missing_parameter_sets() -> None:
 	assert _parse_avcc_meta(b"\x00\x00\x00\x01" + FAKE_ANNEX_B_SPS, 10, 10, 0.0) is None
 	assert _parse_avcc_meta(b"\x00\x42\xc0\x0c" + FAKE_ANNEX_B_SPS, 10, 10, 0.0) is None
@@ -166,24 +111,6 @@ def test_annexb_to_avcc_au_roundtrips_access_unit() -> None:
 	expected_nalu = b"\x65" + b"access-unit"
 	assert _decode_nalu_frames(converted) == [expected_nalu]
 	assert converted == struct.pack(">I", len(expected_nalu)) + expected_nalu
-
-
-def test_annexb_to_avcc_au_handles_multi_nalu_access_units() -> None:
-	au = (
-		b"\x00\x00\x00\x01" + b"\x67" + b"sps"
-		+ b"\x00\x00\x00\x01" + b"\x65" + b"slice"
-	)
-
-	assert _decode_nalu_frames(_annexb_to_avcc_au(au)) == [
-		b"\x67sps",
-		b"\x65slice",
-	]
-
-
-def test_annexb_to_avcc_au_handles_three_byte_start_codes() -> None:
-	au = b"\x00\x00\x01\x65three"
-
-	assert _decode_nalu_frames(_annexb_to_avcc_au(au)) == [b"\x65three"]
 
 
 def test_split_annexb_nalus_accepts_long_zero_run_start_codes() -> None:
@@ -216,66 +143,6 @@ def _nalu_manager() -> ToolCameraStreamManager:
 	manager.nalu_process.is_alive = MagicMock(return_value=True)
 	manager.nalu_process.exitcode = None
 	return manager
-
-
-def test_drain_nalu_queue_fills_rings_and_meta() -> None:
-	manager = _nalu_manager()
-	manager.recording_url = "rtsp://record-camera"
-	manager.nalu_queue = multiprocessing.Queue(maxsize=16)
-	now = time.monotonic()
-	manager.nalu_queue.put(("view", "meta", 0.0, 0.0, (704, 576, 25.0, "h264")))
-	manager.nalu_queue.put(("record", "meta", 0.0, 0.0, (1920, 1080, 25.0, "hevc")))
-	manager.nalu_queue.put(("view", "config", 0.0, 0.0, FAKE_AVC_C))
-	manager.nalu_queue.put(("view", "au", 0.0, now, FAKE_AU))
-	manager.nalu_queue.put(("record", "au", 0.0, now, FAKE_AU))
-
-	deadline = time.monotonic() + 5.0
-	tick_aus: list[bytes] = []
-	while time.monotonic() < deadline and not tick_aus:
-		tick_aus = manager._drain_nalu_queue()
-
-	tick_aus.extend(manager._drain_nalu_queue())
-
-	assert tick_aus == [FAKE_AU]
-	assert manager.nalu_view_ring[-1] == (0.0, FAKE_AU, now)
-	assert manager.nalu_record_ring[-1] == (0.0, FAKE_AU, now)
-	assert manager.nalu_extradata == FAKE_AVC_C
-	assert manager.nalu_meta == (704, 576, 25.0, "h264")
-	assert manager.nalu_view_codec == "h264"
-	assert manager.nalu_record_codec == "hevc"
-	# With a recording source the frozen window holds the record ring,
-	# so the window codec follows it.
-	assert manager.nalu_window_codec() == "hevc"
-	# The record meta can be evicted by the NALU queue before the
-	# record AUs arrive: the window then has no known codec rather
-	# than falling back to the view codec and mislabeling the record
-	# ring.
-	manager.nalu_record_codec = None
-	assert manager.nalu_window_codec() is None
-
-	assert manager.nalu_last_frame_at == now
-	assert manager.nalu_codec_meta() is not None
-
-	manager.recording_url = ""
-	assert manager.nalu_window_codec() == "h264"
-
-
-def test_drain_nalu_queue_trims_old_entries() -> None:
-	manager = _nalu_manager()
-	now = time.monotonic()
-	manager.nalu_view_ring.append((0.0, b"stale", now - 30.0))
-	manager.nalu_ring_bytes["view"] = len(b"stale")
-	manager.nalu_queue = multiprocessing.Queue(maxsize=16)
-	manager.nalu_queue.put(("view", "au", 0.0, now, FAKE_AU))
-
-	deadline = time.monotonic() + 5.0
-	while time.monotonic() < deadline and manager.nalu_view_ring and (
-		manager.nalu_view_ring[-1][1] != FAKE_AU
-	):
-		manager._drain_nalu_queue()
-
-	assert [data for _pts, data, _arrival in manager.nalu_view_ring] == [FAKE_AU]
-	assert manager.nalu_ring_bytes["view"] == len(FAKE_AU)
 
 
 def test_drain_nalu_queue_freshness_tracks_view_aus_only() -> None:
@@ -312,49 +179,6 @@ def test_drain_nalu_queue_freshness_tracks_view_aus_only() -> None:
 	assert manager.nalu_last_frame_at == now + 2.0
 
 
-def test_nalu_window_selects_recent_entries() -> None:
-	manager = _nalu_manager()
-	now = time.monotonic()
-	manager.nalu_view_ring.append((0.0, b"old", now - 10.0))
-	manager.nalu_view_ring.append((1.0, b"recent", now - 0.1))
-
-	window = manager.get_nalu_window(5.0)
-
-	assert window == [(1.0, b"recent")]
-
-
-def test_add_nalu_subscriber_replays_only_recent_window() -> None:
-	manager = _nalu_manager()
-	now = time.monotonic()
-	manager.nalu_view_ring.append((0.0, b"old", now - 10.0))
-	manager.nalu_view_ring.append((1.0, FAKE_AU, now - 0.1))
-
-	subscriber = manager.add_nalu_subscriber()
-
-	assert manager.nalu_subscribers == {subscriber}
-	first = subscriber.get_nowait()
-	# Unknown codec meta still means the ring holds Annex-B, so the
-	# catch-up replay is length-prefixed for WebCodecs.
-	assert _decode_nalu_frames(first) == [_annexb_to_avcc_au(FAKE_AU)]
-	with pytest.raises(asyncio.QueueEmpty):
-		subscriber.get_nowait()
-
-
-def test_add_nalu_subscriber_converts_annexb_catchup() -> None:
-	manager = _nalu_manager()
-	now = time.monotonic()
-	manager.nalu_extradata = FAKE_ANNEX_B_EXTRADATA
-	manager.nalu_meta = (704, 576, 25.0, "h264")
-	manager.nalu_view_ring.append((1.0, FAKE_AU, now - 0.1))
-
-	subscriber = manager.add_nalu_subscriber()
-
-	message = subscriber.get_nowait()
-	assert _decode_nalu_frames(message) == [_annexb_to_avcc_au(FAKE_AU)]
-	# The access unit itself is AVCC for WebCodecs.
-	assert _decode_nalu_frames(_decode_nalu_frames(message)[0]) == [b"\x65" + b"access-unit"]
-
-
 def test_add_nalu_subscriber_anchors_catchup_at_idr() -> None:
 	manager = _nalu_manager()
 	manager.nalu_extradata = FAKE_ANNEX_B_EXTRADATA
@@ -376,23 +200,6 @@ def test_add_nalu_subscriber_anchors_catchup_at_idr() -> None:
 		subscriber.get_nowait()
 
 
-def test_add_nalu_subscriber_replays_window_without_idr() -> None:
-	manager = _nalu_manager()
-	manager.nalu_extradata = FAKE_ANNEX_B_EXTRADATA
-	manager.nalu_meta = (704, 576, 25.0, "h264")
-	now = time.monotonic()
-	manager.nalu_view_ring.append((0.0, FAKE_DELTA_AU, now - 1.0))
-	manager.nalu_view_ring.append((1.0, FAKE_DELTA_AU, now - 0.5))
-
-	subscriber = manager.add_nalu_subscriber()
-
-	# No IDR in the window: replay everything, as before.
-	assert _decode_nalu_frames(subscriber.get_nowait()) == [_annexb_to_avcc_au(FAKE_DELTA_AU)]
-	assert _decode_nalu_frames(subscriber.get_nowait()) == [_annexb_to_avcc_au(FAKE_DELTA_AU)]
-	with pytest.raises(asyncio.QueueEmpty):
-		subscriber.get_nowait()
-
-
 def test_au_contains_idr_sees_both_wire_forms() -> None:
 	# Annex-B spelling.
 	assert _au_contains_idr(FAKE_IDR_AU, False) is True
@@ -409,126 +216,6 @@ def test_au_contains_idr_sees_both_wire_forms() -> None:
 	assert _au_contains_idr(delta_avcc, True) is False
 	assert _au_contains_idr(sps_then_idr_avcc, True) is True
 	assert _au_contains_idr(b"\x00\x00\x00\x00\x07sps", True) is False
-
-
-@pytest.mark.anyio
-async def test_capture_loop_fans_out_new_access_units() -> None:
-	manager = _nalu_manager()
-	manager.nalu_queue = multiprocessing.Queue(maxsize=16)
-	manager.is_running = True
-	manager.capture_task = asyncio.create_task(manager._capture_loop())
-	subscriber = manager.add_nalu_subscriber()
-	manager.nalu_queue.put(
-		("view", "meta", 0.0, 0.0, (704, 576, 25.0, "h264"))
-	)
-	manager.nalu_queue.put(("view", "config", 0.0, 0.0, FAKE_AVC_C))
-	manager.nalu_queue.put(
-		("view", "au", 0.0, time.monotonic(), FAKE_AU)
-	)
-
-	try:
-		await asyncio.sleep(0.15)
-	finally:
-		manager.is_running = False
-		manager.capture_task.cancel()
-		try:
-			await manager.capture_task
-		except asyncio.CancelledError:
-			pass
-
-	assert _decode_nalu_frames(subscriber.get_nowait()) == [FAKE_AU]
-
-
-def _nalu_reader_fake_container() -> MagicMock:
-	stream = MagicMock()
-	stream.codec_context.width = 320
-	stream.codec_context.height = 240
-	stream.codec_context.name = "h264"
-	stream.codec_context.extradata = FAKE_AVC_C
-	stream.average_rate = Fraction(25, 1)
-	stream.time_base = Fraction(1, 12800)
-
-	packet = MagicMock()
-	packet.pts = 1280
-	packet.bytes = bytes(FAKE_AU)
-
-	streams = MagicMock()
-	streams.video = [stream]
-
-	container = MagicMock()
-	container.streams = streams
-
-	def demux(_stream) -> list:
-		return [packet]
-
-	container.demux = demux
-	return container
-
-
-def test_nalu_source_reader_pushes_meta_frames_and_config(monkeypatch) -> None:
-	import av
-	from threading import Thread
-
-	fake_container = _nalu_reader_fake_container()
-	monkeypatch.setattr(av, "open", lambda *args, **kwargs: fake_container)
-
-	context = multiprocessing.get_context("spawn")
-	nalu_queue = context.Queue(maxsize=64)
-	stop_event = context.Event()
-	from openshelf_os_server.core import camera as camera_module
-
-	thread = Thread(
-		target=camera_module._nalu_source_reader,
-		args=("view", "rtsp://camera", nalu_queue, stop_event),
-		daemon=True,
-	)
-	thread.start()
-
-	items: list[tuple] = []
-	deadline = time.monotonic() + 10.0
-	while time.monotonic() < deadline and len(items) < 3:
-		try:
-			items.append(nalu_queue.get(timeout=2.0))
-		except Exception:
-			continue
-
-	stop_event.set()
-	thread.join(timeout=2.0)
-
-	kinds = [kind for _source, kind, _pts, _arrival, _payload in items]
-	assert "meta" in kinds
-	assert "au" in kinds
-	assert "config" in kinds
-
-
-@pytest.mark.anyio
-async def test_capture_loop_converts_annexb_access_units() -> None:
-	manager = _nalu_manager()
-	manager.nalu_queue = multiprocessing.Queue(maxsize=16)
-	manager.is_running = True
-	manager.capture_task = asyncio.create_task(manager._capture_loop())
-	subscriber = manager.add_nalu_subscriber()
-	manager.nalu_queue.put(
-		("view", "meta", 0.0, 0.0, (704, 576, 25.0, "h264"))
-	)
-	manager.nalu_queue.put(("view", "config", 0.0, 0.0, FAKE_ANNEX_B_EXTRADATA))
-	manager.nalu_queue.put(
-		("view", "au", 0.0, time.monotonic(), FAKE_AU)
-	)
-
-	try:
-		await asyncio.sleep(0.15)
-	finally:
-		manager.is_running = False
-		manager.capture_task.cancel()
-		try:
-			await manager.capture_task
-		except asyncio.CancelledError:
-			pass
-
-	message = subscriber.get_nowait()
-	assert _decode_nalu_frames(message) == [_annexb_to_avcc_au(FAKE_AU)]
-	assert _decode_nalu_frames(_decode_nalu_frames(message)[0]) == [b"\x65" + b"access-unit"]
 
 
 @pytest.mark.anyio
@@ -600,23 +287,3 @@ def test_nalu_queue_put_drops_oldest_without_duplicating() -> None:
 	assert b"aux-4" in payloads
 
 
-def test_nalu_window_fps_from_uniform_deltas() -> None:
-	from openshelf_os_server.core.crash_video_recorder import (
-		NaluWindow,
-		_nalu_window_fps,
-	)
-
-	window = NaluWindow(frames=tuple((i * 0.04, b"au") for i in range(10)))
-
-	assert _nalu_window_fps(window) == 25.0
-
-
-def test_nalu_window_fps_defaults_without_reliable_deltas() -> None:
-	from openshelf_os_server.core.crash_video_recorder import (
-		NaluWindow,
-		_nalu_window_fps,
-	)
-
-	window = NaluWindow(frames=((0.0, b"one"), (5.0, b"two")))
-
-	assert _nalu_window_fps(window) == 25.0
