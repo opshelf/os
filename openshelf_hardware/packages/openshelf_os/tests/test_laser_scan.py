@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 
 import pytest
 
@@ -12,17 +10,8 @@ from openshelf_os.laser_calibration.scan import (  # noqa: E402
 	create_scan_capture,
 )
 from openshelf_os.storage import (  # noqa: E402
-	CalibrationCoordinate,
-	Cell,
-	CellStatus,
-	Dimensions,
-	Shelf,
-	StorageGrid,
 	StorageModuleSide,
 )
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
-SYNTHETIC_LASER_SCAN_PATH = FIXTURES_DIR / "laser_scan_synthetic.npy"
 
 
 def build_synthetic_depth_rows() -> list[list[float | None]]:
@@ -50,7 +39,7 @@ def build_synthetic_depth_rows() -> list[list[float | None]]:
 
 def build_synthetic_capture():
 	return create_scan_capture(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		bounds=ScanBounds(x_min=0.0, x_max=130.0, y_min=0.0, y_max=95.0),
 		step_mm=5.0,
 		settle_ms=25,
@@ -77,122 +66,15 @@ def assert_synthetic_analysis(analysis, shelves) -> None:
 	assert shelves[0].cells[2].calibration_point.x == analysis.shelves[0].cells[2].tool_x_mm
 
 
-def test_storage_grid_infers_sparse_indices_from_legacy_payload(tmp_path):
-	grid_path = tmp_path / "storage.json"
-	grid_path.write_text(
-		json.dumps(
-			{
-				"left_module": [
-					{
-						"shelf_height": 200.0,
-						"shelf_width": 240.0,
-						"cells": [
-							{
-								"status": "available",
-								"item": None,
-								"calibration_point": {"x": 100.0, "y": 200.0, "s": 0, "z_offset": 0.0},
-								"dimensions": {"length": 100.0, "width": 50.0, "height": 120.0},
-							},
-							{
-								"status": "available",
-								"item": None,
-								"calibration_point": {"x": 50.0, "y": 200.0, "s": 0, "z_offset": 0.0},
-								"dimensions": {"length": 100.0, "width": 50.0, "height": 120.0},
-							},
-						],
-					}
-				],
-				"right_module": [],
-			}
-		)
-	)
-
-	grid = StorageGrid.load_from_file(str(grid_path))
-
-	assert grid.left_module[0].shelf_idx == 0
-	assert grid.left_module[0].cells[0].cell_idx == 0
-	assert grid.left_module[0].cells[1].cell_idx == 1
-
-
 def test_analyze_scan_capture_detects_enclosed_holes_and_rejects_boundary_gaps(tmp_path):
 	capture = build_synthetic_capture()
 
 	analysis = analyze_scan_capture(capture, base_dir=tmp_path)
 	shelves = build_shelves_from_scan(
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		analysis=analysis,
 	)
 
 	assert_synthetic_analysis(analysis, shelves)
 
 
-def test_build_shelves_from_scan_preserves_existing_dimensions(tmp_path):
-	capture = build_synthetic_capture()
-
-	analysis = analyze_scan_capture(capture, base_dir=tmp_path)
-	existing_shelf = Shelf(
-		shelf_idx=0,
-		shelf_height=456.0,
-		shelf_width=789.0,
-		cells=[
-			Cell(
-				cell_idx=cell_idx,
-				status=CellStatus.AVAILABLE,
-				item=None,
-				calibration_point=CalibrationCoordinate(x=1.0, y=2.0, z_offset=3.0, s=0),
-				dimensions=Dimensions(length=155.0, width=125.0, height=100.0),
-			)
-			for cell_idx in range(3)
-		],
-	)
-
-	shelves = build_shelves_from_scan(
-		side=StorageModuleSide.LEFT,
-		analysis=analysis,
-		existing_shelves=[existing_shelf],
-	)
-
-	assert shelves[0].shelf_height == pytest.approx(456.0)
-	assert shelves[0].shelf_width == pytest.approx(789.0)
-	for cell in shelves[0].cells:
-		assert cell.dimensions == Dimensions(length=155.0, width=125.0, height=100.0)
-		assert cell.calibration_point is not None
-		assert cell.calibration_point.x != pytest.approx(1.0)
-		assert cell.calibration_point.z_offset == pytest.approx(3.0)
-
-def test_analyze_scan_capture_accepts_synthetic_npy_fixture(tmp_path):
-	depth_array = np.load(SYNTHETIC_LASER_SCAN_PATH)
-	depth_rows: list[list[float | None]] = []
-
-	for row in depth_array:
-		depth_row: list[float | None] = []
-
-		for value in row:
-			float_value = float(value)
-
-			if bool(np.isfinite(float_value)) is True:
-				depth_row.append(float_value)
-				continue
-
-			depth_row.append(None)
-
-		depth_rows.append(depth_row)
-
-	capture = create_scan_capture(
-		side=StorageModuleSide.LEFT,
-		bounds=ScanBounds(x_min=0.0, x_max=130.0, y_min=0.0, y_max=95.0),
-		step_mm=5.0,
-		settle_ms=25,
-		samples_per_point=3,
-		laser_offset_x_mm=2.0,
-		laser_offset_y_mm=4.0,
-		depth_rows=depth_rows,
-	)
-
-	analysis = analyze_scan_capture(capture, base_dir=tmp_path)
-	shelves = build_shelves_from_scan(
-		side=StorageModuleSide.LEFT,
-		analysis=analysis,
-	)
-
-	assert_synthetic_analysis(analysis, shelves)

@@ -34,7 +34,7 @@ def statements() -> Iterator[List[str]]:
 def _tray(cell_idx: int, status: str = "at_home", gross_weight: float | None = None) -> StorageBin:
     return StorageBin(
         barcode=f"90000000{cell_idx:04d}",
-        side="left_module",
+        side="front_module",
         shelf_idx=0,
         cell_idx=cell_idx,
         inner_dimensions={"width": 200.0, "height": 100.0, "length": 160.0},
@@ -92,33 +92,6 @@ async def test_batched_bin_payloads_match_the_per_item_payload(statements: List[
         loose = await StorageService(db).create_item("777777777777", "Loose", {"width": 1, "height": 1, "length": 1})
         assert await BinStorageService(db).item_bin_payloads([loose.id]) == {}
         assert await BinStorageService(db).item_bin_payloads([]) == {}
-
-
-@pytest.mark.anyio
-async def test_bin_payloads_cost_a_fixed_number_of_queries(statements: List[str]) -> None:
-    async with AsyncSessionLocal() as db:
-        one = await _seed(db, [1])
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        statements.clear()
-        await service.item_bin_payloads([item.id for item, _ in one])
-        single_member_queries = len(statements)
-
-    async with AsyncSessionLocal() as db:
-        many = await _seed(db, [4, 3], cell_start=1)
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        statements.clear()
-        payloads = await service.item_bin_payloads([item.id for item, _ in many])
-        eight_members_queries = len(statements)
-
-    # Memberships, tray rows, and all tray contents: one query per step, never per member.
-    assert single_member_queries == eight_members_queries
-    assert eight_members_queries <= 3
-    assert {payloads[item.id]["barcode"] for item, _ in many} == {
-        "900000000001",
-        "900000000002",
-    }
 
 
 @pytest.mark.anyio

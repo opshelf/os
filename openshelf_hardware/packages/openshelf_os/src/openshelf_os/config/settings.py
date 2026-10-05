@@ -8,7 +8,7 @@ BARCODE_MAX_LENGTH = 255
 
 
 class StorageBinLocationSettings(BaseModel):
-    side: Literal["left_module", "right_module"]
+    side: Literal["front_module", "back_module"]
     shelf_idx: int = Field(ge=0)
     cell_idx: int = Field(ge=0)
 

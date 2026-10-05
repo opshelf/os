@@ -1,19 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import tempfile
 import time
-from pathlib import Path
 from typing import Any, Callable
 
-import openshelf_os.common as common_module
 import openshelf_os.laser_calibration.angle as angle_module
-import openshelf_os.robot as robot_package
-import openshelf_os.robot.core as robot_module
+from openshelf_os.laser_calibration.core import run_with_temp_robot_config as run_with_temp_robot_config_shared
 
 from .constants import GAP_DEPTH_THRESHOLD_MM
-from .status import print_status, raise_if_cancelled, should_skip_motion_cleanup_on_cancel
+from .status import print_status, raise_if_cancelled
 
 
 async def run_with_temp_robot_config(
@@ -23,40 +18,15 @@ async def run_with_temp_robot_config(
 	did_run: Any,
 	shutdown_action: str,
 ) -> Any:
-	with tempfile.NamedTemporaryFile(
-		mode='w',
-		suffix='.json',
-		prefix='laser-angle-config-',
-		dir=str(Path(config_path).resolve().parent),
-		delete=False,
-	) as temp_config_file:
-		temp_config_path = Path(temp_config_file.name)
-		json.dump(angle_module.build_standalone_config(config), temp_config_file, indent='\t')
-
-	original_common_config_path = common_module.CONFIG_PATH
-	original_robot_config_path = robot_module.CONFIG_PATH
-	common_module.CONFIG_PATH = temp_config_path
-	robot_module.CONFIG_PATH = temp_config_path
-
-	try:
-		robot = robot_package.Robot()
-		print_status('phase=robot-configure')
-		await robot.configure()
-
-		try:
-			return await did_run(robot)
-		finally:
-			if should_skip_motion_cleanup_on_cancel() is False:
-				if shutdown_action == 'stop':
-					print_status('phase=robot-stop')
-					await robot.stop()
-				else:
-					print_status('phase=robot-shutdown')
-					await robot.shutdown()
-	finally:
-		common_module.CONFIG_PATH = original_common_config_path
-		robot_module.CONFIG_PATH = original_robot_config_path
-		temp_config_path.unlink(missing_ok=True)
+	return await run_with_temp_robot_config_shared(
+		config=config,
+		config_path=config_path,
+		didRun=did_run,
+		shutdown_action=shutdown_action,
+		config_builder=angle_module.build_standalone_config,
+		status_print=print_status,
+		prefix="laser-angle-config-",
+	)
 
 
 async def sample_laser_depth(

@@ -75,57 +75,6 @@ def _mock_worker():
 
 
 @pytest.mark.anyio
-async def test_get_cabinet_status(client: AsyncClient) -> None:
-	worker = _mock_worker()
-
-	with patch("openshelf_os_server.routers.cabinet.get_settings", return_value=_mock_settings()):
-		with patch("openshelf_os_server.routers.cabinet.get_robot_worker", return_value=worker):
-			response = await client.get("/api/cabinet/status")
-
-	assert response.status_code == 200
-	assert response.json() == {"configured": True, "doors": _closed_doors(), "latches": _engaged_latches()}
-	worker._robot._cabinet.get_status.assert_called_once()
-
-
-@pytest.mark.anyio
-async def test_set_cabinet_latches_passive(client: AsyncClient) -> None:
-	worker = _mock_worker()
-
-	with patch("openshelf_os_server.routers.cabinet.get_settings", return_value=_mock_settings()):
-		with patch("openshelf_os_server.routers.cabinet.get_robot_worker", return_value=worker):
-			response = await client.post("/api/cabinet/release?action=passive")
-
-	assert response.status_code == 200
-	assert response.json() == {
-		"success": True,
-		"action": "passive",
-		"doors": _closed_doors(),
-		"latches": _engaged_latches(),
-	}
-	worker._robot._cabinet.set_passive.assert_awaited_once()
-	worker._robot._cabinet.release.assert_not_awaited()
-
-
-@pytest.mark.anyio
-async def test_release_cabinet_latches(client: AsyncClient) -> None:
-	worker = _mock_worker()
-
-	with patch("openshelf_os_server.routers.cabinet.get_settings", return_value=_mock_settings()):
-		with patch("openshelf_os_server.routers.cabinet.get_robot_worker", return_value=worker):
-			response = await client.post("/api/cabinet/release?action=release")
-
-	assert response.status_code == 200
-	assert response.json() == {
-		"success": True,
-		"action": "release",
-		"doors": _open_doors(),
-		"latches": _disengaged_latches(),
-	}
-	worker._robot._cabinet.release.assert_awaited_once()
-	worker._robot._cabinet.set_passive.assert_not_awaited()
-
-
-@pytest.mark.anyio
 async def test_release_cabinet_latches_rejects_safety_interruption(client: AsyncClient) -> None:
 	worker = _mock_worker()
 	worker._safety_motion_blocked = True

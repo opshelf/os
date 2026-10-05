@@ -9,6 +9,7 @@ export type WorkerStatusPayload = {
 	queued_operations?: Array<{ command?: Record<string, unknown>; timestamp?: string }>;
 	needs_home?: boolean;
 	needs_home_reason?: string | null;
+	needs_home_axes?: string[];
 };
 
 export type RobotInitComponent = {
