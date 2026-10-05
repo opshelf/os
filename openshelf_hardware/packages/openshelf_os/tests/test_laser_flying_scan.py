@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from hardware.exceptions import ModbusTimeoutError
 from openshelf_os.laser_calibration import (
 	FlyingScanLine,
 	FlyingScanSample,
@@ -35,6 +36,7 @@ class FakeAxisMotor:
 		self.is_moving = False
 		self.moves: list[tuple[float, int | None]] = []
 		self.stop_count = 0
+		self.read_timeouts_s: list[float | None] = []
 
 	async def move_to_position_no_wait(self, value: float, rpm: int | None = None) -> bool:
 		await asyncio.sleep(0)
@@ -47,8 +49,9 @@ class FakeAxisMotor:
 		self.is_moving = True
 		return True
 
-	async def get_position(self) -> float:
+	async def get_position(self, *, timeout_s: float | None = None) -> float:
 		await asyncio.sleep(0)
+		self.read_timeouts_s.append(timeout_s)
 
 		if self.is_moving is True:
 			if self.max_steps is not None and self.steps_taken >= self.max_steps:
@@ -89,8 +92,9 @@ class FakeTimedAxisMotor(FakeAxisMotor):
 
 		return did_start
 
-	async def get_position(self) -> float:
+	async def get_position(self, *, timeout_s: float | None = None) -> float:
 		await asyncio.sleep(0)
+		self.read_timeouts_s.append(timeout_s)
 
 		if self.is_moving is True and self.move_started_at is not None:
 			travelled_mm = (time.monotonic() - self.move_started_at) * self.feed_mm_s
@@ -116,10 +120,22 @@ class FakeFlyingTool:
 		self.depth_reads = 0
 		self.gantry_wait_calls = 0
 		self.wait_positions: list[tuple[float, float]] = []
+		self.laser_timeouts_s: list[float | None] = []
+		# 1-based laser read counts that fail when bounded, or that take the given time to answer.
+		self.failing_reads: set[int] = set()
+		self.slow_reads: dict[int, float] = {}
 
-	async def get_laser_distance(self) -> float | None:
+	async def get_laser_distance(self, *, timeout_s: float | None = None) -> float | None:
 		await asyncio.sleep(0)
 		self.depth_reads += 1
+		self.laser_timeouts_s.append(timeout_s)
+
+		if self.depth_reads in self.failing_reads and timeout_s is not None:
+			raise ModbusTimeoutError("laser did not answer")
+
+		if self.depth_reads in self.slow_reads:
+			await asyncio.sleep(self.slow_reads[self.depth_reads])
+
 		return self.depth_mm
 
 	async def gantry_wait(self, timeout_seconds: float = 120.0, should_abort=None) -> None:
@@ -775,3 +791,109 @@ async def test_flying_shelf_scout_resamples_an_uncovered_bin_instead_of_reading_
 	assert depth_values[y_positions.index(192.0)] == 9.5
 
 
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_bounds_only_the_moving_reads() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+
+	await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=10.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_bounded",
+	)
+
+	bound_s = flying_module.FLYING_SCAN_READ_TIMEOUT_S
+	# The stationary start and end samples keep the default retrying read; every read taken
+	# while the axis flies is bounded.
+	assert tool.laser_timeouts_s[0] is None
+	assert tool.laser_timeouts_s[-1] is None
+	assert tool.laser_timeouts_s[1:-1] != []
+	assert all(timeout_s == bound_s for timeout_s in tool.laser_timeouts_s[1:-1])
+	assert bound_s in tool._my.read_timeouts_s
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_stops_the_axis_and_restarts_when_a_moving_read_fails() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+	# Read 1 is the stationary start sample; read 4 is mid-flight.
+	tool.failing_reads = {4}
+	printed: list[str] = []
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=20.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_read_failure",
+		progress_printer=printed.append,
+	)
+
+	assert tool._my.stop_count >= 1
+	assert any("read_overrun=stopped restart=1/" in message for message in printed)
+	assert [value for value, _ in tool._my.moves].count(0.0) == 2
+	assert line.samples[0].position_mm == pytest.approx(0.0)
+	assert line.samples[-1].position_mm == pytest.approx(20.0)
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_stops_the_axis_when_a_moving_read_outlasts_the_bound(
+	monkeypatch,
+) -> None:
+	monkeypatch.setattr(flying_module, "FLYING_SCAN_READ_TIMEOUT_S", 0.02)
+	tool = FakeFlyingTool(depth_mm=5.0)
+	moving_when_slow: list[bool] = []
+	tool.slow_reads = {4: 0.05}
+	original_read = tool.get_laser_distance
+
+	async def didReadLaser(*, timeout_s=None):
+		if tool.depth_reads + 1 in tool.slow_reads:
+			moving_when_slow.append(tool._my.is_moving)
+
+		return await original_read(timeout_s=timeout_s)
+
+	tool.get_laser_distance = didReadLaser
+	printed: list[str] = []
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=20.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_read_slow",
+		progress_printer=printed.append,
+	)
+
+	assert moving_when_slow == [True]
+	assert tool._my.stop_count >= 1
+	assert any("laser read took" in message for message in printed)
+	# The overrun's late depth never reaches the kept line.
+	assert line.samples[-1].position_mm == pytest.approx(20.0)
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_fails_the_line_when_reads_keep_overrunning() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+	tool.failing_reads = set(range(2, 1000))
+
+	with pytest.raises(flying_module.FlyingScanReadOverrun):
+		await scan_axis_flying(
+			tool=tool,
+			axis="y",
+			start_mm=0.0,
+			end_mm=20.0,
+			fixed_mm=0.0,
+			rpm=30,
+			progress_label="flying_read_dead",
+		)
+
+	assert tool._my.is_moving is False
+	assert tool._my.stop_count == flying_module.FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS + 1

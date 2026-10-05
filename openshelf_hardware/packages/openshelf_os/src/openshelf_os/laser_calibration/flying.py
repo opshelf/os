@@ -10,6 +10,8 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Awaitable, Callable, Optional
 
+from hardware.exceptions import CommunicationError, MotorError
+
 from .core import (
 	COARSE_SCAN_STYLE_FLYING,
 	LineGapSegment,
@@ -43,11 +45,12 @@ FLYING_SCAN_PROGRESS_EPS_MM = 0.02
 # Velocity for the depth-to-position correction is a median over the trailing deltas so a single
 # jittered timestamp cannot move a sample.
 FLYING_SCAN_VELOCITY_WINDOW = 8
-# The latency correction assumes every laser read takes about as long as the last ones. A
-# retried Modbus read can take seconds, and the encoder read that follows it lands far past
-# where the beam was, so a moving read slower than this multiple of the trailing median span is
-# dropped. The cap never falls below the floor, so scheduler jitter on a fast bus keeps its samples,
-# and it is only applied once the window holds enough spans to give a meaningful median.
+# The latency correction assumes every laser read takes about as long as the last ones. A read
+# that waited on the port lock or a slow reply lands its encoder read far past where the beam
+# was, so a moving read slower than this multiple of the trailing median span is dropped. Reads
+# past FLYING_SCAN_READ_TIMEOUT_S stop the pass instead. The cap never falls below the floor, so
+# scheduler jitter on a fast bus keeps its samples, and it is only applied once the window holds
+# enough spans to give a meaningful median.
 FLYING_SCAN_SLOW_READ_FACTOR = 3.0
 FLYING_SCAN_SLOW_READ_FLOOR_S = 0.025
 FLYING_SCAN_SLOW_READ_WINDOW = 16
@@ -73,6 +76,16 @@ FLYING_SCAN_EARLY_STOP_POLL_S = 0.05
 # A pass interrupted by a safety guard is restarted once the guard clears; the sampler polls the
 # interlock at this interval so session cancellation still lands while it waits.
 FLYING_SCAN_SAFETY_POLL_S = 0.1
+# The interlock is only checked between reads, and a read stuck in the controller's retry loop holds
+# the port lock for the whole retry, so no stop write can reach the bus until it ends. Moving reads
+# therefore run as one transaction with no retries under this Modbus timeout, and a read that fails
+# or takes longer than this in total (lock wait included) stops the axis and discards the pass. That
+# bounds how long the gantry can fly unobserved to about two of these per sample plus the stop write,
+# instead of the client's full retry budget. A normal read takes a few tens of milliseconds, and the
+# margin above that leaves room for the weight guard's 0.1s fast weigh to hold the lock first.
+FLYING_SCAN_READ_TIMEOUT_S = 0.15
+# A pass stopped by a read overrun is flown again; a bus that keeps overrunning fails the line.
+FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS = 2
 # Tolerance when matching an interpolated crossing to the grid interval an edge sits in.
 FLYING_EDGE_INTERVAL_EPS_MM = 0.01
 
@@ -581,9 +594,17 @@ class FlyingScanSafetyInterrupted(Exception):
 	"""A safety guard engaged while a pass was sampling, so its samples were discarded."""
 
 
+class FlyingScanReadOverrun(TimeoutError):
+	"""A moving read failed or outlasted FLYING_SCAN_READ_TIMEOUT_S, so the axis was stopped."""
+
+
 def _is_safety_blocked(*motors: Any) -> bool:
 	# Motor.wait_for_move only pauses for the guard while something waits on the move, and a
-	# flying pass defers that wait until acquisition ends, so the sampler checks the interlock.
+	# flying pass defers that wait until acquisition ends, so the sampler checks the interlock
+	# between reads. The guard is a software interlock: it sets a flag and the stop goes out as
+	# a Modbus write, so how fast the axis stops depends on how long a read can hold the bus.
+	# FLYING_SCAN_READ_TIMEOUT_S bounds that. If a hardware interlock cuts drive power on the
+	# guard, it stops the axis whatever the bus is doing, and this bound no longer matters.
 	for motor in motors:
 		safety = getattr(motor, "_safety", None)
 
@@ -602,6 +623,32 @@ async def _wait_for_safety_clear(
 		await asyncio.sleep(FLYING_SCAN_SAFETY_POLL_S)
 
 	raise_if_cancelled(should_abort)
+
+
+async def _read_bounded(label: str, read: Callable[[], Awaitable[Any]]) -> Any:
+	"""Run one moving read, raising FlyingScanReadOverrun if it fails or outlasts the bound.
+
+	The read is never cancelled mid-transaction: a reply landing after the request was abandoned
+	would be taken as the answer to the next one. The Modbus timeout bounds the transaction itself,
+	and the elapsed check catches the time spent waiting on another holder of the port lock.
+	"""
+	started_at = time.monotonic()
+
+	try:
+		value = await read()
+	except (CommunicationError, MotorError, asyncio.TimeoutError) as exc:
+		raise FlyingScanReadOverrun(
+			f"{label} read failed after {time.monotonic() - started_at:.3f}s: {exc}"
+		) from exc
+
+	span_s = time.monotonic() - started_at
+
+	if span_s > FLYING_SCAN_READ_TIMEOUT_S:
+		raise FlyingScanReadOverrun(
+			f"{label} read took {span_s:.3f}s, over {FLYING_SCAN_READ_TIMEOUT_S:.3f}s"
+		)
+
+	return value
 
 
 async def _restore_axis_velocity(scan_motor: Any) -> None:
@@ -660,9 +707,12 @@ async def scan_axis_flying(
 
 	A stepped move pauses at the guard and resumes toward the same target, but a flying pass
 	cannot splice samples taken across a stop into one latency-corrected line, so the interrupted
-	pass is discarded and flown again after the guard clears.
+	pass is discarded and flown again after the guard clears. A pass stopped because a read
+	overran FLYING_SCAN_READ_TIMEOUT_S is flown again the same way, up to
+	FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS times.
 	"""
 	printer = progress_printer if progress_printer is not None else print_status
+	read_overrun_restarts = 0
 
 	while True:
 		try:
@@ -683,6 +733,21 @@ async def scan_axis_flying(
 			)
 		except FlyingScanSafetyInterrupted:
 			printer(f"flying_line={progress_label} safety_guard=stopped restart=after_clear")
+			await _wait_for_safety_clear(
+				getattr(tool, "_mx", None),
+				getattr(tool, "_my", None),
+				should_abort=should_abort,
+			)
+		except FlyingScanReadOverrun as exc:
+			if read_overrun_restarts >= FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS:
+				raise
+
+			read_overrun_restarts += 1
+			printer(
+				f"flying_line={progress_label} read_overrun=stopped "
+				f"restart={read_overrun_restarts}/{FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS} ({exc})"
+			)
+			# The guard may be why the bus went quiet; never restart into it.
 			await _wait_for_safety_clear(
 				getattr(tool, "_mx", None),
 				getattr(tool, "_my", None),
@@ -832,9 +897,17 @@ async def _scan_axis_flying_pass(
 				raise FlyingScanSafetyInterrupted()
 
 			read_started_at = time.monotonic()
-			depth_mm = await tool.get_laser_distance()
+			depth_mm = await _read_bounded(
+				"laser",
+				lambda: tool.get_laser_distance(timeout_s=FLYING_SCAN_READ_TIMEOUT_S),
+			)
 			read_span_s = time.monotonic() - read_started_at
-			position_mm = float(await scan_motor.get_position())
+			position_mm = float(
+				await _read_bounded(
+					"position",
+					lambda: scan_motor.get_position(timeout_s=FLYING_SCAN_READ_TIMEOUT_S),
+				)
+			)
 			sampled_at = time.monotonic()
 			slow_read_cap_s = resolve_slow_read_cap_s(read_spans_s)
 			read_spans_s.append(read_span_s)
