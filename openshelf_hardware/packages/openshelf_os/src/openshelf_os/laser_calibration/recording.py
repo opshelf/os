@@ -179,6 +179,16 @@ def load_staged_scan_recorder(run_dir: Path) -> StagedScanRecorder:
 	)
 
 
+# Run directories saved before the front/back cutover recorded the module side as
+# left_module/right_module; map those historical values at read time (in memory only,
+# the saved metadata is not rewritten).
+HISTORICAL_SIDE_NAMES = {"left_module": "front_module", "right_module": "back_module"}
+
+
+def normalize_saved_side(saved_side: str) -> str:
+	return HISTORICAL_SIDE_NAMES.get(saved_side, saved_side)
+
+
 def find_latest_incomplete_run(scans_dir: str) -> StagedScanRecorder:
 	run_dirs: list[Path] = []
 
@@ -221,7 +231,7 @@ def load_continue_scan_context(
 	run_parameters_document = load_json_file(recorder.run_parameters_path)
 	run_parameters = run_parameters_document["run_parameters"]
 	resolved_parameters = run_parameters["resolved"]
-	side = StorageModuleSide(run_parameters["module"])
+	side = StorageModuleSide(normalize_saved_side(run_parameters["module"]))
 	bounds = ScanBounds.model_validate(resolved_parameters["bounds"])
 	step_mm = float(resolved_parameters["fine_step_mm"])
 	settle_ms = int(resolved_parameters["settle_ms"])

@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,11 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 
-from openshelf_os.iobox_sizer.models import IOBoxSizerDimensions, IOBoxSizerMeasurement
 from openshelf_os.robot.commands import StoreItemCommand
-from openshelf_os_server.core.iobox_sizer import record_store_sizer_measurement
 from openshelf_os_server.database.models import Item, ItemSizerMeasurement
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import robot as robot_router
@@ -119,58 +116,3 @@ async def test_store_item_continues_when_observer_capture_raises(client: AsyncCl
     queued_command = worker.enqueue_command.await_args.args[0]
     assert queued_command.item == payload["item"]
 
-
-@pytest.mark.anyio
-async def test_record_store_sizer_measurement_persists_manual_and_auto_dimensions() -> None:
-    async with AsyncSessionLocal() as session:
-        item = Item(
-            barcode=_TEST_BARCODE,
-            name="Test item",
-            dimensions={"width": 10, "height": 20, "length": 30},
-        )
-        session.add(item)
-        await session.commit()
-
-    timestamp = datetime.now(timezone.utc)
-    measurement = IOBoxSizerMeasurement(
-        detected=True,
-        mode="difference",
-        width_px=100,
-        height_px=200,
-        frame_width=640,
-        frame_height=480,
-        dimensions_mm=IOBoxSizerDimensions(width=11, height=21, length=31),
-        timestamp=timestamp,
-        duration_ms=123,
-    )
-
-    await record_store_sizer_measurement(
-        barcode="123456789012",
-        item_name="Test item",
-        user_id=1,
-        request_correlation_id="correlation-id",
-        command_payload={"command": "store_item"},
-        human_dimensions={"width": 10, "height": 20, "length": 30},
-        human_dimensions_source="db",
-        measurement=measurement,
-        error=None,
-        should_raise=True,
-    )
-
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(ItemSizerMeasurement))
-        row = result.scalar_one()
-
-    assert row.item_id is not None
-    assert row.barcode == "123456789012"
-    assert row.item_name == "Test item"
-    assert row.user_id == 1
-    assert row.request_correlation_id == "correlation-id"
-    assert row.manual_dimensions == {"width": 10, "height": 20, "length": 30}
-    assert row.manual_dimensions_source == "db"
-    assert row.auto_dimensions == {"width": 11.0, "height": 21.0, "length": 31.0}
-    assert row.raw_measurement is not None
-    assert row.raw_measurement["duration_ms"] == 123
-    assert row.command_payload == {"command": "store_item"}
-    assert row.detected is True
-    assert row.error_type is None

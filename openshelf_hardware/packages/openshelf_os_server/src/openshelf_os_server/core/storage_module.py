@@ -4,18 +4,18 @@ from pydantic import BeforeValidator
 
 from openshelf_os.storage import StorageModuleSide
 
-StorageModuleSideName = Literal["left_module", "right_module"]
+StorageModuleSideName = Literal["front_module", "back_module"]
 
 
 def module_name_to_side(side_name: StorageModuleSideName | str | StorageModuleSide) -> StorageModuleSide:
     if isinstance(side_name, StorageModuleSide):
         return side_name
 
-    if side_name == "left":
-        return StorageModuleSide.LEFT
+    if side_name == "front":
+        return StorageModuleSide.FRONT
 
-    if side_name == "right":
-        return StorageModuleSide.RIGHT
+    if side_name == "back":
+        return StorageModuleSide.BACK
 
     try:
         return StorageModuleSide(side_name)
@@ -24,7 +24,7 @@ def module_name_to_side(side_name: StorageModuleSideName | str | StorageModuleSi
 
 
 def side_to_s(side: StorageModuleSide) -> int:
-    if side == StorageModuleSide.LEFT:
+    if side == StorageModuleSide.FRONT:
         return 0
 
     return 1

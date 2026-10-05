@@ -10,6 +10,7 @@ from openshelf_os.config_migrations import (
     v002_laser_parameter_names,
     v003_remove_unused_scan_keys,
     v004_promote_scan_constants,
+    v005_module_side_names,
 )
 
 Migration = Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]
@@ -18,6 +19,7 @@ MIGRATIONS: dict[int, Migration] = {
     2: v002_laser_parameter_names.migrate,
     3: v003_remove_unused_scan_keys.migrate,
     4: v004_promote_scan_constants.migrate,
+    5: v005_module_side_names.migrate,
 }
 
 

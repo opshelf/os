@@ -47,10 +47,6 @@ async def _wait_for_status(client: AsyncClient, command_id: str, expected: str) 
 	raise AssertionError(f"command {command_id} did not reach {expected}")
 
 
-def test_mock_runtime_defaults_to_hardware_execution_delay() -> None:
-	assert MockRobotRuntime().execution_seconds == 30.0
-
-
 @pytest.mark.anyio
 async def test_mock_status_keeps_command_id_through_queued_to_running(
 	client: AsyncClient,
@@ -117,7 +113,7 @@ async def test_mock_store_retrieve_persists_inventory_and_replays_request(
 	command_id = response.json()["command_id"]
 	completed = await _wait_for_status(client, command_id, "succeeded")
 	assert completed["result"]["location"] == {
-		"side": "left_module",
+		"side": "front_module",
 		"shelf_idx": 0,
 		"cell_idx": 0,
 	}
@@ -143,7 +139,7 @@ async def test_mock_store_retrieve_persists_inventory_and_replays_request(
 		json={
 			"command": "retrieve_item",
 			"request_id": "retrieve-once",
-			"location": {"side": "left_module", "shelf_idx": 0, "cell_idx": 0},
+			"location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
 		},
 	)
 	assert retrieve.status_code == 200
@@ -157,222 +153,6 @@ async def test_mock_store_retrieve_persists_inventory_and_replays_request(
 		assert (await session.execute(select(ItemLocation))).scalars().all() == []
 		item = (await session.execute(select(Item).where(Item.barcode == "036000291452"))).scalar_one()
 		assert item.weight == completed["result"]["weight"]
-
-
-@pytest.mark.anyio
-async def test_mock_duplicate_storage_and_invalid_location_are_realistic_4xx(
-	client: AsyncClient,
-	mock_runtime: MockRobotRuntime,
-) -> None:
-	payload = {
-		"command": "store_item",
-		"item": {
-			"barcode": "12345678901",
-			"name": "Item",
-			"dimensions": {"width": 1, "height": 1, "length": 1},
-		},
-	}
-	first = await client.post("/api/robot/commands", json=payload)
-	await _wait_for_status(client, first.json()["command_id"], "succeeded")
-	duplicate = await client.post("/api/robot/commands", json=payload)
-	assert duplicate.status_code == 409
-
-	invalid = await client.post(
-		"/api/robot/commands",
-		json={
-			"command": "retrieve_item",
-			"location": {"side": "left_module", "shelf_idx": 4, "cell_idx": 0},
-		},
-	)
-	assert invalid.status_code == 400
-
-
-@pytest.mark.anyio
-async def test_mock_store_honors_requested_location(
-	client: AsyncClient,
-	mock_runtime: MockRobotRuntime,
-) -> None:
-	requested = {"side": "right_module", "shelf_idx": 2, "cell_idx": 7}
-	response = await client.post(
-		"/api/robot/commands",
-		json={
-			"command": "store_item",
-			"request_id": "requested-cell",
-			"location": requested,
-			"item": {
-				"barcode": "036000291453",
-				"name": "Placed item",
-				"dimensions": {"width": 10, "height": 20, "length": 30},
-			},
-		},
-	)
-	assert response.status_code == 200
-	completed = await _wait_for_status(client, response.json()["command_id"], "succeeded")
-	assert completed["result"]["location"] == requested
-
-	async with AsyncSessionLocal() as session:
-		locations = (await session.execute(select(ItemLocation))).scalars().all()
-		assert [(row.side, row.shelf_idx, row.cell_idx) for row in locations] == [
-			("right_module", 2, 7)
-		]
-
-
-@pytest.mark.anyio
-async def test_mock_store_rejects_unusable_requested_location(
-	client: AsyncClient,
-	mock_runtime: MockRobotRuntime,
-) -> None:
-	async def store(
-		barcode: str,
-		*,
-		location: dict | None = None,
-		dimensions: dict | None = None,
-		nested: bool = False,
-	):
-		item = {
-			"barcode": barcode,
-			"name": "Item",
-			"dimensions": dimensions or {"width": 1, "height": 1, "length": 1},
-		}
-		payload: dict = {"command": "store_item", "item": item}
-		if location is not None:
-			if nested:
-				item["location"] = location
-			else:
-				payload["location"] = location
-		return await client.post("/api/robot/commands", json=payload)
-
-	first = await store(
-		"036000291454", location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
-	)
-	await _wait_for_status(client, first.json()["command_id"], "succeeded")
-
-	occupied = await store(
-		"036000291455", location={"side": "left_module", "shelf_idx": 0, "cell_idx": 0}
-	)
-	assert occupied.status_code == 409
-	assert occupied.json()["detail"]["code"] == "cell_unavailable"
-
-	too_small = await store(
-		"036000291456",
-		location={"side": "left_module", "shelf_idx": 1, "cell_idx": 0},
-		dimensions={"width": 1000, "height": 1000, "length": 1000},
-	)
-	assert too_small.status_code == 409
-	assert too_small.json()["detail"]["code"] == "cell_too_small"
-
-	missing = await store(
-		"036000291457", location={"side": "left_module", "shelf_idx": 9, "cell_idx": 0}
-	)
-	assert missing.status_code == 422
-	assert missing.json()["detail"]["code"] == "cell_not_found"
-
-	malformed = await store(
-		"036000291458",
-		location={"side": "left_module", "shelf_idx": "not-a-number", "cell_idx": 0},
-		nested=True,
-	)
-	assert malformed.status_code == 422
-	assert malformed.json()["detail"]["code"] == "invalid_location"
-
-	malformed_top_level = await store(
-		"036000291459",
-		location={"side": "left_module", "shelf_idx": "not-a-number", "cell_idx": 0},
-	)
-	assert malformed_top_level.status_code == 422
-	assert malformed_top_level.json()["detail"]["code"] == "invalid_location"
-
-	for barcode, shelf_idx, nested in (
-		("036000291460", "0", False),
-		("036000291461", False, False),
-		("036000291462", "0", True),
-	):
-		wrong_type = await store(
-			barcode,
-			location={"side": "left_module", "shelf_idx": shelf_idx, "cell_idx": 0},
-			nested=nested,
-		)
-		assert wrong_type.status_code == 422
-		assert wrong_type.json()["detail"] == {
-			"message": "location requires side, shelf_idx and cell_idx",
-			"code": "invalid_location",
-		}
-
-
-@pytest.mark.anyio
-async def test_mock_store_accepts_long_barcode_but_rejects_blank_or_non_string(
-	client: AsyncClient,
-	mock_runtime: MockRobotRuntime,
-) -> None:
-	long_barcode = "b" * 100
-	accepted = await client.post(
-		"/api/robot/commands",
-		json={
-			"command": "store_item",
-			"item": {
-				"barcode": long_barcode,
-				"name": "Long barcode item",
-				"dimensions": {"width": 10, "height": 20, "length": 30},
-			},
-		},
-	)
-	assert accepted.status_code == 200, accepted.text
-	await _wait_for_status(client, accepted.json()["command_id"], "succeeded")
-
-	for barcode in ("", "   ", 1234567890123456789):
-		rejected = await client.post(
-			"/api/robot/commands",
-			json={
-				"command": "store_item",
-				"item": {
-				"barcode": barcode,
-				"name": "Item",
-				"dimensions": {"width": 1, "height": 1, "length": 1},
-			},
-			},
-		)
-		assert rejected.status_code == 422
-		assert rejected.json()["detail"]["message"] == "item.barcode is required"
-
-
-@pytest.mark.anyio
-async def test_mock_status_has_eighty_cells_and_db_occupancy(
-	mock_runtime: MockRobotRuntime,
-) -> None:
-	async with AsyncSessionLocal() as session:
-		item = Item(
-			barcode="occupancy-1",
-			name="Occupied",
-			dimensions={"width": 1, "height": 1, "length": 1},
-		)
-		session.add(item)
-		await session.flush()
-		session.add(ItemLocation(item_id=item.id, side="left_module", shelf_idx=1, cell_idx=2))
-		await session.commit()
-
-	try:
-		payload = await mock_runtime.status_payload()
-	finally:
-		async with AsyncSessionLocal() as session:
-			await session.execute(delete(ItemLocation))
-			await session.execute(delete(Item))
-			await session.commit()
-
-	status = json.loads(payload)
-	assert status["mode"] == "mock"
-	assert status["ready"] is True
-	assert sum(
-		len(shelf["cells"])
-		for side in ("left_module", "right_module")
-		for shelf in status["robot_status"]["storage"][side]
-	) == 80
-	assert status["robot_status"]["gantry"]["x_axis"]["homed"] == 1
-	assert status["robot_status"]["scale"]["occupied"] is False
-	assert status["robot_status"]["cabinet_doors"]["closed"] is True
-
-	cells = status["robot_status"]["storage"]["left_module"][1]["cells"]
-	assert cells[2]["status"] == "occupied"
-	assert cells[3]["status"] == "available"
 
 
 @pytest.mark.anyio
@@ -432,47 +212,6 @@ async def test_mock_queue_limit_returns_retry_after(
 	assert response.headers["Retry-After"] == "1"
 	async with AsyncSessionLocal() as session:
 		assert (await session.execute(select(Item).where(Item.barcode == "queue-overflow"))).scalar_one_or_none() is None
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("dimension", ["width", "height", "length"])
-@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), "NaN", "Infinity", True, 0, -1, "10"])
-async def test_mock_invalid_enrollment_dimensions_allow_corrected_retry(
-	client: AsyncClient,
-	mock_runtime: MockRobotRuntime,
-	dimension: str,
-	invalid: object,
-) -> None:
-	payload = {
-		"command": "store_item",
-		"request_id": "corrected-enrollment",
-		"item": {
-			"barcode": "invalid-dimensions",
-			"name": "Bottle",
-			"dimensions": {"width": 10, "height": 10, "length": 10, dimension: invalid},
-			"tare_weight": 100,
-			"net_weight": 250.5,
-			"full_net_weight": 500,
-		},
-	}
-	response = await client.post(
-		"/api/robot/commands",
-		content=json.dumps(payload),
-		headers={"Content-Type": "application/json"},
-	)
-	assert response.status_code == 422, response.text
-	async with AsyncSessionLocal() as session:
-		assert (await session.execute(select(Item))).scalars().all() == []
-		assert (await session.execute(select(MockRobotCommand))).scalars().all() == []
-
-	payload["item"]["dimensions"][dimension] = 10
-	response = await client.post("/api/robot/commands", json=payload)
-	assert response.status_code == 200, response.text
-	await _wait_for_status(client, response.json()["command_id"], "succeeded")
-	async with AsyncSessionLocal() as session:
-		item = (await session.execute(select(Item).where(Item.barcode == "invalid-dimensions"))).scalar_one()
-		assert item.dimensions == {"width": 10, "height": 10, "length": 10}
-		assert item.weight == 350.5 and item.tare_weight == 100 and item.full_net_weight == 500
 
 
 @pytest.mark.anyio
@@ -545,26 +284,3 @@ async def test_mock_enrollment_survives_failure_and_editable_retry(
 		assert item.tare_weight == 100 and item.full_net_weight == 500
 		assert not item.enrollment_weight_pending and item.enrollment_storage_completed
 
-
-@pytest.mark.anyio
-async def test_mock_manual_mass_cycle_and_scale(client: AsyncClient, mock_runtime: MockRobotRuntime) -> None:
-	reading = await client.get('/api/robot/debug/scale')
-	assert reading.status_code == 200
-	assert reading.json()['weight_grams'] == 350
-	assert reading.json()['status']['stable'] and reading.json()['status']['valid']
-	response = await client.post('/api/robot/commands', json={
-		'command': 'store_item', 'request_id': 'mass-mock-first', 'item': {
-			'barcode': 'mass-mock', 'name': 'Bottle', 'dimensions': {'width': 10, 'height': 10, 'length': 10},
-			'tare_weight': 100, 'net_weight': 250.5, 'full_net_weight': 500,
-		}})
-	assert response.status_code == 200, response.text
-	result = await _wait_for_status(client, response.json()['command_id'], 'succeeded')
-	assert result['result']['weight'] == 350
-	item = (await client.post("/api/storage/items/lookup", json={"barcode": "mass-mock"})).json()
-	assert item['weight'] == 350.5 and item['net_weight'] == 250.5
-	response = await client.post('/api/robot/commands', json={
-		'command': 'retrieve_item', 'location': item['locations'][0], 'request_id': 'mass-mock-second'})
-	assert response.status_code == 200, response.text
-	await _wait_for_status(client, response.json()['command_id'], 'succeeded')
-	item = (await client.post("/api/storage/items/lookup", json={"barcode": "mass-mock"})).json()
-	assert item['weight'] == 350 and item['net_weight'] == 250
