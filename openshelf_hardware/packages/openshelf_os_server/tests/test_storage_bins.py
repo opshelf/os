@@ -333,7 +333,7 @@ async def test_allocator_prefers_partially_filled_compatible_bin() -> None:
             side="front_module",
             shelf_idx=0,
             cell_idx=0,
-            inner_dimensions={"width": 30, "height": 20, "length": 30},
+            inner_dimensions={"width": 42, "height": 20, "length": 42},
             max_items=3,
             status="at_home",
             active=True,
@@ -343,7 +343,7 @@ async def test_allocator_prefers_partially_filled_compatible_bin() -> None:
             side="front_module",
             shelf_idx=0,
             cell_idx=1,
-            inner_dimensions={"width": 25, "height": 20, "length": 25},
+            inner_dimensions={"width": 37, "height": 20, "length": 37},
             max_items=3,
             status="at_home",
             active=True,
@@ -398,7 +398,7 @@ async def test_allocator_rejects_bin_without_remaining_volume() -> None:
         existing = await storage.create_item(
             "222222222225",
             "Existing",
-            {"width": 10, "height": 10, "length": 9},
+            {"width": 20, "height": 10, "length": 23.7},
         )
         target = await storage.create_item(
             "222222222226",
@@ -410,7 +410,7 @@ async def test_allocator_rejects_bin_without_remaining_volume() -> None:
             side="front_module",
             shelf_idx=0,
             cell_idx=0,
-            inner_dimensions={"width": 10, "height": 10, "length": 10},
+            inner_dimensions={"width": 22, "height": 10, "length": 22},
             max_item_dimensions={"width": 10, "length": 10},
             max_items=10,
             status="at_home",
@@ -425,8 +425,8 @@ async def test_allocator_rejects_bin_without_remaining_volume() -> None:
         assert await service.allocate_bin(target) is None
         summary = await service.serialize_bin(full_bin)
         assert summary["max_item_dimensions"] == {"width": 10.0, "length": 10.0}
-        assert summary["used_volume"] == 900
-        assert summary["available_volume"] == 100
+        assert summary["used_volume"] == pytest.approx(4740)
+        assert summary["available_volume"] == pytest.approx(100)
 
 
 @pytest.mark.anyio
