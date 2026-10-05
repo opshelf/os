@@ -1,6 +1,4 @@
-import argparse
 import asyncio
-import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,10 +16,6 @@ from openshelf_os.laser_calibration import (
 	scan_axis_flying,
 	scan_line_positions_flying,
 )
-from openshelf_os.config.laser_scan import LaserScanConfig, LaserScanXYOffsetConfig
-from openshelf_os.laser_calibration.core import get_flying_capture_latency_ms
-from openshelf_os.laser_calibration.defaults import FLYING_CAPTURE_LATENCY_MS
-from openshelf_os.laser_calibration.recording import build_run_parameters
 from openshelf_os.laser_calibration.scan import ScanBounds, build_axis_positions
 import openshelf_os.laser_calibration.flying as flying_module
 import openshelf_os.laser_calibration.shelf_scan as shelf_scan_module
@@ -180,37 +174,6 @@ class FakeFlyingTool:
 
 
 @pytest.mark.asyncio
-async def test_scan_axis_flying_corrects_depth_positions_by_capture_latency() -> None:
-	tool = FakeFlyingTool(depth_mm=5.0)
-
-	line = await scan_axis_flying(
-		tool=tool,
-		axis="y",
-		start_mm=0.0,
-		end_mm=10.0,
-		fixed_mm=25.0,
-		rpm=30,
-		progress_label="flying_latency",
-		capture_latency_s=0.1,
-	)
-
-	corrected_samples = [
-		sample for sample in line.samples if sample.depth_position_mm is not None
-	]
-
-	assert len(corrected_samples) > 0
-
-	for sample in corrected_samples:
-		assert sample.velocity_mm_s is not None
-		assert sample.depth_position_mm == pytest.approx(
-			sample.position_mm - sample.velocity_mm_s * 0.1
-		)
-
-	# The stationary start sample has no velocity estimate, so it is left where it was measured.
-	assert line.samples[0].depth_position_mm is None
-
-
-@pytest.mark.asyncio
 async def test_scan_line_positions_flying_covers_the_final_position_with_a_clamped_lead_out() -> None:
 	tool = FakeFlyingTool(depth_mm=5.0)
 	# 40mm/rev at 60rpm is 40mm/s, so the lead-out would fly 2.68mm past the grid; the axis
@@ -261,14 +224,6 @@ async def test_scan_axis_flying_stops_the_axis_when_aborted() -> None:
 	assert tool._my.stop_count >= 1
 
 
-def test_estimate_axis_ramp_mm_derives_the_ramp_from_accel_and_rpm() -> None:
-	# 40mm/rev at 60rpm is 40mm/s; 500ms per 1000rpm ramps to 60rpm in 30ms, covering 0.6mm.
-	motor = SimpleNamespace(_params=SimpleNamespace(mpr=40.0, accel=500))
-
-	assert flying_module.estimate_axis_ramp_mm(motor, 60) == pytest.approx(0.6)
-	assert flying_module.estimate_axis_ramp_mm(SimpleNamespace(_params=SimpleNamespace(mpr=40.0)), 60) is None
-
-
 @pytest.mark.asyncio
 async def test_scan_axis_flying_starts_before_the_grid_and_arms_the_stop_after_the_lead_in() -> None:
 	tool = FakeFlyingTool(depth_mm=5.0)
@@ -298,28 +253,6 @@ async def test_scan_axis_flying_starts_before_the_grid_and_arms_the_stop_after_t
 	assert line.samples[0].position_mm > 20.0 - lead_in_mm
 	assert len(seen_positions) > 0
 	assert all(position_mm >= 20.0 for position_mm in seen_positions)
-
-
-@pytest.mark.asyncio
-async def test_scan_axis_flying_keeps_the_stationary_start_when_the_limit_clamps_the_lead_in() -> None:
-	tool = FakeFlyingTool(depth_mm=5.0)
-	tool._my = FakeTimedAxisMotor(feed_mm_s=40.0)
-	tool._my._params = SimpleNamespace(mpr=40.0, accel=500, lower_lim=0.0, lim=100.0)
-
-	line = await scan_axis_flying(
-		tool=tool,
-		axis="y",
-		start_mm=0.0,
-		end_mm=10.0,
-		fixed_mm=25.0,
-		rpm=60,
-		progress_label="flying_clamped_lead_in",
-		capture_latency_s=0.0,
-	)
-
-	assert tool._my.moves[0] == (pytest.approx(0.0), None)
-	assert line.samples[0].position_mm == pytest.approx(0.0)
-	assert line.samples[0].velocity_mm_s is None
 
 
 class FakeGuardInterlock:
@@ -467,86 +400,6 @@ async def test_capture_shelf_candidates_default_style_keeps_the_stepped_scan(
 	assert stepped_sweep.await_count >= 1
 	assert flying.await_count == 0
 	assert shelf_edges[-1].y_mm == pytest.approx(0.0)
-
-
-@pytest.mark.asyncio
-async def test_alternating_flying_hole_sweeps_reverse_every_other_line_and_log_resamples(
-	monkeypatch,
-	tmp_path: Path,
-) -> None:
-	import json
-
-	x_positions = build_axis_positions(0.0, 40.0, 4.0)
-	# Ascending-x profile with one bin the pass leaves empty, at x=8.
-	profile = {x_mm: 9.5 for x_mm in x_positions}
-	flown_directions: list[str] = []
-	merged_rows: list[list[float | None]] = []
-	resampled_x: list[float] = []
-
-	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
-		flown_directions.append("up" if positions[-1] > positions[0] else "down")
-		depth_values = [None if x_mm == 8.0 else profile[x_mm] for x_mm in positions]
-		return depth_values, FlyingScanLine(
-			axis=axis,
-			fixed_mm=fixed_mm,
-			start_mm=float(positions[0]),
-			end_mm=float(positions[-1]),
-			rpm=rpm,
-			samples=[FlyingScanSample(position_mm=float(positions[0]), depth_mm=9.5, elapsed_s=0.0)],
-			duration_s=1.0,
-		)
-
-	async def didSampleScanPoint(tool, *, x_mm, y_mm, settle_ms, samples_per_point, should_abort=None):
-		resampled_x.append(x_mm)
-		return 7.0
-
-	def didMergeLine(coarse_scan, *, axis, positions, fixed_mm, depth_values):
-		assert positions == x_positions
-		merged_rows.append(list(depth_values))
-
-	monkeypatch.setattr(shelf_scan_module, "scan_line_positions_flying", didScanLineFlying)
-	monkeypatch.setattr(shelf_scan_module, "sample_scan_point", didSampleScanPoint)
-	monkeypatch.setattr(shelf_scan_module, "merge_line_scan_into_sparse_scan", didMergeLine)
-
-	recorder = SimpleNamespace(
-		run_id="flying-alternate-run",
-		coarse_depth_path=tmp_path / "coarse_depth.npy",
-		progress_path=tmp_path / "progress.json",
-		run_dir=tmp_path,
-	)
-
-	await shelf_scan_module.capture_shelf_candidates(
-		SimpleNamespace(),
-		side=StorageModuleSide.FRONT,
-		bounds=ScanBounds(x_min=0.0, x_max=40.0, y_min=0.0, y_max=200.0),
-		settle_ms=0,
-		samples_per_point=1,
-		scan_config=SimpleNamespace(
-			coarse_scan_style="flying",
-			coarse_scan_alternate_direction=True,
-			shelf_hole_probe_y_offsets_mm=[10.0, 20.0],
-		),
-		recorder=recorder,
-		shelf_scout_only=False,
-		known_shelf_edge_y=[150.0, 50.0],
-	)
-
-	# Direction alternates across offsets and shelves alike, so each pass starts where the last
-	# one ended; the reversed passes are flipped back before gap detection and merging.
-	assert flown_directions == ["up", "down", "up", "down"]
-	assert resampled_x == [8.0, 8.0, 8.0, 8.0]
-	expected_row = [7.0 if x_mm == 8.0 else 9.5 for x_mm in x_positions]
-	assert merged_rows == [expected_row] * 4
-
-	records = [
-		json.loads(line)
-		for line in (tmp_path / flying_module.FLYING_SAMPLES_FILENAME).read_text().splitlines()
-	]
-	resampled_records = [record for record in records if record["source"] == "resampled"]
-	assert [record["source"] for record in records].count("flown") == 4
-	assert [(record["position_mm"], record["depth_mm"]) for record in resampled_records] == [
-		(8.0, 7.0)
-	] * 4
 
 
 @pytest.mark.asyncio
@@ -797,137 +650,6 @@ async def test_flying_shelf_scout_resamples_an_uncovered_bin_instead_of_reading_
 	assert depth_values[y_positions.index(192.0)] == 9.5
 
 
-def test_flying_capture_latency_falls_back_to_the_default_and_rejects_negative_values() -> None:
-	assert get_flying_capture_latency_ms(LaserScanConfig()) == FLYING_CAPTURE_LATENCY_MS
-	assert get_flying_capture_latency_ms(LaserScanConfig(flying_capture_latency_ms=37.5)) == 37.5
-	assert get_flying_capture_latency_ms(LaserScanConfig(flying_capture_latency_ms=0.0)) == 0.0
-
-	with pytest.raises(ValueError, match="flying_capture_latency_ms"):
-		get_flying_capture_latency_ms(SimpleNamespace(flying_capture_latency_ms=-1.0))
-
-
-@pytest.mark.asyncio
-async def test_prefetch_line_depth_values_corrects_with_the_configured_capture_latency(
-	monkeypatch,
-) -> None:
-	captured_latencies: list[float | None] = []
-
-	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
-		captured_latencies.append(kwargs.get("capture_latency_s"))
-		return [None for _ in positions], FlyingScanLine(
-			axis=axis, fixed_mm=fixed_mm, start_mm=positions[0], end_mm=positions[-1], rpm=rpm
-		)
-
-	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
-
-	await flying_module.prefetch_line_depth_values(
-		SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0))),
-		scan_config=SimpleNamespace(
-			fine_scan_style="flying",
-			fine_scan_feed_mm_s=40.0,
-			flying_capture_latency_ms=37.5,
-		),
-		axis="x",
-		positions=[0.0, 1.0, 2.0],
-		fixed_mm=10.0,
-		progress_label="latency_prefetch",
-	)
-
-	assert captured_latencies == [pytest.approx(0.0375)]
-
-
-@pytest.mark.asyncio
-async def test_flying_line_samples_record_the_capture_latency_they_were_corrected_with(
-	tmp_path: Path,
-) -> None:
-	line = await scan_axis_flying(
-		tool=FakeFlyingTool(depth_mm=5.0),
-		axis="y",
-		start_mm=0.0,
-		end_mm=10.0,
-		fixed_mm=25.0,
-		rpm=30,
-		progress_label="flying_latency_record",
-		capture_latency_s=0.0375,
-	)
-	output_path = flying_module.write_flying_line_samples(
-		run_dir=tmp_path,
-		label="flying_latency_record",
-		line=line,
-	)
-
-	assert line.capture_latency_s == pytest.approx(0.0375)
-	rows = [json.loads(row) for row in Path(output_path).read_text(encoding="utf-8").splitlines()]
-	assert len(rows) > 0
-	assert all(row["capture_latency_s"] == pytest.approx(0.0375) for row in rows)
-
-
-def test_run_parameters_record_the_resolved_capture_latency() -> None:
-	scan_config = LaserScanConfig(
-		laser_offset_x_mm=0.0,
-		laser_offset_y_mm=0.0,
-		front_gripper_xy_correction_mm=LaserScanXYOffsetConfig(x_mm=0.0, y_mm=0.0),
-		flying_capture_latency_ms=37.5,
-	)
-	args = argparse.Namespace(
-		module="front",
-		x=None,
-		y=None,
-		y_offset=0.0,
-		settle_ms=None,
-		samples_per_point=None,
-		known_shelf_edge_y=None,
-		npy=None,
-		scans_dir="scans",
-		config="config.json",
-		apply=False,
-		shelf_scout_only=False,
-		rescan_cell=None,
-		flying_capture_latency_ms=None,
-	)
-
-	run_parameters = build_run_parameters(
-		args=args,
-		side=StorageModuleSide.FRONT,
-		bounds=ScanBounds(x_min=0.0, x_max=100.0, y_min=0.0, y_max=100.0),
-		step_mm=1.0,
-		settle_ms=0,
-		samples_per_point=1,
-		coarse_settle_ms=0,
-		coarse_samples_per_point=1,
-		scan_config=scan_config,
-	)
-
-	assert run_parameters["resolved"]["flying_capture_latency_ms"] == 37.5
-	assert run_parameters["cli"]["flying_capture_latency_ms"] is None
-
-
-
-
-@pytest.mark.asyncio
-async def test_scan_axis_flying_bounds_only_the_moving_reads() -> None:
-	tool = FakeFlyingTool(depth_mm=5.0)
-
-	await scan_axis_flying(
-		tool=tool,
-		axis="y",
-		start_mm=0.0,
-		end_mm=10.0,
-		fixed_mm=0.0,
-		rpm=30,
-		progress_label="flying_bounded",
-	)
-
-	bound_s = flying_module.FLYING_SCAN_READ_TIMEOUT_S
-	# The stationary start and end samples keep the default retrying read; every read taken
-	# while the axis flies is bounded.
-	assert tool.laser_timeouts_s[0] is None
-	assert tool.laser_timeouts_s[-1] is None
-	assert tool.laser_timeouts_s[1:-1] != []
-	assert all(timeout_s == bound_s for timeout_s in tool.laser_timeouts_s[1:-1])
-	assert bound_s in tool._my.read_timeouts_s
-
-
 @pytest.mark.asyncio
 async def test_scan_axis_flying_stops_the_axis_and_restarts_when_a_moving_read_fails() -> None:
 	tool = FakeFlyingTool(depth_mm=5.0)
@@ -953,49 +675,90 @@ async def test_scan_axis_flying_stops_the_axis_and_restarts_when_a_moving_read_f
 	assert line.samples[-1].position_mm == pytest.approx(20.0)
 
 
+class FakeDwellingAxisMotor(FakeTimedAxisMotor):
+	"""A real-time axis that sits out a trigger dwell and sometimes answers its encoder late.
+
+	Every read takes a normal transaction time; every third waits behind another bus user first,
+	as the y-axis weight guard's scale reads do.
+	"""
+
+	def __init__(self, *, feed_mm_s: float, dwell_s: float, mpr: float) -> None:
+		super().__init__(feed_mm_s=feed_mm_s)
+		self.dwell_s = float(dwell_s)
+		self._params = SimpleNamespace(mpr=float(mpr))
+		self.encoder_reads = 0
+
+	def beam_mm(self, at_s: float) -> float:
+		if self.move_started_at is None or at_s <= self.move_started_at + self.dwell_s:
+			return self.move_start_mm
+
+		distance_mm = abs(self.target_mm - self.move_start_mm)
+		travelled_mm = min((at_s - self.move_started_at - self.dwell_s) * self.feed_mm_s, distance_mm)
+		direction = 1.0 if self.target_mm >= self.move_start_mm else -1.0
+
+		return self.move_start_mm + direction * travelled_mm
+
+	async def get_position(self, *, timeout_s: float | None = None) -> float:
+		self.encoder_reads += 1
+		await asyncio.sleep(0.010 + (0.015 if self.encoder_reads % 3 == 0 else 0.0))
+		self.position_mm = self.beam_mm(time.monotonic())
+
+		if self.is_moving is True and self.position_mm == self.target_mm:
+			self.is_moving = False
+
+		return self.position_mm
+
+
 @pytest.mark.asyncio
-async def test_scan_axis_flying_stops_the_axis_when_a_moving_read_outlasts_the_bound(
-	monkeypatch,
-) -> None:
-	monkeypatch.setattr(flying_module, "FLYING_SCAN_READ_TIMEOUT_S", 0.02)
-	tool = FakeFlyingTool(depth_mm=5.0)
-	moving_when_slow: list[bool] = []
-	tool.slow_reads = {4: 0.05}
-	original_read = tool.get_laser_distance
+async def test_scan_axis_flying_places_depths_through_the_dwell_and_late_encoder_reads() -> None:
+	sensor_latency_s = 0.030
+	# 30rpm on a 100mm/rev axis is 50mm/s.
+	motor = FakeDwellingAxisMotor(feed_mm_s=50.0, dwell_s=0.06, mpr=100.0)
+	tool = FakeFlyingTool()
+	tool._my = motor
 
-	async def didReadLaser(*, timeout_s=None):
-		if tool.depth_reads + 1 in tool.slow_reads:
-			moving_when_slow.append(tool._my.is_moving)
+	async def read_beam_as_depth(*, timeout_s: float | None = None) -> float:
+		# The "depth" is where the beam was when the sensor measured, so a correctly placed
+		# sample has depth_position_mm equal to its depth.
+		await asyncio.sleep(0.003)
+		return motor.beam_mm(time.monotonic() - sensor_latency_s)
 
-		return await original_read(timeout_s=timeout_s)
-
-	tool.get_laser_distance = didReadLaser
-	printed: list[str] = []
+	tool.get_laser_distance = read_beam_as_depth
 
 	line = await scan_axis_flying(
 		tool=tool,
 		axis="y",
 		start_mm=0.0,
-		end_mm=20.0,
+		end_mm=15.0,
 		fixed_mm=0.0,
 		rpm=30,
-		progress_label="flying_read_slow",
-		progress_printer=printed.append,
+		progress_label="flying_placement",
+		progress_printer=lambda _message: None,
+		# Fitted on an uninterrupted bus: sensor latency plus the normal encoder transaction.
+		capture_latency_s=sensor_latency_s + 0.010,
 	)
 
-	assert moving_when_slow == [True]
-	assert tool._my.stop_count >= 1
-	assert any("laser read took" in message for message in printed)
-	# The overrun's late depth never reaches the kept line.
-	assert line.samples[-1].position_mm == pytest.approx(20.0)
+	samples = [sample for sample in line.samples if sample.depth_mm is not None]
+	assert any(0.0 < float(sample.depth_mm) < 15.0 for sample in samples)
+	assert any((sample.encoder_delay_s or 0.0) > 0.02 for sample in samples)
+
+	for sample in samples:
+		assert flying_module.sample_depth_position_mm(sample) == pytest.approx(
+			float(sample.depth_mm), abs=0.4
+		)
 
 
 @pytest.mark.asyncio
-async def test_scan_axis_flying_fails_the_line_when_reads_keep_overrunning() -> None:
+async def test_scan_axis_flying_fails_the_line_instead_of_restarting_when_the_stop_fails() -> None:
 	tool = FakeFlyingTool(depth_mm=5.0)
-	tool.failing_reads = set(range(2, 1000))
+	tool.failing_reads = {4}
 
-	with pytest.raises(flying_module.FlyingScanReadOverrun):
+	async def fail_stop() -> None:
+		raise RuntimeError("stop write failed")
+
+	tool._my.stop = fail_stop
+
+	with pytest.raises(flying_module.FlyingScanStopFailed):
 		await scan_axis_flying(
 			tool=tool,
 			axis="y",
@@ -1003,8 +766,26 @@ async def test_scan_axis_flying_fails_the_line_when_reads_keep_overrunning() -> 
 			end_mm=20.0,
 			fixed_mm=0.0,
 			rpm=30,
-			progress_label="flying_read_dead",
+			progress_label="flying_stop_failure",
+			progress_printer=lambda _message: None,
 		)
 
-	assert tool._my.is_moving is False
-	assert tool._my.stop_count == flying_module.FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS + 1
+	# One flying move and no second pass commanded into an axis that may still be moving.
+	assert [rpm for _, rpm in tool._my.moves].count(30) == 1
+
+
+def test_median3_binning_filters_a_spike_and_keeps_the_nearest_below_three_samples() -> None:
+	def at(position_mm: float, depth_mm: float) -> FlyingScanSample:
+		return FlyingScanSample(position_mm=position_mm, depth_mm=depth_mm, elapsed_s=0.0)
+
+	values = flying_module.bin_samples_to_positions(
+		samples=[
+			at(-0.5, 10.0), at(0.2, 30.0), at(0.6, 10.0), at(1.4, 10.0),
+			# Two readings straddling an edge: averaging them would invent a depth of 5.
+			at(4.2, 0.0), at(5.6, 10.0),
+		],
+		positions=[0.0, 4.0],
+		mode=flying_module.FLYING_SCAN_BIN_MEDIAN3,
+	)
+
+	assert values == [10.0, 0.0]

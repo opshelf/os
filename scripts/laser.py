@@ -53,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
 		help='Coarse scan motion. stepped stops at every grid point; flying drives the axis at a constant feed and bins samples onto the same grid.',
 	)
 	parser.add_argument('--coarse-scan-rpm', type=int)
-	parser.add_argument('--coarse-scan-bin-mode', choices=['nearest', 'median'])
+	parser.add_argument('--coarse-scan-bin-mode', choices=['nearest', 'median', 'median3'])
 	parser.add_argument(
 		'--coarse-scan-alternate-direction',
 		action=argparse.BooleanOptionalAction,

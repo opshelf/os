@@ -55,6 +55,7 @@ COARSE_SCAN_STYLE_STEPPED = "stepped"
 COARSE_SCAN_STYLE_FLYING = "flying"
 COARSE_SCAN_BIN_NEAREST = "nearest"
 COARSE_SCAN_BIN_MEDIAN = "median"
+COARSE_SCAN_BIN_MEDIAN3 = "median3"
 # Conservative first feed for a moving pass: 30rpm is 20mm/s on y (mpr 40mm) and 40mm/s on x
 # (mpr 80mm). Sample spacing is set by the bus loop time, not by this value, so raise it only
 # after the sample cadence logged in flying_samples.jsonl shows the grid is still covered.
@@ -451,10 +452,10 @@ def get_coarse_scan_bin_mode(scan_config: Any) -> str:
 	if configured_mode is None:
 		return COARSE_SCAN_BIN_NEAREST
 
-	if configured_mode not in (COARSE_SCAN_BIN_NEAREST, COARSE_SCAN_BIN_MEDIAN):
+	if configured_mode not in (COARSE_SCAN_BIN_NEAREST, COARSE_SCAN_BIN_MEDIAN, COARSE_SCAN_BIN_MEDIAN3):
 		raise ValueError(
 			"robot.grid.scan.coarse_scan_bin_mode must be "
-			f"'{COARSE_SCAN_BIN_NEAREST}' or '{COARSE_SCAN_BIN_MEDIAN}'"
+			f"'{COARSE_SCAN_BIN_NEAREST}', '{COARSE_SCAN_BIN_MEDIAN}' or '{COARSE_SCAN_BIN_MEDIAN3}'"
 		)
 
 	return str(configured_mode)
