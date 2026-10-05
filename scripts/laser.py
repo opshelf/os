@@ -61,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
 	)
 	parser.add_argument('--fine-scan-feed-mm-s', type=float)
 	parser.add_argument(
+		'--flying-capture-latency-ms',
+		type=float,
+		help='Laser-to-encoder delay flying passes correct each depth by; overrides robot.grid.scan.flying_capture_latency_ms. 0 disables the correction.',
+	)
+	parser.add_argument(
 		'--rescan-shelf',
 		type=int,
 		metavar='SHELF_IDX',
@@ -140,6 +145,9 @@ def apply_scan_config_overrides(scan_config: Any, args: argparse.Namespace) -> A
 
 	if args.fine_scan_feed_mm_s is not None:
 		overrides['fine_scan_feed_mm_s'] = float(args.fine_scan_feed_mm_s)
+
+	if args.flying_capture_latency_ms is not None:
+		overrides['flying_capture_latency_ms'] = float(args.flying_capture_latency_ms)
 
 	if len(overrides) == 0:
 		return scan_config
@@ -396,6 +404,9 @@ async def run_scan(args: argparse.Namespace) -> int:
 
 	if args.fine_scan_feed_mm_s is not None and args.fine_scan_feed_mm_s <= 0:
 		raise ValueError('--fine-scan-feed-mm-s must be greater than zero')
+
+	if args.flying_capture_latency_ms is not None and args.flying_capture_latency_ms < 0:
+		raise ValueError('--flying-capture-latency-ms must be zero or greater')
 	rescan_candidate: laser_module.GapCandidateRegion | None = None
 	grid_path = runtime_paths.resolve_storage_path(config, config_path=args.config)
 	grid = laser_module.load_grid(grid_path)
@@ -507,11 +518,13 @@ async def run_scan(args: argparse.Namespace) -> int:
 		known_shelf_edge_y = run_parameters.get('cli', {}).get('known_shelf_edge_y')
 		# The earlier portion of the run already moved with the recorded style/feed,
 		# so the resumed portion restores them instead of the current config values.
-		# Recordings that predate the style fields were necessarily stepped.
+		# Recordings that predate the style fields were necessarily stepped, and ones that
+		# predate the latency field were corrected with the built-in default.
 		resolved_scan_settings = run_parameters.get('resolved', {})
 		scan_overrides = {
 			'coarse_scan_style': laser_module.COARSE_SCAN_STYLE_STEPPED,
 			'fine_scan_style': laser_module.COARSE_SCAN_STYLE_STEPPED,
+			'flying_capture_latency_ms': laser_module.FLYING_CAPTURE_LATENCY_MS,
 		}
 		scan_overrides.update({
 			key: resolved_scan_settings[key]
@@ -521,6 +534,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 				'coarse_scan_bin_mode',
 				'fine_scan_style',
 				'fine_scan_feed_mm_s',
+				'flying_capture_latency_ms',
 			)
 			if key in resolved_scan_settings
 		})
@@ -529,9 +543,11 @@ async def run_scan(args: argparse.Namespace) -> int:
 		coarse_rpm = scan_overrides.get('coarse_scan_rpm')
 		fine_style = scan_overrides.get('fine_scan_style')
 		fine_feed_mm_s = scan_overrides.get('fine_scan_feed_mm_s')
+		latency_ms = scan_overrides.get('flying_capture_latency_ms')
 		laser_module.print_status(
 			f'resume_scan_style=coarse:{coarse_style} coarse_rpm:{coarse_rpm} '
-			f'fine:{fine_style} fine_feed_mm_s:{fine_feed_mm_s}'
+			f'fine:{fine_style} fine_feed_mm_s:{fine_feed_mm_s} '
+			f'capture_latency_ms:{latency_ms}'
 		)
 		resumed_rescan_shelf = run_parameters.get('cli', {}).get('rescan_shelf')
 

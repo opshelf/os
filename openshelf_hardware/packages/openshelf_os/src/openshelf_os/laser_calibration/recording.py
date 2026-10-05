@@ -45,6 +45,7 @@ def build_run_parameters(
 	coarse_scan_bin_mode = get_coarse_scan_bin_mode(scan_config)
 	fine_scan_style = get_fine_scan_style(scan_config)
 	fine_scan_feed_mm_s = get_fine_scan_feed_mm_s(scan_config)
+	flying_capture_latency_ms = get_flying_capture_latency_ms(scan_config)
 
 	return {
 		"module": side.value,
@@ -80,6 +81,7 @@ def build_run_parameters(
 			"coarse_scan_bin_mode": getattr(args, "coarse_scan_bin_mode", None),
 			"fine_scan_style": getattr(args, "fine_scan_style", None),
 			"fine_scan_feed_mm_s": getattr(args, "fine_scan_feed_mm_s", None),
+			"flying_capture_latency_ms": getattr(args, "flying_capture_latency_ms", None),
 			"rescan_shelf": getattr(args, "rescan_shelf", None),
 		},
 		"resolved": {
@@ -100,6 +102,7 @@ def build_run_parameters(
 			"coarse_scan_bin_mode": coarse_scan_bin_mode,
 			"fine_scan_style": fine_scan_style,
 			"fine_scan_feed_mm_s": fine_scan_feed_mm_s,
+			"flying_capture_latency_ms": flying_capture_latency_ms,
 			"laser_scan_pose_stage_mm": laser_scan_pose_stage_mm,
 			"laser_scan_pose_z_delta_from_place_mm": laser_scan_pose_z_delta_from_place_mm,
 			"laser_offset_x_mm": laser_offset_x_mm,

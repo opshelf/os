@@ -32,7 +32,8 @@ LASER_SAMPLES_PER_POINT = 3
 # hole-edge midpoints on lb4a-2 at 40mm/s and 79mm/s gives 42ms (mean residual <=0.03mm at both
 # feeds; the per-hole scatter that remains is edge-detection noise, not delay). It scales with
 # feed, so it is subtracted per sample from the measured velocity. Re-measure it per sensor with
-# a stopped-vs-moving edge comparison before trusting the default.
+# a stopped-vs-moving edge comparison before trusting the default, and store the result in
+# `robot.grid.scan.flying_capture_latency_ms`; this is only the fallback when that is unset.
 FLYING_CAPTURE_LATENCY_MS = 42.0
 
 # A wall depth reading is turned into a gripper z offset by a per-machine model. The
