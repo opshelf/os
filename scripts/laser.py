@@ -55,6 +55,12 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument('--coarse-scan-rpm', type=int)
 	parser.add_argument('--coarse-scan-bin-mode', choices=['nearest', 'median'])
 	parser.add_argument(
+		'--coarse-scan-alternate-direction',
+		action=argparse.BooleanOptionalAction,
+		default=None,
+		help='Fly alternate flying hole-sweep lines in opposite directions. Validate the capture latency in both directions first.',
+	)
+	parser.add_argument(
 		'--fine-scan-style',
 		choices=['stepped', 'flying'],
 		help='Fine line probes. flying prefetches each line in one pass and replays the same probe logic.',
@@ -139,6 +145,9 @@ def apply_scan_config_overrides(scan_config: Any, args: argparse.Namespace) -> A
 
 	if args.coarse_scan_bin_mode is not None:
 		overrides['coarse_scan_bin_mode'] = args.coarse_scan_bin_mode
+
+	if args.coarse_scan_alternate_direction is not None:
+		overrides['coarse_scan_alternate_direction'] = bool(args.coarse_scan_alternate_direction)
 
 	if args.fine_scan_style is not None:
 		overrides['fine_scan_style'] = args.fine_scan_style
@@ -523,6 +532,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 		resolved_scan_settings = run_parameters.get('resolved', {})
 		scan_overrides = {
 			'coarse_scan_style': laser_module.COARSE_SCAN_STYLE_STEPPED,
+			'coarse_scan_alternate_direction': False,
 			'fine_scan_style': laser_module.COARSE_SCAN_STYLE_STEPPED,
 			'flying_capture_latency_ms': laser_module.FLYING_CAPTURE_LATENCY_MS,
 		}
@@ -532,6 +542,7 @@ async def run_scan(args: argparse.Namespace) -> int:
 				'coarse_scan_style',
 				'coarse_scan_rpm',
 				'coarse_scan_bin_mode',
+				'coarse_scan_alternate_direction',
 				'fine_scan_style',
 				'fine_scan_feed_mm_s',
 				'flying_capture_latency_ms',

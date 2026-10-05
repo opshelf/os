@@ -460,6 +460,10 @@ def get_coarse_scan_bin_mode(scan_config: Any) -> str:
 	return str(configured_mode)
 
 
+def get_coarse_scan_alternate_direction(scan_config: Any) -> bool:
+	return getattr(scan_config, "coarse_scan_alternate_direction", None) is True
+
+
 def get_shelf_brim_max_height_mm(scan_config: Any) -> float:
 	configured_max_height_mm = getattr(scan_config, "shelf_brim_max_height_mm", None)
 

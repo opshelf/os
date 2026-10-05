@@ -89,6 +89,7 @@ async def capture_shelf_candidates(
 	coarse_scan_rpm = get_coarse_scan_rpm(scan_config)
 	coarse_scan_bin_mode = get_coarse_scan_bin_mode(scan_config)
 	capture_latency_s = get_flying_capture_latency_s(scan_config)
+	coarse_scan_alternate_direction = get_coarse_scan_alternate_direction(scan_config)
 	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds, side=side, scan_config=scan_config)
 	scout_y_positions = list(reversed(build_axis_positions(bounds.y_min, bounds.y_max, SHELF_SCOUT_STEP_MM)))
 	hole_sweep_x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
@@ -113,6 +114,7 @@ async def capture_shelf_candidates(
 	if coarse_scan_style == COARSE_SCAN_STYLE_FLYING:
 		print_status(
 			f"coarse_scan_style=flying rpm={coarse_scan_rpm} bin_mode={coarse_scan_bin_mode} "
+			f"alternate_direction={coarse_scan_alternate_direction} "
 			f"settle_ms={settle_ms} samples_per_point={samples_per_point} "
 			"(settle and sample count apply only to resampled bins while flying)"
 		)
@@ -221,6 +223,8 @@ async def capture_shelf_candidates(
 	if shelf_scout_only is True:
 		return coarse_scan, 0.0, [], filtered_shelf_edges
 
+	flown_sweep_count = 0
+
 	for shelf_idx, shelf_edge in enumerate(filtered_shelf_edges, start=1):
 		raise_if_cancelled(should_abort)
 		for offset_idx, offset_mm in enumerate(hole_probe_y_offsets_mm, start=1):
@@ -235,10 +239,21 @@ async def capture_shelf_candidates(
 				f"offset={offset_idx}/{len(hole_probe_y_offsets_mm)} y={sweep_y_mm:.2f}"
 			)
 			if coarse_scan_style == COARSE_SCAN_STYLE_FLYING:
-				sweep_depth_values, sweep_line = await scan_line_positions_flying(
+				# Boustrophedon: every other line flies from x_max back to x_min, so the axis
+				# starts each pass where the last one ended instead of travelling back to x_min.
+				# Binning handles a descending grid; the values are flipped back to ascending
+				# order for the gap detection and the sparse grid below.
+				is_reversed_sweep = coarse_scan_alternate_direction is True and flown_sweep_count % 2 == 1
+				flown_sweep_count += 1
+				flown_x_positions = (
+					list(reversed(hole_sweep_x_positions))
+					if is_reversed_sweep is True
+					else hole_sweep_x_positions
+				)
+				flown_depth_values, sweep_line = await scan_line_positions_flying(
 					tool,
 					axis="x",
-					positions=hole_sweep_x_positions,
+					positions=flown_x_positions,
 					fixed_mm=sweep_y_mm,
 					rpm=coarse_scan_rpm,
 					progress_label=f"shelf_{shelf_idx}_offset_{offset_idx}",
@@ -246,10 +261,10 @@ async def capture_shelf_candidates(
 					bin_mode=coarse_scan_bin_mode,
 					capture_latency_s=capture_latency_s,
 				)
-				write_flying_line_samples(
-					run_dir=getattr(recorder, "run_dir", None),
-					label=f"shelf_{shelf_idx}_offset_{offset_idx}",
-					line=sweep_line,
+				sweep_depth_values = (
+					list(reversed(flown_depth_values))
+					if is_reversed_sweep is True
+					else flown_depth_values
 				)
 
 				# Gap detection reads an empty bin as material, so one missing bin would split
@@ -267,10 +282,17 @@ async def capture_shelf_candidates(
 						should_abort=should_abort,
 					)
 					sweep_depth_values[position_idx] = depth_mm
+					sweep_line.record_resample(x_mm, depth_mm)
 					print_status(
 						f"shelf_{shelf_idx}_offset_{offset_idx}=resampled idx={position_idx} "
 						f"x={x_mm:.2f} y={sweep_y_mm:.2f} depth={depth_to_label(depth_mm)}"
 					)
+
+				write_flying_line_samples(
+					run_dir=getattr(recorder, "run_dir", None),
+					label=f"shelf_{shelf_idx}_offset_{offset_idx}",
+					line=sweep_line,
+				)
 			else:
 				sweep_depth_values = await scan_line_positions(
 					tool,
