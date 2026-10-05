@@ -16,6 +16,7 @@ from .core import (
 	depth_to_label,
 	get_fine_scan_feed_mm_s,
 	get_fine_scan_style,
+	get_flying_capture_latency_s,
 	print_status,
 	raise_if_cancelled,
 )
@@ -288,6 +289,8 @@ class FlyingScanLine:
 	duration_s: float = 0.0
 	# Moving reads discarded because the laser transaction ran past the slow-read cap.
 	dropped_slow_reads: int = 0
+	# Latency each depth_position_mm was corrected with, so a replay can undo or redo it.
+	capture_latency_s: Optional[float] = None
 
 	def median_sample_spacing_mm(self) -> Optional[float]:
 		if len(self.samples) < 2:
@@ -462,6 +465,7 @@ def write_flying_line_samples(
 						"start_mm": line.start_mm,
 						"end_mm": line.end_mm,
 						"rpm": line.rpm,
+						"capture_latency_s": line.capture_latency_s,
 						"position_mm": sample.position_mm,
 						"depth_position_mm": sample.depth_position_mm,
 						"velocity_mm_s": sample.velocity_mm_s,
@@ -866,6 +870,7 @@ async def _scan_axis_flying_pass(
 		samples=samples,
 		duration_s=time.monotonic() - started_at,
 		dropped_slow_reads=dropped_slow_reads,
+		capture_latency_s=capture_latency_s,
 	)
 	printer(f"flying_line={progress_label} {line.metrics_text()}")
 
@@ -958,6 +963,7 @@ async def prefetch_line_depth_values(
 		rpm=rpm,
 		progress_label=progress_label,
 		should_abort=should_abort,
+		capture_latency_s=get_flying_capture_latency_s(scan_config),
 	)
 
 	return depth_values, line
