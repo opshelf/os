@@ -64,7 +64,7 @@ async def test_slots_persist_across_sessions_and_reuse_first_vacancy(configured)
         assert stored.compartment == 2
         payload = await service.serialize_workflow(stored)
         assert payload["bin"]["compartment_layout"] == {"rows": 2, "columns": 4}
-        assert payload["bin"]["compartment_dimensions"] == {"width": 50, "length": 80, "height": 100}
+        assert payload["bin"]["compartment_dimensions"] == {"width": 41.75, "length": 70.5, "height": 100}
         assert {entry["id"]: entry["compartment"] for entry in payload["bin"]["items"]} == {first_id: 1, second_id: 2}
         first = await StorageService(db).get_item("123456789001")
         retrieve = await service.begin("retrieve", first, None)
@@ -78,7 +78,7 @@ async def test_slots_persist_across_sessions_and_reuse_first_vacancy(configured)
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("width,length,height,fits", [(50,80,100,True),(80,50,100,True),(51,80,100,False),(40,70,101,False)])
+@pytest.mark.parametrize("width,length,height,fits", [(41.75,70.5,100,True),(70.5,41.75,100,True),(42,70.5,100,False),(40,70,101,False)])
 async def test_fit_is_per_compartment_and_allows_rotation(configured, width, length, height, fits):
     async with AsyncSessionLocal() as db:
         service = BinStorageService(db)
@@ -116,3 +116,17 @@ async def test_relayout_refuses_nonempty_or_checked_out_tray(configured, occupie
         await db.rollback()
         row = await db.scalar(select(StorageBin))
         assert row.compartment_layout == {"rows": 2, "columns": 4}
+
+
+@pytest.mark.anyio
+async def test_member_sized_before_wall_deduction_still_returns(configured):
+    async with AsyncSessionLocal() as db:
+        service = BinStorageService(db)
+        await service.sync_config()
+        stored = await item(db, 1)
+        await finish(service, await service.begin("store", stored, None), True)
+        # Items stored as "bin sized" before walls were deducted carry the full-cell footprint.
+        stored.dimensions = {"width": 50, "length": 80, "height": 90}
+        await db.commit()
+        await finish(service, await service.begin("store", await item(db, 2), None), True)
+        assert await service.item_bin(stored.id) is not None
