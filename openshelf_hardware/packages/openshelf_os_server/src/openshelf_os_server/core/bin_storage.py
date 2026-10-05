@@ -52,6 +52,11 @@ from openshelf_os_server.settings import get_root_config
 
 ACTIVE_STATES = {"retrieving_bin", "awaiting_operator", "returning_bin"}
 
+# A tray's inner dimensions span its outer walls; the walls and every divider between
+# compartments share one thickness, and each compartment keeps some leeway for placement.
+TRAY_WALL_THICKNESS_MM = 5.0
+COMPARTMENT_LEEWAY_MM = 2.0
+
 logger = logging.getLogger(__name__)
 
 
@@ -505,13 +510,18 @@ class BinStorageService:
         return width * height * length
 
     @staticmethod
-    def _compartment_dimensions(bin_row: StorageBin) -> dict[str, float]:
+    def _compartment_span(inside: float, count: int) -> float:
+        walls = (count + 1) * TRAY_WALL_THICKNESS_MM
+        return max(0.0, (inside - walls) / count - COMPARTMENT_LEEWAY_MM)
+
+    @classmethod
+    def _compartment_dimensions(cls, bin_row: StorageBin) -> dict[str, float]:
         inside = bin_row.inner_dimensions
         layout = bin_row.compartment_layout
         return {
-            "width": inside["width"] / (layout["columns"] if layout else 1),
+            "width": cls._compartment_span(inside["width"], layout["columns"] if layout else 1),
             "height": inside["height"],
-            "length": inside["length"] / (layout["rows"] if layout else 1),
+            "length": cls._compartment_span(inside["length"], layout["rows"] if layout else 1),
         }
 
     async def _free_compartment(self, bin_row: StorageBin) -> Optional[int]:
@@ -586,13 +596,11 @@ class BinStorageService:
     def _max_item_dimensions(cls, bin_row: StorageBin) -> dict[str, float]:
         configured = cls._dimensions(bin_row.max_item_dimensions, ("width", "length"))
         if configured is not None:
-            if bin_row.compartment_layout:
-                slot = cls._compartment_dimensions(bin_row)
-                return {
-                    "width": min(configured[0], slot["width"]),
-                    "length": min(configured[1], slot["length"]),
-                }
-            return {"width": configured[0], "length": configured[1]}
+            slot = cls._compartment_dimensions(bin_row)
+            return {
+                "width": min(configured[0], slot["width"]),
+                "length": min(configured[1], slot["length"]),
+            }
         inside = cls._dimensions(cls._compartment_dimensions(bin_row), ("width", "length"))
         if inside is None:
             return {"width": 0.0, "length": 0.0}
@@ -774,7 +782,16 @@ class BinStorageService:
             return "A confirmed bin item no longer exists"
         if len(items) > bin_row.max_items:
             return "Storage bin has reached its item limit"
-        if any(not self._fits(item, bin_row) for item in items):
+        # A current member is already inside the tray; re-checking its fit would strand the
+        # tray outside once compartment sizing tightens after the item was stored.
+        members = set(
+            (
+                await self.session.scalars(
+                    select(StorageBinItem.item_id).where(StorageBinItem.bin_id == bin_row.id)
+                )
+            ).all()
+        )
+        if any(item.id not in members and not self._fits(item, bin_row) for item in items):
             return "A confirmed item no longer fits the configured storage bin"
         if not self._contents_have_volume(items, bin_row):
             return "Confirmed bin contents exceed the configured storage capacity"
