@@ -52,6 +52,15 @@ from openshelf_os_server.settings import get_root_config
 
 ACTIVE_STATES = {"retrieving_bin", "awaiting_operator", "returning_bin"}
 
+# A tray's inner dimensions span its outer walls; the walls and every divider between
+# compartments share one thickness, and each compartment keeps some leeway for placement.
+TRAY_WALL_THICKNESS_MM = 5.0
+COMPARTMENT_LEEWAY_MM = 2.0
+
+# Robot failure codes that stop operation and open the crash dialog: a hardware fault raised
+# mid-motion, or an emergency stop interrupting the command. Plain command errors do not.
+CRASH_FAILURE_CODES = {"execution_error", "command_interrupted"}
+
 logger = logging.getLogger(__name__)
 
 
@@ -505,13 +514,18 @@ class BinStorageService:
         return width * height * length
 
     @staticmethod
-    def _compartment_dimensions(bin_row: StorageBin) -> dict[str, float]:
+    def _compartment_span(inside: float, count: int) -> float:
+        walls = (count + 1) * TRAY_WALL_THICKNESS_MM
+        return max(0.0, (inside - walls) / count - COMPARTMENT_LEEWAY_MM)
+
+    @classmethod
+    def _compartment_dimensions(cls, bin_row: StorageBin) -> dict[str, float]:
         inside = bin_row.inner_dimensions
         layout = bin_row.compartment_layout
         return {
-            "width": inside["width"] / (layout["columns"] if layout else 1),
+            "width": cls._compartment_span(inside["width"], layout["columns"] if layout else 1),
             "height": inside["height"],
-            "length": inside["length"] / (layout["rows"] if layout else 1),
+            "length": cls._compartment_span(inside["length"], layout["rows"] if layout else 1),
         }
 
     async def _free_compartment(self, bin_row: StorageBin) -> Optional[int]:
@@ -586,13 +600,11 @@ class BinStorageService:
     def _max_item_dimensions(cls, bin_row: StorageBin) -> dict[str, float]:
         configured = cls._dimensions(bin_row.max_item_dimensions, ("width", "length"))
         if configured is not None:
-            if bin_row.compartment_layout:
-                slot = cls._compartment_dimensions(bin_row)
-                return {
-                    "width": min(configured[0], slot["width"]),
-                    "length": min(configured[1], slot["length"]),
-                }
-            return {"width": configured[0], "length": configured[1]}
+            slot = cls._compartment_dimensions(bin_row)
+            return {
+                "width": min(configured[0], slot["width"]),
+                "length": min(configured[1], slot["length"]),
+            }
         inside = cls._dimensions(cls._compartment_dimensions(bin_row), ("width", "length"))
         if inside is None:
             return {"width": 0.0, "length": 0.0}
@@ -774,7 +786,16 @@ class BinStorageService:
             return "A confirmed bin item no longer exists"
         if len(items) > bin_row.max_items:
             return "Storage bin has reached its item limit"
-        if any(not self._fits(item, bin_row) for item in items):
+        # A current member is already inside the tray; re-checking its fit would strand the
+        # tray outside once compartment sizing tightens after the item was stored.
+        members = set(
+            (
+                await self.session.scalars(
+                    select(StorageBinItem.item_id).where(StorageBinItem.bin_id == bin_row.id)
+                )
+            ).all()
+        )
+        if any(item.id not in members and not self._fits(item, bin_row) for item in items):
             return "A confirmed item no longer fits the configured storage bin"
         if not self._contents_have_volume(items, bin_row):
             return "Confirmed bin contents exceed the configured storage capacity"
@@ -911,13 +932,76 @@ class BinStorageService:
             workflow.completed_at = _utc_now()
         await self.session.commit()
 
-    async def fail(self, workflow: StorageBinWorkflow, error: str) -> None:
+    async def fail(
+        self,
+        workflow: StorageBinWorkflow,
+        error: str,
+        *,
+        code: Optional[str] = None,
+        tray_moved: bool = True,
+    ) -> None:
         workflow.error = error
+        if code is not None:
+            workflow.resolution = {**(workflow.resolution or {}), "failure_code": code}
         tray = await self.session.get(StorageBin, workflow.bin_id)
         if tray is not None:
-            tray.status = "outside"
+            # Releasing the claim of a motion that never started leaves the tray on its shelf.
+            tray.status = "outside" if tray_moved else "at_home"
             tray.gross_weight = None
         await self.transition(workflow, "failed", error)
+
+    async def crash_interrupted_workflows(self) -> list[StorageBinWorkflow]:
+        """Failed tray motions a crash or emergency stop interrupted, while their tray is still outside.
+
+        Only the latest workflow of each tray counts: a later interaction supersedes the failure.
+        """
+        trays = (
+            await self.session.scalars(select(StorageBin).where(StorageBin.status == "outside"))
+        ).all()
+        interrupted: list[StorageBinWorkflow] = []
+        for tray in trays:
+            latest = await self.session.scalar(
+                select(StorageBinWorkflow)
+                .where(StorageBinWorkflow.bin_id == tray.id)
+                .order_by(StorageBinWorkflow.created_at.desc())
+                .limit(1)
+            )
+            if (
+                latest is not None
+                and latest.state == "failed"
+                and (latest.resolution or {}).get("failure_code") in CRASH_FAILURE_CODES
+            ):
+                interrupted.append(latest)
+        return interrupted
+
+    async def recover_crash_interrupted(self) -> list[tuple[StorageBinWorkflow, Optional[str]]]:
+        """Put trays back home once the operator confirmed them on their shelves after a crash.
+
+        An interrupted return also records the contents the operator confirmed before it
+        started. Returns each interrupted workflow with the reason its tray stays outside, or
+        None when the tray is home again.
+        """
+        results: list[tuple[StorageBinWorkflow, Optional[str]]] = []
+        for workflow in await self.crash_interrupted_workflows():
+            tray = await self.session.get(StorageBin, workflow.bin_id)
+            assert tray is not None
+            if workflow.operation == "return":
+                error = await self._return_contents_error(workflow, tray)
+                if error:
+                    results.append((workflow, error))
+                    continue
+                await self._apply_return_contents(workflow, tray)
+            tray.status = "at_home"
+            tray.gross_weight = None
+            workflow.resolution = {**(workflow.resolution or {}), "crash_recovered": True}
+            workflow.history = [
+                *(workflow.history or []),
+                _history_entry("failed", "Operator confirmed the tray on its shelf after the crash"),
+            ]
+            workflow.updated_at = _utc_now()
+            await self.session.commit()
+            results.append((workflow, None))
+        return results
 
     async def begin(
         self, operation: str, item: Item, user_id: Optional[int]
@@ -1221,7 +1305,11 @@ class BinStorageService:
         if payload.get("command") != expected:
             return False
         if payload.get("message") != "success":
-            await self.fail(workflow, str(payload.get("error") or "Tray motion failed"))
+            await self.fail(
+                workflow,
+                str(payload.get("error") or "Tray motion failed"),
+                code=payload.get("code"),
+            )
         elif workflow.state == "retrieving_bin":
             await self.transition(workflow, "awaiting_operator")
         else:

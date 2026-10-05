@@ -473,3 +473,43 @@ def test_apply_wall_depth_z_offsets_refuses_cells_without_wall_depth(tmp_path: P
 	assert scanned_shelves[0].cells[0].calibration_point.z_offset == pytest.approx(9.9 + 4.85 - 0.00285 * 340.0)
 
 
+
+
+def test_scan_rebuild_leaves_matched_and_new_cells_unsized_but_keeps_manual_cells() -> None:
+	analysis = SimpleNamespace(shelves=[_detected_scan_shelf(0, [329.0, 494.0, 660.0])])
+	existing = _existing_calibrated_shelf(0, [329.0, 494.0])
+	for cell in existing.cells:
+		cell.dimensions = Dimensions(width=145.0, height=115.0, length=185.0)
+	existing.cells[1].is_manual = True
+
+	result = build_shelves_from_scan(
+		side=StorageModuleSide.FRONT,
+		analysis=analysis,
+		existing_shelves=[existing],
+	)
+
+	cells = sorted(result[0].cells, key=lambda cell: cell.cell_idx)
+	unsized = Dimensions(width=0.0, height=0.0, length=0.0)
+	assert cells[0].dimensions == unsized
+	assert cells[1].dimensions == Dimensions(width=145.0, height=115.0, length=185.0)
+	assert cells[2].dimensions == unsized
+
+
+def test_single_cell_rescan_leaves_the_cell_unsized(tmp_path: Path) -> None:
+	from openshelf_os.laser_calibration import apply_single_cell_rescan
+	from openshelf_os.laser_calibration.core import SingleCellRescanTarget
+	from openshelf_os.storage import StorageGrid
+
+	shelf = _existing_calibrated_shelf(0, [329.0])
+	shelf.cells[0].dimensions = Dimensions(width=145.0, height=115.0, length=185.0)
+	grid = StorageGrid(filename=str(tmp_path / "storage.json"), front_module=[shelf], back_module=[])
+
+	apply_single_cell_rescan(
+		grid=grid,
+		target=SingleCellRescanTarget(shelf_idx=0, cell_idx=0),
+		side=StorageModuleSide.FRONT,
+		detected_cell=_detected_scan_shelf(0, [330.0]).cells[0],
+		scan_config=SimpleNamespace(front_gripper_xy_correction_mm=None),
+	)
+
+	assert grid.front_module[0].cells[0].dimensions == Dimensions(width=0.0, height=0.0, length=0.0)

@@ -10,7 +10,7 @@ from openshelf_os.laser_calibration.defaults import (
 	MIN_VERTICAL_WALL_COVERAGE_MM,
 	WALL_DEPTH_TOLERANCE_MM,
 )
-from openshelf_os.storage import CellStatus
+from openshelf_os.storage import CellStatus, Dimensions
 
 from . import core as core_module
 from .core import *
@@ -1122,6 +1122,10 @@ def apply_single_cell_rescan(
 		calibration_point.y = float(detected_cell.tool_y_mm) + xy_offset[1]
 	else:
 		print_status("xy_offset_inference=skipped reason=single_cell_preserves_existing_frame")
+
+	if getattr(target_cell, "is_manual", False) is False:
+		# As in a shelf rebuild (see _build_scan_cell), a recalibrated cell must be resized by hand.
+		target_cell.dimensions = Dimensions(width=0.0, height=0.0, length=0.0)
 
 	grid.save()
 	print_status(
