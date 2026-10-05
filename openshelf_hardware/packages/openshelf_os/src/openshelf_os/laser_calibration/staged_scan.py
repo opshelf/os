@@ -715,6 +715,7 @@ async def estimate_seeded_candidate_wall_depths(
 				progress_label=progress_label,
 				should_abort=should_abort,
 				bin_mode=get_coarse_scan_bin_mode(scan_config),
+				capture_latency_s=get_flying_capture_latency_s(scan_config),
 			)
 
 			if on_flying_line is not None:
