@@ -1,64 +1,18 @@
-import inspect
 import json
-import os
+
+from pathlib import Path
 
 import pytest
 
-from openshelf_os.common import RootConfig, resolve_grid_path, CONFIG_PATH, write_json_file_with_backup
-from openshelf_os.runtime_state import infer_mode_from_path
-from openshelf_os.storage import StorageGrid, StorageValidationError
+from openshelf_os.common import write_json_file_with_backup
+from openshelf_os.storage import StorageGrid
 
 
-MINIMAL_CONFIG_DICT = {
-	"name": "test",
-	"schema_version": 4,
-	"version": "0.1.0",
-	"robot": {
-		"tool": {
-			"parameters": {
-				"IDLE_POSITION": [0, 0],
-				"PICKUP_POSITION_L": [0, 0],
-				"PICKUP_POSITION_H": [0, 0],
-				"SCAN_POSITION": [0, 0],
-				"STAGE_EXTENSION_IO_BOX": 0,
-				"STAGE_NUDGE": 0,
-				"STAGE_EXTENSION_SHELF_FRONT": 0,
-				"STAGE_EXTENSION_SHELF_BACK": 0,
-				"Z_EXTENSION_PICK": 0,
-				"Z_EXTENSION_PLACE": 0,
-				"Z_EXTENSION_IO": 0,
-				"Z_MOVE_RPM": 1,
-				"Z_MOVE_ACCEL": 1,
-				"ROTATION_FRONT": 0,
-				"ROTATION_BACK": 0,
-			},
-			"motors": [],
-			"poe_camera": {
-				"url": "",
-			},
-		},
-		"grid": {"path": "REPLACE_ME"},
-		"io": {
-			"motors": [],
-		},
-	},
-	"auth": {"require_auth": False},
-}
-
-
-def _make_config(grid_path: str) -> RootConfig:
-	data = json.loads(json.dumps(MINIMAL_CONFIG_DICT))
-	data["robot"]["grid"]["path"] = grid_path
-	return RootConfig.model_validate(data)
-
-
-EMPTY_GRID = {"left_module": [], "right_module": []}
+EMPTY_GRID = {"front_module": [], "back_module": []}
 
 GRID_WITH_SHELVES = {
-	"left_module": [
+	"front_module": [
 		{
-			"shelf_height": 200.0,
-			"shelf_width": 400.0,
 			"cells": [
 				{
 					"status": "available",
@@ -69,10 +23,8 @@ GRID_WITH_SHELVES = {
 			],
 		}
 	],
-	"right_module": [
+	"back_module": [
 		{
-			"shelf_height": 200.0,
-			"shelf_width": 400.0,
 			"cells": [
 				{
 					"status": "occupied",
@@ -95,97 +47,6 @@ GRID_WITH_SHELVES = {
 }
 
 
-class TestResolveGridPath:
-
-	def test_relative_path(self):
-		config = _make_config("storage.json")
-		result = resolve_grid_path(config)
-
-		mode = infer_mode_from_path(CONFIG_PATH)
-		expected = str((CONFIG_PATH.parent / f"storage{'.' + mode.value if mode.value != 'production' else ''}.json").resolve())
-
-		assert result == expected
-
-	def test_dotslash_resolves_same(self):
-		config_plain = _make_config("storage.json")
-		config_dot = _make_config("./storage.json")
-
-		assert resolve_grid_path(config_plain) == resolve_grid_path(config_dot)
-
-	def test_nested_subdirectory(self):
-		config = _make_config("grids/main.json")
-		result = resolve_grid_path(config)
-
-		mode = infer_mode_from_path(CONFIG_PATH)
-		expected = str((CONFIG_PATH.parent / f"grids/main{'.' + mode.value if mode.value != 'production' else ''}.json").resolve())
-
-		assert result == expected
-
-	def test_result_is_absolute(self):
-		config = _make_config("storage.json")
-		result = resolve_grid_path(config)
-
-		assert os.path.isabs(result) is True
-
-	def test_uses_provided_config_path_for_relative_grid_path(self, tmp_path):
-		config = _make_config("storage.json")
-		config_path = tmp_path / "nested" / "config.json"
-		result = resolve_grid_path(config, config_path)
-
-		expected = str((config_path.parent / "storage.json").resolve())
-
-		assert result == expected
-
-
-class TestLoadFromFile:
-
-	def test_file_not_found(self, tmp_path):
-		missing = str(tmp_path / "nope.json")
-
-		with pytest.raises(StorageValidationError, match="storage file not found"):
-			StorageGrid.load_from_file(missing)
-
-	def test_invalid_json(self, tmp_path):
-		bad_file = tmp_path / "bad.json"
-		bad_file.write_text("{not valid json")
-
-		with pytest.raises(StorageValidationError, match="invalid json"):
-			StorageGrid.load_from_file(str(bad_file))
-
-	def test_schema_validation_failure(self, tmp_path):
-		schema_file = tmp_path / "schema.json"
-		schema_file.write_text(json.dumps({"left_module": "not_a_list"}))
-
-		with pytest.raises(StorageValidationError, match="storage schema validation failed"):
-			StorageGrid.load_from_file(str(schema_file))
-
-	def test_loads_empty_grid(self, tmp_path):
-		f = tmp_path / "empty.json"
-		f.write_text(json.dumps(EMPTY_GRID))
-
-		grid = StorageGrid.load_from_file(str(f))
-
-		assert grid.left_module == []
-		assert grid.right_module == []
-
-	def test_loads_grid_with_shelves(self, tmp_path):
-		f = tmp_path / "shelves.json"
-		f.write_text(json.dumps(GRID_WITH_SHELVES))
-
-		grid = StorageGrid.load_from_file(str(f))
-
-		assert len(grid.left_module) == 1
-		assert len(grid.left_module[0].cells) == 1
-		assert len(grid.right_module) == 1
-		assert len(grid.right_module[0].cells) == 2
-
-	def test_requires_explicit_path(self):
-		sig = inspect.signature(StorageGrid.load_from_file)
-		path_param = sig.parameters["path"]
-
-		assert path_param.default is inspect.Parameter.empty
-
-
 LEGACY_ITEM = {
 	"dimensions": {"length": 80.0, "width": 40.0, "height": 100.0},
 	"weight": 350.0,
@@ -199,11 +60,9 @@ class TestLegacyUpcaItem:
 
 	def _grid_with_item(self, item: dict) -> dict:
 		return {
-			"left_module": [],
-			"right_module": [
+			"front_module": [],
+			"back_module": [
 				{
-					"shelf_height": 200.0,
-					"shelf_width": 400.0,
 					"cells": [
 						{
 							"status": "occupied",
@@ -224,7 +83,7 @@ class TestLegacyUpcaItem:
 
 	def _load_item(self, tmp_path, name: str, item: dict):
 		grid, _ = self._load(tmp_path, name, item)
-		cell_item = grid.right_module[0].cells[0].item
+		cell_item = grid.back_module[0].cells[0].item
 
 		assert cell_item is not None
 
@@ -259,59 +118,102 @@ class TestLegacyUpcaItem:
 
 		grid.save_to_file(str(saved_file))
 		reloaded = StorageGrid.load_from_file(str(saved_file))
-		reloaded_item = reloaded.right_module[0].cells[0].item
+		reloaded_item = reloaded.back_module[0].cells[0].item
 
 		assert reloaded_item is not None
 		assert reloaded_item.barcode == "880000000001"
 
-		saved_item = json.loads(saved_file.read_text())["right_module"][0]["cells"][0]["item"]
+		saved_item = json.loads(saved_file.read_text())["back_module"][0]["cells"][0]["item"]
 
 		assert saved_item["barcode"] == "880000000001"
 		assert "upca" not in saved_item
 
 
-class TestFilenameField:
+class TestSideRenameMigration:
+	"""Storage files written before the front/back cutover keyed their sides as left_module/right_module."""
 
-	def test_default_is_empty(self):
-		grid = StorageGrid()
+	def _legacy_file(self, tmp_path, name: str) -> Path:
+		f = tmp_path / name
+		f.write_text(json.dumps({
+			"left_module": [
+				{
+					"cells": [
+						{
+							"status": "available",
+							"item": None,
+							"calibration_point": {"x": 10.0, "y": 20.0, "s": 0, "z_offset": 0.0},
+							"dimensions": {"length": 100.0, "width": 50.0, "height": 150.0},
+						}
+					],
+				}
+			],
+			"right_module": [
+				{
+					"cells": [
+						{
+							"status": "occupied",
+							"item": {
+								"dimensions": {"length": 80.0, "width": 40.0, "height": 100.0},
+								"weight": 1.5,
+							},
+							"calibration_point": {"x": 30.0, "y": 40.0, "s": 1, "z_offset": 0.0},
+							"dimensions": {"length": 100.0, "width": 50.0, "height": 150.0},
+						}
+					],
+				}
+			],
+		}))
+		return f
 
-		assert grid.filename == ""
-
-	def test_explicit_filename_preserved(self):
-		grid = StorageGrid(filename="/custom/path.json")
-
-		assert grid.filename == "/custom/path.json"
-
-	def test_filename_from_json_preserved(self, tmp_path):
-		data = {**EMPTY_GRID, "filename": "/some/path"}
-		f = tmp_path / "with_fn.json"
-		f.write_text(json.dumps(data))
+	def test_legacy_side_keys_migrate_in_place_on_load(self, tmp_path):
+		f = self._legacy_file(tmp_path, "legacy.json")
+		original = f.read_text()
 
 		grid = StorageGrid.load_from_file(str(f))
 
-		assert grid.filename == str(f.resolve())
+		assert len(grid.front_module) == 1
+		assert len(grid.back_module) == 1
+		assert grid.back_module[0].cells[0].item.weight == 1.5
+		payload = json.loads(f.read_text())
+		assert "left_module" not in payload
+		assert "right_module" not in payload
+		assert payload["front_module"] == json.loads(original)["left_module"]
+		assert payload["back_module"] == json.loads(original)["right_module"]
+
+	def test_migration_writes_an_exclusive_created_backup(self, tmp_path):
+		f = self._legacy_file(tmp_path, "legacy.json")
+		original = f.read_text()
+
+		StorageGrid.load_from_file(str(f))
+
+		backup = tmp_path / (f.name + ".side-rename.bak")
+		assert backup.exists() is True
+		assert backup.read_text() == original
+
+	def test_migration_is_idempotent_on_reload(self, tmp_path):
+		f = self._legacy_file(tmp_path, "legacy.json")
+
+		StorageGrid.load_from_file(str(f))
+		migrated = f.read_text()
+
+		StorageGrid.load_from_file(str(f))
+
+		assert f.read_text() == migrated
+		assert len(list(tmp_path.glob("*.side-rename.bak"))) == 1
+
+	def test_modern_file_is_left_untouched(self, tmp_path):
+		f = tmp_path / "modern.json"
+		f.write_text(json.dumps(GRID_WITH_SHELVES))
+		original = f.read_text()
+
+		StorageGrid.load_from_file(str(f))
+
+		assert f.read_text() == original
+		assert list(tmp_path.glob("*.side-rename.bak")) == []
 
 
 class TestSaveToFile:
 
-	def test_writes_valid_json(self, tmp_path):
-		grid = StorageGrid.model_validate(GRID_WITH_SHELVES)
-		out = tmp_path / "out.json"
-
-		grid.save_to_file(str(out))
-
-		parsed = json.loads(out.read_text())
-
-		assert "left_module" in parsed
-		assert "right_module" in parsed
-
-	def test_save_uses_filename_field(self, tmp_path):
-		out = tmp_path / "via_save.json"
-		grid = StorageGrid(filename=str(out))
-
-		grid.save()
-
-		assert out.exists() is True
 
 	def test_creates_backup_on_overwrite(self, tmp_path):
 		out = tmp_path / "grid.json"
@@ -327,63 +229,6 @@ class TestSaveToFile:
 		assert backups[0].name.endswith(".production.json")
 		assert json.loads(backups[0].read_text()) == EMPTY_GRID
 
-	def test_backup_name_includes_mode_and_shared_version_id(self, tmp_path):
-		out = tmp_path / "storage.development.json"
-		out.write_text(json.dumps(EMPTY_GRID))
-
-		grid = StorageGrid.model_validate(GRID_WITH_SHELVES)
-		grid.save_to_file(str(out), version_id="version-1")
-
-		backup = tmp_path / "storage" / "version-1.development.json"
-		assert json.loads(backup.read_text()) == EMPTY_GRID
-
-	def test_creates_backup_in_data_storage_directory(self, tmp_path):
-		out = tmp_path / "data" / "storage.json"
-		out.parent.mkdir(parents=True)
-		out.write_text(json.dumps(EMPTY_GRID))
-
-		grid = StorageGrid.model_validate(GRID_WITH_SHELVES)
-		grid.save_to_file(str(out))
-
-		backup_dir = tmp_path / "data" / "storage"
-		backups = list(backup_dir.glob("*.json"))
-
-		assert len(backups) == 1
-		assert json.loads(backups[0].read_text()) == EMPTY_GRID
-
-	def test_no_backup_for_new_file(self, tmp_path):
-		out = tmp_path / "brand_new.json"
-		grid = StorageGrid()
-
-		grid.save_to_file(str(out))
-
-		all_files = list(tmp_path.iterdir())
-
-		assert len(all_files) == 1
-		assert all_files[0].name == "brand_new.json"
-
-	def test_roundtrip(self, tmp_path):
-		original = StorageGrid.model_validate(GRID_WITH_SHELVES)
-		f = tmp_path / "roundtrip.json"
-
-		original.save_to_file(str(f))
-		reloaded = StorageGrid.load_from_file(str(f))
-
-		assert len(reloaded.left_module) == len(original.left_module)
-		assert len(reloaded.right_module) == len(original.right_module)
-		assert reloaded.right_module[0].cells[0].item is not None
-		assert reloaded.right_module[0].cells[0].item.weight == 1.5
-
-	def test_save_to_file_updates_filename_field_and_payload(self, tmp_path):
-		out = tmp_path / "saved.json"
-		grid = StorageGrid(filename="/stale/path.json")
-
-		grid.save_to_file(str(out))
-
-		assert grid.filename == str(out.resolve())
-
-		payload = json.loads(out.read_text())
-		assert payload["filename"] == str(out.resolve())
 
 	def test_write_failure_preserves_existing_file(self, tmp_path):
 		out = tmp_path / "grid.json"

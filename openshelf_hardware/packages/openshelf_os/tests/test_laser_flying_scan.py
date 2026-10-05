@@ -952,7 +952,7 @@ async def test_capture_shelf_candidates_flying_style_uses_the_flying_scan(
 
 	coarse_scan, wall_depth_mm, candidates, shelf_edges = await shelf_scan_module.capture_shelf_candidates(
 		tool,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		bounds=ScanBounds(x_min=0.0, x_max=40.0, y_min=0.0, y_max=100.0),
 		settle_ms=0,
 		samples_per_point=1,
@@ -1032,7 +1032,7 @@ async def test_capture_shelf_candidates_resamples_uncovered_flying_sweep_bins(
 
 	_, _, candidates, _ = await shelf_scan_module.capture_shelf_candidates(
 		tool,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		bounds=ScanBounds(x_min=0.0, x_max=100.0, y_min=0.0, y_max=100.0),
 		settle_ms=0,
 		samples_per_point=1,
@@ -1087,7 +1087,7 @@ async def test_capture_shelf_candidates_default_style_keeps_the_stepped_scan(
 
 	_, _, _, shelf_edges = await shelf_scan_module.capture_shelf_candidates(
 		tool,
-		side=StorageModuleSide.LEFT,
+		side=StorageModuleSide.FRONT,
 		bounds=ScanBounds(x_min=0.0, x_max=40.0, y_min=0.0, y_max=100.0),
 		settle_ms=0,
 		samples_per_point=1,

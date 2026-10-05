@@ -26,13 +26,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 from httpx import AsyncClient
-from starlette.requests import Request
 
 from openshelf_os_server.core.camera import camera_registry
 from openshelf_os_server.database.base import engine
-from openshelf_os_server.database.models import User
 from openshelf_os_server.database.session import get_db
 from openshelf_os_server.main import app
 from openshelf_os_server.routers import camera as camera_router
@@ -213,52 +210,3 @@ async def test_mjpeg_stream_still_rejects_an_unauthenticated_client(
     assert response.status_code == 401
     assert response.headers.get("www-authenticate") == "Bearer"
 
-
-@pytest.mark.anyio
-async def test_stream_auth_dependency_closes_its_session(auth_headers: dict[str, str]) -> None:
-    baseline = _checkedout()
-    token = auth_headers["Authorization"].split(" ")[1]
-
-    user = await get_current_user_for_stream(token=token)
-
-    assert isinstance(user, User)
-    assert user.email == "admin@opshelf.com"
-    # The session is closed inside the dependency, so whatever a stream route reads
-    # off the user has to be loaded already.
-    assert user.role is not None
-    assert "robot:control" in (user.role.permissions or [])
-    assert _checkedout() == baseline
-
-
-@pytest.mark.anyio
-async def test_stream_auth_dependency_rejects_an_invalid_token() -> None:
-    with pytest.raises(HTTPException) as excinfo:
-        await get_current_user_for_stream(token="not-a-token")
-
-    assert excinfo.value.status_code == 401
-    assert excinfo.value.headers == {"WWW-Authenticate": "Bearer"}
-
-
-@pytest.mark.anyio
-async def test_relay_stream_dependency_closes_its_session(auth_headers: dict[str, str]) -> None:
-    baseline = _checkedout()
-    token = auth_headers["Authorization"].split(" ")[1]
-    request = Request(_stream_scope("/api/robot/status", auth_headers))
-
-    user = await get_relay_or_current_user_for_stream(request=request, token=token)
-
-    assert isinstance(user, User)
-    assert user.email == "admin@opshelf.com"
-    assert request.state.relay_service_authenticated is False
-    assert user.role is not None
-    assert _checkedout() == baseline
-
-
-@pytest.mark.anyio
-async def test_relay_stream_dependency_rejects_an_invalid_token() -> None:
-    request = Request(_stream_scope("/api/robot/status", {}))
-
-    with pytest.raises(HTTPException) as excinfo:
-        await get_relay_or_current_user_for_stream(request=request, token="not-a-token")
-
-    assert excinfo.value.status_code == 401

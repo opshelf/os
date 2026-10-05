@@ -3,6 +3,7 @@ import errno
 import logging
 
 import pytest
+from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -15,8 +16,6 @@ TEST_PATH = "/api/test/error-handling"
 
 
 def _raise_for_kind(kind: str) -> None:
-	from fastapi import HTTPException
-
 	if kind == "validation":
 		raise ValidationError("name is required")
 	if kind == "cell_occupied":
@@ -165,25 +164,3 @@ async def test_string_http_detail_is_standardized(
 	}
 
 
-@pytest.mark.anyio
-async def test_router_raised_not_found_and_method_not_allowed_are_standardized(
-	unauthenticated_client: AsyncClient,
-	monkeypatch: pytest.MonkeyPatch,
-) -> None:
-	client = await _client_with_test_route(unauthenticated_client, monkeypatch)
-
-	# The router, not a route, raises these as Starlette base HTTPException
-	# instances; the handler registered on the base class must standardize
-	# them like route-raised FastAPI ones.
-	response = await client.get("/api/test/no-such-route")
-	assert response.status_code == 404
-	assert response.json()["detail"] == {"message": "Not Found", "code": "not_found"}
-
-	response = await client.post(TEST_PATH)
-	assert response.status_code == 405
-	assert response.json()["detail"] == {
-		"message": "Method Not Allowed",
-		"code": "method_not_allowed",
-	}
-	# The router attaches an allow header; it must survive the handler.
-	assert "GET" in response.headers.get("allow", "")

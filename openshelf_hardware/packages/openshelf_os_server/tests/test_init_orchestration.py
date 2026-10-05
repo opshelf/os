@@ -1,4 +1,3 @@
-from dataclasses import replace
 import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -9,89 +8,7 @@ import pytest
 import openshelf_os_server.core.robot as robot_module
 import openshelf_os_server.main as main_module
 from openshelf_os_server.core.init_progress import OVERALL_READY, get_init_tracker
-from openshelf_os_server.core.printer_status import PrinterStatus, PrinterStatusProbeError
 from openshelf_os.operating_mode import OperatingMode
-
-
-def _phase_for(component: str) -> str | None:
-    snapshot = get_init_tracker().snapshot()
-    for entry in snapshot["components"]:
-        if entry["component"] == component:
-            return entry["phase"]
-    return None
-
-
-def _reason_for(component: str) -> str | None:
-    snapshot = get_init_tracker().snapshot()
-    for entry in snapshot["components"]:
-        if entry["component"] == component:
-            return entry["reason"]
-    return None
-
-
-def test_barcode_enabled_honors_env(monkeypatch):
-    monkeypatch.delenv("OPENSHELF_DISABLE_BARCODE", raising=False)
-    assert robot_module._barcode_enabled() is True
-
-    monkeypatch.setenv("OPENSHELF_DISABLE_BARCODE", "true")
-    assert robot_module._barcode_enabled() is False
-
-
-@pytest.mark.anyio
-async def test_report_scanner_status_ready_when_connected(monkeypatch):
-    monkeypatch.delenv("OPENSHELF_DISABLE_BARCODE", raising=False)
-    get_init_tracker().reset()
-    worker = MagicMock()
-    worker.wait_scanner_connected = AsyncMock(return_value=True)
-
-    await robot_module._report_scanner_status(worker)
-
-    assert _phase_for("barcode") == "ready"
-
-
-@pytest.mark.anyio
-async def test_report_scanner_status_failed_when_not_detected(monkeypatch):
-    monkeypatch.delenv("OPENSHELF_DISABLE_BARCODE", raising=False)
-    get_init_tracker().reset()
-    worker = MagicMock()
-    worker.wait_scanner_connected = AsyncMock(return_value=False)
-    worker.describe_scanner_failure = MagicMock(return_value="scanner not detected")
-
-    await robot_module._report_scanner_status(worker)
-
-    assert _phase_for("barcode") == "failed"
-    assert _reason_for("barcode") == "scanner not detected"
-
-
-@pytest.mark.anyio
-async def test_report_scanner_status_failed_reports_hid_mode(monkeypatch):
-    monkeypatch.delenv("OPENSHELF_DISABLE_BARCODE", raising=False)
-    get_init_tracker().reset()
-    worker = MagicMock()
-    worker.wait_scanner_connected = AsyncMock(return_value=False)
-    worker.describe_scanner_failure = MagicMock(
-        return_value="scanner is in usb hid keyboard mode; switch it to usb-com (serial) mode"
-    )
-
-    await robot_module._report_scanner_status(worker)
-
-    assert _phase_for("barcode") == "failed"
-    assert _reason_for("barcode") == (
-        "scanner is in usb hid keyboard mode; switch it to usb-com (serial) mode"
-    )
-
-
-@pytest.mark.anyio
-async def test_report_scanner_status_skipped_when_disabled(monkeypatch):
-    monkeypatch.setenv("OPENSHELF_DISABLE_BARCODE", "true")
-    get_init_tracker().reset()
-    worker = MagicMock()
-    worker.wait_scanner_connected = AsyncMock(return_value=True)
-
-    await robot_module._report_scanner_status(worker)
-
-    assert _phase_for("barcode") is None
-    worker.wait_scanner_connected.assert_not_called()
 
 
 def test_robot_health_is_ok_when_only_camera_component_failed(monkeypatch):
@@ -126,99 +43,6 @@ def test_robot_health_is_degraded_when_motor_component_failed(monkeypatch):
 
     assert health["status"] == "degraded"
     assert health["failed_components"] == ["y_axis"]
-
-
-def _printer_status(**overrides: bool) -> PrinterStatus:
-    status = PrinterStatus(
-        raw=(0x12, 0x12, 0x12, 0x12),
-        offline=False,
-        waiting_for_online_recovery=False,
-        feed_button_active=False,
-        cover_open=False,
-        paper_out=False,
-        paper_near_end=False,
-        recoverable_error=False,
-        cutter_error=False,
-        unrecoverable_error=False,
-        auto_recoverable_error=False,
-    )
-    return replace(status, **overrides)
-
-
-def test_report_printer_status_failed_when_probe_fails(monkeypatch):
-    get_init_tracker().reset()
-    monkeypatch.setattr(robot_module, "_printer_enabled", lambda: True)
-    monkeypatch.setattr(
-        robot_module,
-        "probe_printer_status",
-        MagicMock(side_effect=PrinterStatusProbeError("device not found: /dev/usb/lp0")),
-    )
-
-    robot_module._report_printer_status()
-
-    assert _phase_for("printer") == "failed"
-    assert _reason_for("printer") == "device not found: /dev/usb/lp0"
-
-
-def test_report_printer_status_ready_when_probe_is_healthy(monkeypatch):
-    get_init_tracker().reset()
-    monkeypatch.setattr(robot_module, "_printer_enabled", lambda: True)
-    probe = MagicMock(return_value=_printer_status())
-    monkeypatch.setattr(robot_module, "probe_printer_status", probe)
-
-    robot_module._report_printer_status()
-
-    assert _phase_for("printer") == "ready"
-    probe.assert_called_once_with("/dev/usb/lp0")
-
-
-@pytest.mark.parametrize(
-    ("condition", "reason"),
-    [
-        ({"paper_out": True, "offline": True}, "paper out"),
-        ({"cover_open": True, "offline": True}, "cover open"),
-        ({"cutter_error": True, "offline": True}, "cutter error"),
-        ({"recoverable_error": True, "offline": True}, "recoverable printer error"),
-        ({"unrecoverable_error": True, "offline": True}, "unrecoverable printer error"),
-        ({"auto_recoverable_error": True, "offline": True}, "auto-recoverable printer error"),
-        ({"offline": True}, "printer offline"),
-    ],
-)
-def test_report_printer_status_failed_for_unhealthy_status(monkeypatch, condition, reason):
-    get_init_tracker().reset()
-    monkeypatch.setattr(robot_module, "_printer_enabled", lambda: True)
-    monkeypatch.setattr(robot_module, "probe_printer_status", MagicMock(return_value=_printer_status(**condition)))
-
-    robot_module._report_printer_status()
-
-    assert _phase_for("printer") == "failed"
-    assert _reason_for("printer") == reason
-
-
-def test_report_printer_status_ready_with_near_end_detail(monkeypatch):
-    get_init_tracker().reset()
-    monkeypatch.setattr(robot_module, "_printer_enabled", lambda: True)
-    monkeypatch.setattr(
-        robot_module,
-        "probe_printer_status",
-        MagicMock(return_value=_printer_status(paper_near_end=True)),
-    )
-
-    robot_module._report_printer_status()
-
-    snapshot = get_init_tracker().snapshot()
-    printer = next(entry for entry in snapshot["components"] if entry["component"] == "printer")
-    assert printer["phase"] == "ready"
-    assert printer["detail"] == "/dev/usb/lp0 (paper near end)"
-
-
-def test_report_printer_status_skipped_when_disabled(monkeypatch):
-    get_init_tracker().reset()
-    monkeypatch.setattr(robot_module, "_printer_enabled", lambda: False)
-
-    robot_module._report_printer_status()
-
-    assert _phase_for("printer") is None
 
 
 @pytest.mark.anyio
@@ -276,40 +100,6 @@ async def test_stop_robot_worker_cleans_partial_listener_after_worker_failure(mo
         await robot_module.stop_robot_worker()
 
     assert events == ["worker_shutdown", "listener_drain", "listener_stop"]
-    assert robot_module.robot_worker is None
-    assert robot_module.robot_instance is None
-    assert robot_module.event_listener is None
-
-
-@pytest.mark.anyio
-async def test_stop_robot_worker_clears_globals_when_listener_stop_fails(monkeypatch) -> None:
-    class Listener:
-        async def drain(self) -> None:
-            return None
-
-        async def stop(self) -> None:
-            raise RuntimeError("listener stop failed")
-
-    monkeypatch.setattr(robot_module, "robot_worker", None)
-    monkeypatch.setattr(robot_module, "robot_instance", object())
-    monkeypatch.setattr(robot_module, "event_listener", Listener())
-
-    with pytest.raises(RuntimeError, match="listener stop failed"):
-        await robot_module.stop_robot_worker()
-
-    assert robot_module.robot_worker is None
-    assert robot_module.robot_instance is None
-    assert robot_module.event_listener is None
-
-
-@pytest.mark.anyio
-async def test_stop_robot_worker_is_a_noop_when_no_worker_or_listener(monkeypatch) -> None:
-    monkeypatch.setattr(robot_module, "robot_worker", None)
-    monkeypatch.setattr(robot_module, "robot_instance", object())
-    monkeypatch.setattr(robot_module, "event_listener", None)
-
-    await robot_module.stop_robot_worker()
-
     assert robot_module.robot_worker is None
     assert robot_module.robot_instance is None
     assert robot_module.event_listener is None

@@ -16,6 +16,9 @@
 		type WorkerStatusPayload
 	} from '$lib';
 	import { devicePath, stripDeviceId } from '$lib/nav';
+	import NeedsHomeAlert from '$lib/components/NeedsHomeAlert.svelte';
+	import SafetyAckAlert from '$lib/components/SafetyAckAlert.svelte';
+	import ToastStack from '$lib/components/ToastStack.svelte';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -185,6 +188,9 @@
 	{@render children?.()}
 </main>
 
+<NeedsHomeAlert />
+<SafetyAckAlert />
+
 {#if apiState === 'down'}
 	<div class="connection-overlay">
 		<div class="connection-message">DEVICE OR API IS UNREACHABLE</div>
@@ -199,43 +205,4 @@
 	</div>
 {/if}
 
-<div class="logo-container">
-	<table class="logo-table">
-		<tbody>
-			<tr class="row-1"><td></td></tr>
-			<tr class="row-2"><td></td></tr>
-			<tr class="row-3"><td></td></tr>
-		</tbody>
-	</table>
-</div>
-
-<style>
-	.logo-container {
-		position: fixed;
-		bottom: 1.5em;
-		right: 1.5em;
-	}
-
-	.logo-table {
-		width: 4em;
-		height: 4em;
-		border-collapse: collapse;
-	}
-
-	.logo-table td {
-		border: 3px solid #00a210;
-		padding: 0;
-	}
-
-	.logo-table .row-1 td {
-		height: 21.74%;
-	}
-
-	.logo-table .row-2 td {
-		height: 34.78%;
-	}
-
-	.logo-table .row-3 td {
-		height: 43.48%;
-	}
-</style>
+<ToastStack />

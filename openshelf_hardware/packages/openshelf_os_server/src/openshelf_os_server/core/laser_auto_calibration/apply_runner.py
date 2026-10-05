@@ -60,10 +60,10 @@ def _reference_offset_scan_config(
 		y_mm=float(result.offset_y_mm),
 	)
 
-	if side == StorageModuleSide.LEFT:
-		scan_config.left_gripper_xy_correction_mm = offset
+	if side == StorageModuleSide.FRONT:
+		scan_config.front_gripper_xy_correction_mm = offset
 	else:
-		scan_config.right_gripper_xy_correction_mm = offset
+		scan_config.back_gripper_xy_correction_mm = offset
 
 
 def _build_reference_offset_entry(
@@ -242,10 +242,10 @@ class ApplyRunnerMixin:
             reference_z_place_mm=float(result.z_place_mm),
         )
 
-        if result.side == StorageModuleSide.LEFT:
-            scan_config.left_wall_depth_to_gripper_z_model = model
+        if result.side == StorageModuleSide.FRONT:
+            scan_config.front_wall_depth_to_gripper_z_model = model
         else:
-            scan_config.right_wall_depth_to_gripper_z_model = model
+            scan_config.back_wall_depth_to_gripper_z_model = model
 
     def _resolve_manual_z_intercept(
         self,
@@ -312,7 +312,7 @@ class ApplyRunnerMixin:
         the two disagree the rack moved under load or the datum was saved with the stage
         somewhere else - both need looking at rather than modelling over.
         """
-        side_name = "left" if side == StorageModuleSide.LEFT else "right"
+        side_name = "front" if side == StorageModuleSide.FRONT else "back"
         tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
         agreement_mm = self._z_stall_datum_agreement_mm(
             side=side,
@@ -671,7 +671,7 @@ class ApplyRunnerMixin:
         if configured_model is not None:
             tool = worker._robot._tool
             stage_param = (
-                "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.LEFT else "STAGE_EXTENSION_SHELF_BACK"
+                "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.FRONT else "STAGE_EXTENSION_SHELF_BACK"
             )
             stage_extension_value = await tool.get_param(stage_param)
             z_place_value = await tool.get_param("Z_EXTENSION_PLACE")
@@ -690,7 +690,7 @@ class ApplyRunnerMixin:
             intercept_mm = float(configured_model.intercept_mm)
             slope_per_mm = float(configured_model.x_slope_mm_per_mm)
             laser_module.print_status(
-                f"z_offset_model=config side={'left' if side == StorageModuleSide.LEFT else 'right'} "
+                f"z_offset_model=config side={'front' if side == StorageModuleSide.FRONT else 'back'} "
                 f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.6f} "
                 f"stage_extension_mm={float(stage_extension_value):.2f} z_place_mm={float(z_place_value):.2f}"
             )
@@ -699,7 +699,7 @@ class ApplyRunnerMixin:
         if allow_missing is True:
             return None
 
-        side_name = "left" if side == StorageModuleSide.LEFT else "right"
+        side_name = "front" if side == StorageModuleSide.FRONT else "back"
         raise ValueError(
             f"no z offset source for the {side_name} module: configure "
             f"robot.grid.scan.{side_name}_z_offset_model, or enable robot.grid.scan.z_stall_anchor_enabled. "
@@ -743,8 +743,8 @@ class ApplyRunnerMixin:
         scan_config = next_config.robot.grid.scan
         grid_path = Path(resolve_grid_path(next_config))
         source_grid = laser_module.load_grid(grid_path)
-        left_module = list(source_grid.left_module)
-        right_module = list(source_grid.right_module)
+        front_module = list(source_grid.front_module)
+        back_module = list(source_grid.back_module)
 
         for completed_result in completed_results:
             if len(completed_result.analysis.shelves) == 0:
@@ -793,9 +793,9 @@ class ApplyRunnerMixin:
             )
 
             existing_side_shelves = (
-                list(source_grid.left_module)
-                if completed_result.side == StorageModuleSide.LEFT
-                else list(source_grid.right_module)
+                list(source_grid.front_module)
+                if completed_result.side == StorageModuleSide.FRONT
+                else list(source_grid.back_module)
             )
             scanned_shelves = _preserve_manual_cells(scanned_shelves, existing_side_shelves)
 
@@ -808,14 +808,14 @@ class ApplyRunnerMixin:
                     x_axis_limit_mm=x_axis_limit_mm,
                 )
 
-            if completed_result.side == StorageModuleSide.LEFT:
-                left_module = scanned_shelves
+            if completed_result.side == StorageModuleSide.FRONT:
+                front_module = scanned_shelves
             else:
-                right_module = scanned_shelves
+                back_module = scanned_shelves
 
         storage_grid = laser_module.StorageGrid(
-            left_module=left_module,
-            right_module=right_module,
+            front_module=front_module,
+            back_module=back_module,
             filename=source_grid.filename if source_grid.filename != "" else str(grid_path),
         )
 

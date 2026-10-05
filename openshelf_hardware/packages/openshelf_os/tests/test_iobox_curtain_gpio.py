@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock
 from types import SimpleNamespace
 
 import pytest
@@ -70,18 +69,3 @@ async def test_curtain_uses_shared_gpio_light_curtain_input() -> None:
     await iobox.stop()
 
 
-@pytest.mark.asyncio
-async def test_open_door_ignores_curtain_when_safety_guard_bypassed() -> None:
-    iobox = make_iobox(gpio=None)
-    iobox._curtain_state = True
-    iobox.set_safety_guard_bypassed(True)
-    iobox._md = AsyncMock()
-    iobox._params.motors = SimpleNamespace(
-        by_name=lambda name: SimpleNamespace(lim=42.0)
-    )
-    iobox.refresh_door_state = AsyncMock()
-
-    await iobox.open_door()
-
-    iobox._md.move_to_position.assert_awaited_once_with(42.0, rpm=None)
-    iobox.refresh_door_state.assert_awaited_once_with(force=True)

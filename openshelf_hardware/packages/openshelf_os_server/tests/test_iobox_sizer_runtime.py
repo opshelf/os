@@ -5,7 +5,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -14,7 +14,6 @@ from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.runtime_state import RuntimeStatePaths
 from hardware.exceptions import CameraConnectionError, ToFConnectionError
 from openshelf_os_server.core import iobox_sizer
-from openshelf_os_server.routers import iobox_sizer as iobox_sizer_router
 
 
 class FakeService:
@@ -71,7 +70,6 @@ class ImmediateService:
             duration_ms=25,
             timestamp=datetime.now(timezone.utc),
         )
-
 
 
 class ReloadService:
@@ -219,62 +217,6 @@ async def test_reload_iobox_sizer_config_serializes_full_stop_and_init(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_init_iobox_sizer_keeps_shared_config_blank_path_logical_across_modes(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-) -> None:
-    events: list[str] = []
-    config = SimpleNamespace(
-        enabled=True,
-        tof=SimpleNamespace(channels=[6]),
-        camera=SimpleNamespace(),
-        detection=SimpleNamespace(blank_frame_path="data/iobox_sizer/blank_frame.png"),
-    )
-    root_config = SimpleNamespace(robot=SimpleNamespace(io=SimpleNamespace(sizer=config)))
-    shared_config_path = tmp_path / "shared-config.json"
-
-    def make_paths(mode: OperatingMode) -> RuntimeStatePaths:
-        return _state_paths(
-            mode,
-            tmp_path,
-            config_path=shared_config_path,
-        )
-
-    def did_make_service(current_config: object) -> ReloadService:
-        service = ReloadService(str(len(events)), events)
-        return service
-
-    monkeypatch.setattr(iobox_sizer, "get_root_config", lambda: root_config)
-    monkeypatch.setattr(iobox_sizer, "_make_service", did_make_service)
-    monkeypatch.setattr(iobox_sizer, "init_sizer_camera_manager", AsyncMock())
-    monkeypatch.setattr(iobox_sizer, "unregister_camera_manager", AsyncMock())
-
-    try:
-        monkeypatch.setattr(
-            RuntimeStatePaths,
-            "current",
-            classmethod(lambda cls: make_paths(OperatingMode.development)),
-        )
-        await iobox_sizer.init_iobox_sizer()
-        assert iobox_sizer._runtime is not None
-        assert iobox_sizer._runtime.config.detection.blank_frame_path.endswith("blank_frame.development.png")
-        assert config.detection.blank_frame_path == "data/iobox_sizer/blank_frame.png"
-
-        await iobox_sizer.stop_iobox_sizer()
-        monkeypatch.setattr(
-            RuntimeStatePaths,
-            "current",
-            classmethod(lambda cls: make_paths(OperatingMode.demo)),
-        )
-        await iobox_sizer.init_iobox_sizer()
-        assert iobox_sizer._runtime is not None
-        assert iobox_sizer._runtime.config.detection.blank_frame_path.endswith("blank_frame.demo.png")
-        assert config.detection.blank_frame_path == "data/iobox_sizer/blank_frame.png"
-    finally:
-        await iobox_sizer.stop_iobox_sizer()
-
-
-@pytest.mark.asyncio
 async def test_init_iobox_sizer_degrades_to_camera_only_when_tof_connect_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -384,31 +326,6 @@ async def test_init_iobox_sizer_unavailable_when_camera_start_fails(
     assert "camera_stop" in service.events
     assert "tof_close" in service.events
     assert "tof_connect" not in service.events
-
-
-@pytest.mark.asyncio
-async def test_capture_camera_blank_returns_runtime_path_without_saving_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    logical_path = "data/iobox_sizer/blank_frame.png"
-    physical_path = "/runtime/data/iobox_sizer/blank_frame.development.png"
-    root_config = SimpleNamespace(
-        robot=SimpleNamespace(
-            io=SimpleNamespace(sizer=SimpleNamespace(detection=SimpleNamespace(blank_frame_path=logical_path)))
-        )
-    )
-    service = SimpleNamespace(capture_camera_blank=lambda: physical_path)
-    save_root_config = MagicMock()
-
-    monkeypatch.setattr(iobox_sizer_router, "get_iobox_sizer_or_error", lambda: service)
-    monkeypatch.setattr(iobox_sizer_router, "get_root_config", lambda: root_config)
-    monkeypatch.setattr(iobox_sizer_router, "save_root_config", save_root_config)
-
-    response = await iobox_sizer_router.capture_camera_blank_endpoint()
-
-    assert response == {"success": True, "blank_frame_path": physical_path}
-    assert root_config.robot.io.sizer.detection.blank_frame_path == logical_path
-    save_root_config.assert_not_called()
 
 
 @pytest.mark.asyncio

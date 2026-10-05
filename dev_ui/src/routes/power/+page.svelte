@@ -8,7 +8,6 @@
 	const STATE_POLL_INTERVAL_MS = 2000;
 
 	let rails: PowerRail[] = [];
-	let holdSeconds = 0;
 	let isLoading = true;
 	let cyclingRail: string | null = null;
 	let error = '';
@@ -31,17 +30,16 @@
 
 	function powerLabel(powered: boolean | null): string {
 		if (powered === null) {
-			return 'unknown';
+			return 'UNKNOWN';
 		}
 
-		return powered === true ? 'on' : 'off';
+		return powered === true ? 'ON' : 'OFF';
 	}
 
 	async function fetchRails(): Promise<void> {
 		try {
 			const data = await getPowerRails();
 			rails = data.rails;
-			holdSeconds = data.hold_seconds;
 			loadError = '';
 		} catch (err) {
 			// Kept separate from `error` so the refresh after a cycle cannot
@@ -94,9 +92,6 @@
 	<table class="power-table">
 		<thead>
 			<tr>
-				<th colspan="4">motion axis power control</th>
-			</tr>
-			<tr>
 				<th class="rail-column">rail</th>
 				<th>equipment</th>
 				<th class="status-column">power</th>
@@ -131,13 +126,6 @@
 		</tbody>
 	</table>
 
-	{#if rails.length > 0}
-		<p class="hint">
-			cycling cuts a rail for {holdSeconds}s, then restores it and re-applies the drive settings
-			that power loss cleared. the axes it dropped still need homing before they are moved.
-		</p>
-	{/if}
-
 	{#if message !== ''}
 		<StatusMessage {message} />
 	{/if}
@@ -158,36 +146,13 @@
 		white-space: nowrap;
 	}
 
-	.rail-column {
-		width: 100px;
-	}
-
-	.status-column {
-		width: 90px;
-	}
-
-	.actions-column {
-		width: 120px;
-	}
-
-	.hint {
-		margin-top: 1em;
-		color: #666;
-	}
-
 	button {
 		margin-top: 0;
 	}
 
-	.power-on {
-		color: green;
-	}
-
-	.power-off {
-		color: red;
-	}
-
+	.power-on,
+	.power-off,
 	.power-unknown {
-		color: gray;
+		color: black;
 	}
 </style>

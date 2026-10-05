@@ -13,7 +13,7 @@ from openshelf_os_server.core.storage_module import StorageModuleSideName, modul
 
 from ..database.models import Item, ItemLocation, StorageBin, StorageCell
 from .mass import apply_mass
-from .validation import CellOccupiedError, LocationValidator, StorageCellValidator, StorageValidator, ValidationError
+from .validation import CellOccupiedError, StorageValidator
 
 
 _session_locks: "WeakKeyDictionary[AsyncSession, asyncio.Lock]" = WeakKeyDictionary()
@@ -329,37 +329,3 @@ class StorageService:
         )
         occupied.extend((row.side, row.shelf_idx, row.cell_idx, row.barcode) for row in bins.all())
         return occupied
-
-    async def create_storage_cell(self, shelf_idx: int, cell_idx: int, capacity: str) -> StorageCell:
-        """Create a new storage cell."""
-        StorageCellValidator.validate_capacity(capacity)
-        StorageCellValidator.validate_status("available")  # New cells default to available
-        LocationValidator.validate_location(shelf_idx, cell_idx)
-
-        async with self._lock:
-            result = await self.session.execute(
-                select(StorageCell)
-                .where(StorageCell.shelf_idx == shelf_idx)
-                .where(StorageCell.cell_idx == cell_idx)
-                .with_for_update()
-            )
-            existing_cell = result.scalar_one_or_none()
-
-            if existing_cell is not None:
-                raise ValidationError(f"Storage cell at shelf {shelf_idx}, cell {cell_idx} already exists")
-
-            try:
-                cell = StorageCell(
-                    shelf_idx=shelf_idx,
-                    cell_idx=cell_idx,
-                    capacity=capacity,
-                    status="available"
-                )
-                self.session.add(cell)
-                await self.session.flush()
-                await self.session.commit()
-                await self.session.refresh(cell)
-                return cell
-            except Exception:
-                await self.session.rollback()
-                raise

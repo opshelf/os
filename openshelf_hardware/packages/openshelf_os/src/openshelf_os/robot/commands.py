@@ -33,9 +33,9 @@ class RetrieveItemCommand(BaseModel):
     location: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Current item location. Required by the retrieval endpoint; bin homes cannot be retrieved directly.",
-        examples=[{"side": "left_module", "shelf_idx": 0, "cell_idx": 2}],
+        examples=[{"side": "front_module", "shelf_idx": 0, "cell_idx": 2}],
         json_schema_extra={"properties": {
-            "side": {"type": "string", "enum": ["left_module", "right_module"]},
+            "side": {"type": "string", "enum": ["front_module", "back_module"]},
             "shelf_idx": {"type": "integer", "description": "Zero-based shelf index"},
             "cell_idx": {"type": "integer", "description": "Zero-based cell index"},
         }},
@@ -52,9 +52,9 @@ class StoreItemCommand(BaseModel):
             "Storage bin homes are reserved and cannot be requested; demo mode keeps its "
             "configured cell mapping."
         ),
-        examples=[{"side": "left_module", "shelf_idx": 0, "cell_idx": 2}],
+        examples=[{"side": "front_module", "shelf_idx": 0, "cell_idx": 2}],
         json_schema_extra={"properties": {
-            "side": {"type": "string", "enum": ["left_module", "right_module"]},
+            "side": {"type": "string", "enum": ["front_module", "back_module"]},
             "shelf_idx": {"type": "integer", "description": "Zero-based shelf index"},
             "cell_idx": {"type": "integer", "description": "Zero-based cell index"},
         }},
