@@ -311,6 +311,16 @@ class BinWorkflowsResponse(BaseModel):
     workflows: list[BinWorkflowResponse]
 
 
+class UnresolvedTrayRecovery(BaseModel):
+    workflow: BinWorkflowResponse
+    error: str = Field(description="Why the tray stays outside; return it by scanning its barcode")
+
+
+class TrayCrashRecoveryResponse(BaseModel):
+    recovered: list[BinWorkflowResponse]
+    unresolved: list[UnresolvedTrayRecovery]
+
+
 # ---------------------------------------------------------------------------
 # Utility helpers
 # ---------------------------------------------------------------------------
@@ -887,7 +897,7 @@ async def create_bin_workflow(
                 )
             return {"storage_mode": "direct", "workflow": None}
         workflow.error = "Robot worker is unavailable"
-        await service.fail(workflow, workflow.error)
+        await service.fail(workflow, workflow.error, tray_moved=False)
     else:
         try:
             async with robot_command_enqueue_guard():
@@ -918,10 +928,34 @@ async def create_bin_workflow(
         except Exception as exc:
             if workflow is not None:
                 workflow.error = str(exc)
-                await service.fail(workflow, workflow.error)
+                await service.fail(workflow, workflow.error, tray_moved=False)
             else:
                 raise
     return {"storage_mode": "bin", "workflow": await service.serialize_workflow(workflow)}
+
+
+@router.get("/bin-workflows/interrupted", responses=response_docs(model=BinWorkflowsResponse, errors=(401, 403)), dependencies=[Depends(require_permissions("storage:read"))])
+async def get_crash_interrupted_bin_workflows(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """List tray motions a crash or emergency stop interrupted whose tray is still marked outside. The crash dialog names these trays and their home cells so the operator can put them back."""
+    service = BinStorageService(session)
+    return {"workflows": [await service.serialize_workflow(w) for w in await service.crash_interrupted_workflows()]}
+
+
+@router.post("/bin-workflows/interrupted/recover", responses=response_docs(model=TrayCrashRecoveryResponse, errors=(401, 403)), dependencies=[Depends(require_permissions("storage:write"))])
+async def recover_crash_interrupted_bin_workflows(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Mark trays from interrupted motions as home after the operator confirmed them on their shelves in the crash dialog. An interrupted return records the contents confirmed before it started. Does not move hardware. A tray whose state conflicts with being home stays outside and is listed as unresolved."""
+    service = BinStorageService(session)
+    recovered: list[Dict[str, Any]] = []
+    unresolved: list[Dict[str, Any]] = []
+    for workflow, error in await service.recover_crash_interrupted():
+        payload = await service.serialize_workflow(workflow)
+        if error is None:
+            recovered.append(payload)
+        else:
+            unresolved.append({"workflow": payload, "error": error})
+        if robot_core.robot_worker is not None:
+            await service.publish_workflow(robot_core.robot_worker, workflow)
+    return {"recovered": recovered, "unresolved": unresolved}
 
 
 async def _tray_workflow(session: AsyncSession, workflow_id: str) -> StorageBinWorkflow:

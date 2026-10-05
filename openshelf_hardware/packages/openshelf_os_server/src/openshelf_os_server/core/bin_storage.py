@@ -57,6 +57,10 @@ ACTIVE_STATES = {"retrieving_bin", "awaiting_operator", "returning_bin"}
 TRAY_WALL_THICKNESS_MM = 5.0
 COMPARTMENT_LEEWAY_MM = 2.0
 
+# Robot failure codes that stop operation and open the crash dialog: a hardware fault raised
+# mid-motion, or an emergency stop interrupting the command. Plain command errors do not.
+CRASH_FAILURE_CODES = {"execution_error", "command_interrupted"}
+
 logger = logging.getLogger(__name__)
 
 
@@ -928,13 +932,76 @@ class BinStorageService:
             workflow.completed_at = _utc_now()
         await self.session.commit()
 
-    async def fail(self, workflow: StorageBinWorkflow, error: str) -> None:
+    async def fail(
+        self,
+        workflow: StorageBinWorkflow,
+        error: str,
+        *,
+        code: Optional[str] = None,
+        tray_moved: bool = True,
+    ) -> None:
         workflow.error = error
+        if code is not None:
+            workflow.resolution = {**(workflow.resolution or {}), "failure_code": code}
         tray = await self.session.get(StorageBin, workflow.bin_id)
         if tray is not None:
-            tray.status = "outside"
+            # Releasing the claim of a motion that never started leaves the tray on its shelf.
+            tray.status = "outside" if tray_moved else "at_home"
             tray.gross_weight = None
         await self.transition(workflow, "failed", error)
+
+    async def crash_interrupted_workflows(self) -> list[StorageBinWorkflow]:
+        """Failed tray motions a crash or emergency stop interrupted, while their tray is still outside.
+
+        Only the latest workflow of each tray counts: a later interaction supersedes the failure.
+        """
+        trays = (
+            await self.session.scalars(select(StorageBin).where(StorageBin.status == "outside"))
+        ).all()
+        interrupted: list[StorageBinWorkflow] = []
+        for tray in trays:
+            latest = await self.session.scalar(
+                select(StorageBinWorkflow)
+                .where(StorageBinWorkflow.bin_id == tray.id)
+                .order_by(StorageBinWorkflow.created_at.desc())
+                .limit(1)
+            )
+            if (
+                latest is not None
+                and latest.state == "failed"
+                and (latest.resolution or {}).get("failure_code") in CRASH_FAILURE_CODES
+            ):
+                interrupted.append(latest)
+        return interrupted
+
+    async def recover_crash_interrupted(self) -> list[tuple[StorageBinWorkflow, Optional[str]]]:
+        """Put trays back home once the operator confirmed them on their shelves after a crash.
+
+        An interrupted return also records the contents the operator confirmed before it
+        started. Returns each interrupted workflow with the reason its tray stays outside, or
+        None when the tray is home again.
+        """
+        results: list[tuple[StorageBinWorkflow, Optional[str]]] = []
+        for workflow in await self.crash_interrupted_workflows():
+            tray = await self.session.get(StorageBin, workflow.bin_id)
+            assert tray is not None
+            if workflow.operation == "return":
+                error = await self._return_contents_error(workflow, tray)
+                if error:
+                    results.append((workflow, error))
+                    continue
+                await self._apply_return_contents(workflow, tray)
+            tray.status = "at_home"
+            tray.gross_weight = None
+            workflow.resolution = {**(workflow.resolution or {}), "crash_recovered": True}
+            workflow.history = [
+                *(workflow.history or []),
+                _history_entry("failed", "Operator confirmed the tray on its shelf after the crash"),
+            ]
+            workflow.updated_at = _utc_now()
+            await self.session.commit()
+            results.append((workflow, None))
+        return results
 
     async def begin(
         self, operation: str, item: Item, user_id: Optional[int]
@@ -1238,7 +1305,11 @@ class BinStorageService:
         if payload.get("command") != expected:
             return False
         if payload.get("message") != "success":
-            await self.fail(workflow, str(payload.get("error") or "Tray motion failed"))
+            await self.fail(
+                workflow,
+                str(payload.get("error") or "Tray motion failed"),
+                code=payload.get("code"),
+            )
         elif workflow.state == "retrieving_bin":
             await self.transition(workflow, "awaiting_operator")
         else:
