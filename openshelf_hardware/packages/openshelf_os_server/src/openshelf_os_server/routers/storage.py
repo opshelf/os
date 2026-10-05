@@ -624,6 +624,12 @@ async def assign_tray(
     )
     if cell is None:
         raise HTTPException(status_code=404, detail="Cell does not exist in the grid")
+    # Laser calibration leaves cells unsized; the tray inherits the cell's dimensions.
+    if min(cell.dimensions.width, cell.dimensions.height, cell.dimensions.length) <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Set the cell dimensions before assigning a tray",
+        )
 
     config = get_root_config()
     home = (side, shelf_idx, cell_idx)

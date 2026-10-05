@@ -1165,6 +1165,11 @@
 		});
 	}
 
+	// Laser calibration leaves cells 0x0x0 until a technician enters the real dimensions.
+	function isCellUnsized(cell: Cell): boolean {
+		return Math.min(cell.dimensions.width, cell.dimensions.height, cell.dimensions.length) <= 0;
+	}
+
 	function isCellTestable(cell: Cell): boolean {
 		return UNTESTABLE_CELL_STATUSES.has(cell.status.toLowerCase()) === false;
 	}
@@ -1517,6 +1522,7 @@
 								class="storage-cell"
 								class:selected={isSelected(selectedSide, shelf.shelf_idx, cell.cell_idx)}
 								class:occupied={cell.status.toLowerCase() === 'occupied'}
+								class:unsized={isCellUnsized(cell)}
 								class:dimmed={
 									cell.status.toLowerCase() === 'maintenance' ||
 									cell.status.toLowerCase() === 'disabled'
@@ -1814,6 +1820,12 @@
 
 	.storage-cell.occupied {
 		background: rgba(0, 0, 0, 0.5);
+	}
+
+	.storage-cell.unsized {
+		background: #fdd;
+		border-color: #d00;
+		color: #d00;
 	}
 
 	.storage-cell.dimmed {
