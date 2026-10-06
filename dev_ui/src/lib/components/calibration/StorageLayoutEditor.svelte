@@ -1174,6 +1174,11 @@
 		return UNTESTABLE_CELL_STATUSES.has(cell.status.toLowerCase()) === false;
 	}
 
+	// The backend rejects every testing action on disabled and maintenance cells, so the
+	// testing buttons go inert when none of the selected cells can be tested. A mixed
+	// selection stays enabled: the queue skips its untestable cells.
+	const hasTestableSelection = $derived(selectedCells.some((entry) => isCellTestable(entry.cell)));
+
 	// The selected testable cells, one test each, in shelf/cell-ascending order
 	// (cycle_test.py walks cells one at a time).
 	function buildTestQueue(): Array<{ shelf: number; cell: Cell }> {
@@ -1623,16 +1628,42 @@
 			<section class="editor-tests">
 				<p class="editor-section-label">testing</p>
 				<div class="editor-group editor-group-tests">
-					<button type="button" onclick={() => void didStartTest('quick')} disabled={testRunning}>quick</button>
-					<button type="button" onclick={() => void didStartTest('cycle')} disabled={testRunning}>cycle</button>
-					<button type="button" onclick={() => void didStartTest('store')} disabled={testRunning}>store</button>
-					<button type="button" onclick={() => void didStartTest('retrieve')} disabled={testRunning}>retrieve</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('quick')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						quick
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('cycle')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						cycle
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('store')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						store
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('retrieve')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						retrieve
+					</button>
 				</div>
 				{#if testRunning}
 					<p class="editor-test-progress">{testCurrent} • PASS: {testPassed}</p>
 					<button type="button" onclick={() => didAbortTest()} disabled={testAborting}>abort</button>
 				{:else if testNote !== ''}
 					<p class="editor-test-note" class:is-error={testNoteIsError}>{testNote}</p>
+				{:else if hasTestableSelection === false}
+					<p class="editor-test-note">no testable cells selected</p>
 				{/if}
 			</section>
 			<label class="editor-row editor-row-lock">
@@ -2010,6 +2041,11 @@
 		width: 100%;
 		height: 2.5em;
 		margin-top: 0;
+	}
+
+	.editor-group-tests button:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 
 	.editor-test-progress {
