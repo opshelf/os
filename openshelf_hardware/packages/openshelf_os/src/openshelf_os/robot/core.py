@@ -1135,6 +1135,8 @@ class Robot:
         if self._tool._my is None:
             raise ConfigError("Y-axis motor not configured")
 
+        self.set_operation_context(phase="io_place.ensure_door_homed")
+        await self._io.ensure_door_homed()
         self.set_operation_context(phase="io_place.pick_from_shelf", target_coordinate=coord)
         await self._tool.pick(coord)
         self.set_operation_context(phase="io_place.rotate_to_front")
@@ -1157,7 +1159,7 @@ class Robot:
         await self._tool.place(coord)
 
         self.set_operation_context(phase="io_place.home_door")
-        await self._io.home_door()
+        await self._io.home_door_after_cycle()
         self.set_operation_context(phase="io_place.clear_alarms")
         await self._tool.clear_alarms()
 
@@ -1170,6 +1172,8 @@ class Robot:
         if self._tool._my is None:
             raise ConfigError("Y-axis motor not configured")
 
+        self.set_operation_context(phase="io_pick.ensure_door_homed")
+        await self._io.ensure_door_homed()
         self.set_operation_context(phase="io_pick.pick_from_shelf_cell", target_coordinate=coord)
         await self._tool.pick(coord)
         self.set_operation_context(phase="io_pick.rotate_to_front")
@@ -1192,7 +1196,7 @@ class Robot:
         await self._tool.place(coord)
 
         self.set_operation_context(phase="io_pick.home_door")
-        await self._io.home_door()
+        await self._io.home_door_after_cycle()
         self.set_operation_context(phase="io_pick.clear_alarms")
         await self._tool.clear_alarms()
 

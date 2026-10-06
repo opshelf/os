@@ -1011,6 +1011,26 @@ async def test_home_fails_when_the_drive_does_not_zero(mock_controller, monkeypa
     motor._park.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("tolerance", "homed"), [(None, False), (1.0, True)])
+async def test_home_zero_tolerance_is_per_motor(mock_controller, monkeypatch, tolerance, homed):
+    # The lb4a-3 door read 0.496 mm after a good torque home: it springs back off the stop.
+    monkeypatch.setattr("hardware.motor.ZERO_SETTLE_TIMEOUT_S", 0.0)
+    overrides = {} if tolerance is None else {"home_zero_tolerance_mm": tolerance}
+    motor = home_motor(mock_controller, **overrides)
+    motor._park = AsyncMock()
+    # 62 pulses at 80 mm/rev = 0.496 mm.
+    echo_registers(mock_controller, {0x016D: 0x07, 0x602D: 62})
+
+    if homed:
+        await motor.home()
+    else:
+        with pytest.raises(MotorError, match="zero did not take: position=0.496 mm"):
+            await motor.home()
+
+    assert motor.is_homed() is homed
+
+
 def mapped_home_motor(mock_controller, phys_at_zero: float, phys_at_max: float) -> Motor:
     """home_motor with the config model's real logical/physical mapping."""
     config = MotorConfig(

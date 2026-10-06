@@ -48,6 +48,7 @@ def make_iobox() -> IOBox:
     iobox._door_home_verify_tolerance_mm = 1.0
     iobox._door_zero_position_tolerance_mm = 0.01
     iobox._door_motion_lock = asyncio.Lock()
+    iobox._door_home_pending = False
     return iobox
 
 
@@ -134,3 +135,36 @@ async def test_open_does_not_retry_when_shared_safety_blocks_after_fault() -> No
     iobox._md.home.assert_not_awaited()
 
 
+
+
+@pytest.mark.asyncio
+async def test_failed_end_of_cycle_home_is_deferred_to_the_next_cycle() -> None:
+    # The item is already on its shelf when the cycle re-homes the door, so a failed
+    # home must not fail the command; the next cycle homes before it moves an item.
+    iobox = make_iobox()
+    iobox._md.home.side_effect = HardwareMotorError("Motor 31 zero did not take: position=0.496 mm")
+
+    assert await iobox.home_door_after_cycle() is False
+    assert iobox._door_home_pending is True
+
+    iobox._md.home.side_effect = None
+    iobox._md.home.reset_mock()
+    await iobox.ensure_door_homed()
+
+    iobox._md.home.assert_awaited_once()
+    assert iobox._door_home_pending is False
+
+    iobox._md.home.reset_mock()
+    await iobox.ensure_door_homed()
+    iobox._md.home.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deferred_door_home_failure_stops_the_next_cycle_before_motion() -> None:
+    iobox = make_iobox()
+    iobox._door_home_pending = True
+    iobox._md.home.side_effect = HardwareMotorError("Motor 31 zero did not take: position=0.496 mm")
+
+    with pytest.raises(MotorError, match="Failed to home door"):
+        await iobox.ensure_door_homed()
+    assert iobox._door_home_pending is True

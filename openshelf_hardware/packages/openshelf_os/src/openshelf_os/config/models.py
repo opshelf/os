@@ -44,6 +44,10 @@ class Motor(BaseModel):
     # Drive torque homing: stall current as % of Ip, and hold time before zeroing.
     home_torque_pct: int = Field(default=30, ge=1, le=100)
     home_torque_ms: int = Field(default=200, ge=1, le=65535)
+    # How far from the drive's zero the axis may read once torque homing stops. Compliant
+    # axes such as the IO door spring back off the stop (lb4a-3 read 0.496 mm), so they
+    # need more than the default; a false success still reads far outside either value.
+    home_zero_tolerance_mm: float = Field(default=0.25, gt=0)
     lim: Union[int, float] = Field(..., gt=0)
     lower_lim: Union[int, float] = Field(default=0, ge=0)
     phys_at_zero: Optional[Union[int, float]] = Field(default=None)
