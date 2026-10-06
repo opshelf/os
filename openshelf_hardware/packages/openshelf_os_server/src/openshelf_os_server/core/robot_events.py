@@ -8,6 +8,7 @@ from sqlalchemy import select
 import openshelf_os_server.core.robot as robot_core
 
 from openshelf_os.robot.worker import RobotWorker
+from openshelf_os_server.core.event_log import append_robot_event
 from openshelf_os_server.core.mass import apply_cycle_mass
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import BinStorageService, RobotEventPublisher
@@ -22,11 +23,11 @@ EVENT_FORWARD_WAIT_TIMEOUT_S = 5.0
 class EventProcessingTracker:
     """Track worker events whose side effects have finished.
 
-    The event listener commits DB state after the worker emits an event, so SSE
-    clients must not observe an event before that commit. The event stream waits
-    on this tracker before forwarding each payload; fan-out preserves order in
-    every subscriber queue, so a per-connection sequence number maps 1:1 onto
-    the monotonically growing processed count.
+    The event listener commits DB state after the worker emits an event, so the
+    durable event log row (which commits after the side effects) only exists once
+    processing has finished. `/api/robot/events` waits on this tracker for each
+    queued message before reading the log, so clients never observe an event
+    before its row is durable.
     """
 
     def __init__(self) -> None:
@@ -39,6 +40,9 @@ class EventProcessingTracker:
 
     def deactivate(self) -> None:
         self._active = False
+
+    def processed_count(self) -> int:
+        return self._processed
 
     async def record_processed(self) -> None:
         async with self._lock:
@@ -352,6 +356,9 @@ class RobotEventListener:
                     continue
 
                 await process_robot_event(payload, self._worker)
+                # The log row commits before the tracker release, so SSE clients
+                # can only observe the event once it is durable and replayable.
+                await append_robot_event(payload)
             finally:
                 queue.task_done()
                 await event_processing_tracker.record_processed()

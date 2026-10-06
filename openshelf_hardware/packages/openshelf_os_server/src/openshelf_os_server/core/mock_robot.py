@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 
 from openshelf_os_server.core.bin_storage import reserved_bin_locations
+from openshelf_os_server.core.event_log import append_robot_event
 from openshelf_os_server.database.models import (
 	Item,
 	ItemLocation,
@@ -591,6 +592,9 @@ class MockRobotRuntime:
 
 	async def publish_event(self, payload: dict[str, Any]) -> None:
 		message = json.dumps(payload)
+		# The log row commits before the fan-out, so SSE clients see mock events
+		# only once they are durable and replayable.
+		await append_robot_event(payload)
 		for queue in list(self._event_subscribers):
 			await queue.put(message)
 

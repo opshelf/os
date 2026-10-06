@@ -182,6 +182,7 @@ PARAMETER_DESCRIPTIONS = {
     "offset": "Number of records to skip before returning results.",
     "skip": "Number of records to skip before returning results.",
     "limit": "Maximum number of records to return.",
+    "since": "Exclusive lower bound on the event log `seq`; only events with a higher `seq` are returned.",
 }
 
 
