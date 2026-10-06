@@ -30,13 +30,23 @@ PYTHON_PATHS = [
 	REPO_ROOT / "openshelf_hardware/packages/hardware/src",
 ]
 
+# Run directories saved before the front/back cutover recorded the module side as
+# left_module/right_module; map those historical values at read time (in memory only,
+# the saved metadata is not rewritten).
+HISTORICAL_SIDE_NAMES = {"left_module": "front_module", "right_module": "back_module"}
+
 for import_path in reversed(PYTHON_PATHS):
 	sys.path.insert(0, str(import_path))
 
 import openshelf_os.laser_calibration as laser_module
 from openshelf_os.common import CONFIG_PATH, load_config_file
+from openshelf_os.laser_calibration.defaults import Z_OFFSET_MODEL_PARAM_TOLERANCE_MM
 from openshelf_os.runtime_state import RuntimeStatePaths, paths_for_config_file
 from openshelf_os.storage import StorageModuleSide
+
+
+def normalize_saved_side(saved_side: str | None) -> str | None:
+	return None if saved_side is None else HISTORICAL_SIDE_NAMES.get(saved_side, saved_side)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -44,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
 		description="Probe the shelf plate and fit the z delta model, without a full calibration."
 	)
 	parser.add_argument("--config", default=str(CONFIG_PATH))
-	parser.add_argument("--module", choices=["left", "right"], required=True)
+	parser.add_argument("--module", choices=["front", "back"], required=True)
 	parser.add_argument(
 		"--from-run",
 		type=Path,
@@ -123,7 +133,7 @@ def run_side(run_dir: Path) -> str | None:
 	metadata_path = Path(run_dir) / "metadata.json"
 
 	try:
-		return laser_module.load_json_file(metadata_path).get("side")
+		return normalize_saved_side(laser_module.load_json_file(metadata_path).get("side"))
 	except Exception:
 		return None
 
@@ -178,7 +188,7 @@ def resolve_probe_reach(
 	Planning and candidate selection only: `run_z_stall_anchor` applies the xy offset and the
 	probe shift itself, so the run hands it the raw axis limits.
 	"""
-	xy_offset = laser_module.get_scan_xy_offset(scan_config=scan_config, side=side)
+	xy_offset = laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side)
 	offset_x_mm = 0.0 if xy_offset is None else float(xy_offset[0])
 	shift_mm = float(scan_config.z_stall_probe_x_shift_mm)
 	upper_mm, lower_mm = resolve_motor_limits(config, "x_axis")
@@ -307,7 +317,7 @@ def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side:
 		"reference_stage_mm": float(result.stage_extension_mm),
 		"reference_z_place_mm": float(result.z_place_mm),
 	}
-	side_name = "left" if side == StorageModuleSide.LEFT else "right"
+	side_name = "front" if side == StorageModuleSide.FRONT else "back"
 	print(f"model for robot.grid.scan.{side_name}_z_offset_model: {model}")
 	print(
 		f"  model_source={decision.source} raw_probe_intercept_mm={float(result.intercept_mm):.3f} "
@@ -347,7 +357,7 @@ def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side:
 
 	if manual_reference.z_captured_stage_mm is not None:
 		stage_delta_mm = abs(float(manual_reference.z_captured_stage_mm) - float(result.stage_extension_mm))
-		pin_tolerance_mm = float(scan_config.z_offset_model_param_tolerance_mm)
+		pin_tolerance_mm = float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM)
 		stage_ok = stage_delta_mm <= pin_tolerance_mm
 		print(
 			f"           datum captured at stage {float(manual_reference.z_captured_stage_mm):.2f}mm vs probe "
@@ -365,7 +375,7 @@ def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side:
 
 async def main() -> int:
 	args = build_parser().parse_args()
-	side = StorageModuleSide.LEFT if args.module == "left" else StorageModuleSide.RIGHT
+	side = StorageModuleSide.FRONT if args.module == "front" else StorageModuleSide.BACK
 	cells = parse_cells(args.cell)
 	config = load_config_file(args.config)
 	scan_config = resolve_scan_config(config, args)
@@ -376,7 +386,7 @@ async def main() -> int:
 	run_dir = args.from_run if args.from_run is not None else newest_run_dir(Path(args.config), side)
 	metadata_path = Path(run_dir) / "metadata.json"
 	metadata = laser_module.load_json_file(metadata_path)
-	saved_side = metadata.get("side")
+	saved_side = normalize_saved_side(metadata.get("side"))
 
 	if args.from_run is not None and saved_side is not None and saved_side != side.value:
 		raise ValueError(
@@ -476,7 +486,7 @@ async def main() -> int:
 			side=side,
 			scan_config=scan_config,
 			excluded_cells=excluded_cells,
-			xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
+			xy_offset=laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side),
 		)
 		return 0
 
@@ -490,7 +500,7 @@ async def main() -> int:
 			x_axis_limit_mm=x_axis_limit_mm,
 			x_axis_lower_limit_mm=x_axis_lower_limit_mm,
 			z_axis_limit_mm=z_axis_limit_mm,
-			xy_offset=laser_module.get_scan_xy_offset(scan_config=scan_config, side=side),
+			xy_offset=laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side),
 			should_abort=None,
 		)
 

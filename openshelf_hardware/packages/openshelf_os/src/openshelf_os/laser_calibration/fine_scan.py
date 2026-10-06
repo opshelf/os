@@ -432,14 +432,6 @@ def build_detected_cell_from_segments(
 	)
 
 
-def get_coarse_settle_ms(fine_settle_ms: int) -> int:
-	return max(0, fine_settle_ms)
-
-
-def get_coarse_samples_per_point(fine_samples_per_point: int) -> int:
-	return max(1, fine_samples_per_point)
-
-
 def get_fine_settle_ms(config_settle_ms: int) -> int:
 	return max(0, config_settle_ms)
 
@@ -546,7 +538,6 @@ def build_detected_shelves(
 			current_shelf = ScanDetectedShelf(
 				shelf_idx=0,
 				center_y_mm=cell.center_y_mm,
-				shelf_height_mm=cell.height_mm,
 				shelf_width_mm=cell.width_mm,
 			)
 			current_cells = [cell]
@@ -565,14 +556,12 @@ def build_detected_shelves(
 
 		current_shelf.cells = list(current_cells)
 		current_shelf.center_y_mm = float(np.mean([current.center_y_mm for current in current_cells]))
-		current_shelf.shelf_height_mm = max(current.height_mm for current in current_cells)
 		current_shelf.shelf_width_mm = sum(current.width_mm for current in current_cells)
 		shelves.append(current_shelf)
 
 		current_shelf = ScanDetectedShelf(
 			shelf_idx=len(shelves),
 			center_y_mm=cell.center_y_mm,
-			shelf_height_mm=cell.height_mm,
 			shelf_width_mm=cell.width_mm,
 		)
 		current_cells = [cell]
@@ -589,7 +578,6 @@ def build_detected_shelves(
 
 	current_shelf.cells = list(current_cells)
 	current_shelf.center_y_mm = float(np.mean([current.center_y_mm for current in current_cells]))
-	current_shelf.shelf_height_mm = max(current.height_mm for current in current_cells)
 	current_shelf.shelf_width_mm = sum(current.width_mm for current in current_cells)
 	shelves.append(current_shelf)
 	return shelves

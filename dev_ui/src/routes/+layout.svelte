@@ -3,6 +3,7 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import {
+		buildAuthenticatedUrl,
 		createReconnectingEventSource,
 		isApiConnected,
 		isAuthenticated,
@@ -15,6 +16,9 @@
 		type WorkerStatusPayload
 	} from '$lib';
 	import { devicePath, stripDeviceId } from '$lib/nav';
+	import NeedsHomeAlert from '$lib/components/NeedsHomeAlert.svelte';
+	import SafetyAckAlert from '$lib/components/SafetyAckAlert.svelte';
+	import ToastStack from '$lib/components/ToastStack.svelte';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -34,8 +38,26 @@
 
 	let { children } = $props();
 	let authReady = $state(false);
+	let apiState = $state<'unknown' | 'down' | 'up'>('unknown');
 	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
 	let didReceiveRobotUnavailable = false;
+
+	function setApiState(state: 'unknown' | 'down' | 'up'): void {
+		apiState = state;
+		isApiConnected.set(state === 'up');
+	}
+
+	async function probeApiState(): Promise<void> {
+		try {
+			const response = await fetch(buildAuthenticatedUrl('/robot/status'), {
+				headers: { Accept: 'text/event-stream' }
+			});
+			await response.body?.cancel();
+			setApiState(response.status >= 500 ? 'down' : 'up');
+		} catch {
+			setApiState('down');
+		}
+	}
 
 	function isActiveLink(href: string, currentPath: string): boolean {
 		const path = stripDeviceId(currentPath);
@@ -52,7 +74,7 @@
 			robotStatus.set(JSON.parse(raw) as WorkerStatusPayload);
 			robotStatusError.set('');
 			robotStatusLastUpdate.set(new Date().toLocaleString());
-			isApiConnected.set(true);
+			setApiState('up');
 		} catch {
 			robotStatusError.set('failed to parse robot status payload');
 		}
@@ -64,6 +86,8 @@
 		}
 
 		async function startStatusStream(): Promise<void> {
+			void probeApiState();
+
 			if (isAuthenticated() === false) {
 				try {
 					await loginAsDeveloper();
@@ -78,7 +102,7 @@
 				path: '/robot/status',
 				refreshAuthenticationOnError: () => didReceiveRobotUnavailable === false,
 				onOpen: () => {
-					isApiConnected.set(true);
+					setApiState('up');
 					robotStatusError.set('');
 				},
 				onMessage: (event) => {
@@ -87,11 +111,11 @@
 				onError: () => {
 					if (didReceiveRobotUnavailable === true) {
 						didReceiveRobotUnavailable = false;
-						isApiConnected.set(true);
+						setApiState('up');
 						return;
 					}
 
-					isApiConnected.set(false);
+					setApiState('down');
 					robotStatusError.set('lost connection to robot status stream');
 				},
 				events: {
@@ -107,7 +131,7 @@
 								robotStatus.set(null);
 								robotStatusLastUpdate.set('');
 							}
-							isApiConnected.set(true);
+							setApiState('up');
 						} catch {
 							// ignore malformed init progress payloads
 						}
@@ -120,7 +144,7 @@
 						didReceiveRobotUnavailable = true;
 						robotStatus.set(null);
 						robotStatusError.set(event.data);
-						isApiConnected.set(true);
+						setApiState('up');
 					}
 				}
 			});
@@ -164,51 +188,21 @@
 	{@render children?.()}
 </main>
 
-{#if authReady === false || $isApiConnected === false}
+<NeedsHomeAlert />
+<SafetyAckAlert />
+
+{#if apiState === 'down'}
 	<div class="connection-overlay">
-		<div class="connection-message">
-			{authReady === false ? 'AUTHENTICATING, PLEASE WAIT' : 'CONNECTING, PLEASE WAIT'}
-		</div>
+		<div class="connection-message">DEVICE OR API IS UNREACHABLE</div>
+	</div>
+{:else if authReady === false}
+	<div class="connection-overlay">
+		<div class="connection-message">AUTHENTICATING, PLEASE WAIT</div>
+	</div>
+{:else if apiState === 'unknown'}
+	<div class="connection-overlay">
+		<div class="connection-message">CONNECTING, PLEASE WAIT</div>
 	</div>
 {/if}
 
-<div class="logo-container">
-	<table class="logo-table">
-		<tbody>
-			<tr class="row-1"><td></td></tr>
-			<tr class="row-2"><td></td></tr>
-			<tr class="row-3"><td></td></tr>
-		</tbody>
-	</table>
-</div>
-
-<style>
-	.logo-container {
-		position: fixed;
-		bottom: 1.5em;
-		right: 1.5em;
-	}
-
-	.logo-table {
-		width: 4em;
-		height: 4em;
-		border-collapse: collapse;
-	}
-
-	.logo-table td {
-		border: 3px solid #00a210;
-		padding: 0;
-	}
-
-	.logo-table .row-1 td {
-		height: 21.74%;
-	}
-
-	.logo-table .row-2 td {
-		height: 34.78%;
-	}
-
-	.logo-table .row-3 td {
-		height: 43.48%;
-	}
-</style>
+<ToastStack />

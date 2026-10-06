@@ -12,13 +12,14 @@ import logging
 import socket
 import struct
 from pathlib import Path
-from typing import Any, AsyncGenerator, Optional, cast
+from typing import Any, AsyncGenerator, NamedTuple, Optional, cast
 from urllib.parse import urlsplit
 
 import sentry_sdk
 import uvicorn
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from argon2 import PasswordHasher
 from fastapi import FastAPI, Request
 from openshelf_os_server.documentation import DESCRIPTION, TAGS, configure_security_documentation
@@ -28,14 +29,27 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.transport import HttpTransport
-from sqlalchemy import select
+from sqlalchemy import create_engine, inspect, select
+from sqlalchemy.pool import NullPool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from openshelf_os.device import get_device_id
+from openshelf_os.device import get_device_alias, get_device_id, get_release_branch, get_release_sha
+from openshelf_os import (
+    DOOR_MOTOR_RECOVERY_EVENT,
+    _redact_sensitive_mapping,
+    _sentry_event_has_door_motor_recovery_failure,
+    _sentry_event_has_message,
+    _sentry_event_has_suppressed_pymodbus_message,
+    _sentry_log_has_door_motor_recovery_failure,
+    _sentry_log_has_message,
+    _sentry_log_is_suppressed_pymodbus_message,
+    _strip_pymodbus_frame_dump,
+)
 from openshelf_os.common import CONFIG_PATH, OperatingMode
 from openshelf_os.operating_mode import should_enable_sentry
 from openshelf_os.runtime_state import RuntimeStatePaths
-from openshelf_os_server.core.logging_config import configure_logging, get_logger
+from openshelf_os_server.core.logging_config import configure_logging, get_logger, get_correlation_id
+from openshelf_os_server.core.migrations import rename_module_side_values
 from openshelf_os_server.core.robot import get_robot_health, init_robot_worker, stop_robot_worker
 from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
@@ -58,6 +72,13 @@ from openshelf_os_server.core.mock_robot import (
 	stop_mock_robot_runtime,
 )
 from openshelf_os_server.core.command_lifecycle import recover_interrupted_commands
+from openshelf_os_server.errors import (
+	capture_unhandled_exception,
+	error_detail,
+	internal_error_detail,
+	register_mapped_handlers,
+	request_correlation_id,
+)
 from openshelf_os_server.settings import Settings
 from openshelf_os_server.database.base import Base, engine, get_database_url
 from openshelf_os_server.database.session import AsyncSessionLocal, get_db
@@ -72,13 +93,48 @@ from openshelf_os_server.utils.cors_policy import allows_credentials, resolve_al
 configure_logging()
 logger = get_logger(__name__)
 
-SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
 PYMODBUS_NO_RESPONSE_RETRY_PREFIX = "No response received after "
 PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
+# pymodbus' Log.error/Log.critical append the last frames as "\n>>>>> send: ..." /
+# "\n>>>>> recv: ..." lines whenever DEBUG logging is off, so the message of a
+# no-response retry is the log text plus that trailer. Every appended line
+# carries the marker prefix; a deduplicated frame shows up as
+# ">>>>> Repeating....".
 ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 TOOL_FAULT_LOG_EVENT = "Tool fault detected - manual intervention required"
-DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
+# The message uvicorn hands to Task.cancel() for every request task that is still running when
+# the drain window given to it in start() (`timeout_graceful_shutdown`) expires. Its presence
+# marks a cancellation uvicorn started itself rather than one a client or the app caused.
+UVICORN_SHUTDOWN_CANCEL_MESSAGE = "Task cancelled, timeout graceful shutdown exceeded"
+# Exceptions anyio leaves as the context of a cancellation delivered inside its own streams:
+# MemoryObjectReceiveStream.receive() tries the non-blocking path first, catches the WouldBlock
+# it raises, and only then awaits its receiver event, so a cancel that lands on that await carries
+# WouldBlock as its context. Starlette's BaseHTTPMiddleware awaits such a stream in call_next.
+ANYIO_STREAM_CONTEXT_ERRORS = (
+	"WouldBlock",
+	"EndOfStream",
+	"ClosedResourceError",
+	"BrokenResourceError",
+)
+# anyio names a task after the callable spawned into its task group, and records the repr of the
+# task that called CancelScope.cancel() in the CancelledError message it delivers. These are the
+# request tasks that tear a streaming request down once the client stops listening: sse-starlette
+# cancels its response task group from cancel_on_finish, and Starlette's BaseHTTPMiddleware cancels
+# the scope running the endpoint from call_next.<locals>.coro.
+ANYIO_CANCEL_SCOPE_MESSAGE = "Cancelled via cancel scope"
+ASGI_REQUEST_CANCEL_TASKS = (
+	"cancel_on_finish",
+	"starlette.middleware.base.BaseHTTPMiddleware",
+)
+DOOR_MOTOR_RECOVERY_FAILED_PREFIX = "Door motor recovery failed:"
+# The log line uvicorn writes when the drain window given to it in start()
+# (`timeout_graceful_shutdown`) expires. uvicorn.Server.shutdown logs it through its own
+# "uvicorn.error" logger at ERROR level, with the number of requests still running as the only
+# parameter, and then cancels those requests and exits. Stored as the two parts around that number so
+# the unformatted record ("Cancel %s running task(s), ...") matches as well as the formatted one.
+UVICORN_SHUTDOWN_DRAIN_PREFIX = "Cancel "
+UVICORN_SHUTDOWN_DRAIN_SUFFIX = " running task(s), timeout graceful shutdown exceeded"
 ROBOT_UNAVAILABLE_REQUEST_PATH_PREFIXES = (
 	"/api/robot",
 	"/api/calibration",
@@ -87,40 +143,25 @@ ROBOT_UNAVAILABLE_REQUEST_PATH_PREFIXES = (
 )
 
 
-def _redact_sensitive_mapping(value: Any) -> Any:
-	if isinstance(value, dict) is True:
-		redacted: dict[str, Any] = {}
-
-		for key, item in value.items():
-			if isinstance(key, str) is True and key.lower() in SENSITIVE_HEADER_NAMES:
-				redacted[key] = "[Filtered]"
-				continue
-
-			redacted[key] = _redact_sensitive_mapping(item)
-
-		return redacted
-
-	if isinstance(value, list) is True:
-		return [_redact_sensitive_mapping(item) for item in value]
-
-	return value
-
 
 def _is_pymodbus_request_id_mismatch(message: Any) -> bool:
 	return isinstance(message, str) is True and message.startswith(PYMODBUS_REQUEST_ID_MISMATCH_PREFIX)
+
 
 
 def _is_pymodbus_no_response_retry(message: Any) -> bool:
 	if isinstance(message, str) is False:
 		return False
 
-	if message.startswith(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) is False:
+	log_text = _strip_pymodbus_frame_dump(message)
+
+	if log_text.startswith(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) is False:
 		return False
 
-	if message.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
+	if log_text.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
 		return False
 
-	retry_count = message[
+	retry_count = log_text[
 		len(PYMODBUS_NO_RESPONSE_RETRY_PREFIX):-len(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX)
 	]
 	return retry_count.isdigit()
@@ -133,9 +174,24 @@ def _is_suppressed_pymodbus_log_message(message: Any) -> bool:
 	)
 
 
-def _sentry_log_is_suppressed_pymodbus_message(log: dict[str, Any]) -> bool:
+def _is_uvicorn_shutdown_drain_message(message: Any) -> bool:
+	if isinstance(message, str) is False:
+		return False
+
+	if message.startswith(UVICORN_SHUTDOWN_DRAIN_PREFIX) is False:
+		return False
+
+	return message.endswith(UVICORN_SHUTDOWN_DRAIN_SUFFIX) is True
+
+
+def _is_door_motor_recovery_failure(message: Any) -> bool:
+	return isinstance(message, str) is True and message.startswith(DOOR_MOTOR_RECOVERY_FAILED_PREFIX)
+
+
+
+def _sentry_log_is_uvicorn_shutdown_drain(log: dict[str, Any]) -> bool:
 	for key in ("body", "message"):
-		if _is_suppressed_pymodbus_log_message(log.get(key)) is True:
+		if _is_uvicorn_shutdown_drain_message(log.get(key)) is True:
 			return True
 
 	attributes_value = log.get("attributes")
@@ -143,20 +199,9 @@ def _sentry_log_is_suppressed_pymodbus_message(log: dict[str, Any]) -> bool:
 		return False
 
 	attributes = cast(dict[str, Any], attributes_value)
-	return any(_is_suppressed_pymodbus_log_message(value) is True for value in attributes.values())
+	return any(_is_uvicorn_shutdown_drain_message(value) is True for value in attributes.values())
 
 
-def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
-	for key in ("body", "message"):
-		if log.get(key) == target:
-			return True
-
-	attributes_value = log.get("attributes")
-	if isinstance(attributes_value, dict) is False:
-		return False
-
-	attributes = cast(dict[str, Any], attributes_value)
-	return any(value == target for value in attributes.values())
 
 
 def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:
@@ -173,14 +218,28 @@ def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]
 	return [value for value in values_list if isinstance(value, dict) is True]
 
 
-def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
-	if event.get("message") == target:
+
+
+
+def _sentry_event_is_uvicorn_shutdown_drain(event: dict[str, Any]) -> bool:
+	"""Drop the notice uvicorn logs when its shutdown drain window expires.
+
+	Long-lived requests - an SSE status or event stream, an MJPEG camera stream - never finish on
+	their own, so the window start() gives uvicorn expires on every restart with a live client and
+	uvicorn.Server.shutdown logs the drain message at ERROR level before cancelling those requests and
+	exiting. The LoggingIntegration turns any ERROR record into an issue, so each planned restart filed
+	a stackless log-only event here next to the CancelledError the cancellation raises in the request.
+	Cancelling the requests that outlived the window is the configured outcome of a restart, not a
+	fault, and the record carries no stack, no request and no device state, so it is dropped. Both the
+	formatted message and the "%s" template uvicorn passed to the logger are matched.
+	"""
+	if _is_uvicorn_shutdown_drain_message(event.get("message")) is True:
 		return True
 
 	logentry_value = event.get("logentry")
 	if isinstance(logentry_value, dict) is True:
 		logentry = cast(dict[str, Any], logentry_value)
-		if any(logentry.get(key) == target for key in ("message", "formatted")) is True:
+		if any(_is_uvicorn_shutdown_drain_message(logentry.get(key)) is True for key in ("message", "formatted")):
 			return True
 
 	entries_value = event.get("entries", [])
@@ -193,54 +252,55 @@ def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
 		if isinstance(data, dict) is False:
 			continue
 
-		if any(data.get(key) == target for key in ("message", "formatted")) is True:
+		if any(_is_uvicorn_shutdown_drain_message(data.get(key)) is True for key in ("message", "formatted")):
 			return True
 
 	return False
 
 
-def _sentry_event_has_suppressed_pymodbus_message(event: dict[str, Any]) -> bool:
-	if _is_suppressed_pymodbus_log_message(event.get("message")) is True:
-		return True
+def _sentry_event_is_asgi_request_cancel(event: dict[str, Any]) -> bool:
+	"""Drop a cancellation an ASGI request task issued while nothing but a cancellation failed.
 
-	logentry_value = event.get("logentry")
-	if isinstance(logentry_value, dict) is True:
-		logentry = cast(dict[str, Any], logentry_value)
-		if any(_is_suppressed_pymodbus_log_message(logentry.get(key)) is True for key in ("message", "formatted")):
-			return True
+	A streaming endpoint such as /api/robot/events is torn down by cancelling its request task:
+	sse-starlette's `cancel_on_finish` cancels the response task group when the response finishes,
+	and Starlette's BaseHTTPMiddleware cancels the scope running the endpoint in
+	`call_next.<locals>.coro`. The CancelledError then surfaces from whatever the teardown was
+	awaiting at that moment, so a pooled SQLite connection being returned is one of the await
+	points SQLAlchemy's pool logs (`Exception terminating connection`) with the cancellation
+	attached. Those are the configured outcome of a client that stopped listening or of a restart
+	that cancelled the request, not a fault.
 
-	entries_value = event.get("entries", [])
-	entries = cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
-	for entry in entries:
-		if isinstance(entry, dict) is False:
+	The cancelling task is the request task, and a real failure can be chained to the cancellation,
+	so both stay reportable: the event is dropped only when every serialized exception is a
+	cancellation, or one of anyio's stream bookkeeping types, and one of them names an ASGI request
+	task as the canceller.
+	"""
+	values = _sentry_event_exception_values(event)
+	if len(values) == 0:
+		return False
+
+	is_request_cancel = False
+	for value in values:
+		if _sentry_exception_type_is_one_of(value, ("CancelledError",)) is True:
+			exception_message_value = value.get("value")
+			if not isinstance(exception_message_value, str):
+				continue
+
+			exception_message = exception_message_value
+			if ANYIO_CANCEL_SCOPE_MESSAGE not in exception_message:
+				continue
+
+			if any(task in exception_message for task in ASGI_REQUEST_CANCEL_TASKS) is True:
+				is_request_cancel = True
+
 			continue
 
-		data = entry.get("data")
-		if isinstance(data, dict) is False:
+		if _sentry_exception_type_is_one_of(value, ANYIO_STREAM_CONTEXT_ERRORS) is True:
 			continue
 
-		if any(_is_suppressed_pymodbus_log_message(data.get(key)) is True for key in ("message", "formatted")):
-			return True
+		return False
 
-	return False
-
-
-def _sentry_event_is_anyio_cancelled_error(event: dict[str, Any]) -> bool:
-	for value in _sentry_event_exception_values(event):
-		exception_type_value = value.get("type")
-		exception_message_value = value.get("value")
-		if not isinstance(exception_type_value, str) or not isinstance(exception_message_value, str):
-			continue
-
-		exception_type = exception_type_value
-		exception_message = exception_message_value
-		if exception_type.endswith("CancelledError") is False:
-			continue
-
-		if "Cancelled via cancel scope" in exception_message and "cancel_on_finish" in exception_message:
-			return True
-
-	return False
+	return is_request_cancel
 
 
 def _sentry_event_is_http_exception(event: dict[str, Any], hint: dict[str, Any]) -> bool:
@@ -304,20 +364,87 @@ def _sentry_event_is_robot_unavailable_request(event: dict[str, Any]) -> bool:
 	return False
 
 
+def _sentry_exception_type_is_one_of(value: dict[str, Any], names: tuple[str, ...]) -> bool:
+	exception_type_value = value.get("type")
+	if not isinstance(exception_type_value, str):
+		return False
+
+	exception_type = exception_type_value
+	for name in names:
+		if exception_type == name or exception_type.endswith(f".{name}"):
+			return True
+
+	return False
+
+
+def _sentry_event_is_shutdown_cancelled_request(event: dict[str, Any]) -> bool:
+	"""Drop a request uvicorn cancelled when its shutdown drain window expired.
+
+	start() gives uvicorn a bounded graceful shutdown so an API restart exits even while a client
+	still holds a long-lived request - an SSE status or event stream, an MJPEG camera stream, or a
+	move that runs longer than the window. When the window expires, uvicorn cancels that request task
+	itself and the CancelledError surfaces from whatever the ASGI stack was sitting on, so the frames
+	are framework bookkeeping and the event says only "this request was still running at restart".
+
+	That is the configured outcome of a restart, not a fault, so it is dropped. The cancellation is
+	accepted on its own, though: a real failure that was chained to it stays reportable, so any
+	exception type that is not a cancellation or one of anyio's stream bookkeeping types keeps the
+	event.
+	"""
+	values = _sentry_event_exception_values(event)
+	if len(values) == 0:
+		return False
+
+	is_shutdown_cancel = False
+	for value in values:
+		if _sentry_exception_type_is_one_of(value, ("CancelledError",)) is True:
+			exception_message_value = value.get("value")
+			if not isinstance(exception_message_value, str):
+				continue
+
+			exception_message = exception_message_value
+			if UVICORN_SHUTDOWN_CANCEL_MESSAGE in exception_message:
+				is_shutdown_cancel = True
+
+			continue
+
+		if _sentry_exception_type_is_one_of(value, ANYIO_STREAM_CONTEXT_ERRORS) is True:
+			continue
+
+		return False
+
+	return is_shutdown_cancel
+
+
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
 	if _sentry_event_is_http_exception(event, _hint) is True:
 		return None
 
-	if _sentry_event_is_anyio_cancelled_error(event) is True:
+	if _sentry_event_is_asgi_request_cancel(event) is True:
 		return None
 
 	if _sentry_event_has_suppressed_pymodbus_message(event) is True:
 		return None
 
+	if _sentry_event_is_uvicorn_shutdown_drain(event) is True:
+		return None
+
 	if _sentry_event_has_message(event, DOOR_MOTOR_RECOVERY_EVENT) is True:
 		return None
 
+	# The IO-box door recovery is a best-effort self-healing path that keeps the
+	# cached door state when its recovery home fails; the motor fault itself is
+	# still reported separately as the motor's "Fault detected - stopping motor"
+	# warning or an ERROR-level motion-timeout event. The recovery message is
+	# stackless, so drop the whole recovery-failure class instead of a log-only
+	# issue grouped by that message.
+	if _sentry_event_has_door_motor_recovery_failure(event) is True:
+		return None
+
 	if _sentry_event_is_robot_unavailable_request(event) is True:
+		return None
+
+	if _sentry_event_is_shutdown_cancelled_request(event) is True:
 		return None
 
 	request_value = event.get("request")
@@ -334,6 +461,9 @@ def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[
 	if _sentry_log_is_suppressed_pymodbus_message(log) is True:
 		return None
 
+	if _sentry_log_is_uvicorn_shutdown_drain(log) is True:
+		return None
+
 	# The startup path already captures the underlying exception separately with a stacktrace.
 	# Dropping the structured log avoids a duplicate log-only issue grouped by message.
 	if _sentry_log_has_message(log, ROBOT_INITIALIZATION_FAILED_EVENT) is True:
@@ -346,6 +476,9 @@ def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[
 		return None
 
 	if _sentry_log_has_message(log, DOOR_MOTOR_RECOVERY_EVENT) is True:
+		return None
+
+	if _sentry_log_has_door_motor_recovery_failure(log) is True:
 		return None
 
 	attributes_value = log.get("attributes")
@@ -373,9 +506,13 @@ def _configure_sentry() -> bool:
 		logger.warning("sentry_not_configured", reason="SENTRY_DSN_API not set", mode=mode.value)
 		return False
 
+	# Errors only: each one is sent the moment it is captured. Sentry logs, traces, and
+	# release-health sessions are batched or sent at exit, so a shutdown always found
+	# some pending and waited out shutdown_timeout.
 	sentry_sdk.init(
 		dsn=sentry_dsn,
-		enable_logs=True,
+		enable_logs=False,
+		auto_session_tracking=False,
 		integrations=[
 			StarletteIntegration(transaction_style="endpoint"),
 			FastApiIntegration(transaction_style="endpoint"),
@@ -385,7 +522,7 @@ def _configure_sentry() -> bool:
 				event_level=logging.ERROR,
 			),
 		],
-		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+		traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0")),
 		environment=mode.value,
 		release=os.getenv("APP_VERSION", "0.1.0"),
 		server_name=device_id,
@@ -404,30 +541,165 @@ def _configure_sentry() -> bool:
 sentry_enabled = _configure_sentry()
 
 
-def _run_migrations() -> None:
-	try:
-		script_location = Path(__file__).parent / "alembic"
+MISSING_SCHEMA_DETAIL_LIMIT = 25
 
-		if script_location.exists() is False:
-			logger.warning("alembic_directory_missing", script_location=str(script_location))
+
+class _SchemaState(NamedTuple):
+	"""What the live database holds compared to the schema the models describe."""
+
+	current_revisions: list[str]
+	tables_present: int
+	missing: list[str]
+
+
+def _alembic_config(database_url: str) -> Optional[Config]:
+	script_location = Path(__file__).parent / "alembic"
+
+	if script_location.exists() is False:
+		logger.warning("alembic_directory_missing", script_location=str(script_location))
+		return None
+
+	# Historical resolution, kept as is: the packaged alembic.ini is not found from
+	# here, so the fallback Config is what runs in the image. Loading that ini would
+	# make alembic/env.py call fileConfig(), which disables the app loggers that
+	# configure_logging() already installed.
+	alembic_ini_path = Path(__file__).parent.parent.parent.parent.parent / "alembic.ini"
+
+	if alembic_ini_path.exists() is False:
+		logger.warning("alembic_ini_missing", path=str(alembic_ini_path), action="using_fallback_config")
+		alembic_cfg = Config()
+	else:
+		alembic_cfg = Config(str(alembic_ini_path))
+
+	alembic_cfg.set_main_option("script_location", str(script_location))
+	alembic_cfg.set_main_option("sqlalchemy.url", database_url)
+	return alembic_cfg
+
+
+def _schema_state(database_url: str) -> _SchemaState:
+	"""Compare the live schema with the schema `Base.metadata` describes.
+
+	The API builds its databases with `Base.metadata.create_all`, and a replay that
+	dies partway leaves behind the `alembic_version` rows sqlite committed around its
+	DDL, so neither the revision row nor its absence says where the schema really is.
+	Missing lists every model table, and every `table.column`, that the database does
+	not have yet.
+	"""
+	sync_engine = create_engine(database_url, poolclass=NullPool)
+
+	try:
+		with sync_engine.connect() as connection:
+			inspector = inspect(connection)
+			table_names = set(inspector.get_table_names())
+			current_revisions: list[str] = []
+
+			if "alembic_version" in table_names:
+				current_revisions = sorted(
+					str(row[0]) for row in connection.exec_driver_sql("SELECT version_num FROM alembic_version")
+				)
+
+			missing: list[str] = []
+
+			for table_name, table in Base.metadata.tables.items():
+				if table_name not in table_names:
+					missing.append(table_name)
+					continue
+
+				columns = {column["name"] for column in inspector.get_columns(table_name)}
+				missing.extend(
+					f"{table_name}.{column.name}"
+					for column in table.columns
+					if column.name not in columns
+				)
+
+			missing_tables = len([entry for entry in missing if "." not in entry])
+			return _SchemaState(
+				current_revisions=current_revisions,
+				tables_present=len(Base.metadata.tables) - missing_tables,
+				missing=missing,
+			)
+	finally:
+		sync_engine.dispose()
+
+
+def _apply_module_side_rename(database_url: str) -> None:
+	"""Re-run the idempotent side-value rename that a baseline stamp skips.
+
+	`_schema_state` compares table and column names only, so the data-only
+	revision f9a0b1c2d3e4 (left/right to front/back in `item_locations` and
+	`storage_bins`) is invisible to it: a field database stamped onto head
+	would keep its old side values under code that no longer matches them.
+	The UPDATEs only touch rows that still carry the old values, so re-running
+	them after every startup path is a no-op in steady state.
+	"""
+	sync_engine = create_engine(database_url, poolclass=NullPool)
+
+	try:
+		with sync_engine.begin() as connection:
+			rename_module_side_values(connection, forward=True)
+	finally:
+		sync_engine.dispose()
+
+
+def _run_migrations() -> None:
+	"""Bring the database to revision head, or baseline it when it is already there.
+
+	Databases in the field were built by `Base.metadata.create_all`, not by this
+	revision chain: they already carry the schema head describes while
+	`alembic_version` holds no version, or an old row an aborted replay left behind.
+	Replaying the full history into them can never complete - revisions create tables
+	and indexes that are already there (`storage_bins`,
+	`ix_item_sizer_measurements_upca`), and no revision creates `items`,
+	`item_locations` or `storage_cells`, whose absence breaks the batch rebuild in
+	a4b5c6d7e8f9. Every abort logged `migration_failed`, and since sqlite had already
+	committed the version rows around its DDL the next start replayed the same way, so
+	every restart of every device raised this alert again.
+
+	A database whose schema matches the models - or that holds no model table at all
+	and is about to get them from the create_all that runs right after here - is
+	baselined with a stamp instead. A stamp writes one `alembic_version` row, touches
+	no rows and no tables, and revisions land incrementally from head from then on.
+	"""
+	try:
+		db_url = get_database_url()
+		alembic_cfg = _alembic_config(db_url)
+
+		if alembic_cfg is None:
 			return
 
-		package_root = Path(__file__).parent.parent.parent.parent.parent
-		alembic_ini_path = package_root / "alembic.ini"
+		heads = sorted(ScriptDirectory.from_config(alembic_cfg).get_heads())
+		state = _schema_state(db_url)
+		fresh_database = state.tables_present == 0
+		schema_is_current = state.missing == []
 
-		if alembic_ini_path.exists() is False:
-			logger.warning("alembic_ini_missing", path=str(alembic_ini_path), action="using_fallback_config")
-			alembic_cfg = Config()
-			alembic_cfg.set_main_option("script_location", str(script_location))
-		else:
-			alembic_cfg = Config(str(alembic_ini_path))
-			alembic_cfg.set_main_option("script_location", str(script_location))
+		if state.current_revisions != heads and (fresh_database is True or schema_is_current is True):
+			logger.info(
+				"migrations_baseline_stamped",
+				reason="empty_database" if fresh_database is True else "schema_matches_models",
+				previous_revision=",".join(state.current_revisions) or None,
+				tables_present=state.tables_present,
+				model_tables=len(Base.metadata.tables),
+			)
+			command.stamp(alembic_cfg, "head")
+			_apply_module_side_rename(db_url)
+			logger.info("database_migrations_complete", action="baseline_stamp")
+			return
 
-		db_url = get_database_url()
-		alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+		if fresh_database is False and schema_is_current is False:
+			# The schema matches neither the models nor head, so the replay below is the
+			# only path left. Name the drift it has to close: revisions cannot add a
+			# column to a table they did not create, and an abort that follows has to say
+			# what the device is short of.
+			logger.warning(
+				"migrations_history_replay",
+				from_revision=",".join(state.current_revisions) or None,
+				missing_count=len(state.missing),
+				missing=state.missing[:MISSING_SCHEMA_DETAIL_LIMIT],
+			)
 
-		logger.info("running_database_migrations", script_location=str(script_location))
+		logger.info("running_database_migrations", script_location=str(Path(__file__).parent / "alembic"))
 		command.upgrade(alembic_cfg, "head")
+		_apply_module_side_rename(db_url)
 		logger.info("database_migrations_complete")
 	except Exception as e:
 		logger.error("migration_failed", error=str(e), exc_info=True)
@@ -885,20 +1157,15 @@ app.add_middleware(
 	allow_headers=["*"],
 )
 app.add_middleware(CorrelationIdMiddleware)
-app.add_middleware(AuditMiddleware)
+app.add_middleware(AuditMiddleware, sentry_enabled=sentry_enabled)
+register_mapped_handlers(app)
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-	correlation_id = getattr(request.state, "correlation_id", None)
+	correlation_id = get_correlation_id() or request_correlation_id(request)
 
-	if sentry_enabled is True and sentry_sdk.is_initialized() is True:
-		with sentry_sdk.new_scope() as scope:
-			if correlation_id:
-				scope.set_tag("correlation_id", correlation_id)
-			scope.set_tag("path", request.url.path)
-			scope.set_tag("method", request.method)
-			sentry_sdk.capture_exception(exc)
+	capture_unhandled_exception(exc, request.url.path, request.method, correlation_id, enabled=sentry_enabled)
 
 	logger.error(
 		"unhandled_exception",
@@ -909,10 +1176,10 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 		correlation_id=correlation_id,
 		exc_info=True,
 	)
-	detail: dict[str, str] = {"message": "Internal server error", "code": "internal_error"}
+	code, message = internal_error_detail(exc)
+	detail: dict[str, str] = error_detail(message, code)
 	if correlation_id:
 		detail["correlation_id"] = correlation_id
-		detail["reason"] = f"correlation_id={correlation_id}"
 	return JSONResponse(status_code=500, content={"detail": detail})
 
 
@@ -971,10 +1238,14 @@ async def health() -> JSONResponse:
     responses=response_docs(model=SystemInfoResponse),
 )
 async def system_info() -> dict[str, str | None]:
-	"""Read device identity and network address.
+	"""Read device identity, alias, release, and network address.
 
-	Public device discovery information. `lan_ip` is the IPv4 address of `wlan0`, or null
-	when that interface cannot be read. This endpoint does not establish robot readiness.
+	Public device discovery information. `device_alias` is the operator-assigned alias
+	staged by provisioning, or null when the device has none. `release_sha` and
+	`release_branch` identify the release the device is running, staged by the
+	on-device sync scripts, or null when unknown. `lan_ip` is the IPv4 address of
+	`wlan0`, or null when that interface cannot be read. This endpoint does not
+	establish robot readiness.
 	"""
 	lan_ip: str | None = None
 	try:
@@ -986,7 +1257,13 @@ async def system_info() -> dict[str, str | None]:
 	except OSError:
 		pass
 
-	return {"device_id": get_device_id(), "lan_ip": lan_ip}
+	return {
+		"device_id": get_device_id(),
+		"device_alias": get_device_alias() or None,
+		"release_sha": get_release_sha() or None,
+		"release_branch": get_release_branch() or None,
+		"lan_ip": lan_ip,
+	}
 
 
 app.include_router(auth.router)
@@ -1044,4 +1321,9 @@ def start() -> None:
 		reload_includes=reload_includes,
 		reload_excludes=reload_excludes,
 		log_config=log_config,
+		# Room for in-flight hardware operations (a rail power cycle holds power off for
+		# 3s). Persistent streams end on the shutdown signal themselves (SSE through
+		# sse-starlette, MJPEG through AppStatus), so the drain stops as soon as the
+		# ordinary requests do.
+		timeout_graceful_shutdown=5,
 	)

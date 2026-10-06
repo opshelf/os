@@ -48,17 +48,6 @@ def _worker(motor):
 
 
 @pytest.mark.anyio
-async def test_get_iobox_door_position_reads_motor_limits(client) -> None:
-	config = _config(close=1.5, open=58.0)
-
-	with patch("openshelf_os_server.routers.calibration.get_root_config", return_value=config):
-		response = await client.get("/api/calibration/iobox/door")
-
-	assert response.status_code == 200
-	assert response.json() == {"close": 1.5, "open": 58.0}
-
-
-@pytest.mark.anyio
 async def test_move_iobox_door_uses_unsaved_candidate_limits(client) -> None:
 	captured_limits: list[tuple[float, float]] = []
 	motor = SimpleNamespace(_params=_door_config(), move_to_position=AsyncMock())
@@ -119,4 +108,4 @@ async def test_iobox_door_position_rejects_close_at_or_above_open(client) -> Non
 	)
 
 	assert response.status_code == 400
-	assert response.json()["detail"] == "IO door close position must be less than open position"
+	assert response.json()["detail"]["message"] == "IO door close position must be less than open position"

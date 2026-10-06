@@ -39,7 +39,7 @@ def _bin_config(location: StorageModuleCellLocation) -> SimpleNamespace:
 
 def _demo_location(cell_idx: int = 0) -> StorageModuleCellLocation:
     return StorageModuleCellLocation(
-        side=StorageModuleSide.LEFT,
+        side=StorageModuleSide.FRONT,
         shelf_idx=0,
         cell_idx=cell_idx,
     )

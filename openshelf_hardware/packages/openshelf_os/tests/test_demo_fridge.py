@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
+from hardware.servo import GripState
 
 import openshelf_os.fridge as fridge_module
 from openshelf_os.common import AxisCoordinate, RootConfig
@@ -17,6 +18,9 @@ from openshelf_os.robot.core import Robot
 from openshelf_os.robot.worker import RobotWorker
 from openshelf_os.storage import StorageModuleCellLocation, StorageModuleSide
 from openshelf_os.tool import Tool
+
+
+GRIPPED = GripState(0x71, 0x9000, 0x90, 0x40)
 
 
 def motor_config(name: str, motor_id: int, *, limit: float) -> dict[str, object]:
@@ -103,7 +107,7 @@ def calibration_fridge_settings() -> DemoFridgeSettings:
 
 def fridge_location() -> StorageModuleCellLocation:
     return StorageModuleCellLocation(
-        side=StorageModuleSide.RIGHT,
+        side=StorageModuleSide.BACK,
         shelf_idx=0,
         cell_idx=1,
     )
@@ -605,7 +609,8 @@ async def test_tool_pick_runs_access_callbacks_around_extension_and_retraction()
     tool = Tool.__new__(Tool)
     tool._gs = SimpleNamespace(
         safe_open=AsyncMock(side_effect=lambda: events.append("gripper_safe")),
-        open=AsyncMock(side_effect=lambda: events.append("grip")),
+        open=AsyncMock(side_effect=lambda: events.append("grip") or GRIPPED),
+        read_state=AsyncMock(return_value=GRIPPED),
     )
     tool.move = AsyncMock(side_effect=lambda _coord: events.append("move"))
     tool.rotate_to_position = AsyncMock(side_effect=lambda _side: events.append("rotate"))
@@ -711,8 +716,9 @@ async def test_tool_access_callbacks_preserve_fridge_safety_rejections(
     tool = Tool.__new__(Tool)
     tool._gs = SimpleNamespace(
         safe_open=AsyncMock(),
-        open=AsyncMock(),
+        open=AsyncMock(return_value=GRIPPED),
         close=AsyncMock(),
+        read_state=AsyncMock(return_value=GRIPPED),
     )
     tool.move = AsyncMock()
     tool.rotate_to_position = AsyncMock()
@@ -828,9 +834,11 @@ async def test_io_transfer_accesses_fridge_for_pick_and_carrier_return() -> None
     robot = Robot.__new__(Robot)
     robot._tool = tool
     robot._io = SimpleNamespace(
+        ensure_door_homed=AsyncMock(),
         open_door=AsyncMock(),
         close_door=AsyncMock(),
         home_door=AsyncMock(),
+        home_door_after_cycle=AsyncMock(),
     )
     robot._operation_context = {}
     robot._access_storage_cell = AsyncMock()
@@ -925,3 +933,13 @@ async def test_startup_configures_fridge_last() -> None:
     await robot.configure(home_on_init=True)
 
     assert events == ["tool", "io_door", "cabinet", "fridge_door"]
+
+
+def test_demo_fridge_config_renames_legacy_cell_sides() -> None:
+    # lb2-3's demo config predates the front/back rename and still says right_module.
+    data = copy.deepcopy(config_dict())
+    data["demo"]["fridge"]["cells"][0]["location"]["side"] = "right_module"
+
+    fridge = RootConfig.model_validate(data).demo.fridge
+
+    assert fridge.cells[0].location.side == "back_module"

@@ -10,7 +10,7 @@ from openshelf_os.laser_calibration.defaults import (
 	MIN_VERTICAL_WALL_COVERAGE_MM,
 	WALL_DEPTH_TOLERANCE_MM,
 )
-from openshelf_os.storage import CellStatus
+from openshelf_os.storage import CellStatus, Dimensions
 
 from . import core as core_module
 from .core import *
@@ -1123,6 +1123,10 @@ def apply_single_cell_rescan(
 	else:
 		print_status("xy_offset_inference=skipped reason=single_cell_preserves_existing_frame")
 
+	if getattr(target_cell, "is_manual", False) is False:
+		# As in a shelf rebuild (see _build_scan_cell), a recalibrated cell must be resized by hand.
+		target_cell.dimensions = Dimensions(width=0.0, height=0.0, length=0.0)
+
 	grid.save()
 	print_status(
 		f"single_cell_apply=updated side={side.value} "
@@ -1255,22 +1259,22 @@ def apply_single_shelf_analysis(
 	# moves to its real slot for the merge.
 	scanned_shelf.shelf_idx = target_shelf_idx
 
-	left_module = list(grid.left_module)
-	right_module = list(grid.right_module)
+	front_module = list(grid.front_module)
+	back_module = list(grid.back_module)
 	merged_shelves = merge_scanned_shelf(
 		existing_shelves=grid.get_side(side),
 		scanned_shelf=scanned_shelf,
 		target_shelf_idx=target_shelf_idx,
 	)
 
-	if side == StorageModuleSide.LEFT:
-		left_module = merged_shelves
+	if side == StorageModuleSide.FRONT:
+		front_module = merged_shelves
 	else:
-		right_module = merged_shelves
+		back_module = merged_shelves
 
 	storage_grid = StorageGrid(
-		left_module=left_module,
-		right_module=right_module,
+		front_module=front_module,
+		back_module=back_module,
 		filename=grid.filename if grid.filename != "" else str(grid_path),
 	)
 	storage_grid.save()
@@ -1291,7 +1295,7 @@ def resolve_validation_coordinate(
 	return AxisCoordinate(
 		x=float(target_cell.calibration_point.x),
 		y=float(target_cell.calibration_point.y),
-		s=0 if side == StorageModuleSide.LEFT else 1,
+		s=0 if side == StorageModuleSide.FRONT else 1,
 		z_offset=float(target_cell.calibration_point.z_offset),
 	)
 
@@ -1357,17 +1361,17 @@ def apply_analysis(
 		side=side,
 	)
 	print_status("z_offset_inference=skipped reason=cli_scan_preserves_existing_z_offsets")
-	left_module = list(grid.left_module)
-	right_module = list(grid.right_module)
+	front_module = list(grid.front_module)
+	back_module = list(grid.back_module)
 
-	if side == StorageModuleSide.LEFT:
-		left_module = scanned_shelves
+	if side == StorageModuleSide.FRONT:
+		front_module = scanned_shelves
 	else:
-		right_module = scanned_shelves
+		back_module = scanned_shelves
 
 	storage_grid = StorageGrid(
-		left_module=left_module,
-		right_module=right_module,
+		front_module=front_module,
+		back_module=back_module,
 		filename=grid.filename if grid.filename != "" else str(grid_path),
 	)
 	storage_grid.save()
@@ -1601,7 +1605,7 @@ def load_staged_scan_analysis(
     if require_completed is True and metadata.get("status") != "completed":
         raise ValueError(f"Staged scan {run_dir} is not completed")
 
-    side = StorageModuleSide(metadata["side"])
+    side = StorageModuleSide(normalize_saved_side(metadata["side"]))
     bounds = ScanBounds.model_validate(metadata["bounds"])
     fine_step_mm = float(metadata["fine_step_mm"])
     candidates = load_candidates_from_metadata(metadata)

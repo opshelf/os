@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Supervised diagnostic for the lb4a Y home-zero offset.
+"""Supervised diagnostic for Y drive torque homing.
 
-Reads commanded vs actual position, following error and alarm state at each
-step of the production Motor.home() sequence, to show where a post-home
-offset (one revolution, 40 mm) appears.
+Reads commanded vs actual position, following error, alarm and Pr8.x homing
+state at each step of the production Motor.home() sequence.
 
   inspect  read-only snapshots; run after the app has homed and been stopped
   home     runs Motor.configure() + Motor.home() with checkpoint reads
@@ -56,6 +55,11 @@ REGISTERS = {
     "status_feedback_position": (0x1014, 2),
     "pr_profile_position": (0x602A, 2),
     "pr_actual_position": (0x602C, 2),
+    "homing_mode": (0x600A, 1),
+    "homing_torque_ms": (0x6013, 1),
+    "homing_torque_pct": (0x6014, 1),
+    "homing_overtravel_0p1rev": (0x6015, 1),
+    "pr_warning": (0x601D, 1),
 }
 POSITION_KEYS = (
     "status_profile_position",
@@ -65,12 +69,10 @@ POSITION_KEYS = (
 )
 
 # Wrapped Motor steps: snapshot before and/or after each call.
-BEFORE = ("_set_zero_position", "_clear_homing_trip")
+BEFORE = ("_trigger_drive_homing",)
 AFTER = (
-    "_arm_following_error_trip",
-    "_start_path_zero",
-    "_clear_homing_trip",
-    "_set_zero_position",
+    "_configure_drive_homing",
+    "_trigger_drive_homing",
     "move_config",
     "_park",
 )
@@ -129,22 +131,6 @@ def instrument(motor: Motor, controller: Any, params: Any, t0: float) -> None:
 
     motor.wait_for_move = wait_wrapper
 
-    is_limit_stop = motor._is_homing_limit_stop
-
-    def limit_stop_wrapper(homing: bool, alarm_state: Any, state: Any) -> bool:
-        tripped = is_limit_stop(homing, alarm_state, state)
-        if tripped:
-            now = time.monotonic()
-            base.emit(
-                "homing_trip",
-                alarm_code=alarm_state.alarm_code,
-                stall_to_trip_s=round(now - state.last_movement_time, 3),
-                run_to_trip_s=round(now - state.start_time, 3),
-            )
-        return tripped
-
-    motor._is_homing_limit_stop = limit_stop_wrapper
-
 
 async def run_inspect(args: argparse.Namespace, controller: Any, params: Any) -> int:
     for i in range(args.samples):
@@ -157,17 +143,7 @@ async def run_home(args: argparse.Namespace, controller: Any, params: Any) -> in
     if args.confirm != HOME_CONFIRMATION:
         raise RuntimeError(f"--confirm must be {HOME_CONFIRMATION}")
 
-    home_kwargs: dict[str, Any] = {}
-    if args.startup:
-        from openshelf_os.tool import Y_STARTUP_HOME_CLEARANCE_MM, Y_STARTUP_HOME_PEAK_CURRENT
-
-        home_kwargs = {
-            "pre_home_clearance_mm": Y_STARTUP_HOME_CLEARANCE_MM,
-            "skip_pre_home_approach": True,
-            "homing_peak_current": Y_STARTUP_HOME_PEAK_CURRENT,
-        }
-
-    base.emit("home_preflight", home_kwargs=home_kwargs, **await snapshot(controller, params))
+    base.emit("home_preflight", **await snapshot(controller, params))
     await base.arm_countdown("home", args.arm_delay_s)
 
     motor = Motor(controller, params)
@@ -177,7 +153,7 @@ async def run_home(args: argparse.Namespace, controller: Any, params: Any) -> in
     try:
         await motor.configure()
         async with asyncio.timeout(HOME_TIMEOUT_S):
-            await motor.home(**home_kwargs)
+            await motor.home()
     except BaseException as exc:
         await base.stop_after_motion_error(motor, exc)
         base.emit("home_failed", error=str(exc), **await snapshot(controller, params))
@@ -280,8 +256,6 @@ def build_parser() -> argparse.ArgumentParser:
     home = sub.choices["home"]
     home.add_argument("--confirm", required=True)
     home.add_argument("--arm-delay-s", type=float, default=5.0)
-    home.add_argument("--startup", action="store_true",
-                      help="Use the tool startup profile: 10 mm clearance, no approach, reduced current.")
 
     move = sub.choices["move"]
     move.add_argument("--confirm", required=True)

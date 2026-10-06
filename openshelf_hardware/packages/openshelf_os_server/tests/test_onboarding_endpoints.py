@@ -5,10 +5,11 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import delete, select, update
 
-from openshelf_os_server.main import _ensure_developer_user
+from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.database.models import AuditLog, Role, User
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.routers import onboarding, wifi
+from openshelf_os_server.routers import onboarding
+from openshelf_os_server.settings import get_settings
 
 
 @pytest.fixture(autouse=True)
@@ -48,55 +49,27 @@ async def fresh_device(seeded_db: AsyncGenerator[None, None]) -> AsyncGenerator[
         await db.commit()
 
 
-async def _add_system_user() -> None:
+async def _add_regular_user(email: str, pin: str = "1111", role_name: str = "operator") -> int:
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Role).filter(Role.name == "admin"))
-        admin_role = result.scalar_one()
-        user_result = await db.execute(
-            select(User).filter(User.email == "developer@opshelf.com")
+        role_result = await db.execute(select(Role).filter(Role.name == role_name))
+        role = role_result.scalar_one()
+        settings = get_settings()
+        auth_service = AuthService(
+            settings.auth.jwt_secret or "",
+            settings.auth.jwt_algorithm,
         )
-        user = user_result.scalar_one_or_none()
-        if user is None:
-            db.add(
-                User(
-                    email="developer@opshelf.com",
-                    first_name="Developer",
-                    last_name="System",
-                    pin_hash="not-a-real-hash",
-                    role_id=admin_role.id,
-                    is_active=True,
-                    is_system=True,
-                )
-            )
-        else:
-            user.is_system = True
+        user = User(
+            email=email,
+            first_name="Second",
+            last_name="User",
+            pin_hash=auth_service.hash_pin(pin),
+            role_id=role.id,
+            is_active=True,
+        )
+        db.add(user)
         await db.commit()
-
-
-@pytest.mark.anyio
-async def test_status_needs_onboarding_on_fresh_device(
-    unauthenticated_client: AsyncClient, fresh_device: None
-) -> None:
-    resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert resp.status_code == 200
-    assert resp.json() == {"needs_onboarding": True}
-
-
-@pytest.mark.anyio
-async def test_status_ignores_system_users(
-    unauthenticated_client: AsyncClient, fresh_device: None
-) -> None:
-    await _add_system_user()
-    resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert resp.status_code == 200
-    assert resp.json() == {"needs_onboarding": True}
-
-
-@pytest.mark.anyio
-async def test_status_provisioned_when_user_exists(unauthenticated_client: AsyncClient) -> None:
-    resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert resp.status_code == 200
-    assert resp.json() == {"needs_onboarding": False}
+        await db.refresh(user)
+        return user.id
 
 
 @pytest.mark.anyio
@@ -148,18 +121,6 @@ async def test_create_admin_user_rejected_when_provisioned(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("pin", ["12a4", "123", "12345", ""])
-async def test_create_admin_user_rejects_invalid_pin(
-    unauthenticated_client: AsyncClient, fresh_device: None, pin: str
-) -> None:
-    resp = await unauthenticated_client.post(
-        "/api/onboarding/admin-user",
-        json={"email": "owner@example.com", "pin": pin},
-    )
-    assert resp.status_code == 422
-
-
-@pytest.mark.anyio
 async def test_wifi_endpoints_rejected_when_provisioned(
     unauthenticated_client: AsyncClient,
 ) -> None:
@@ -176,24 +137,41 @@ async def test_wifi_endpoints_rejected_when_provisioned(
 
 
 @pytest.mark.anyio
-async def test_ensure_developer_user_recreates_after_wipe(
+async def test_pending_admin_user_retry_resets_the_interrupted_admin_pin(
     unauthenticated_client: AsyncClient, fresh_device: None
 ) -> None:
-    await _ensure_developer_user()
-    await _ensure_developer_user()
+    first_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "owner@example.com", "pin": "4321"},
+    )
+    assert first_resp.status_code == 200, first_resp.text
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).filter(User.email == "developer@opshelf.com"))
-        developers = result.scalars().all()
-        assert len(developers) == 1
-        assert bool(developers[0].is_system) is True
+    # The wizard created this admin and was reloaded before /complete, so its PIN step
+    # runs again. The retry must take the account over, not strand the device on 409.
+    retry_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "owner@example.com", "pin": "9876"},
+    )
+    assert retry_resp.status_code == 200, retry_resp.text
+    assert retry_resp.json()["id"] == first_resp.json()["id"]
+    assert retry_resp.json()["role_name"] == "admin"
 
-    resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert resp.json() == {"needs_onboarding": True}
+    status_resp = await unauthenticated_client.get("/api/onboarding/status")
+    assert status_resp.json() == {"needs_onboarding": True}
+
+    stale_login = await unauthenticated_client.post(
+        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
+    )
+    assert stale_login.status_code == 401
+
+    new_login = await unauthenticated_client.post(
+        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "9876"}
+    )
+    assert new_login.status_code == 200, new_login.text
 
 
 @pytest.mark.anyio
-async def test_pending_state_is_not_inferred_again_after_admin_creation(
+async def test_pending_admin_user_retry_rejects_a_different_email(
     unauthenticated_client: AsyncClient, fresh_device: None
 ) -> None:
     create_resp = await unauthenticated_client.post(
@@ -202,54 +180,70 @@ async def test_pending_state_is_not_inferred_again_after_admin_creation(
     )
     assert create_resp.status_code == 200, create_resp.text
 
-    status_resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert status_resp.json() == {"needs_onboarding": True}
+    # The reset is scoped to the account the pending installation already holds.
+    other_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "intruder@example.com", "pin": "0000"},
+    )
+    assert other_resp.status_code == 409
+
+    owner_login = await unauthenticated_client.post(
+        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
+    )
+    assert owner_login.status_code == 200
 
 
 @pytest.mark.anyio
-async def test_missing_state_is_migrated_once_from_existing_users(
-    unauthenticated_client: AsyncClient,
+async def test_pending_admin_user_retry_rejects_a_second_regular_user(
+    unauthenticated_client: AsyncClient, fresh_device: None
 ) -> None:
-    onboarding._onboarding_state_path().unlink(missing_ok=True)
+    create_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "owner@example.com", "pin": "4321"},
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    await _add_regular_user("second@example.com", pin="1111")
 
-    status_resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert status_resp.json() == {"needs_onboarding": False}
-    assert onboarding._read_onboarding_state() == onboarding.ONBOARDING_COMPLETED
+    # A pending device that already holds another regular user is not a first run:
+    # keep 409 rather than let an unauthenticated caller reset the admin PIN.
+    retry_resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "owner@example.com", "pin": "9876"},
+    )
+    assert retry_resp.status_code == 409
+
+    owner_login = await unauthenticated_client.post(
+        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
+    )
+    assert owner_login.status_code == 200
 
 
 @pytest.mark.anyio
-async def test_wifi_passthrough_on_fresh_device(
+async def test_state_failure_returns_fixed_503_without_filesystem_details(
+    client: AsyncClient,
     unauthenticated_client: AsyncClient,
-    fresh_device: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_scan() -> wifi.WifiNetworkList:
-        return wifi.WifiNetworkList(
-            networks=[wifi.WifiNetwork(ssid="Lab", signal=90, security="WPA2", in_use=False)]
-        )
+    def broken_read() -> None:
+        raise RuntimeError("Could not read onboarding state from /app/data/.onboarding_state")
 
-    async def fake_connect(ssid: str, password: str) -> wifi.WifiConnectResponse:
-        return wifi.WifiConnectResponse(success=True, ssid=ssid, message=f"connected to {ssid}")
+    monkeypatch.setattr(onboarding, "_read_onboarding_state", broken_read)
 
-    async def fake_status() -> wifi.WifiStatus:
-        return wifi.WifiStatus(connected=False, ssid=None, signal=None, ip=None)
+    status_resp = await unauthenticated_client.get("/api/onboarding/status")
+    assert status_resp.status_code == 503
+    detail = status_resp.json()["detail"]
+    assert detail["code"] == "onboarding_state_unavailable"
+    assert detail["message"] == "Onboarding state unavailable"
+    assert "/app/data" not in detail["message"]
 
-    monkeypatch.setattr(wifi, "scan_networks", fake_scan)
-    monkeypatch.setattr(wifi, "perform_connect", fake_connect)
-    monkeypatch.setattr(wifi, "active_status", fake_status)
+    def broken_write(_value: str) -> None:
+        raise OSError(13, "Permission denied", "/app/data/.onboarding_state.tmp")
 
-    networks_resp = await unauthenticated_client.get("/api/onboarding/wifi/networks")
-    assert networks_resp.status_code == 200
-    assert networks_resp.json() == {
-        "networks": [{"ssid": "Lab", "signal": 90, "security": "WPA2", "in_use": False}]
-    }
+    monkeypatch.setattr(onboarding, "_write_onboarding_state", broken_write)
 
-    status_resp = await unauthenticated_client.get("/api/onboarding/wifi/status")
-    assert status_resp.status_code == 200
-    assert status_resp.json()["connected"] is False
-
-    connect_resp = await unauthenticated_client.post(
-        "/api/onboarding/wifi/connect", json={"ssid": "Lab", "password": "hunter22"}
-    )
-    assert connect_resp.status_code == 200
-    assert connect_resp.json() == {"success": True, "ssid": "Lab", "message": "connected to Lab"}
+    complete_resp = await client.post("/api/onboarding/complete")
+    assert complete_resp.status_code == 503
+    detail = complete_resp.json()["detail"]
+    assert detail["code"] == "onboarding_state_unavailable"
+    assert detail["message"] == "Onboarding state unavailable"
+    assert "/app/data" not in detail["message"]

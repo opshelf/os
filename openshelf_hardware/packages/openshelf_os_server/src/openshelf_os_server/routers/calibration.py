@@ -28,7 +28,7 @@ from openshelf_os.storage import (
 	StorageModuleCellLocation,
 	StorageModuleSide,
 )
-from openshelf_os.exceptions import IOBoxError, MotorError, ToolError
+from openshelf_os.exceptions import ConfigError, IOBoxError, MotorError, MovementError, ToolError
 from hardware.exceptions import MotorError as HardwareMotorError
 
 from openshelf_os_server.core.robot import get_robot_worker
@@ -40,7 +40,8 @@ from openshelf_os_server.core.laser_auto_calibration import (
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.bin_storage import reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.routers.auth_deps import get_current_user
+from openshelf_os_server.errors import error_detail
+from openshelf_os_server.routers.auth_deps import get_current_user_for_stream
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
 
@@ -59,7 +60,13 @@ class StageMoveResponse(BaseModel):
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user)])
+# Router-level auth gates every route here, so it cannot be scoped per route, and
+# /laser/stream answers with an EventSourceResponse that stays open for the whole
+# calibration session. Auth with a session that closes before the body streams
+# (get_current_user would pin a pooled connection until the stream ends).
+router = APIRouter(
+	prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user_for_stream)]
+)
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 P = ParamSpec("P")
@@ -99,8 +106,8 @@ async def get_robot_worker_or_503():
 			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
 			detail="Robot is not initialized",
 		) from exc
-_DEFAULT_SHELF_HEIGHT = 200.0
-_DEFAULT_SHELF_WIDTH = 480.0
+_DEFAULT_CELL_HEIGHT = 200.0
+_DEFAULT_CELL_WIDTH = 480.0
 _DEFAULT_DIVIDER_WIDTH = 12.0
 _DEFAULT_CELL_LENGTH = 400.0
 
@@ -256,7 +263,7 @@ def _build_coordinate_for_location(grid, location: StorageModuleCellLocation) ->
 	return AxisCoordinate(
 		x=calibration_point.x,
 		y=calibration_point.y,
-		s=0 if location.side == StorageModuleSide.LEFT else 1,
+		s=0 if location.side == StorageModuleSide.FRONT else 1,
 		z_offset=calibration_point.z_offset,
 	)
 
@@ -320,7 +327,7 @@ class LaserReadingResponse(BaseModel):
 
 _current_position: Optional[PositionResponse] = None
 _current_side: int = 0
-_current_side_name: str = "left_module"
+_current_side_name: str = "front_module"
 
 
 def _build_error_detail(
@@ -331,7 +338,7 @@ def _build_error_detail(
 	needs_home_axes: Optional[list[str]] = None,
 	reason: Optional[str] = None,
 ) -> dict[str, object]:
-	detail: dict[str, object] = {"message": message, "code": code}
+	detail: dict[str, object] = error_detail(message, code)
 	if needs_home:
 		detail["needs_home"] = True
 		if needs_home_axes is not None:
@@ -546,22 +553,20 @@ def _find_cell(shelf, cell_idx: int):
 def _build_default_shelf_template() -> Shelf:
 	return Shelf(
 		shelf_idx=0,
-		shelf_height=_DEFAULT_SHELF_HEIGHT,
-		shelf_width=_DEFAULT_SHELF_WIDTH,
 		cells=[],
 		divider_width=_DEFAULT_DIVIDER_WIDTH,
 	)
 
 
-def _build_default_cell_template(shelf) -> Cell:
+def _build_default_cell_template() -> Cell:
 	return Cell(
 		cell_idx=0,
 		status=CellStatus.AVAILABLE,
 		item=None,
 		calibration_point=None,
 		dimensions=Dimensions(
-			width=max(float(shelf.shelf_width), 1.0),
-			height=max(float(shelf.shelf_height), 1.0),
+			width=_DEFAULT_CELL_WIDTH,
+			height=_DEFAULT_CELL_HEIGHT,
 			length=_DEFAULT_CELL_LENGTH,
 		),
 	)
@@ -572,7 +577,7 @@ def _get_shelf_template(grid, side: StorageModuleSide) -> Shelf:
 	if len(shelves) > 0:
 		return shelves[-1]
 
-	other_side = StorageModuleSide.RIGHT if side == StorageModuleSide.LEFT else StorageModuleSide.LEFT
+	other_side = StorageModuleSide.BACK if side == StorageModuleSide.FRONT else StorageModuleSide.FRONT
 	other_shelves = grid.get_side(other_side)
 
 	if len(other_shelves) > 0:
@@ -589,13 +594,13 @@ def _get_cell_template(grid, side: StorageModuleSide, shelf) -> Cell:
 		if len(candidate_shelf.cells) > 0:
 			return candidate_shelf.cells[-1]
 
-	other_side = StorageModuleSide.RIGHT if side == StorageModuleSide.LEFT else StorageModuleSide.LEFT
+	other_side = StorageModuleSide.BACK if side == StorageModuleSide.FRONT else StorageModuleSide.FRONT
 
 	for candidate_shelf in reversed(grid.get_side(other_side)):
 		if len(candidate_shelf.cells) > 0:
 			return candidate_shelf.cells[-1]
 
-	return _build_default_cell_template(shelf)
+	return _build_default_cell_template()
 
 
 def _ensure_shelf(grid, side: StorageModuleSide, shelf_idx: int):
@@ -607,8 +612,6 @@ def _ensure_shelf(grid, side: StorageModuleSide, shelf_idx: int):
 	template = _get_shelf_template(grid, side)
 	new_shelf = Shelf(
 		shelf_idx=shelf_idx,
-		shelf_height=template.shelf_height,
-		shelf_width=template.shelf_width,
 		cells=[],
 		divider_width=template.divider_width,
 	)
@@ -866,8 +869,6 @@ async def stream_laser_auto_calibration(
 	include_angle_calibration: bool | None = None,
 	include_extension_calibration: bool | None = None,
 	hold_y_enabled: bool | None = None,
-	derive_offsets_from_manual_cells: bool | None = None,
-	derive_z_model_from_stall: bool | None = None,
 	subscribe_only: bool = False,
 ) -> EventSourceResponse:
 	"""Start or observe automatic laser calibration.
@@ -881,14 +882,9 @@ async def stream_laser_auto_calibration(
 	unsubscribes that client; use the abort endpoint to stop the session. Do not infer
 	cancellation from a closed connection. Optional scope parameters select cells,
 	both sides, or the angle/extension calibration phases. `hold_y_enabled=false` parks
-	Y on its brake between moves instead of holding it energised for the session.
-	`derive_offsets_from_manual_cells=true` frames the run by the cells marked manual in
-	scope, deriving each side's xy offset from them instead of using the configured one; it
-	needs at least one manual cell per side in scope and returns `400` without one.
-	`derive_z_model_from_stall=true` probes the shelf plate beside those same cells (physical
-	contact) to derive the side's z model, which is accepted only when it agrees with the
-	manual datum; the machine-level `robot.grid.scan.z_stall_anchor_enabled` asks for the same
-	thing without the parameter.
+	Y on its brake between moves instead of holding it energised for the session. Every run
+	frames its offsets from the hand-calibrated bottom-left cell of the sides it covers and
+	returns `400` before moving when one of those cells is missing or not marked manual.
 	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,
@@ -900,8 +896,6 @@ async def stream_laser_auto_calibration(
 	).model_copy(
 		update={
 			"hold_y_enabled": hold_y_enabled is not False,
-			"derive_offsets_from_manual_cells": derive_offsets_from_manual_cells is True,
-			"derive_z_model_from_stall": derive_z_model_from_stall is True,
 		}
 	)
 	manager = get_laser_auto_calibration_manager()
@@ -1295,7 +1289,7 @@ async def test_cycle(request: TestRequest):
 	return {"success": True}
 
 
-def _validate_saved_dimensions(dimensions: Dimensions, shelf_height: float) -> None:
+def _validate_saved_dimensions(dimensions: Dimensions) -> None:
 	for field, value in (
 		("width", dimensions.width),
 		("height", dimensions.height),
@@ -1306,12 +1300,6 @@ def _validate_saved_dimensions(dimensions: Dimensions, shelf_height: float) -> N
 				status_code=status.HTTP_400_BAD_REQUEST,
 				detail=f"Dimension {field} must be greater than zero",
 			)
-
-	if dimensions.height > shelf_height:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Cell height {dimensions.height} mm exceeds the containing shelf height {shelf_height} mm",
-		)
 
 
 @router.post(
@@ -1360,7 +1348,7 @@ async def save_calibration(request: SaveRequest):
 	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
 
 	if request.dimensions is not None:
-		_validate_saved_dimensions(request.dimensions, shelf.shelf_height)
+		_validate_saved_dimensions(request.dimensions)
 
 	cell = _ensure_cell(grid, side_enum, shelf, request.cell_idx)
 	previous_point = cell.calibration_point
@@ -2012,14 +2000,15 @@ async def get_rotation_angles() -> RotationAnglesResponse:
 @router.post(
     "/rotation/rotate",
     summary="Test tool rotation",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
 )
 async def rotate_to_angle(angle: float):
 	"""Test tool rotation.
 
 	Rotates to the requested angle, clamped to the configured motor limits. Positions the
 	stage as needed for rotation and restores its safe X position. Does not persist
-	front/back calibration.
+	front/back calibration. Blocked by the rotation clearance guard (e.g. the tool is
+	extended) with a 409 that names the unsafe axis; a misconfigured machine returns 400.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
@@ -2046,6 +2035,19 @@ async def rotate_to_angle(angle: float):
 				await tool.restore_safe_rotation_x_position(original_x)
 	except (MotorError, HardwareMotorError) as e:
 		await _raise_motor_error(worker, f"Rotation failed: {str(e)}", e)
+	except MovementError as e:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail=_build_error_detail(
+				f"Rotation blocked: {str(e)}",
+				code="rotation_blocked",
+			),
+		) from e
+	except ConfigError as e:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=_build_error_detail(f"Invalid rotation configuration: {str(e)}", code="config_error"),
+		) from e
 
 	return {"success": True}
 

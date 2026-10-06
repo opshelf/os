@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from openshelf_os.config.models import Motor
 
@@ -10,7 +10,7 @@ BARCODE_MAX_LENGTH = 255
 
 
 class StorageBinLocationSettings(BaseModel):
-    side: Literal["left_module", "right_module"]
+    side: Literal["front_module", "back_module"]
     shelf_idx: int = Field(ge=0)
     cell_idx: int = Field(ge=0)
 
@@ -148,9 +148,22 @@ class DemoFridgeDoorPositionsSettings(BaseModel):
     open_right: float = Field(ge=0)
 
 
+# Fridge configs written before the front/back side rename keep left_module/right_module.
+# Main's v005 config migration cannot rename them because the fridge block exists only on
+# this demo branch, so rename them when the config is read.
+_LEGACY_FRIDGE_SIDES = {"left_module": "front_module", "right_module": "back_module"}
+
+
 class DemoFridgeCellSettings(BaseModel):
     location: StorageBinLocationSettings
     stage_extension_mm: float = Field(gt=0)
+
+    @field_validator("location", mode="before")
+    @classmethod
+    def _rename_legacy_side(cls, value: Any) -> Any:
+        if isinstance(value, dict) and value.get("side") in _LEGACY_FRIDGE_SIDES:
+            return {**value, "side": _LEGACY_FRIDGE_SIDES[value["side"]]}
+        return value
 
 
 class DemoFridgeSettings(BaseModel):

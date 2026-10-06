@@ -20,7 +20,7 @@ body {
 	font-weight: normal;
 	color: black;
 	background-color: white;
-	margin: 1.5em 1.5em 6em 1.5em;
+	margin: 1.5em;
 }
 
 * {
@@ -91,17 +91,6 @@ button:active {
 	box-shadow: none;
 }
 
-.message {
-	margin-top: 1.5em;
-	text-transform: uppercase;
-	color: oklch(0.5318 0.2399 256.98999);
-}
-
-.message.error {
-	color: #c40000;
-	white-space: pre-wrap;
-}
-
 nav a.active {
 	background-color: black;
 	color: white;
@@ -113,7 +102,7 @@ nav a.active {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	background-color: rgba(255, 255, 255, 0.85);
+	background-color: rgba(0, 0, 0, 0.4);
 	z-index: 1000;
 }
 

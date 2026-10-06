@@ -6,7 +6,9 @@ state is pending. Completing onboarding requires the newly created admin to
 authenticate.
 """
 from openshelf_os_server.documentation import response_docs
+from openshelf_os_server.errors import api_error
 import asyncio
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -26,6 +28,8 @@ from ..settings import get_settings
 from . import wifi
 from .auth_deps import require_permissions
 from .users import UserResponse, _build_user_response
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["onboarding"])
 
@@ -65,6 +69,16 @@ async def _count_regular_users(db: AsyncSession) -> int:
 	return int(result.scalar() or 0)
 
 
+async def _list_regular_users(db: AsyncSession) -> list[User]:
+	result = await db.execute(
+		select(User)
+		.options(selectinload(User.role), selectinload(User.access_level))
+		.filter(~User.is_system)
+		.order_by(User.id)
+	)
+	return list(result.scalars().all())
+
+
 def _onboarding_state_path() -> Path:
 	override = os.getenv(ONBOARDING_STATE_PATH_ENV)
 	if override:
@@ -102,18 +116,23 @@ def _write_onboarding_state(value: str) -> None:
 
 async def ensure_onboarding_state(db: AsyncSession) -> str:
 	"""Create explicit state once, migrating already-provisioned installations."""
-	state = _read_onboarding_state()
-	if state is not None:
-		return state
-
-	async with _onboarding_state_lock:
+	try:
 		state = _read_onboarding_state()
 		if state is not None:
 			return state
 
-		state = ONBOARDING_COMPLETED if await _count_regular_users(db) > 0 else ONBOARDING_PENDING
-		_write_onboarding_state(state)
-		return state
+		async with _onboarding_state_lock:
+			state = _read_onboarding_state()
+			if state is not None:
+				return state
+
+			state = ONBOARDING_COMPLETED if await _count_regular_users(db) > 0 else ONBOARDING_PENDING
+			_write_onboarding_state(state)
+			return state
+	except (RuntimeError, ValueError, OSError) as exc:
+		# A corrupt, unreadable, or unwritable state file is a device fault, not a client error.
+		logger.error(f"Onboarding state unavailable: {exc}")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "Onboarding state unavailable") from exc
 
 
 async def require_first_run(db: AsyncSession = Depends(get_db)) -> None:
@@ -128,13 +147,13 @@ async def require_first_run(db: AsyncSession = Depends(get_db)) -> None:
     "/status",
     response_model=OnboardingStatus,
     summary="Read first-run setup state",
-    responses=response_docs(),
+    responses=response_docs(errors=(503,)),
 )
 async def get_onboarding_status(db: AsyncSession = Depends(get_db)) -> OnboardingStatus:
 	"""Read first-run setup state.
 
 	Public endpoint indicating whether onboarding is pending. The check ensures onboarding
-	state exists; it is not a robot health check.
+	state exists; it is not a robot health check. A corrupt state file returns `503`.
 	"""
 	return OnboardingStatus(needs_onboarding=await ensure_onboarding_state(db) == ONBOARDING_PENDING)
 
@@ -200,21 +219,18 @@ async def create_admin_user(
 ) -> UserResponse:
 	"""Create the first administrator.
 
-	Public only while onboarding is pending and no non-system administrator exists. Creates
-	the initial administrator using the provisioned admin role. Returns `409` when already
-	created and `403` after onboarding is complete.
+	Public only while onboarding is pending. Creates the initial administrator using the
+	provisioned admin role. When the pending installation already holds exactly the
+	requested administrator - the wizard created it and never reached /complete - the
+	retry resets that account's PIN instead of failing, so an interrupted setup can be
+	finished. Returns `409` when a different regular user exists and `403` after
+	onboarding is complete.
 	"""
 	async with _admin_user_lock:
 		if await ensure_onboarding_state(db) == ONBOARDING_COMPLETED:
 			raise HTTPException(
 				status_code=status.HTTP_403_FORBIDDEN,
 				detail="Onboarding is already completed"
-			)
-
-		if await _count_regular_users(db) > 0:
-			raise HTTPException(
-				status_code=status.HTTP_409_CONFLICT,
-				detail="Administrator account is already created"
 			)
 
 		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
@@ -225,11 +241,39 @@ async def create_admin_user(
 				detail="Admin role is not available yet"
 			)
 
+		regular_users = await _list_regular_users(db)
+		if len(regular_users) > 1:
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail="Administrator account is already created"
+			)
+
 		settings = get_settings()
 		auth_service = AuthService(
 			settings.auth.jwt_secret or "",
 			settings.auth.jwt_algorithm
 		)
+
+		if len(regular_users) == 1:
+			existing_user = regular_users[0]
+			if existing_user.email != request.email or existing_user.role_id != admin_role.id:
+				raise HTTPException(
+					status_code=status.HTTP_409_CONFLICT,
+					detail="Administrator account is already created"
+				)
+
+			# The wizard created this administrator but onboarding never completed, for
+			# example because the client was reloaded before it posted /complete. Take
+			# over the interrupted setup instead of stranding the device on a 409 the
+			# wizard cannot get past.
+			existing_user.pin_hash = str(auth_service.hash_pin(request.pin))
+			existing_user.first_name = request.first_name
+			existing_user.last_name = request.last_name
+			existing_user.is_active = True
+			await db.commit()
+			await db.refresh(existing_user)
+			logger.info("Onboarding admin PIN reset for %s", existing_user.email)
+			return _build_user_response(existing_user)
 
 		user = User(
 			email=request.email,
@@ -255,7 +299,7 @@ async def create_admin_user(
     response_model=OnboardingStatus,
     dependencies=[Depends(require_permissions("users:write"))],
     summary="Complete first-run setup",
-    responses=response_docs(errors=(401, 403)),
+    responses=response_docs(errors=(401, 403, 503)),
 )
 async def complete_onboarding() -> OnboardingStatus:
 	"""Complete first-run setup.
@@ -263,5 +307,10 @@ async def complete_onboarding() -> OnboardingStatus:
 	Requires `users:write`. Marks onboarding complete, disabling the public first-run
 	mutation endpoints. Returns `needs_onboarding=false`.
 	"""
-	_write_onboarding_state(ONBOARDING_COMPLETED)
+	try:
+		_write_onboarding_state(ONBOARDING_COMPLETED)
+	except (RuntimeError, ValueError, OSError) as exc:
+		# A corrupt, unreadable, or unwritable state file is a device fault, not a client error.
+		logger.error(f"Onboarding state unavailable: {exc}")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "Onboarding state unavailable") from exc
 	return OnboardingStatus(needs_onboarding=False)

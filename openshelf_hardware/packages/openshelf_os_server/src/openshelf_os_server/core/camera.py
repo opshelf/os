@@ -873,7 +873,9 @@ class ToolCameraStreamManager:
 			self.nalu_stop_event.set()
 
 		if self.nalu_process is not None:
-			self.nalu_process.join(timeout=2.0)
+			# The worker only decodes frames; one blocked in an RTSP read never sees the
+			# stop event, so do not hold shutdown for it.
+			self.nalu_process.join(timeout=0.5)
 			if self.nalu_process.is_alive() is True:
 				self.nalu_process.terminate()
 				self.nalu_process.join(timeout=2.0)
@@ -1061,7 +1063,9 @@ class ToolCameraStreamManager:
 			self.stop_event.set()
 
 		if self.process is not None:
-			self.process.join(timeout=2.0)
+			# The worker only decodes frames; one blocked in an RTSP read never sees the
+			# stop event, so do not hold shutdown for it.
+			self.process.join(timeout=0.5)
 			if self.process.is_alive() is True:
 				self.process.terminate()
 				self.process.join(timeout=2.0)

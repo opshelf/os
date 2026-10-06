@@ -82,7 +82,7 @@ async def init_iobox_sizer() -> None:
 	service = _make_service(config)
 
 	try:
-		await asyncio.to_thread(service.start)
+		await asyncio.to_thread(service.camera.start)
 	except Exception as exc:
 		try:
 			await asyncio.to_thread(service.close)
@@ -105,12 +105,31 @@ async def init_iobox_sizer() -> None:
 		)
 		return
 
+	# A missing ToF sensor degrades the sizer to camera-only operation instead of
+	# taking the camera down with it; measurement and calibration endpoints report
+	# the per-channel ToF error instead of failing the whole service.
+	tof_error: Exception | None = None
+	try:
+		await asyncio.to_thread(service.tof_bus.connect)
+	except Exception as exc:
+		tof_error = exc
+		logger.warning(
+			"iobox_sizer_tof_unavailable",
+			error=str(exc),
+			error_type=type(exc).__name__,
+			exc_info=True,
+		)
+
 	_runtime.service = service
 	_runtime.available = True
-	_runtime.last_error = None
-	_runtime.last_error_type = None
+	_runtime.last_error = str(tof_error) if tof_error is not None else None
+	_runtime.last_error_type = type(tof_error).__name__ if tof_error is not None else None
 	await init_sizer_camera_manager(service.camera)
-	logger.info("iobox_sizer_initialized", channels=config.tof.channels)
+	logger.info(
+		"iobox_sizer_initialized",
+		channels=config.tof.channels,
+		tof_available=tof_error is None,
+	)
 
 
 async def stop_iobox_sizer() -> None:

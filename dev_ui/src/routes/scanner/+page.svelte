@@ -175,11 +175,6 @@
 					<td colspan="2">loading...</td>
 				</tr>
 			{/if}
-			{#if statusError !== ''}
-				<tr>
-					<td colspan="2"><ErrorMessage message={statusError} /></td>
-				</tr>
-			{/if}
 		</tbody>
 
 		<thead>
@@ -208,6 +203,10 @@
 			</tr>
 		</tbody>
 	</table>
+
+	{#if statusError !== ''}
+		<ErrorMessage message={statusError} />
+	{/if}
 
 	<div class="action-buttons">
 		<button type="button" on:click={didClickRefresh} disabled={isRefreshing === true}>

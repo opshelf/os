@@ -262,7 +262,7 @@ class BinResponse(BaseModel):
         default=None, description="Equal-sized compartment rows and columns; null for an undivided bin.",
     )
     compartment_dimensions: StorageBinDimensionsSettings | None = Field(
-        default=None, description="Compartment dimensions in millimeters: inner width divided by columns, inner length divided by rows, and full inner height; null for an undivided bin.",
+        default=None, description="Compartment dimensions in millimeters: the inner width and length less the outer walls and dividers, split evenly by columns and rows, less placement leeway, and the full inner height; null for an undivided bin.",
     )
     item_count: int
     used_volume: float = Field(description="Occupied volume in cubic millimeters")
@@ -309,6 +309,16 @@ class BinWorkflowStartResponse(BinWorkflowEnvelope):
 
 class BinWorkflowsResponse(BaseModel):
     workflows: list[BinWorkflowResponse]
+
+
+class UnresolvedTrayRecovery(BaseModel):
+    workflow: BinWorkflowResponse
+    error: str = Field(description="Why the tray stays outside; return it by scanning its barcode")
+
+
+class TrayCrashRecoveryResponse(BaseModel):
+    recovered: list[BinWorkflowResponse]
+    unresolved: list[UnresolvedTrayRecovery]
 
 
 # ---------------------------------------------------------------------------
@@ -473,17 +483,21 @@ def monitor_performance(func: Callable) -> Callable:
     "/bins",
     dependencies=[Depends(require_relay_or_permissions("storage:read"))],
     summary="List storage bins",
-    responses=response_docs(model=BinsResponse, errors=(401, 403)),
+    responses=response_docs(model=BinsResponse, errors=(401, 403, 409)),
 )
 async def get_bins(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     """List storage bins.
 
     Synchronizes configured bins into the database, then returns bin state and contents.
+    A configured bin barcode already assigned to an item returns `409`.
     Aggregate `gross_weight` includes the bin and all its contents; it is exposed only at
     home and is not an individual item mass.
     """
     service = BinStorageService(session)
-    await service.sync_config()
+    try:
+        await service.sync_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"bins": await service.list_bins()}
 
 
@@ -620,6 +634,12 @@ async def assign_tray(
     )
     if cell is None:
         raise HTTPException(status_code=404, detail="Cell does not exist in the grid")
+    # Laser calibration leaves cells unsized; the tray inherits the cell's dimensions.
+    if min(cell.dimensions.width, cell.dimensions.height, cell.dimensions.length) <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Set the cell dimensions before assigning a tray",
+        )
 
     config = get_root_config()
     home = (side, shelf_idx, cell_idx)
@@ -806,7 +826,10 @@ async def create_bin_workflow(
     """
     storage = StorageService(session)
     service = BinStorageService(session)
-    await service.sync_config()
+    try:
+        await service.sync_config()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     item = await storage.get_item(request.barcode)
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -874,7 +897,7 @@ async def create_bin_workflow(
                 )
             return {"storage_mode": "direct", "workflow": None}
         workflow.error = "Robot worker is unavailable"
-        await service.fail(workflow, workflow.error)
+        await service.fail(workflow, workflow.error, tray_moved=False)
     else:
         try:
             async with robot_command_enqueue_guard():
@@ -905,10 +928,34 @@ async def create_bin_workflow(
         except Exception as exc:
             if workflow is not None:
                 workflow.error = str(exc)
-                await service.fail(workflow, workflow.error)
+                await service.fail(workflow, workflow.error, tray_moved=False)
             else:
                 raise
     return {"storage_mode": "bin", "workflow": await service.serialize_workflow(workflow)}
+
+
+@router.get("/bin-workflows/interrupted", responses=response_docs(model=BinWorkflowsResponse, errors=(401, 403)), dependencies=[Depends(require_permissions("storage:read"))])
+async def get_crash_interrupted_bin_workflows(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """List tray motions a crash or emergency stop interrupted whose tray is still marked outside. The crash dialog names these trays and their home cells so the operator can put them back."""
+    service = BinStorageService(session)
+    return {"workflows": [await service.serialize_workflow(w) for w in await service.crash_interrupted_workflows()]}
+
+
+@router.post("/bin-workflows/interrupted/recover", responses=response_docs(model=TrayCrashRecoveryResponse, errors=(401, 403)), dependencies=[Depends(require_permissions("storage:write"))])
+async def recover_crash_interrupted_bin_workflows(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Mark trays from interrupted motions as home after the operator confirmed them on their shelves in the crash dialog. An interrupted return records the contents confirmed before it started. Does not move hardware. A tray whose state conflicts with being home stays outside and is listed as unresolved."""
+    service = BinStorageService(session)
+    recovered: list[Dict[str, Any]] = []
+    unresolved: list[Dict[str, Any]] = []
+    for workflow, error in await service.recover_crash_interrupted():
+        payload = await service.serialize_workflow(workflow)
+        if error is None:
+            recovered.append(payload)
+        else:
+            unresolved.append({"workflow": payload, "error": error})
+        if robot_core.robot_worker is not None:
+            await service.publish_workflow(robot_core.robot_worker, workflow)
+    return {"recovered": recovered, "unresolved": unresolved}
 
 
 async def _tray_workflow(session: AsyncSession, workflow_id: str) -> StorageBinWorkflow:
@@ -1024,6 +1071,11 @@ async def get_items(
 
     items = await storage_service.get_all_items(skip=skip, limit=limit)
     total = await storage_service.get_items_count()
+    # Resolve every page row's tray in one batch: per-item lookups re-read the same tray once
+    # per member, which made this endpoint issue two queries per row.
+    bin_payloads = await BinStorageService(session).item_bin_payloads(
+        [int(item.id) for item in items]
+    )
 
     if response is not None:
         response.headers["X-Total-Count"] = str(total)
@@ -1031,7 +1083,9 @@ async def get_items(
         response.headers["X-Skip"] = str(skip)
 
     item_payloads = [
-        await _build_item_payload_with_bin(item, list(item.locations), current_user, session)
+        _build_item_payload(
+            item, list(item.locations), current_user, bin_payloads.get(int(item.id))
+        )
         for item in items
     ]
 
@@ -1101,34 +1155,34 @@ async def create_item(
     """
     storage_service = StorageService(session)
 
+    if await is_reserved_bin_barcode(item.barcode, session):
+        raise HTTPException(status_code=409, detail="Barcode is reserved for a storage bin")
+    existing = await storage_service.get_item(item.barcode)
+    bin_service = BinStorageService(session)
+    dimensions = item.dimensions
+    metadata = item.item_metadata or {}
+    access_level_id = item.access_level_id
+    if existing is not None and await bin_service.item_bin(existing.id) is not None:
+        provided_fields = item.model_fields_set
+        dimensions_changed = (
+            "dimensions" in provided_fields and item.dimensions != existing.dimensions
+        )
+        access_changed = (
+            "access_level_id" in provided_fields
+            and item.access_level_id != existing.access_level_id
+        )
+        if dimensions_changed or access_changed:
+            raise HTTPException(
+                status_code=409,
+                detail="Retrieve the item before changing dimensions or access level",
+            )
+        if "dimensions" not in provided_fields:
+            dimensions = existing.dimensions
+        if "item_metadata" not in provided_fields:
+            metadata = existing.item_metadata or {}
+        if "access_level_id" not in provided_fields:
+            access_level_id = existing.access_level_id
     try:
-        if await is_reserved_bin_barcode(item.barcode, session):
-            raise HTTPException(status_code=409, detail="Barcode is reserved for a storage bin")
-        existing = await storage_service.get_item(item.barcode)
-        bin_service = BinStorageService(session)
-        dimensions = item.dimensions
-        metadata = item.item_metadata or {}
-        access_level_id = item.access_level_id
-        if existing is not None and await bin_service.item_bin(existing.id) is not None:
-            provided_fields = item.model_fields_set
-            dimensions_changed = (
-                "dimensions" in provided_fields and item.dimensions != existing.dimensions
-            )
-            access_changed = (
-                "access_level_id" in provided_fields
-                and item.access_level_id != existing.access_level_id
-            )
-            if dimensions_changed or access_changed:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Retrieve the item before changing dimensions or access level",
-                )
-            if "dimensions" not in provided_fields:
-                dimensions = existing.dimensions
-            if "item_metadata" not in provided_fields:
-                metadata = existing.item_metadata or {}
-            if "access_level_id" not in provided_fields:
-                access_level_id = existing.access_level_id
         db_item = await storage_service.create_item(
             barcode=item.barcode,
             name=item.name,
@@ -1139,17 +1193,12 @@ async def create_item(
             access_level_id=access_level_id,
             mass_values={k: v for k, v in item.model_dump(exclude_unset=True).items() if k in (*MASS_FIELDS, "weight")},
         )
-
-        locations = await storage_service.get_item_locations(item.barcode)
-
-        return await _build_item_payload_with_bin(db_item, locations, current_user, session)
-
-    except HTTPException:
-        raise
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    locations = await storage_service.get_item_locations(item.barcode)
+
+    return await _build_item_payload_with_bin(db_item, locations, current_user, session)
 
 
 @router.post(
@@ -1669,7 +1718,6 @@ async def update_grid_cell(
     try:
         grid = _get_robot_grid()
         cell = grid.get_cell(StorageModuleCellLocation(side=side, shelf_idx=shelf_idx, cell_idx=cell_idx))
-        shelf = grid.get_shelf(side, shelf_idx)
     except IndexError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
@@ -1678,7 +1726,7 @@ async def update_grid_cell(
             detail=f"Failed to load storage grid: {exc}",
         ) from exc
 
-    _validate_grid_cell_update(payload, shelf.shelf_height)
+    _validate_grid_cell_update(payload)
     _apply_grid_cell_update(cell, payload, side)
 
     grid.save()
@@ -1686,7 +1734,7 @@ async def update_grid_cell(
     return {"success": True}
 
 
-def _validate_grid_dimensions(dims: DimensionsPayload, shelf_height: Optional[float] = None) -> None:
+def _validate_grid_dimensions(dims: DimensionsPayload) -> None:
     for field, value in (
         ("width", dims.width),
         ("height", dims.height),
@@ -1698,14 +1746,8 @@ def _validate_grid_dimensions(dims: DimensionsPayload, shelf_height: Optional[fl
                 detail=f"Dimension {field} must be greater than zero",
             )
 
-    if shelf_height is not None and dims.height > shelf_height:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cell height {dims.height} mm exceeds the containing shelf height {shelf_height} mm",
-        )
 
-
-def _validate_grid_cell_update(payload: GridCellUpdate, shelf_height: Optional[float] = None) -> None:
+def _validate_grid_cell_update(payload: GridCellUpdate) -> None:
     if (
         payload.x is None
     ) != (payload.y is None) or (
@@ -1726,7 +1768,7 @@ def _validate_grid_cell_update(payload: GridCellUpdate, shelf_height: Optional[f
             )
 
     if payload.dimensions is not None:
-        _validate_grid_dimensions(payload.dimensions, shelf_height)
+        _validate_grid_dimensions(payload.dimensions)
 
 
 def _apply_grid_cell_update(cell: Cell, payload: GridCellUpdate, side: StorageModuleSide) -> None:
@@ -1787,10 +1829,9 @@ async def update_grid_cells(
             cell = grid.get_cell(
                 StorageModuleCellLocation(side=side, shelf_idx=item.shelf_idx, cell_idx=item.cell_idx)
             )
-            shelf = grid.get_shelf(side, item.shelf_idx)
         except IndexError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
-        _validate_grid_cell_update(item, shelf.shelf_height)
+        _validate_grid_cell_update(item)
         resolved.append((cell, item))
 
     for cell, item in resolved:

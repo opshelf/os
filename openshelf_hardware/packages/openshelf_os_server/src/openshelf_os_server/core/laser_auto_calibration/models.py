@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 ACTIVE_SESSION_STATES = {"starting", "running", "applying"}
 DEFAULT_SCANS_DIR_NAME = "calibration"
 AUTO_SCAN_X_MIN_MM = 5.0
-RIGHT_AUTO_SCAN_X_MAX_MM = 945.0
+BACK_AUTO_SCAN_X_MAX_MM = 945.0
 ANGLE_DEBUG_DIR_NAME = "laser_auto_calibration_debug"
 
 ANGLE_CAPTURE_RE = re.compile(
@@ -223,8 +223,6 @@ class LaserAutoCalibrationScope(BaseModel):
     include_angle_calibration: bool = True
     include_extension_calibration: bool = True
     hold_y_enabled: bool = True
-    derive_offsets_from_manual_cells: bool = False
-    derive_z_model_from_stall: bool = False
 
 class LaserAutoCalibrationError(BaseModel):
     error_type: str
@@ -247,16 +245,16 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     started_at: str | None = None
     updated_at: str | None = None
     scouted_shelf_count: int = 0
-    left_scouted_shelf_count: int = 0
-    right_scouted_shelf_count: int = 0
+    front_scouted_shelf_count: int = 0
+    back_scouted_shelf_count: int = 0
     candidate_count: int = 0
-    left_candidate_count: int = 0
-    right_candidate_count: int = 0
+    front_candidate_count: int = 0
+    back_candidate_count: int = 0
     detected_cell_count: int = 0
-    left_detected_cell_count: int = 0
-    right_detected_cell_count: int = 0
-    left_stage_extension_mm: float | None = None
-    right_stage_extension_mm: float | None = None
+    front_detected_cell_count: int = 0
+    back_detected_cell_count: int = 0
+    front_stage_extension_mm: float | None = None
+    back_stage_extension_mm: float | None = None
     shelf_edges: list[LaserAutoCalibrationShelfEdge] = Field(default_factory=list)
     shelf_candidates: list[LaserAutoCalibrationCandidate] = Field(default_factory=list)
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
@@ -302,17 +300,17 @@ def _build_default_scans_dir() -> str:
 
 
 def _side_to_module_name(side: StorageModuleSide) -> StorageModuleSideName:
-    if side == StorageModuleSide.LEFT:
-        return "left_module"
+    if side == StorageModuleSide.FRONT:
+        return "front_module"
 
-    return "right_module"
+    return "back_module"
 
 
-def _side_to_short_name(side: StorageModuleSide) -> Literal["left", "right"]:
-    if side == StorageModuleSide.LEFT:
-        return "left"
+def _side_to_short_name(side: StorageModuleSide) -> Literal["front", "back"]:
+    if side == StorageModuleSide.FRONT:
+        return "front"
 
-    return "right"
+    return "back"
 
 
 
@@ -321,14 +319,14 @@ def _build_angle_rotation_center_deg(parameters: Any, side: StorageModuleSide) -
 
 
 def _side_to_rotation_param_name(side: StorageModuleSide) -> str:
-    if side == StorageModuleSide.LEFT:
+    if side == StorageModuleSide.FRONT:
         return "ROTATION_FRONT"
 
     return "ROTATION_BACK"
 
 
 def _side_to_stage_extension_param_name(side: StorageModuleSide) -> str:
-    if side == StorageModuleSide.LEFT:
+    if side == StorageModuleSide.FRONT:
         return "STAGE_EXTENSION_SHELF_FRONT"
 
     return "STAGE_EXTENSION_SHELF_BACK"
@@ -339,15 +337,15 @@ def _build_stage_extension_probe_y_mm(top_shelf_y_mm: float, bounds: ScanBounds)
 
 
 def _build_bounds_for_side(scan_config: Any, side: StorageModuleSide) -> ScanBounds:
-    prefix = "left" if side == StorageModuleSide.LEFT else "right"
+    prefix = "front" if side == StorageModuleSide.FRONT else "back"
 
     x_min_mm = float(getattr(scan_config, f"{prefix}_bounds_x_min_mm"))
     x_max_mm = float(getattr(scan_config, f"{prefix}_bounds_x_max_mm"))
 
     x_min_mm = max(x_min_mm, AUTO_SCAN_X_MIN_MM)
 
-    if side == StorageModuleSide.RIGHT:
-        x_max_mm = min(x_max_mm, RIGHT_AUTO_SCAN_X_MAX_MM)
+    if side == StorageModuleSide.BACK:
+        x_max_mm = min(x_max_mm, BACK_AUTO_SCAN_X_MAX_MM)
 
     return ScanBounds(
         x_min=x_min_mm,
@@ -561,7 +559,7 @@ __all__ = [
     "ACTIVE_SESSION_STATES",
     "DEFAULT_SCANS_DIR_NAME",
     "AUTO_SCAN_X_MIN_MM",
-    "RIGHT_AUTO_SCAN_X_MAX_MM",
+    "BACK_AUTO_SCAN_X_MAX_MM",
     "ANGLE_DEBUG_DIR_NAME",
     "STAGE_STALL_CAPTURE_RE",
     "STAGE_STALL_PROBE_RE",

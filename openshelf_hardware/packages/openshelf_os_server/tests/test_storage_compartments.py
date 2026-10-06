@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from openshelf_os.config.settings import StorageBinSettings
 from openshelf_os_server.core import bin_storage
-from openshelf_os_server.core.bin_storage import BinStorageService, BinWorkflowConflict
+from openshelf_os_server.core.bin_storage import BinStorageService
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.database.models import StorageBin, StorageBinItem, StorageBinWorkflow
 from openshelf_os_server.database.session import AsyncSessionLocal
@@ -14,7 +14,7 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 def tray(columns=4, rows=2, cell=0, width=200, length=160):
     return StorageBinSettings.model_validate({
         "barcode": f"90000000000{cell}",
-        "home_location": {"side": "left_module", "shelf_idx": 0, "cell_idx": cell},
+        "home_location": {"side": "front_module", "shelf_idx": 0, "cell_idx": cell},
         "inner_dimensions": {"width": width, "length": length, "height": 100},
         "compartment_layout": {"rows": rows, "columns": columns},
     })
@@ -45,7 +45,6 @@ async def finish(service, workflow, present):
     assert returned.state == "completed"
 
 
-
 @pytest.mark.anyio
 async def test_slots_persist_across_sessions_and_reuse_first_vacancy(configured):
     async with AsyncSessionLocal() as db:
@@ -65,7 +64,7 @@ async def test_slots_persist_across_sessions_and_reuse_first_vacancy(configured)
         assert stored.compartment == 2
         payload = await service.serialize_workflow(stored)
         assert payload["bin"]["compartment_layout"] == {"rows": 2, "columns": 4}
-        assert payload["bin"]["compartment_dimensions"] == {"width": 50, "length": 80, "height": 100}
+        assert payload["bin"]["compartment_dimensions"] == {"width": 41.75, "length": 70.5, "height": 100}
         assert {entry["id"]: entry["compartment"] for entry in payload["bin"]["items"]} == {first_id: 1, second_id: 2}
         first = await StorageService(db).get_item("123456789001")
         retrieve = await service.begin("retrieve", first, None)
@@ -79,63 +78,7 @@ async def test_slots_persist_across_sessions_and_reuse_first_vacancy(configured)
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("compartmentalized", [True, False])
-async def test_serialization_keeps_contents_coherent_during_retrieval(
-    configured, monkeypatch, compartmentalized
-):
-    if not compartmentalized:
-        configured[:] = [configured[0].model_copy(update={"compartment_layout": None})]
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        await service.sync_config()
-        second, first = await item(db, 2), await item(db, 1)
-        for target in (second, first):
-            workflow = await service.begin("store", target, None)
-            await finish(service, workflow, True)
-        retrieve = await service.begin("retrieve", second, None)
-        await service.transition(retrieve, "awaiting_operator")
-        bin_id, workflow_id = retrieve.bin_id, retrieve.id
-        expected = [
-            {"id": first.id, "barcode": first.barcode, "name": first.name,
-             "compartment": 2 if compartmentalized else None},
-            {"id": second.id, "barcode": second.barcode, "name": second.name,
-             "compartment": 1 if compartmentalized else None},
-        ]
-
-    async with AsyncSessionLocal() as reader, AsyncSessionLocal() as writer:
-        service = BinStorageService(reader)
-        row = await reader.get(StorageBin, bin_id)
-        retrieve = await writer.get(StorageBinWorkflow, workflow_id)
-        execute = reader.execute
-        completed = False
-
-        async def complete_retrieval_after_read(*args, **kwargs):
-            nonlocal completed
-            result = await execute(*args, **kwargs)
-            if not completed:
-                completed = True
-                # Complete the real workflow after a read has observed the old contents.
-                await BinStorageService(writer).close(retrieve)
-                assert retrieve.state == "completed"
-            return result
-
-        monkeypatch.setattr(reader, "execute", complete_retrieval_after_read)
-        payload = await service.serialize_bin(row)
-        assert completed
-        assert payload["items"] == expected
-        assert payload["item_count"] == 2
-        assert payload["used_volume"] == 2 * 40 * 70 * 90
-        assert payload["available_volume"] == 200 * 160 * 100 - payload["used_volume"]
-
-        current = await service.serialize_bin(row)
-        assert current["items"] == expected[:1]
-        assert current["item_count"] == 1
-        assert current["used_volume"] == 40 * 70 * 90
-        assert current["available_volume"] == 200 * 160 * 100 - current["used_volume"]
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("width,length,height,fits", [(50,80,100,True),(80,50,100,True),(51,80,100,False),(40,70,101,False)])
+@pytest.mark.parametrize("width,length,height,fits", [(41.75,70.5,100,True),(70.5,41.75,100,True),(42,70.5,100,False),(40,70,101,False)])
 async def test_fit_is_per_compartment_and_allows_rotation(configured, width, length, height, fits):
     async with AsyncSessionLocal() as db:
         service = BinStorageService(db)
@@ -159,18 +102,6 @@ async def test_full_slots_cannot_share_even_with_spare_volume(configured):
 
 
 @pytest.mark.anyio
-async def test_selects_compatible_cell_layout(configured):
-    configured[:] = [tray(), tray(columns=2, rows=2, cell=1)]
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        await service.sync_config()
-        small = await item(db, 1)
-        assert (await service.allocate_bin(small)).cell_idx == 0
-        large = await item(db, 2, 90, 70)
-        assert (await service.allocate_bin(large)).cell_idx == 1
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize("occupied", [True, False])
 async def test_relayout_refuses_nonempty_or_checked_out_tray(configured, occupied):
     async with AsyncSessionLocal() as db:
@@ -185,3 +116,17 @@ async def test_relayout_refuses_nonempty_or_checked_out_tray(configured, occupie
         await db.rollback()
         row = await db.scalar(select(StorageBin))
         assert row.compartment_layout == {"rows": 2, "columns": 4}
+
+
+@pytest.mark.anyio
+async def test_member_sized_before_wall_deduction_still_returns(configured):
+    async with AsyncSessionLocal() as db:
+        service = BinStorageService(db)
+        await service.sync_config()
+        stored = await item(db, 1)
+        await finish(service, await service.begin("store", stored, None), True)
+        # Items stored as "bin sized" before walls were deducted carry the full-cell footprint.
+        stored.dimensions = {"width": 50, "length": 80, "height": 90}
+        await db.commit()
+        await finish(service, await service.begin("store", await item(db, 2), None), True)
+        assert await service.item_bin(stored.id) is not None

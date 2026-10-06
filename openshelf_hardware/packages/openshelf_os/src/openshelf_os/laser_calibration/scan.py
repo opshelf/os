@@ -49,7 +49,6 @@ class ScanDetectedCell(BaseModel):
 class ScanDetectedShelf(BaseModel):
 	shelf_idx: int
 	center_y_mm: float
-	shelf_height_mm: float
 	shelf_width_mm: float
 	cells: list[ScanDetectedCell] = Field(default_factory=list)
 
@@ -472,7 +471,6 @@ def analyze_scan_capture(
 			current_shelf = ScanDetectedShelf(
 				shelf_idx=0,
 				center_y_mm=cell.center_y_mm,
-				shelf_height_mm=cell.height_mm,
 				shelf_width_mm=cell.width_mm,
 			)
 			current_shelf_cells = [cell]
@@ -489,14 +487,12 @@ def analyze_scan_capture(
 
 		current_shelf.cells = list(current_shelf_cells)
 		current_shelf.center_y_mm = float(np.mean([shelf_cell.center_y_mm for shelf_cell in current_shelf_cells]))
-		current_shelf.shelf_height_mm = max(shelf_cell.height_mm for shelf_cell in current_shelf_cells)
 		current_shelf.shelf_width_mm = sum(shelf_cell.width_mm for shelf_cell in current_shelf_cells)
 		shelves.append(current_shelf)
 
 		current_shelf = ScanDetectedShelf(
 			shelf_idx=len(shelves),
 			center_y_mm=cell.center_y_mm,
-			shelf_height_mm=cell.height_mm,
 			shelf_width_mm=cell.width_mm,
 		)
 		current_shelf_cells = [cell]
@@ -509,7 +505,6 @@ def analyze_scan_capture(
 
 		current_shelf.cells = list(current_shelf_cells)
 		current_shelf.center_y_mm = float(np.mean([shelf_cell.center_y_mm for shelf_cell in current_shelf_cells]))
-		current_shelf.shelf_height_mm = max(shelf_cell.height_mm for shelf_cell in current_shelf_cells)
 		current_shelf.shelf_width_mm = sum(shelf_cell.width_mm for shelf_cell in current_shelf_cells)
 		shelves.append(current_shelf)
 
@@ -547,18 +542,15 @@ def _build_scan_cell(
 	detected_cell: ScanDetectedCell,
 	existing_cell: Optional[Cell],
 	side_number: int,
-	default_length_mm: float,
 ) -> Cell:
 	status = CellStatus.AVAILABLE
 	item = None
 	z_offset = 0.0
 	is_manual = False
 	captured_at_stage_mm = None
-	dimensions = Dimensions(
-		width=detected_cell.width_mm,
-		height=detected_cell.height_mm,
-		length=default_length_mm,
-	)
+	# The scan locates a cell's engagement hole, not the tray it holds: a rebuilt cell comes out
+	# unsized so the missing tray dimensions cannot pass for real ones.
+	dimensions = Dimensions(width=0.0, height=0.0, length=0.0)
 
 	if existing_cell is not None:
 		status = existing_cell.status
@@ -568,14 +560,13 @@ def _build_scan_cell(
 		# back untouched: the operator's point, not the detected one, or the next probe would be
 		# judged against a value a model produced.
 		is_manual = getattr(existing_cell, "is_manual", False) is True
-		dimensions = existing_cell.dimensions
 		if is_manual is True and existing_cell.calibration_point is not None:
 			return Cell(
 				cell_idx=cell_idx,
 				status=status,
 				item=item,
 				calibration_point=copy.deepcopy(existing_cell.calibration_point),
-				dimensions=dimensions,
+				dimensions=existing_cell.dimensions,
 				is_manual=True,
 			)
 		if existing_cell.calibration_point is not None:
@@ -669,7 +660,6 @@ def _match_detected_cells_to_existing(
 	detected_cells: list[ScanDetectedCell],
 	existing_cells: list[Cell],
 	side_number: int,
-	default_length_mm: float,
 	shelf_idx: int,
 	detected_cell_key_map: Optional[dict[tuple[int, int], tuple[int, int]]] = None,
 ) -> list[Cell]:
@@ -696,7 +686,6 @@ def _match_detected_cells_to_existing(
 				detected_cell=detected_cell,
 				existing_cell=existing_cell,
 				side_number=side_number,
-				default_length_mm=default_length_mm,
 			)
 			for (existing_cell, _existing_point), detected_cell in zip(existing_sorted, detected_sorted)
 		]
@@ -750,7 +739,6 @@ def _match_detected_cells_to_existing(
 				detected_cell=detected_sorted[best_index],
 				existing_cell=existing_cell,
 				side_number=side_number,
-				default_length_mm=default_length_mm,
 			)
 		)
 
@@ -776,7 +764,6 @@ def _match_detected_cells_to_existing(
 				detected_cell=detected_cell,
 				existing_cell=None,
 				side_number=side_number,
-				default_length_mm=default_length_mm,
 			)
 		)
 		next_cell_idx += 1
@@ -804,7 +791,6 @@ def build_shelves_from_scan(
 	side: StorageModuleSide,
 	analysis: ScanAnalysisResult,
 	existing_shelves: Optional[list[Shelf]] = None,
-	default_length_mm: float = 400.0,
 	detected_cell_key_map: Optional[dict[tuple[int, int], tuple[int, int]]] = None,
 ) -> list[Shelf]:
 	existing_lookup: dict[tuple[int, int], Cell] = {}
@@ -817,7 +803,7 @@ def build_shelves_from_scan(
 				existing_lookup[(shelf.shelf_idx, cell.cell_idx)] = cell
 
 	shelves: list[Shelf] = []
-	side_number = 0 if side == StorageModuleSide.LEFT else 1
+	side_number = 0 if side == StorageModuleSide.FRONT else 1
 
 	for detected_shelf in analysis.shelves:
 		existing_shelf = existing_by_shelf.get(detected_shelf.shelf_idx)
@@ -827,7 +813,6 @@ def build_shelves_from_scan(
 				detected_cells=detected_shelf.cells,
 				existing_cells=existing_shelf.cells,
 				side_number=side_number,
-				default_length_mm=default_length_mm,
 				shelf_idx=detected_shelf.shelf_idx,
 				detected_cell_key_map=detected_cell_key_map,
 			)
@@ -845,25 +830,13 @@ def build_shelves_from_scan(
 					detected_cell=detected_cell,
 					existing_cell=existing_lookup.get((detected_cell.shelf_idx, detected_cell.cell_idx)),
 					side_number=side_number,
-					default_length_mm=default_length_mm,
 				)
 				for detected_cell in detected_shelf.cells
 			]
 
-		output_shelf_height = detected_shelf.shelf_height_mm
-		output_shelf_width = detected_shelf.shelf_width_mm
-		if existing_shelves is not None:
-			for existing_shelf in existing_shelves:
-				if existing_shelf.shelf_idx == detected_shelf.shelf_idx:
-					output_shelf_height = existing_shelf.shelf_height
-					output_shelf_width = existing_shelf.shelf_width
-					break
-
 		shelves.append(
 			Shelf(
 				shelf_idx=detected_shelf.shelf_idx,
-				shelf_height=output_shelf_height,
-				shelf_width=output_shelf_width,
 				cells=cells,
 			)
 		)

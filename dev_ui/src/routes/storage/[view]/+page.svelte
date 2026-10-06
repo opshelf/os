@@ -7,6 +7,7 @@
 		| 'layout'
 		| 'cell_auto'
 		| 'cell_manual'
+		| 'stage'
 		| 'io'
 		| 'rotation'
 		| 'fridge'
@@ -16,6 +17,7 @@
 		layout: 'layout',
 		auto: 'cell_auto',
 		cells: 'cell_manual',
+		stage: 'stage',
 		'io-box': 'io',
 		'tool-rotation': 'rotation',
 		fridge: 'fridge',

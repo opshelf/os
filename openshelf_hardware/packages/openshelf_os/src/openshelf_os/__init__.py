@@ -36,10 +36,13 @@ def _configure_sentry() -> bool:
 			)
 		)
 
+	# Errors only; batched logs, traces, and release-health sessions made every worker
+	# shutdown wait to flush them.
 	sentry_sdk.init(
 		dsn=sentry_dsn,
-		enable_logs=True,
-		traces_sample_rate=0.1,
+		enable_logs=False,
+		auto_session_tracking=False,
+		traces_sample_rate=0,
 		environment=mode.value,
 		server_name=device_id,
 		integrations=integrations if integrations else None,  # type: ignore[arg-type]
@@ -55,7 +58,14 @@ SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
 PYMODBUS_REQUEST_ID_MISMATCH_PREFIX = "ERROR: request ask for id="
 PYMODBUS_NO_RESPONSE_RETRY_PREFIX = "No response received after "
 PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
+# pymodbus' Log.error/Log.critical append the last frames as "\n>>>>> send: ..." /
+# "\n>>>>> recv: ..." lines whenever DEBUG logging is off, so the message of a
+# no-response retry is the log text plus that trailer. Every appended line
+# carries the marker prefix; a deduplicated frame shows up as
+# ">>>>> Repeating....".
+PYMODBUS_FRAME_DUMP_LINE_PREFIX = ">>>>> "
 DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
+DOOR_MOTOR_RECOVERY_FAILED_PREFIX = "Door motor recovery failed:"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -81,17 +91,42 @@ def _is_pymodbus_request_id_mismatch(message: Any) -> bool:
 	return isinstance(message, str) is True and message.startswith(PYMODBUS_REQUEST_ID_MISMATCH_PREFIX)
 
 
+def _strip_pymodbus_frame_dump(message: str) -> str:
+	"""Drop the frame dump pymodbus appends to its error messages.
+
+	``Log.error``/``Log.critical`` add the last frames as ``>>>>> send:`` /
+	``>>>>> recv:`` lines when DEBUG logging is off, so only the first line
+	carries the log text. Anything else after a newline is left untouched.
+	"""
+	log_text, separator, trailer = message.partition("\n")
+	if separator == "":
+		return message
+
+	trailer_lines = [line for line in trailer.split("\n") if line.strip() != ""]
+	if trailer_lines == []:
+		return message
+
+	if any(
+		line.startswith(PYMODBUS_FRAME_DUMP_LINE_PREFIX) is False for line in trailer_lines
+	):
+		return message
+
+	return log_text
+
+
 def _is_pymodbus_no_response_retry(message: Any) -> bool:
 	if isinstance(message, str) is False:
 		return False
 
-	if message.startswith(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) is False:
+	log_text = _strip_pymodbus_frame_dump(message)
+
+	if log_text.startswith(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) is False:
 		return False
 
-	if message.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
+	if log_text.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
 		return False
 
-	retry_count = message[
+	retry_count = log_text[
 		len(PYMODBUS_NO_RESPONSE_RETRY_PREFIX):-len(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX)
 	]
 	return retry_count.isdigit()
@@ -102,6 +137,10 @@ def _is_suppressed_pymodbus_log_message(message: Any) -> bool:
 		_is_pymodbus_request_id_mismatch(message) is True
 		or _is_pymodbus_no_response_retry(message) is True
 	)
+
+
+def _is_door_motor_recovery_failure(message: Any) -> bool:
+	return isinstance(message, str) is True and message.startswith(DOOR_MOTOR_RECOVERY_FAILED_PREFIX)
 
 
 def _sentry_log_is_suppressed_pymodbus_message(log: dict[str, Any]) -> bool:
@@ -130,6 +169,27 @@ def _sentry_log_has_message(log: dict[str, Any], target: str) -> bool:
 	return any(value == target for value in attributes.values())
 
 
+def _sentry_log_has_door_motor_recovery_failure(log: dict[str, Any]) -> bool:
+	# Drop the whole recovery-failure class: the IO-box door recovery is a
+	# best-effort self-healing path, and its failure message is logged without a
+	# stacktrace, so it would only create log-only Sentry issues.
+	for key in ("body", "message"):
+		if _is_door_motor_recovery_failure(log.get(key)) is True:
+			return True
+
+	attributes_value = log.get("attributes")
+	if isinstance(attributes_value, dict) is False:
+		return False
+
+	attributes = cast(dict[str, Any], attributes_value)
+	return any(_is_door_motor_recovery_failure(value) is True for value in attributes.values())
+
+
+def _event_entries(event: dict[str, Any]) -> list[Any]:
+	entries_value = event.get("entries", [])
+	return cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
+
+
 def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
 	if event.get("message") == target:
 		return True
@@ -140,7 +200,7 @@ def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
 		if any(logentry.get(key) == target for key in ("message", "formatted")) is True:
 			return True
 
-	for entry in event.get("entries", []):
+	for entry in _event_entries(event):
 		if isinstance(entry, dict) is False:
 			continue
 
@@ -149,6 +209,30 @@ def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
 			continue
 
 		if any(data.get(key) == target for key in ("message", "formatted")) is True:
+			return True
+
+	return False
+
+
+def _sentry_event_has_door_motor_recovery_failure(event: dict[str, Any]) -> bool:
+	if _is_door_motor_recovery_failure(event.get("message")) is True:
+		return True
+
+	logentry_value = event.get("logentry")
+	if isinstance(logentry_value, dict) is True:
+		logentry = cast(dict[str, Any], logentry_value)
+		if any(_is_door_motor_recovery_failure(logentry.get(key)) is True for key in ("message", "formatted")):
+			return True
+
+	for entry in _event_entries(event):
+		if isinstance(entry, dict) is False:
+			continue
+
+		data = entry.get("data")
+		if isinstance(data, dict) is False:
+			continue
+
+		if any(_is_door_motor_recovery_failure(data.get(key)) is True for key in ("message", "formatted")):
 			return True
 
 	return False
@@ -164,7 +248,7 @@ def _sentry_event_has_suppressed_pymodbus_message(event: dict[str, Any]) -> bool
 		if any(_is_suppressed_pymodbus_log_message(logentry.get(key)) is True for key in ("message", "formatted")):
 			return True
 
-	for entry in event.get("entries", []):
+	for entry in _event_entries(event):
 		if isinstance(entry, dict) is False:
 			continue
 
@@ -185,6 +269,14 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 	if _sentry_event_has_message(event, DOOR_MOTOR_RECOVERY_EVENT) is True:
 		return None
 
+	# A recovery home that fails on a faulted drive is still the expected
+	# self-healing path: the door keeps its cached state and the motor fault is
+	# still reported separately as the motor's "Fault detected - stopping motor"
+	# warning or an ERROR-level motion-timeout event. The recovery message is a
+	# stackless log-only issue, so drop the whole recovery-failure class.
+	if _sentry_event_has_door_motor_recovery_failure(event) is True:
+		return None
+
 	request_value = event.get("request")
 	if isinstance(request_value, dict) is True:
 		request = cast(dict[str, Any], request_value)
@@ -202,6 +294,9 @@ def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[
 	# Door position recovery is an expected hardware self-healing path. Keep it in
 	# local logs without creating a log-only Sentry issue.
 	if _sentry_log_has_message(log, DOOR_MOTOR_RECOVERY_EVENT) is True:
+		return None
+
+	if _sentry_log_has_door_motor_recovery_failure(log) is True:
 		return None
 
 	attributes = log.get("attributes")

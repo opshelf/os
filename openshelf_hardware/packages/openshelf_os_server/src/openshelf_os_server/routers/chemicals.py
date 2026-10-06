@@ -3,8 +3,7 @@ from openshelf_os_server.documentation import response_docs
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..core.chemicals import (
-    ChemicalDetail, ChemicalNotFound, ChemicalSearch, ChemicalUnavailable,
-    CommonChemistry, get_common_chemistry, normalize_cas,
+    ChemicalDetail, ChemicalSearch, CommonChemistry, get_common_chemistry, normalize_cas,
 )
 from .auth_deps import require_permissions
 
@@ -30,10 +29,7 @@ async def search_chemicals(
     """
     if len(q.strip()) < 2:
         raise HTTPException(422, "Enter at least two characters")
-    try:
-        return await service.search(q, offset)
-    except ChemicalUnavailable:
-        raise HTTPException(503, "CAS search unavailable", headers={"Retry-After": "5"}) from None
+    return await service.search(q, offset)
 
 
 @router.get(
@@ -55,9 +51,4 @@ async def chemical_detail(
         cas_number = normalize_cas(cas_number)
     except ValueError:
         raise HTTPException(422, "Invalid CAS number") from None
-    try:
-        return await service.detail(cas_number)
-    except ChemicalNotFound:
-        raise HTTPException(404, "Chemical not found") from None
-    except ChemicalUnavailable:
-        raise HTTPException(503, "CAS search unavailable", headers={"Retry-After": "5"}) from None
+    return await service.detail(cas_number)

@@ -195,6 +195,10 @@ async def init_robot_worker() -> None:
         tracker.set_overall(OVERALL_FAILED, error=str(e))
         logger.warning("robot_configure_failed: %s", e, exc_info=True)
         _capture_init_exception(e)
+        try:
+            await robot.stop_weight_guard()
+        except Exception as stop_error:
+            logger.warning("weight_guard_stop_failed_after_configure_failure: %s", stop_error)
         return
 
     worker: Optional[r_worker.RobotWorker] = None

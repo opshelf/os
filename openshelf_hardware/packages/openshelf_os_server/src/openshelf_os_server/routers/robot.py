@@ -69,19 +69,21 @@ from openshelf_os_server.core.command_lifecycle import (
     replay as replay_robot_command,
     serialize_command,
 )
-from openshelf_os_server.core.storage import StorageService
+from openshelf_os_server.core import occupancy_cache
 from openshelf_os_server.core.bin_storage import (
     DirectStoreReservationError,
     is_reserved_bin_location,
     validate_direct_store_reservation,
 )
 from openshelf_os_server.routers.common import SuccessResponse
+from openshelf_os_server.errors import error_detail
 from openshelf_os_server.settings import get_settings, get_operating_mode
-from openshelf_os_server.database.session import get_db, AsyncSessionLocal
+from openshelf_os_server.database.session import get_db
 from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation, StorageBinItem, User
 from .auth_deps import (
     get_current_user,
     get_relay_or_current_user,
+    get_relay_or_current_user_for_stream,
     require_permissions,
     can_user_retrieve_item,
 )
@@ -174,14 +176,6 @@ _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 _SCALE_NOT_ENABLED_MESSAGE = "Scale is not enabled"
 
 
-def _error_detail(message: str, code: str) -> dict[str, str]:
-    return {"message": message, "code": code}
-
-
-
-
-
-
 
 
 def _is_scale_not_enabled(exc: Exception) -> bool:
@@ -191,7 +185,7 @@ def _is_scale_not_enabled(exc: Exception) -> bool:
 def _scale_not_enabled_exception() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail=_error_detail(_SCALE_NOT_ENABLED_MESSAGE, "scale_not_enabled"),
+        detail=error_detail(_SCALE_NOT_ENABLED_MESSAGE, "scale_not_enabled"),
     )
 
 
@@ -274,7 +268,7 @@ def overlay_db_occupancy(payload_json: str, occupied: set[tuple[str, int, int]])
     payload = json.loads(payload_json)
     storage = payload.get("robot_status", {}).get("storage", {})
 
-    for side in ("left_module", "right_module"):
+    for side in ("front_module", "back_module"):
         for shelf_position, shelf in enumerate(storage.get(side, [])):
             shelf_idx_raw = shelf.get("shelf_idx", shelf_position)
 
@@ -339,7 +333,7 @@ class SafetyGuardOverrideRequest(BaseModel):
 
 
 class SafetyComponentOverrideRequest(BaseModel):
-    component: Literal["light_curtain", "cabinet_doors"]
+    component: Literal["light_curtain", "cabinet_doors", "weight_change"]
     bypass: bool
 
 
@@ -488,7 +482,7 @@ async def _validate_direct_store_reservation(item_data: dict[str, Any], db: Asyn
     except DirectStoreReservationError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail(str(exc), exc.code),
+            detail=error_detail(str(exc), exc.code),
         ) from exc
 
 
@@ -527,7 +521,7 @@ def _parse_requested_store_location(item_data: dict[str, Any]) -> StorageModuleC
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=_error_detail("location requires side, shelf_idx and cell_idx", "invalid_location"),
+            detail=error_detail("location requires side, shelf_idx and cell_idx", "invalid_location"),
         ) from None
 
 
@@ -549,12 +543,12 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
     if cell is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=_error_detail("Requested storage cell does not exist", "cell_not_found"),
+            detail=error_detail("Requested storage cell does not exist", "cell_not_found"),
         )
     if cell.status != CellStatus.AVAILABLE:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail(f"Requested storage cell is {cell.status.value}", "cell_unavailable"),
+            detail=error_detail(f"Requested storage cell is {cell.status.value}", "cell_unavailable"),
         )
 
     dimensions = item_data.get("dimensions")
@@ -573,7 +567,7 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
     if grid.cell_fits_item(cell, item) is False:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail("Item does not fit the requested storage cell", "cell_too_small"),
+            detail=error_detail("Item does not fit the requested storage cell", "cell_too_small"),
         )
 
 
@@ -596,7 +590,7 @@ async def _validate_mock_store_location(
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=_error_detail("Requested storage cell does not exist", "cell_not_found"),
+            detail=error_detail("Requested storage cell does not exist", "cell_not_found"),
         )
 
     occupied = (
@@ -611,7 +605,7 @@ async def _validate_mock_store_location(
     if occupied is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail("Requested storage cell is occupied", "cell_unavailable"),
+            detail=error_detail("Requested storage cell is occupied", "cell_unavailable"),
         )
 
     # A live bin home is unavailable for explicit stores, matching the maintenance status
@@ -619,13 +613,13 @@ async def _validate_mock_store_location(
     if await is_reserved_bin_location((side, shelf_idx, cell_idx), db):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail("Requested storage cell is reserved", "cell_unavailable"),
+            detail=error_detail("Requested storage cell is reserved", "cell_unavailable"),
         )
 
     if isinstance(dimensions, dict) and mock_cell_fits(dimensions) is False:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail("Item does not fit the requested storage cell", "cell_too_small"),
+            detail=error_detail("Item does not fit the requested storage cell", "cell_too_small"),
         )
 
 
@@ -717,7 +711,7 @@ async def robot_commands(
     failure.
 
     To choose the destination cell, add a top-level `location`
-    (`{"side":"left_module","shelf_idx":0,"cell_idx":0}`). The cell must exist in the
+    (`{"side":"front_module","shelf_idx":0,"cell_idx":0}`). The cell must exist in the
     storage grid, be available, and fit the item; a live bin home stays reserved and is
     reported unavailable. Omitting `location` keeps automatic allocation, and demo mode
     keeps its configured cell mapping.
@@ -1139,9 +1133,11 @@ async def acknowledge_safety_guard(
 ) -> SuccessResponse:
     """Acknowledge a cleared safety interruption.
 
-    Acknowledges the worker safety guard only after all interruption sources are clear.
-    Returns `409` with `active_sources` while an interruption remains active. This does not
-    bypass sensors or home the robot.
+    Acknowledges the worker safety guard once every interruption source is either
+    clear or one an acknowledgement is enough to clear, such as a weight change
+    that leaves the scale reading permanently shifted. Returns `409` with
+    `active_sources` while a source that has to clear physically remains active.
+    This does not bypass sensors or home the robot.
     """
     result = await worker.acknowledge_safety_guard()
 
@@ -1198,9 +1194,9 @@ async def override_safety_component(
 ) -> dict[str, Any]:
     """Set a component safety bypass.
 
-    Engineering control requiring `robot:control`. Changes bypass for `light_curtain` or
-    `cabinet_doors` and returns the resulting safety state. Restore the component after the
-    controlled diagnostic procedure.
+    Engineering control requiring `robot:control`. Changes bypass for `light_curtain`,
+    `cabinet_doors` or `weight_change` and returns the resulting safety state. Restore the
+    component after the controlled diagnostic procedure.
     """
     return await worker.set_safety_component_bypassed(request.component, request.bypass)
 
@@ -1595,7 +1591,7 @@ async def clear_motor_alarm(
         logging.error("Motor alarm clear failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Motor alarm clear failed: {exc}", "motor_alarm_clear_failed"),
+            detail=error_detail(f"Motor alarm clear failed: {exc}", "motor_alarm_clear_failed"),
         ) from exc
 
 
@@ -1607,28 +1603,15 @@ async def clear_motor_alarm(
 )
 async def home_motor(
     motor_name: str,
-    skip_pre_home_approach: bool = False,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Home one motor.
 
     Runs the selected motor's homing operation with manual-motion guards. This moves
-    hardware and may also position the tool for safe rotation. `skip_pre_home_approach=true`
-    is restricted to the Y axis in development mode. Unknown names return `404`; motion that
-    another operation already holds returns `409`.
+    hardware and may also position the tool for safe rotation. Unknown names return `404`;
+    motion that another operation already holds returns `409`.
     """
-    if skip_pre_home_approach is True:
-        if get_operating_mode() != OperatingMode.development:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Skipping the pre-home approach is only available in development mode",
-            )
-        if motor_name != "y_axis":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Skipping the pre-home approach is only supported for y_axis diagnostics",
-            )
 
     motor = worker._robot._get_motor_by_name(motor_name)
 
@@ -1658,10 +1641,7 @@ async def home_motor(
                 await fridge.home_door()
             else:
                 await motor.clear_alarm()
-                if skip_pre_home_approach is True:
-                    await motor.home(skip_pre_home_approach=True)
-                else:
-                    await motor.home()
+                await motor.home()
             if motor_name == "rotate":
                 await worker._robot._tool.rotate_to_home_orientation(
                     should_ensure_safe_stage_extension=False,
@@ -1678,7 +1658,7 @@ async def home_motor(
     except FridgeSafetyError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail(str(exc), "tool_not_retracted"),
+            detail=error_detail(str(exc), "tool_not_retracted"),
         ) from exc
     except MotorError as exc:
         if motor_name == "fridge_door":
@@ -1687,13 +1667,13 @@ async def home_motor(
         logging.error("Motor home failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
+            detail=error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
         ) from exc
     except Exception as exc:
         logging.error("Motor home failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
+            detail=error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
         ) from exc
 
 
@@ -1777,7 +1757,7 @@ async def power_cycle_rail(
         logging.error("Power cycle failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Power cycle failed: {exc}", "power_cycle_failed"),
+            detail=error_detail(f"Power cycle failed: {exc}", "power_cycle_failed"),
         ) from exc
 
 
@@ -1904,13 +1884,13 @@ async def move_motor(
     except FridgeSafetyError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=_error_detail(str(exc), "tool_not_retracted"),
+            detail=error_detail(str(exc), "tool_not_retracted"),
         ) from exc
     except Exception as exc:
         logging.warning("Motor move failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Motor move failed: {exc}", "motor_move_failed"),
+            detail=error_detail(f"Motor move failed: {exc}", "motor_move_failed"),
         ) from exc
 
 
@@ -1947,21 +1927,24 @@ async def control_door(
         logging.error("Door control failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_error_detail(f"Door {action} failed: {exc}", "door_control_failed"),
+            detail=error_detail(f"Door {action} failed: {exc}", "door_control_failed"),
         ) from exc
 
 
 
-async def get_occupied_cells_from_db() -> set[tuple[str, int, int]]:
-    async with AsyncSessionLocal() as session:
-        service = StorageService(session)
-        rows = await service.get_all_occupied_cells()
-        return {(row[0], row[1], row[2]) for row in rows}
+async def get_occupied_cells_for_overlay() -> set[tuple[str, int, int]]:
+    """Return occupied cells for the status overlay.
+
+    Reads are cached per commit generation (see `core.occupancy_cache`): frame
+    generation reuses the last snapshot, so a stream no longer issues the same
+    query pair once per status push inside its long-lived transaction.
+    """
+    return await occupancy_cache.get_occupied_cells()
 
 
 @router.get(
     "/status",
-    dependencies=[Depends(get_relay_or_current_user)],
+    dependencies=[Depends(get_relay_or_current_user_for_stream)],
     summary="Stream robot status",
     responses=response_docs(
         errors=(401, 503),
@@ -2034,7 +2017,7 @@ async def stream_sse() -> EventSourceResponse:
                         status_queue, _ = await worker.subscribe_status()
                         raw_payload = await worker.get_status_snapshot(force_refresh=True)
                         if raw_payload is not None:
-                            occupied_cells = await get_occupied_cells_from_db()
+                            occupied_cells = await get_occupied_cells_for_overlay()
                             yield {"data": inject_mode_field(overlay_db_occupancy(raw_payload, occupied_cells))}
 
                 waiters = {
@@ -2062,7 +2045,7 @@ async def stream_sse() -> EventSourceResponse:
                     if kind == "init":
                         yield {"event": "init_progress", "data": data}
                     else:
-                        occupied_cells = await get_occupied_cells_from_db()
+                        occupied_cells = await get_occupied_cells_for_overlay()
                         yield {"data": inject_mode_field(overlay_db_occupancy(data, occupied_cells))}
                 waiters = {}
         finally:
@@ -2081,14 +2064,14 @@ async def stream_sse() -> EventSourceResponse:
 
 @router.get(
     "/events",
-    dependencies=[Depends(get_relay_or_current_user)],
+    dependencies=[Depends(get_relay_or_current_user_for_stream)],
     summary="Stream robot events and command results",
     responses=response_docs(
         errors=(401, 503),
         existing=stream_docs(
             "text/event-stream",
             "Live JSON robot events in SSE data frames; command, scanner, safety and workflow events share this stream.",
-            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"left_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
+            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"front_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
         ),
     ),
     response_class=Response,
@@ -2128,8 +2111,10 @@ async def stream_events() -> EventSourceResponse:
     except ValueError:
         worker = None
 
+    received_before_subscribe = 0
     if worker is not None:
         event_queue = await worker.subscribe_events()
+        received_before_subscribe = event_processing_tracker.received_count()
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         try:
@@ -2142,9 +2127,13 @@ async def stream_events() -> EventSourceResponse:
                 forwarded += 1
                 # The event listener commits DB state after the worker emits, so
                 # wait for that work to settle before clients observe the event.
-                await event_processing_tracker.wait_until_processed(
-                    forwarded, EVENT_FORWARD_WAIT_TIMEOUT_S
+                settled = await event_processing_tracker.wait_until_processed(
+                    received_before_subscribe + forwarded, EVENT_FORWARD_WAIT_TIMEOUT_S
                 )
+                if settled is False:
+                    logging.warning(
+                        "Forwarding robot event before its inventory update settled"
+                    )
                 yield {"data": message}
         finally:
             if worker is not None and event_queue is not None:

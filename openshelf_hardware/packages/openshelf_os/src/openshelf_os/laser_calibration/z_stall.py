@@ -484,7 +484,7 @@ async def run_z_stall_anchor(
 
 	# A grid-built analysis has no run metadata: its wall depths arrive with the analysis.
 	if len(loaded_candidates) == 0 and getattr(analysis, "metadata_path", None) is not None:
-		metadata = load_json_file(Path(str(analysis.metadata_path)))
+		metadata = load_json_file(analysis.metadata_path)
 		loaded_candidates = load_candidates_from_metadata(metadata)
 
 	probe_wall_depths = wall_depths_by_cell(analysis=analysis, candidates=loaded_candidates)
@@ -523,10 +523,10 @@ async def run_z_stall_anchor(
 	from .angle.capture import enter_capture_mode  # noqa: PLC0415
 	from .angle.robot_ops import probe_z_until_stall  # noqa: PLC0415
 
-	side_name = "left" if side == StorageModuleSide.LEFT else "right"
-	side_number = 0 if side == StorageModuleSide.LEFT else 1
-	rotation_param = "ROTATION_FRONT" if side_name == "left" else "ROTATION_BACK"
-	stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side_name == "left" else "STAGE_EXTENSION_SHELF_BACK"
+	side_name = "front" if side == StorageModuleSide.FRONT else "back"
+	side_number = 0 if side == StorageModuleSide.FRONT else 1
+	rotation_param = "ROTATION_FRONT" if side_name == "front" else "ROTATION_BACK"
+	stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side_name == "front" else "STAGE_EXTENSION_SHELF_BACK"
 
 	rotation_center_value = await tool.get_param(rotation_param)
 	stage_extension_value = await tool.get_param(stage_param)
@@ -905,7 +905,6 @@ def build_probe_analysis(
 		ScanDetectedShelf(
 			shelf_idx=shelf_idx,
 			center_y_mm=float(median([cell.tool_y_mm for cell in cells])),
-			shelf_height_mm=max(float(cell.height_mm) for cell in cells),
 			shelf_width_mm=sum(float(cell.width_mm) for cell in cells),
 			cells=sorted(cells, key=lambda cell: int(cell.cell_idx)),
 		)
@@ -941,7 +940,6 @@ def restrict_analysis(
 			ScanDetectedShelf(
 				shelf_idx=int(shelf.shelf_idx),
 				center_y_mm=float(median([cell.tool_y_mm for cell in selected])),
-				shelf_height_mm=max(float(cell.height_mm) for cell in selected),
 				shelf_width_mm=sum(float(cell.width_mm) for cell in selected),
 				cells=selected,
 			)
@@ -1019,7 +1017,6 @@ def build_probe_analysis_from_grid(
 		ScanDetectedShelf(
 			shelf_idx=shelf_index,
 			center_y_mm=float(median([cell.tool_y_mm for cell in shelf_cells])),
-			shelf_height_mm=max(float(cell.height_mm) for cell in shelf_cells),
 			shelf_width_mm=sum(float(cell.width_mm) for cell in shelf_cells),
 			cells=sorted(shelf_cells, key=lambda cell: int(cell.cell_idx)),
 		)

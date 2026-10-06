@@ -54,7 +54,7 @@ def _worker(fridge) -> SimpleNamespace:
 def _calibration_api() -> FastAPI:
     app = FastAPI()
     app.include_router(calibration.router)
-    app.dependency_overrides[calibration.get_current_user] = lambda: None
+    app.dependency_overrides[calibration.get_current_user_for_stream] = lambda: None
     return app
 
 

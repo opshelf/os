@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 MOCK_COMMAND_LIMIT = 32
 MOCK_COMMAND_RETENTION_DAYS = 7
 MOCK_EXECUTION_SECONDS = 30.0
-MOCK_SIDES = ("left_module", "right_module")
+MOCK_SIDES = ("front_module", "back_module")
 MOCK_SHELVES_PER_SIDE = 4
 MOCK_CELLS_PER_SHELF = 10
 MOCK_CELL_DIMENSIONS = {"width": 300.0, "height": 300.0, "length": 300.0}
@@ -528,6 +528,8 @@ class MockRobotRuntime:
 						{
 							"cell_idx": cell_idx,
 							"status": "occupied" if (side, shelf_idx, cell_idx) in occupied else "available",
+							"item": None,
+							"calibration_point": None,
 							"dimensions": MOCK_CELL_DIMENSIONS,
 						}
 						for cell_idx in range(MOCK_CELLS_PER_SHELF)

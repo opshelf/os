@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from sqlalchemy import select
+from sse_starlette.sse import AppStatus
 from sqlalchemy.orm import selectinload
 
 from openshelf_os_server.documentation import response_docs, stream_docs
@@ -31,7 +32,7 @@ from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.database.models import User
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.settings import get_settings
-from .auth_deps import get_current_user
+from .auth_deps import get_current_user, get_current_user_for_stream
 
 logger = get_logger(__name__)
 
@@ -77,6 +78,12 @@ async def mjpeg_stream_generator_for_camera(
 	try:
 		while True:
 			if await request.is_disconnected() is True:
+				break
+
+			# sse-starlette flags uvicorn's shutdown signal. SSE streams end on it by
+			# themselves; end this one too, so the shutdown drain only waits for
+			# ordinary requests instead of running out on an endless stream.
+			if AppStatus.should_exit is True:
 				break
 
 			if manager.unregistered.is_set() is True:
@@ -151,7 +158,7 @@ async def list_cameras() -> dict:
 
 @router.get(
     "/{camera_id}",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_user_for_stream)],
     summary="Stream camera frames",
     responses=response_docs(
         errors=(401, 404, 503),

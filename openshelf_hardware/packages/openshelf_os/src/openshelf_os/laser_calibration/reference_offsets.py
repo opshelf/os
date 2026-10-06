@@ -5,6 +5,11 @@ measures the same opening in the laser frame. The difference between the two is 
 offset the apply step needs, so a machine can replace the rough offset it was configured
 with (copied from another machine or guessed) by the value its own reference cells imply.
 
+The bottom-left cell of each side (shelf 0, cell 0) is the anchor: it is the one opening every
+machine hand-calibrates first, and `select_reference_datum_cell` is what a run checks before it
+starts, so a run that cannot measure that cell fails instead of falling back to the configured
+offset. Other manual cells on the side still join the derivation as extra samples.
+
 The stored point is `detected + xy_offset`, so the derivation is `manual - detected`, taken as
 a median across the reference cells and reported with its spread: one hand-set cell is only
 as precise as the operator's jogging, while several cells also expose a mistyped or stale
@@ -44,6 +49,12 @@ REFERENCE_MATCH_WINDOW_MM = 25.0
 # Two hand-set cells that disagree by more than this cannot share one fixed tool geometry, so
 # the derivation refuses rather than averaging a bad datum into every cell.
 REFERENCE_MAX_SPREAD_MM = 1.5
+
+# The bottom-left opening of each side is where the reference frame is anchored: an operator
+# jogs the gripper onto that one cell by hand and every derived value is measured from it, so a
+# run that cannot use it has nothing to frame against and must not invent one.
+REFERENCE_DATUM_SHELF_IDX = 0
+REFERENCE_DATUM_CELL_IDX = 0
 
 
 @dataclass
@@ -148,6 +159,63 @@ def z_model_datum_agreement_mm(
 	return max(residuals)
 
 
+def select_reference_datum_cell(
+	*,
+	grid: StorageGrid,
+	side: StorageModuleSide,
+) -> tuple[int, Cell] | None:
+	"""The side's bottom-left hand-calibrated cell, or None when it is not a usable datum.
+
+	Missing (no shelf 0 / no cell 0), uncalibrated, or not marked manual all answer None: every
+	one of them leaves the run without the reference the derivation predicts its matches from.
+	"""
+	for shelf in grid.get_side(side):
+		if int(shelf.shelf_idx) != REFERENCE_DATUM_SHELF_IDX:
+			continue
+
+		for cell in shelf.cells:
+			if int(cell.cell_idx) != REFERENCE_DATUM_CELL_IDX:
+				continue
+
+			if cell.is_manual is not True or cell.calibration_point is None:
+				return None
+
+			return (int(shelf.shelf_idx), cell)
+
+	return None
+
+
+def select_datum_derivation_scope(
+	*,
+	mode: str | None,
+	shelf_idx: int | None = None,
+	cell_idx: int | None = None,
+) -> tuple[int | None, int | None] | None:
+	"""Shelf and cell the datum is derived from in this run's scan, or None when it cannot be seen.
+
+	A full-module scan sees every opening, so it frames the side from all of its manual cells
+	(None, None). A shelf or cell rescan sees only its own part of the side: when that part *is*
+	the datum the run re-frames from it, and otherwise the scan holds nothing to measure the frame
+	against, so the run keeps the frame the datum already established rather than failing a
+	routine rescan.
+	"""
+	if mode not in ("shelf", "cell"):
+		return (None, None)
+
+	# Both indices are required by the scope runner before a narrow scope runs; a missing one
+	# cannot be the datum, so the derivation stays out of the way rather than raising here.
+	if shelf_idx is None or int(shelf_idx) != REFERENCE_DATUM_SHELF_IDX:
+		return None
+
+	if mode == "shelf":
+		return (int(shelf_idx), None)
+
+	if cell_idx is None or int(cell_idx) != REFERENCE_DATUM_CELL_IDX:
+		return None
+
+	return (int(shelf_idx), int(cell_idx))
+
+
 def select_manual_reference_cells(
 	*,
 	grid: StorageGrid,
@@ -248,11 +316,13 @@ def derive_reference_offsets(
 ) -> ReferenceOffsetResult:
 	"""Laser-to-gripper offset implied by the hand-calibrated cells in scope.
 
-	Raises ValueError when the reference frame cannot be trusted: no manual cell in scope, no
-	configured offset to predict the manual cells from, no manual point matched a detected
-	opening, or the reference cells disagree by more than a fixed tool geometry can explain.
-	Falling back to the configured offset would calibrate the module against the very value the
-	operator asked to replace, so the caller is told why.
+	The run-start guard is what makes the bottom-left datum a prerequisite; this reads whatever
+	manual cells the scope holds, so a full-side run medians the datum with any other hand-set
+	cell on the side. Raises ValueError when the reference frame cannot be trusted: no manual
+	cell in scope, no configured offset to predict the manual cells from, no manual point matched
+	a detected opening, or the reference cells disagree by more than a fixed tool geometry can
+	explain. Falling back to the configured offset would calibrate the module against the very
+	value the operator asked to replace, so the caller is told why.
 	"""
 	if candidates is None:
 		candidates = _load_candidates(analysis)
@@ -266,8 +336,8 @@ def derive_reference_offsets(
 
 	if len(reference_cells) == 0:
 		raise ValueError(
-			f"derive_offsets_from_manual_cells needs at least one cell marked manual in scope on "
-			f"the {side.value}; tick 'keep manual' when saving the reference cell"
+			f"reference offsets: the {side.value} has no cell marked manual in scope to frame the "
+			"run from; tick 'keep manual' when saving the bottom-left reference cell"
 		)
 
 	configured_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
@@ -278,9 +348,9 @@ def derive_reference_offsets(
 		# With nothing configured there is no prediction to make, and a proximity match at a
 		# ~105mm pitch silently lands on a neighbouring opening: one wrong match re-frames and
 		# persists every cell on the module.
-		side_name = "left" if side == StorageModuleSide.LEFT else "right"
+		side_name = "front" if side == StorageModuleSide.FRONT else "back"
 		raise ValueError(
-			f"derive_offsets_from_manual_cells on the {side.value}: no "
+			f"reference offsets on the {side.value}: no "
 			f"robot.grid.scan.{side_name}_gripper_xy_correction_mm is configured, so there is nothing to "
 			"predict the manual cells' detected positions from; set a rough one first (it only "
 			"needs to land within a few tens of millimetres of the truth), then re-run; the "
@@ -354,7 +424,7 @@ def derive_reference_offsets(
 
 	if len(samples) == 0:
 		raise ValueError(
-			"derive_offsets_from_manual_cells matched no manual reference cell to a detected "
+			"reference offsets: no manual reference cell matched a detected "
 			f"opening on the {side.value}: {'; '.join(skipped)}"
 		)
 
@@ -381,7 +451,7 @@ def derive_reference_offsets(
 
 	if spread_x_mm > REFERENCE_MAX_SPREAD_MM or spread_y_mm > REFERENCE_MAX_SPREAD_MM:
 		raise ValueError(
-			f"derive_offsets_from_manual_cells: the manual reference cells on the {side.value} "
+			f"reference offsets: the manual reference cells on the {side.value} "
 			f"disagree by ({spread_x_mm:.2f}, {spread_y_mm:.2f})mm, above the "
 			f"{REFERENCE_MAX_SPREAD_MM:.2f}mm one fixed tool geometry can explain; re-check which "
 			"cells are marked manual before calibrating against them"

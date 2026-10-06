@@ -25,11 +25,18 @@
 		type Shelf,
 		type Cell
 	} from '$lib/api';
+	import { activeVocabulary, activeVocabularyStore, sideIndex, sideInitial, sideLabel } from '$lib/side';
+	import type { SideIndex, SideVocabulary } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import {
 		createReconnectingEventSource,
 		type ReconnectingEventSource
 	} from '$lib/sse';
+
+	let vocabulary = $state(activeVocabulary());
+	$effect(() => activeVocabularyStore.subscribe((v) => {
+		vocabulary = v;
+	}));
 
 	let storageGrid = $state<StorageGrid | null>(null);
 	let loading = $state<boolean>(true);
@@ -57,10 +64,14 @@
 
 	const selectedSide = $derived.by(
 		(): StorageModuleSide =>
-			page.url.searchParams.get('side') === 'right_module' ? 'right_module' : 'left_module'
+			sideIndex(page.url.searchParams.get('side')) === 1 ? 'back_module' : 'front_module'
 	);
 
-	const sideInitial = $derived(selectedSide === 'right_module' ? 'R' : 'L');
+	const sideInitialLetter = $derived(sideInitialFor(selectedSide, vocabulary));
+
+	function sideInitialFor(side: StorageModuleSide, vocab: SideVocabulary): string {
+		return sideInitial(sideIndex(side) as SideIndex, vocab);
+	}
 
 	function sideHref(side: StorageModuleSide): string {
 		const url = new URL(page.url.pathname, location.origin);
@@ -73,7 +84,7 @@
 			return [];
 		}
 		const shelves =
-			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+			selectedSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
 		// Highest index renders on top, so a newly added shelf (next index) appears first.
 		return [...shelves].sort((a, b) => b.shelf_idx - a.shelf_idx);
 	}
@@ -103,7 +114,7 @@
 			if (parsed === null) {
 				continue;
 			}
-			entries.push({ shelf: parsed.shelf, cell: parsed.cell, label: `${sideInitial}:${parsed.shelf}:${parsed.cell}` });
+			entries.push({ shelf: parsed.shelf, cell: parsed.cell, label: `${sideInitialLetter}:${parsed.shelf}:${parsed.cell}` });
 		}
 
 		entries.sort((a, b) => a.shelf - b.shelf || a.cell - b.cell);
@@ -122,7 +133,7 @@
 			return false;
 		}
 		const shelves =
-			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+			selectedSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
 
 		return shelves.some(
 			(shelf) => shelf.shelf_idx === shelfIdx && shelf.cells.some((cell) => cell.cell_idx === cellIdx)
@@ -134,7 +145,7 @@
 			return null;
 		}
 		const shelves =
-			selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+			selectedSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
 		const shelf = shelves.find((candidate) => candidate.shelf_idx === shelfIdx);
 		return shelf === undefined ? null : shelf.cells;
 	}
@@ -244,6 +255,14 @@
 		setAnchor(shelfIdx, cellIdx);
 	}
 
+	function didDoubleClickCell(shelfIdx: number, cellIdx: number): void {
+		// A dblclick arrives after two click events, and the second click just toggled
+		// the selection, so select this cell unconditionally.
+		selectedKeys = new Set([cellKey(selectedSide, shelfIdx, cellIdx)]);
+		setAnchor(shelfIdx, cellIdx);
+		overlayOpen = true;
+	}
+
 	function didClickShelf(
 		event: Pick<MouseEvent, 'shiftKey' | 'ctrlKey' | 'metaKey'>,
 		shelfIdx: number
@@ -327,7 +346,13 @@
 
 	function didDeselect(): void {
 		clearCurrentSideSelection();
+		closeOverlay();
+	}
+
+	function closeOverlay(): void {
 		overlayOpen = false;
+		testNote = '';
+		testNoteIsError = false;
 	}
 
 	// A scrim click only counts when the press both started and ended in the dimmed area.
@@ -381,7 +406,14 @@
 			return;
 		}
 
-		overlayOpen = false;
+		closeOverlay();
+	}
+
+	function didPressEscape(event: KeyboardEvent): void {
+		if (event.key !== 'Escape' || overlayOpen === false) {
+			return;
+		}
+		closeOverlay();
 	}
 
 	type EditorField = 'status' | 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
@@ -412,7 +444,7 @@
 				return [];
 			}
 			const shelves =
-				selectedSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+				selectedSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
 			const entries: Array<{ shelfIdx: number; cell: Cell }> = [];
 
 			for (const shelf of shelves) {
@@ -478,7 +510,7 @@
 				continue;
 			}
 			if (
-				bin.home_location.side === selectedSide &&
+				sideIndex(bin.home_location.side) === sideIndex(selectedSide) &&
 				bin.home_location.shelf_idx === shelfIdx &&
 				bin.home_location.cell_idx === cell.cell_idx
 			) {
@@ -700,12 +732,46 @@
 		return formatFieldValue(parsed) !== formatFieldValue(value);
 	}
 
+	function dimensionFieldIssue(field: NumericEditorField): string {
+		const raw = editorValues[field].trim();
+		if (raw === '' || raw.toLowerCase() === 'mixed') {
+			return '';
+		}
+		const parsed = Number(raw);
+		if (Number.isFinite(parsed) === false) {
+			return `${field} must be a number`;
+		}
+		if (parsed <= 0) {
+			return `${field} must be greater than zero`;
+		}
+		return '';
+	}
+
+	const dimensionIssue = $derived.by((): string => {
+		for (const column of DIMENSION_COLUMNS) {
+			const issue = dimensionFieldIssue(column.field);
+			if (issue !== '') {
+				return issue;
+			}
+		}
+		return '';
+	});
+
 	function isFieldValid(field: EditorField): boolean {
 		const raw = editorValues[field].trim();
 		if (raw === '' || raw.toLowerCase() === 'mixed' || field === 'status') {
 			return true;
 		}
-		return Number.isFinite(Number(raw));
+		const parsed = Number(raw);
+		if (Number.isFinite(parsed) === false) {
+			return false;
+		}
+		if (field === 'width' || field === 'height' || field === 'length') {
+			if (parsed <= 0) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	const editorDirty = $derived(
@@ -856,7 +922,7 @@
 			}
 			storageGrid = await getStorageGrid();
 			clearCurrentSideSelection();
-			overlayOpen = false;
+			closeOverlay();
 		} catch (err) {
 			fail(err, 'failed to delete cells');
 			// A partial failure deleted some cells already; reload + prune so the
@@ -872,17 +938,98 @@
 		}
 	}
 
+	async function didBulkDeleteSelected(): Promise<void> {
+		if (busy === true || hasSelection === false || storageGrid === null) {
+			return;
+		}
+		const shelves =
+			selectedSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
+		const cellTargets: Array<{ shelf: number; cellIdx: number }> = [];
+		const shelfTargets: number[] = [];
+
+		for (const shelf of shelves) {
+			const selectedOnShelf = shelf.cells.filter(
+				(cell) => selectedKeys.has(cellKey(selectedSide, shelf.shelf_idx, cell.cell_idx))
+			);
+			if (selectedOnShelf.length === 0) {
+				continue;
+			}
+			if (selectedOnShelf.length === shelf.cells.length) {
+				shelfTargets.push(shelf.shelf_idx);
+			} else {
+				for (const cell of selectedOnShelf) {
+					cellTargets.push({ shelf: shelf.shelf_idx, cellIdx: cell.cell_idx });
+				}
+			}
+		}
+
+		if (cellTargets.length === 0 && shelfTargets.length === 0) {
+			return;
+		}
+
+		const parts: string[] = [];
+		if (shelfTargets.length > 0) {
+			const labels = [...shelfTargets].sort((a, b) => a - b).map((idx) => `${sideInitial}:${idx}`);
+			parts.push(`${shelfTargets.length} ${shelfTargets.length === 1 ? 'shelf' : 'shelves'} ${labels.join(', ')}`);
+		}
+		if (cellTargets.length > 0) {
+			const labels = cellTargets
+				.map((target) => `${sideInitial}:${target.shelf}:${target.cellIdx}`)
+				.sort();
+			parts.push(`${cellTargets.length} ${cellTargets.length === 1 ? 'cell' : 'cells'} ${labels.join(', ')}`);
+		}
+
+		const confirmed = confirm(`are you sure you want to delete ${parts.join(' and ')}?`);
+		if (confirmed !== true) {
+			return;
+		}
+
+		busy = true;
+		error = '';
+		const deletedShelves: number[] = [];
+
+		try {
+			// Cell deletions keep the surviving cells' indices, so they run before any
+			// shelf deletion shifts the shelf indices; shelves go down-to-up so the
+			// indices of the shelves still to delete stay valid.
+			for (const target of cellTargets) {
+				await deleteCell(selectedSide, target.shelf, target.cellIdx);
+			}
+			for (const shelfIdx of [...shelfTargets].sort((a, b) => b - a)) {
+				await deleteShelf(selectedSide, shelfIdx);
+				deletedShelves.push(shelfIdx);
+			}
+		} catch (err) {
+			fail(err, 'failed to delete');
+		}
+
+		try {
+			storageGrid = await getStorageGrid();
+		} catch (err) {
+			fail(err, 'failed to load storage grid');
+		}
+		for (const shelfIdx of deletedShelves) {
+			remapSelectionAfterShelfDelete(shelfIdx);
+		}
+		pruneSelection();
+		if (error === '') {
+			clearCurrentSideSelection();
+			closeOverlay();
+		}
+		busy = false;
+	}
+
 	function pruneSelection(): void {
 		const existing = new Set<string>();
 		if (storageGrid !== null) {
-			for (const shelf of storageGrid.left_module) {
+			for (const shelf of storageGrid.front_module) {
 				for (const cell of shelf.cells) {
-					existing.add(cellKey('left_module', shelf.shelf_idx, cell.cell_idx));
+					existing.add(cellKey('front_module', shelf.shelf_idx, cell.cell_idx));
 				}
 			}
-			for (const shelf of storageGrid.right_module) {
+			for (const shelf of storageGrid.back_module) {
 				for (const cell of shelf.cells) {
-					existing.add(cellKey('right_module', shelf.shelf_idx, cell.cell_idx));
+					existing.add(cellKey('back_module', shelf.shelf_idx, cell.cell_idx));
 				}
 			}
 		}
@@ -892,11 +1039,11 @@
 			selectedKeys = next;
 		}
 		if (next.size === 0) {
-			overlayOpen = false;
+			closeOverlay();
 		}
 		if (anchorSide !== null && anchorShelf !== null && storageGrid !== null) {
 			const anchorShelves =
-				anchorSide === 'left_module' ? storageGrid.left_module : storageGrid.right_module;
+				anchorSide === 'front_module' ? storageGrid.front_module : storageGrid.back_module;
 			const surviving = anchorShelves.find((shelf) => shelf.shelf_idx === anchorShelf);
 
 			if (surviving === undefined) {
@@ -942,7 +1089,7 @@
 		}
 
 		if (next.size === 0) {
-			overlayOpen = false;
+			closeOverlay();
 		}
 	}
 
@@ -1016,6 +1163,11 @@
 			}
 			}, TEST_COMMAND_TIMEOUT_MS);
 		});
+	}
+
+	// Laser calibration leaves cells 0x0x0 until a technician enters the real dimensions.
+	function isCellUnsized(cell: Cell): boolean {
+		return Math.min(cell.dimensions.width, cell.dimensions.height, cell.dimensions.length) <= 0;
 	}
 
 	function isCellTestable(cell: Cell): boolean {
@@ -1093,7 +1245,7 @@
 				if (testAborting) {
 					break;
 				}
-				testCurrent = `${sideInitial}:${target.shelf}:${target.cell.cell_idx}`;
+				testCurrent = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
 				if (result.ok) {
 				testPassed += 1;
@@ -1165,11 +1317,13 @@
 		document.addEventListener('mousedown', didScrimMouseDown);
 		document.addEventListener('mouseup', didScrimMouseUp);
 		document.addEventListener('click', didClickOutside);
+		document.addEventListener('keydown', didPressEscape);
 		return () => {
 			disconnectScanStream();
 			document.removeEventListener('mousedown', didScrimMouseDown);
 			document.removeEventListener('mouseup', didScrimMouseUp);
 			document.removeEventListener('click', didClickOutside);
+			document.removeEventListener('keydown', didPressEscape);
 		};
 	});
 
@@ -1205,12 +1359,85 @@
 		}
 	}
 
+	// The 0:0 datum is the module's coordinate origin; z=13 is the fixed front
+	// offset of the first shelf's opening.
+	const ORIGIN_Z_OFFSET = 13;
+
+	type InferredPoint = { cellIdx: number; x: number; y: number; z: number };
+
+	// Infer the new (pointless) cell's calibration point from its calibrated
+	// neighbours: a new 0:0 takes the fixed origin, a cell appended on a shelf
+	// steps right from the nearest calibrated neighbour on that shelf
+	// (accumulating the widths of any uncalibrated cells in between), and the
+	// first cell of a higher shelf rises from the shelf below, keeping x and z.
+	function inferNewCellPoint(shelfIdx: number): InferredPoint | null {
+		const cells = getShelfCells(shelfIdx);
+		if (cells === null || cells.length === 0) {
+			return null;
+		}
+		const cellIdx = Math.max(...cells.map((cell) => cell.cell_idx));
+
+		if (shelfIdx === 0 && cellIdx === 0) {
+			return { cellIdx, x: 0, y: 0, z: ORIGIN_Z_OFFSET };
+		}
+
+		if (cellIdx === 0) {
+			const belowCells = getShelfCells(shelfIdx - 1) ?? [];
+			const reference =
+				belowCells.find((cell) => cell.cell_idx === 0 && cell.calibration_point !== null) ??
+				belowCells.find((cell) => cell.calibration_point !== null);
+			if (reference === undefined || reference.calibration_point === null) {
+				return null;
+			}
+			return {
+				cellIdx,
+				x: reference.calibration_point.x,
+				y: reference.calibration_point.y + reference.dimensions.height,
+				z: reference.calibration_point.z_offset
+			};
+		}
+
+		const byIdx = new Map(cells.map((cell) => [cell.cell_idx, cell]));
+		let widthSum = 0;
+		for (let idx = cellIdx - 1; idx >= 0; idx -= 1) {
+			const cell = byIdx.get(idx);
+			if (cell === undefined) {
+				continue; // gap left by a deleted cell: no physical slot, no width
+			}
+			if (cell.calibration_point !== null) {
+				return {
+					cellIdx,
+					x: cell.calibration_point.x + widthSum + cell.dimensions.width,
+					y: cell.calibration_point.y,
+					z: cell.calibration_point.z_offset
+				};
+			}
+			widthSum += cell.dimensions.width;
+		}
+		return null;
+	}
+
 	async function didAddCell(shelfIdx: number): Promise<void> {
 		busy = true;
 		error = '';
 		try {
 			await addCell(selectedSide, shelfIdx);
 			storageGrid = await getStorageGrid();
+			const inferred = inferNewCellPoint(shelfIdx);
+			if (inferred !== null) {
+				await updateGridCells(selectedSide, {
+					cells: [
+						{
+							shelf_idx: shelfIdx,
+							cell_idx: inferred.cellIdx,
+							x: inferred.x,
+							y: inferred.y,
+							z_offset: inferred.z
+						}
+					]
+				});
+				storageGrid = await getStorageGrid();
+			}
 			pruneSelection();
 		} catch (err) {
 			fail(err, 'failed to add cell');
@@ -1221,7 +1448,7 @@
 
 	async function didDeleteShelf(shelfIdx: number): Promise<void> {
 		const confirmed = confirm(
-			`are you sure you want to delete shelf ${sideInitial}:${shelfIdx}?`
+			`are you sure you want to delete shelf ${sideInitialLetter}:${shelfIdx}?`
 		);
 		if (confirmed !== true) {
 			return;
@@ -1243,11 +1470,11 @@
 
 <div class="layout-toolbar">
 	<div class="toggle-group">
-		<a class:selected={selectedSide === 'left_module'} href={sideHref('left_module')}>
-			left
+		<a class:selected={selectedSide === 'front_module'} href={sideHref('front_module')}>
+			{sideLabel(0, vocabulary).toLowerCase()}
 		</a>
-		<a class:selected={selectedSide === 'right_module'} href={sideHref('right_module')}>
-			right
+		<a class:selected={selectedSide === 'back_module'} href={sideHref('back_module')}>
+			{sideLabel(1, vocabulary).toLowerCase()}
 		</a>
 	</div>
 	<span class="toolbar-separator">—</span>
@@ -1260,6 +1487,13 @@
 	<button type="button" onclick={didDeselect} disabled={hasSelection === false}>
 		deselect
 	</button>
+	<button
+		type="button"
+		onclick={() => void didBulkDeleteSelected()}
+		disabled={hasSelection === false || busy === true}
+	>
+		delete
+	</button>
 </div>
 
 {#if loading === true}
@@ -1268,7 +1502,7 @@
 	<ErrorMessage message={loadError} />
 {:else if storageGrid !== null}
 	{#if getShelves().length === 0}
-		<p class="empty">no shelves on the {sideInitial} side</p>
+		<p class="empty">no shelves on the {sideInitialLetter} side</p>
 	{:else}
 		<div class="shelf-list">
 			{#each getShelves() as shelf (shelf.shelf_idx)}
@@ -1280,16 +1514,23 @@
 				onclick={(event) => didClickShelf(event, shelf.shelf_idx)}
 				onkeydown={(event) => didPressShelf(event, shelf.shelf_idx)}
 			>
-				{sideInitial}:{shelf.shelf_idx}
+				{sideInitialLetter}:{shelf.shelf_idx}
 			</span>
 					<div class="shelf-cells">
 						{#each shelf.cells as cell (cell.cell_idx)}
 							<div
 								class="storage-cell"
 								class:selected={isSelected(selectedSide, shelf.shelf_idx, cell.cell_idx)}
+								class:occupied={cell.status.toLowerCase() === 'occupied'}
+								class:unsized={isCellUnsized(cell)}
+								class:dimmed={
+									cell.status.toLowerCase() === 'maintenance' ||
+									cell.status.toLowerCase() === 'disabled'
+								}
 								role="button"
 								tabindex={0}
 								onclick={(event) => didClickCell(event, shelf.shelf_idx, cell.cell_idx)}
+								ondblclick={() => didDoubleClickCell(shelf.shelf_idx, cell.cell_idx)}
 								onkeydown={(event) => didPressCell(event, shelf.shelf_idx, cell.cell_idx)}
 							>
 								{cell.cell_idx}
@@ -1422,6 +1663,9 @@
 					</label>
 				{/each}
 			</div>
+			{#if dimensionIssue !== ''}
+				<p class="editor-shelf-note is-error">{dimensionIssue}</p>
+			{/if}
 			{#if selectedSingle !== null}
 				<hr class="editor-hr" />
 				<label class="editor-row editor-row-tray">
@@ -1574,9 +1818,24 @@
 		cursor: pointer;
 	}
 
+	.storage-cell.occupied {
+		background: rgba(0, 0, 0, 0.5);
+	}
+
+	.storage-cell.unsized {
+		background: #fdd;
+		border-color: #d00;
+		color: #d00;
+	}
+
+	.storage-cell.dimmed {
+		opacity: 0.5;
+	}
+
 	.storage-cell.selected {
 		background: black;
 		color: #fff;
+		opacity: 1;
 	}
 
 	.shelf-actions {
@@ -1764,10 +2023,18 @@
 	}
 
 	.editor-test-note {
-		margin: 0;
+		margin: 0 0 1.5em 0;
 	}
 
 	.editor-test-note.is-error {
+		color: #b00020;
+	}
+
+	.editor-shelf-note {
+		margin: 0 0 1.5em 0;
+	}
+
+	.editor-shelf-note.is-error {
 		color: #b00020;
 	}
 </style>
