@@ -12,7 +12,7 @@ import re
 from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Iterable, List, Literal, NoReturn, Optional, cast
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from openshelf_os.common import ConfigError
 from openshelf_os.config.settings import BARCODE_MAX_LENGTH
@@ -54,8 +54,13 @@ from openshelf_os_server.core.mock_robot import (
     MOCK_SIDES,
     MockQueueFullError,
     MockRequestConflictError,
+    MockRobotRuntime,
     get_mock_robot_runtime,
     mock_cell_fits,
+)
+from openshelf_os_server.core.event_log import (
+    latest_robot_event_seq,
+    read_robot_events,
 )
 from openshelf_os_server.core.command_lifecycle import (
     CommandQueueFullError,
@@ -2017,6 +2022,23 @@ async def stream_sse() -> EventSourceResponse:
     )
 
 
+# `/api/robot/events` pacing: how long the stream waits for a queued message
+# before polling the log, and how long it idles between log reads.
+EVENT_STREAM_QUEUE_WAIT_S = 1.0
+EVENT_STREAM_IDLE_SLEEP_S = 0.5
+# One log read page; the stream re-reads until the page is exhausted.
+EVENT_LOG_PAGE_LIMIT = 1000
+
+
+def _parse_last_event_id(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value.strip())
+    except ValueError:
+        return None
+
+
 @router.get(
     "/events",
     dependencies=[Depends(get_relay_or_current_user_for_stream)],
@@ -2025,67 +2047,154 @@ async def stream_sse() -> EventSourceResponse:
         errors=(401, 503),
         existing=stream_docs(
             "text/event-stream",
-            "Live JSON robot events in SSE data frames; command, scanner, safety and workflow events share this stream.",
-            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"front_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
+            "Durable robot events in SSE frames: an `id:` line carries the event's log `seq`, the `data:` frame the event JSON. Command, scanner, safety and workflow events share this stream.",
+            'id: 12\ndata: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"front_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
         ),
     ),
     response_class=Response,
 )
-async def stream_events() -> EventSourceResponse:
+async def stream_events(request: Request) -> EventSourceResponse:
     """Stream robot events and command results.
 
-    Server-Sent Events with JSON in each `data:` frame. Subscribe before submitting
-    commands: this is a live stream without historical replay. Events include terminal
-    command results, scanner events, and bin-workflow updates; dispatch by `command`,
-    `message`, or `kind`, rather than assuming every frame is a completion.
+    Server-Sent Events; each event carries an `id:` line with its durable log
+    `seq` and a `data:` frame with the event JSON. Events include terminal
+    command results, scanner events, and bin-workflow updates; dispatch by
+    `command`, `message`, or `kind`, rather than assuming every frame is a
+    completion.
 
-    A terminal result includes `command_id`; use durable command polling after a disconnect.
-    `weight`, when present, is the cycle's gross reading in grams, not container net mass.
-    Physical retrieval currently supplies no weight reading. Inventory changes are
-    committed before an event is forwarded. User tokens can be supplied through the
-    bearer header or `?token=`.
+    A fresh subscription starts live at the top of the log and receives no
+    earlier events. Reconnect with the `Last-Event-ID` header set to the last
+    `id:` you processed and the stream replays every event above that `seq`
+    before resuming live, so a disconnect loses no events. Explicit replay of
+    the log is available at `/api/robot/events/log?since=<seq>`. An event is
+    forwarded only once its log row is committed; inventory changes commit
+    before the event is forwarded. A terminal result includes `command_id`; use
+    durable command polling to reconcile after long outages. `weight`, when
+    present, is the cycle's gross reading in grams, not container net mass;
+    physical retrieval currently supplies no weight reading. User tokens can be
+    supplied through the bearer header or `?token=`.
     """
-    if get_operating_mode() == OperatingMode.mock:
-        runtime = get_mock_robot_runtime()
-        mock_event_queue = await runtime.subscribe_events()
-
-        async def mock_event_generator() -> AsyncGenerator[dict[str, str], None]:
-            try:
-                while True:
-                    yield {"data": await mock_event_queue.get()}
-            finally:
-                await runtime.unsubscribe_events(mock_event_queue)
-
-        return EventSourceResponse(mock_event_generator())
+    last_event_id = _parse_last_event_id(request.headers.get("Last-Event-ID"))
+    # Resumption is exclusive of the acknowledged id: everything above it is
+    # replayed. A fresh subscriber starts live at the top of the log.
+    resume_from = (
+        last_event_id if last_event_id is not None else await latest_robot_event_seq()
+    )
 
     event_queue: Optional[asyncio.Queue[str]] = None
-    worker: Optional[RobotWorker]
-
-    try:
-        worker = await get_robot_worker()
-    except ValueError:
-        worker = None
-
-    if worker is not None:
-        event_queue = await worker.subscribe_events()
+    worker: Optional[RobotWorker] = None
+    runtime: Optional[MockRobotRuntime] = None
+    if get_operating_mode() == OperatingMode.mock:
+        runtime = get_mock_robot_runtime()
+        event_queue = await runtime.subscribe_events()
+    else:
+        try:
+            worker = await get_robot_worker()
+        except ValueError:
+            worker = None
+        if worker is not None:
+            event_queue = await worker.subscribe_events()
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
+        sent_max = resume_from
         try:
-            if event_queue is None:
-                return
-
-            forwarded = 0
             while True:
-                message = await event_queue.get()
-                forwarded += 1
-                # The event listener commits DB state after the worker emits, so
-                # wait for that work to settle before clients observe the event.
-                await event_processing_tracker.wait_until_processed(
-                    forwarded, EVENT_FORWARD_WAIT_TIMEOUT_S
-                )
-                yield {"data": message}
+                # The processed count is captured before the wait so the tracker
+                # release below maps onto exactly this queued message: the
+                # listener appends the durable log row before it releases.
+                processed_before = event_processing_tracker.processed_count()
+                message: Optional[str] = None
+                if event_queue is not None:
+                    try:
+                        message = await asyncio.wait_for(
+                            event_queue.get(), timeout=EVENT_STREAM_QUEUE_WAIT_S
+                        )
+                    except asyncio.TimeoutError:
+                        message = None
+
+                if message is not None:
+                    settled = await event_processing_tracker.wait_until_processed(
+                        processed_before + 1, EVENT_FORWARD_WAIT_TIMEOUT_S
+                    )
+                    if settled is False:
+                        logging.warning(
+                            "Robot event log row not committed within %.1fs; "
+                            "the stream continues and the gap is visible in the log",
+                            EVENT_FORWARD_WAIT_TIMEOUT_S,
+                        )
+
+                # Forward from the durable log so clients only ever see committed
+                # events, in `seq` order, with the ids resumption relies on.
+                for row in await read_robot_events(sent_max, EVENT_LOG_PAGE_LIMIT):
+                    yield {"id": str(row.seq), "data": json.dumps(row.payload)}
+                    sent_max = row.seq
+
+                if message is None:
+                    # No queued message: rows committed while we were away are
+                    # picked up by the read above; pace the poll (slower while
+                    # the queue itself is absent, i.e. the worker is down).
+                    await asyncio.sleep(
+                        5.0 if event_queue is None else EVENT_STREAM_IDLE_SLEEP_S
+                    )
         finally:
             if worker is not None and event_queue is not None:
                 await worker.unsubscribe_events(event_queue)
+            if runtime is not None and event_queue is not None:
+                await runtime.unsubscribe_events(event_queue)
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        event_generator(),
+        ping=15,
+        send_timeout=30,
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+class RobotEventLogEntry(BaseModel):
+    seq: int
+    created_at: datetime
+    command_id: Optional[str]
+    payload: dict[str, Any]
+
+
+class RobotEventLogResponse(BaseModel):
+    events: list[RobotEventLogEntry]
+    latest_seq: int
+    next_since: int
+
+
+@router.get(
+    "/events/log",
+    dependencies=[Depends(get_relay_or_current_user)],
+    response_model=RobotEventLogResponse,
+    responses=response_docs(errors=(401, 503)),
+    summary="Replay the durable robot event log",
+)
+async def get_robot_event_log(
+    since: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=1000),
+) -> RobotEventLogResponse:
+    """Replay the durable robot event log.
+
+    Returns events with `seq > since`, oldest first, at most `limit` per page.
+    `since=0` reads from the start of the log; after a page, request the next
+    with `since=next_since` until `next_since` reaches `latest_seq` for a
+    complete catch-up. `next_since` stays `since` for an empty page. This is
+    the reconciliation path for `/api/robot/events` subscribers after a
+    disconnect.
+    """
+    rows = await read_robot_events(since, limit)
+    latest_seq = await latest_robot_event_seq()
+    return RobotEventLogResponse(
+        events=[
+            RobotEventLogEntry(
+                seq=row.seq,
+                created_at=row.created_at,
+                command_id=row.command_id,
+                payload=row.payload,
+            )
+            for row in rows
+        ],
+        latest_seq=latest_seq,
+        next_since=rows[-1].seq if rows else since,
+    )
