@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from types import SimpleNamespace
 
@@ -100,4 +101,30 @@ async def test_retrieve_succeeds_without_weight_when_scale_unavailable() -> None
 
     assert isinstance(result, RobotCommandSuccessful)
     assert result.weight is None
+    assert cleared_locations == [location]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_cancelled_while_weighing_still_clears_grid_cell() -> None:
+    awaiting_weight = asyncio.Event()
+    robot, _, cleared_locations = build_robot(weight=42.0)
+    location = StorageModuleCellLocation(
+        side=StorageModuleSide.FRONT,
+        shelf_idx=0,
+        cell_idx=1,
+    )
+
+    async def get_weight() -> float | None:
+        awaiting_weight.set()
+        await asyncio.Event().wait()  # simulate the 15s stable-weight wait never returning
+        return 42.0
+
+    robot._io = SimpleNamespace(get_weight=get_weight)
+
+    task = asyncio.create_task(robot.retrieve_by_location(location.model_dump()))
+    await awaiting_weight.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
     assert cleared_locations == [location]
