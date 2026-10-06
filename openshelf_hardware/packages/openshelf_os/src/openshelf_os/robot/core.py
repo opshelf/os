@@ -141,6 +141,7 @@ class Robot:
         fridge_motor = self._config.demo.fridge.motor
         if (
             should_enable_demo_fridge() is True
+            and self._config.demo.fridge.enabled is True
             and fridge_motor is not None
             and fridge_motor.enabled is True
         ):
@@ -953,6 +954,22 @@ class Robot:
         )
         return cell_map
 
+    def _blocked_fridge_cell_error(
+        self, command_name: str, location: StorageModuleCellLocation
+    ) -> RobotCommandError | None:
+        """Refuse a configured fridge cell while the fridge is off: its door stays closed."""
+        config = getattr(self, "_config", None)
+        if getattr(self, "_fridge", None) is not None or config is None:
+            return None
+        cells = config.demo.fridge.cells
+        key = (location.side.value, location.shelf_idx, location.cell_idx)
+        if any((c.location.side, c.location.shelf_idx, c.location.cell_idx) == key for c in cells):
+            return RobotCommandError(
+                command=command_name,
+                error="This cell is behind the demo fridge door, and the fridge is disabled",
+            )
+        return None
+
     def _get_demo_nudge(self, location: StorageModuleCellLocation) -> float | None:
         return self._demo_nudge_map.get(
             (location.side.value, location.shelf_idx, location.cell_idx)
@@ -1531,6 +1548,9 @@ class Robot:
         if not location:
             return RobotCommandError(command=command_name, error="No suitable storage location found")
 
+        if tray is False and (blocked := self._blocked_fridge_cell_error(command_name, location)) is not None:
+            return blocked
+
         self._state.current_cell = location
         self.set_operation_context(
             command=command_name,
@@ -1669,6 +1689,9 @@ class Robot:
         if retrieved_barcode is None and cached_item is not None:
             barcode_from_data = cached_item.data.get("barcode") if cached_item.data else None
             retrieved_barcode = cached_item.barcode or (str(barcode_from_data) if barcode_from_data is not None else None)
+
+        if tray is False and (blocked := self._blocked_fridge_cell_error(command_name, location)) is not None:
+            return blocked
 
         self.set_operation_context(command=command_name, phase="retrieve.moving_from_io_to_shelf", target_cell=location)
         try:

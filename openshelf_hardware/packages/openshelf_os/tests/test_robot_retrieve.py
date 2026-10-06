@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.robot import Robot, RobotCommandSuccessful
+from openshelf_os.robot import Robot, RobotCommandError, RobotCommandSuccessful
 from openshelf_os.storage import CellItem, Dimensions, StorageModuleCellLocation, StorageModuleSide
 
 
@@ -107,3 +107,49 @@ async def test_io_cycle_homes_the_door_first_and_survives_a_failed_final_home(cy
     assert calls[0] == "ensure_door_homed"
     assert calls.index("ensure_door_homed") < calls.index("pick")
     assert calls[-2:] == ["home_door_after_cycle", "clear_alarms"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fridge_active", (False, True))
+async def test_retrieve_refuses_a_fridge_cell_while_the_fridge_is_disabled(fridge_active: bool) -> None:
+    # With demo.fridge.enabled false nothing opens the fridge door, so a normal pick at a
+    # configured fridge cell would drive the gripper into it.
+    fridge_cell = StorageModuleCellLocation(side=StorageModuleSide.BACK, shelf_idx=0, cell_idx=0)
+    placed: list[AxisCoordinate] = []
+
+    robot = Robot.__new__(Robot)
+    robot._logger = logging.getLogger("test_fridge_disabled")
+    robot._state = SimpleNamespace(current_cell=None)
+    robot._operation_context = {}
+    robot._last_fault_context = None
+    robot._demo_cell_map = None
+    robot._config = SimpleNamespace(
+        demo=SimpleNamespace(
+            fridge=SimpleNamespace(
+                cells=[SimpleNamespace(location=SimpleNamespace(side="back_module", shelf_idx=0, cell_idx=0))]
+            )
+        )
+    )
+    robot._fridge = SimpleNamespace(is_fridge_cell=lambda location: True) if fridge_active else None
+    robot._grid = SimpleNamespace(
+        get_cell=lambda location: SimpleNamespace(item=None),
+        get_cell_coordinate=lambda location: SimpleNamespace(
+            to_axis_coordinate=lambda: AxisCoordinate(x=10, y=20, s=1, z_offset=0),
+        ),
+        clear_item=lambda location: None,
+    )
+
+    async def io_place(coordinate: AxisCoordinate, nudge_override=None, location=None) -> None:
+        placed.append(coordinate)
+
+    robot.io_place = io_place
+
+    result = await robot.retrieve_by_location(fridge_cell.model_dump(), barcode_hint="049000000078")
+
+    if fridge_active:
+        assert isinstance(result, RobotCommandSuccessful)
+        assert len(placed) == 1
+    else:
+        assert isinstance(result, RobotCommandError)
+        assert "fridge is disabled" in result.error
+        assert placed == []
