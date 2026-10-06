@@ -2070,15 +2070,29 @@ async def stream_events(request: Request) -> EventSourceResponse:
     before the event is forwarded. A terminal result includes `command_id`; use
     durable command polling to reconcile after long outages. `weight`, when
     present, is the cycle's gross reading in grams, not container net mass;
-    physical retrieval currently supplies no weight reading. User tokens can be
-    supplied through the bearer header or `?token=`.
+    both store and retrieve cycles supply it when a scale reading is
+    available. A cursor above the log top (e.g. after a database reset or
+    from another device) is clamped to the top: the stream starts live at
+    the top and the gap is visible in the log. User tokens can be supplied
+    through the bearer header or `?token=`.
     """
     last_event_id = _parse_last_event_id(request.headers.get("Last-Event-ID"))
+    latest_seq = await latest_robot_event_seq()
     # Resumption is exclusive of the acknowledged id: everything above it is
-    # replayed. A fresh subscriber starts live at the top of the log.
-    resume_from = (
-        last_event_id if last_event_id is not None else await latest_robot_event_seq()
-    )
+    # replayed. A fresh subscriber starts live at the top of the log. A cursor
+    # above the log top (a reset or re-provisioned device, or a cursor from
+    # another device) would sit above every row and the stream would go
+    # silent, so fall back to live at the top.
+    if last_event_id is not None and last_event_id > latest_seq:
+        logging.warning(
+            "Last-Event-ID %d is above the robot event log top %d; "
+            "falling back to live at the top",
+            last_event_id,
+            latest_seq,
+        )
+        resume_from = latest_seq
+    else:
+        resume_from = last_event_id if last_event_id is not None else latest_seq
 
     event_queue: Optional[asyncio.Queue[str]] = None
     worker: Optional[RobotWorker] = None
@@ -2096,8 +2110,20 @@ async def stream_events(request: Request) -> EventSourceResponse:
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         sent_max = resume_from
-        rows_sent = 0
+        # Gate pacing, not correctness: the stream forwards only committed
+        # rows, so the gate exists to keep an event from waiting out an idle
+        # poll. It compares the dequeued messages against the rows above the
+        # pre-subscribe log top that have already been delivered: rows commit
+        # in the same order as messages are dequeued, so a message whose row
+        # was already delivered by an earlier page (e.g. a burst) skips the
+        # gate. There is no write-off and no independent confirmation: a
+        # message whose row times out is not counted, and a row that commits
+        # late counts for the message it belongs to, so the comparison cannot
+        # accumulate a surplus or go silent. A timeout warns and continues;
+        # a late row is delivered by the next forward read, and the next
+        # message gates independently with its own full wait.
         messages_dequeued = 0
+        new_rows_delivered = 0
         try:
             while True:
                 message: Optional[str] = None
@@ -2111,11 +2137,14 @@ async def stream_events(request: Request) -> EventSourceResponse:
 
                 if message is not None:
                     messages_dequeued += 1
-                    # Gate on the not-yet-sent row of the most recently dequeued message.
-                    # Rows are committed and forwarded in the same order as messages are
-                    # dequeued, so when rows_sent >= messages_dequeued the message's row
-                    # is already forwarded and the gate must be skipped entirely.
-                    if rows_sent < messages_dequeued:
+                    # Gate on this message's not-yet-delivered row. Skipped
+                    # when the already-delivered rows above the pre-subscribe
+                    # log top have caught up with the dequeued messages, so a
+                    # burst whose rows one page delivered cannot wait on a row
+                    # that no longer exists. Replay backlog (at or below the
+                    # pre-subscribe log top) never counts, so it cannot build
+                    # a surplus that silences the gate.
+                    if messages_dequeued > new_rows_delivered:
                         deadline = asyncio.get_running_loop().time() + EVENT_FORWARD_WAIT_TIMEOUT_S
                         found_new_row = False
                         while asyncio.get_running_loop().time() < deadline:
@@ -2125,6 +2154,9 @@ async def stream_events(request: Request) -> EventSourceResponse:
                                 break
                             await asyncio.sleep(0.05)
                         if not found_new_row:
+                            # The row has not committed yet: warn and continue;
+                            # a late row is delivered by the next forward
+                            # read and the next message gates independently.
                             logging.warning(
                                 "Robot event log row not committed within %.1fs; "
                                 "the stream continues and the gap is visible in the log",
@@ -2136,7 +2168,8 @@ async def stream_events(request: Request) -> EventSourceResponse:
                 for row in await read_robot_events(sent_max, EVENT_LOG_PAGE_LIMIT):
                     yield {"id": str(row.seq), "data": json.dumps(row.payload)}
                     sent_max = row.seq
-                    rows_sent += 1
+                    if row.seq > latest_seq:
+                        new_rows_delivered += 1
 
                 if message is None:
                     # No queued message: rows committed while we were away are
