@@ -419,11 +419,18 @@ class StorageGrid(BaseModel):
 		template = self._get_cell_template(side, shelf)
 		dimensions = template.dimensions.model_copy(deep=True)
 
+		# New cells start at the side origin instead of having no point, so every
+		# cell is movable immediately; the layout editor then refines the estimate.
 		return Cell(
 			cell_idx=cell_idx,
 			status=CellStatus.AVAILABLE,
 			item=None,
-			calibration_point=None,
+			calibration_point=CalibrationCoordinate(
+				x=0.0,
+				y=0.0,
+				s=0 if side == StorageModuleSide.FRONT else 1,
+				z_offset=0.0,
+			),
 			dimensions=dimensions,
 		)
 
