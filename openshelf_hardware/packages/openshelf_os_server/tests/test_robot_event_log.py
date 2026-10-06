@@ -12,6 +12,7 @@ from openshelf_os.operating_mode import OperatingMode
 from openshelf_os_server.core import event_log
 from openshelf_os_server.core import mock_robot as mock_core
 from openshelf_os_server.core import robot as robot_core
+import openshelf_os_server.core.robot_events as robot_events
 from openshelf_os_server.core.mock_robot import MockRobotRuntime
 from openshelf_os_server.core.robot_events import RobotEventListener
 from openshelf_os_server.database.models import Item, ItemLocation, MockRobotCommand, RobotEvent
@@ -344,6 +345,52 @@ async def test_sse_fresh_subscription_does_not_replay_history(
 
 
 @pytest.mark.anyio
+async def test_sse_stale_last_event_id_falls_back_to_live_at_top(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    mock_runtime: MockRobotRuntime,
+) -> None:
+    """A cursor above the log top (a reset or re-provisioned device, or a
+    cursor from another device) must not leave the stream silent: the
+    stream falls back to live at the top and still delivers subsequent
+    events."""
+    await _run_command(
+        client,
+        {
+            "command": "store_item",
+            "item": {
+                "barcode": "036000291452",
+                "name": "Stale",
+                "dimensions": {"width": 10, "height": 20, "length": 30},
+            },
+        },
+    )
+    top = (await _event_rows())[-1].seq
+
+    stale = SseStream(
+        "/api/robot/events",
+        auth_headers,
+        extra={"Last-Event-ID": str(top + 5)},
+    )
+    await stale.start()
+    await _run_command(
+        client,
+        {
+            "command": "retrieve_item",
+            "location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
+        },
+    )
+    seq, _ = await stale.wait_for_frame(
+        lambda frame: json.loads(frame[1]).get("command") == "retrieve_item",
+        timeout=5.0,
+    )
+    # The stream fell back to live at the top: the new event is delivered
+    # with the next seq, not silently dropped.
+    assert seq == top + 1
+    await stale.stop()
+
+
+@pytest.mark.anyio
 async def test_listener_appends_hardware_events_to_the_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -546,6 +593,408 @@ async def test_burst_events_do_not_cause_false_gate_timeout(
             assert len(warnings) == 0, f"Unexpected warnings: {warnings}"
             # Assert read_robot_events was called much fewer times than the buggy ~100 gate reads.
             assert read_count < 60, f"Too many read_robot_events calls: {read_count}"
+    finally:
+        await listener.stop()
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(RobotEvent))
+            await session.commit()
+
+
+@pytest.mark.anyio
+async def test_sse_resumed_connection_gate_still_waits_for_uncommitted_row(
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: the commit-wait gate must still run after a resumed connection's replay.
+
+    A subscriber reconnects with a `Last-Event-ID` below the latest seq, so the
+    stream replays the missed row before going live. On the hardware path the
+    next event's log row commits only after the fan-out, so the gate must wait
+    (polling `read_robot_events`) for that commit; counting the replayed row
+    used to silence the gate for the rest of the connection, leaving the event
+    to a later loop cycle.
+    """
+
+    class QueueWorker:
+        def __init__(self) -> None:
+            self._subscribers: list[asyncio.Queue[str]] = []
+
+        async def subscribe_events(self) -> asyncio.Queue[str]:
+            queue: asyncio.Queue[str] = asyncio.Queue()
+            self._subscribers.append(queue)
+            return queue
+
+        async def unsubscribe_events(self, queue: asyncio.Queue[str]) -> None:
+            self._subscribers.remove(queue)
+
+        async def publish_event(self, payload: dict) -> None:
+            message = json.dumps(payload)
+            for queue in list(self._subscribers):
+                await queue.put(message)
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(MockRobotCommand))
+        await session.execute(delete(RobotEvent))
+        await session.execute(delete(ItemLocation))
+        await session.execute(delete(Item))
+        await session.commit()
+
+    worker = QueueWorker()
+    listener = RobotEventListener(worker)  # type: ignore[arg-type]
+    await listener.start()
+    monkeypatch.setattr(robot_core, "robot_worker", worker)
+    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.development)
+
+    read_count = 0
+
+    async def counting_read_robot_events(since: int, limit: int) -> list[RobotEvent]:
+        nonlocal read_count
+        read_count += 1
+        return await event_log.read_robot_events(since, limit)
+
+    monkeypatch.setattr(robot_router, "read_robot_events", counting_read_robot_events)
+
+    hold_commit = asyncio.Event()
+    real_append = event_log.append_robot_event
+
+    async def held_append(payload: dict) -> int | None:
+        await hold_commit.wait()
+        return await real_append(payload)
+
+    monkeypatch.setattr(robot_events, "append_robot_event", held_append)
+
+    try:
+        # Two baseline events whose log rows commit before the subscriber connects.
+        for index in range(2):
+            await worker.publish_event(
+                {"kind": "safety_state", "payload": {"active": index == 1}}
+            )
+            hold_commit.set()
+            deadline = asyncio.get_running_loop().time() + 5.0
+            while asyncio.get_running_loop().time() < deadline:
+                if len(await _event_rows()) > index:
+                    break
+                await asyncio.sleep(0.01)
+            hold_commit.clear()
+
+        baseline = await _event_rows()
+        assert len(baseline) == 2
+
+        # Reconnect with a Last-Event-ID below the latest seq: the missed row
+        # is replayed before the stream goes live.
+        stream = SseStream(
+            "/api/robot/events",
+            auth_headers,
+            extra={"Last-Event-ID": str(baseline[0].seq)},
+        )
+        await stream.start()
+        await stream.wait_for_frame(lambda frame: frame[0] == baseline[1].seq)
+
+        # A new event whose log row commit is held behind the barrier: the
+        # listener fans the message out to the stream's queue, then blocks in
+        # the append, so the row is not yet committed.
+        expected_seq = baseline[-1].seq + 1
+        read_count = 0
+        await worker.publish_event(
+            {"kind": "safety_state", "payload": {"active": True, "motion_blocked": False}}
+        )
+        await asyncio.sleep(2.0)
+
+        # While the row is uncommitted the gate must be polling for it (the
+        # replayed row must not have silenced it), and no frame for the new
+        # event may have been forwarded.
+        assert len(await _event_rows()) == 2, "append barrier did not hold the row"
+        assert read_count >= 10, (
+            f"Gate did not poll for the uncommitted row on the resumed stream: {read_count} reads"
+        )
+        assert not any(seq == expected_seq for seq, _ in stream.frames()), (
+            "New event's frame was forwarded before its log row committed"
+        )
+
+        # Releasing the barrier commits the row; the still-running gate picks it
+        # up on its next poll and the frame arrives.
+        hold_commit.set()
+        new_seq, _ = await stream.wait_for_frame(
+            lambda frame: frame[0] == expected_seq, timeout=5.0
+        )
+        assert new_seq == expected_seq
+        await stream.stop()
+    finally:
+        await listener.stop()
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(RobotEvent))
+            await session.commit()
+
+
+@pytest.mark.anyio
+async def test_sse_gate_still_polls_after_a_timeout_late_commit(
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression test: a row that commits after its gate timeout must not
+    silence the gate.
+
+    The first event's append is held past the (patched, short) gate timeout,
+    so the gate times out and warns while the stream continues. The row then
+    commits late and is delivered by a later forward read. With a
+    confirmation counter, that late commit counted as a confirmation without
+    cancelling the timeout write-off, leaving a permanent surplus that skipped
+    the gate for the next event. The stateless gate must still be polling
+    for the second event's uncommitted row.
+    """
+
+    class QueueWorker:
+        def __init__(self) -> None:
+            self._subscribers: list[asyncio.Queue[str]] = []
+
+        async def subscribe_events(self) -> asyncio.Queue[str]:
+            queue: asyncio.Queue[str] = asyncio.Queue()
+            self._subscribers.append(queue)
+            return queue
+
+        async def unsubscribe_events(self, queue: asyncio.Queue[str]) -> None:
+            self._subscribers.remove(queue)
+
+        async def publish_event(self, payload: dict) -> None:
+            message = json.dumps(payload)
+            for queue in list(self._subscribers):
+                await queue.put(message)
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(RobotEvent))
+        await session.commit()
+
+    worker = QueueWorker()
+    listener = RobotEventListener(worker)  # type: ignore[arg-type]
+    await listener.start()
+    monkeypatch.setattr(robot_core, "robot_worker", worker)
+    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.development)
+    monkeypatch.setattr(robot_router, "EVENT_FORWARD_WAIT_TIMEOUT_S", 0.8)
+
+    read_count = 0
+
+    async def counting_read_robot_events(since: int, limit: int) -> list[RobotEvent]:
+        nonlocal read_count
+        read_count += 1
+        return await event_log.read_robot_events(since, limit)
+
+    monkeypatch.setattr(robot_router, "read_robot_events", counting_read_robot_events)
+
+    hold_commit = asyncio.Event()
+    real_append = event_log.append_robot_event
+
+    async def held_append(payload: dict) -> int | None:
+        await hold_commit.wait()
+        return await real_append(payload)
+
+    monkeypatch.setattr(robot_events, "append_robot_event", held_append)
+
+    try:
+        with caplog.at_level(logging.WARNING):
+            stream = SseStream("/api/robot/events", auth_headers)
+            await stream.start()
+            await asyncio.sleep(1.2)
+
+            # Event 1: append held past the patched gate timeout, so the gate
+            # times out and warns while the stream continues.
+            await worker.publish_event(
+                {"kind": "safety_state", "payload": {"active": True, "motion_blocked": False}}
+            )
+            deadline = asyncio.get_running_loop().time() + 5.0
+            while asyncio.get_running_loop().time() < deadline:
+                if any(
+                    "row not committed" in record.message for record in caplog.records
+                ):
+                    break
+                await asyncio.sleep(0.05)
+
+            assert len(await _event_rows()) == 0, "append barrier did not hold the row"
+            assert sum(
+                "row not committed" in record.message for record in caplog.records
+            ) == 1
+
+            # Release the barrier: the row commits late and is delivered by a
+            # later forward read.
+            hold_commit.set()
+            first_seq, _ = await stream.wait_for_frame(
+                lambda frame: frame[0] == 1, timeout=5.0
+            )
+            assert first_seq == 1
+            hold_commit.clear()
+
+            # Event 2: append held again. The gate must still be polling for
+            # the uncommitted row; a confirmation surplus from event 1's late
+            # commit (the removed bug) would have skipped the wait entirely.
+            read_count = 0
+            await worker.publish_event(
+                {"kind": "safety_state", "payload": {"active": False, "motion_blocked": False}}
+            )
+            await asyncio.sleep(3.0)
+
+            assert len(await _event_rows()) == 1, "append barrier did not hold the row"
+            assert read_count >= 10, (
+                f"Gate stopped polling after the late commit: {read_count} reads"
+            )
+            assert sum(
+                "row not committed" in record.message for record in caplog.records
+            ) == 2, "Gate did not wait for the second event's uncommitted row"
+
+            # Releasing the barrier commits the row; the next forward read
+            # delivers it.
+            hold_commit.set()
+            second_seq, _ = await stream.wait_for_frame(
+                lambda frame: frame[0] == 2, timeout=5.0
+            )
+            assert second_seq == 2
+            await stream.stop()
+    finally:
+        await listener.stop()
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(RobotEvent))
+            await session.commit()
+
+
+@pytest.mark.anyio
+async def test_sse_resumed_connection_gate_survives_message_before_replay(
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: a live message dequeued before the replay must not be
+    confirmed by the replayed backlog.
+
+    A subscriber reconnects with a `Last-Event-ID` at least two rows behind
+    the log top while the robot is active: the first iteration dequeues a
+    live message before the replay is read, and the gate is satisfied by the
+    committed backlog rows. Counting the replayed backlog as confirmations
+    (the arrival-order rule) left a permanent surplus of K-1 confirmations,
+    silencing the gate for the rest of the connection. A row confirms only
+    when its seq is above the pre-subscribe log top, so the gate must keep
+    running for the next event until its own row commits.
+    """
+
+    class QueueWorker:
+        def __init__(self) -> None:
+            self._subscribers: list[asyncio.Queue[str]] = []
+
+        async def subscribe_events(self) -> asyncio.Queue[str]:
+            queue: asyncio.Queue[str] = asyncio.Queue()
+            self._subscribers.append(queue)
+            return queue
+
+        async def unsubscribe_events(self, queue: asyncio.Queue[str]) -> None:
+            self._subscribers.remove(queue)
+
+        async def publish_event(self, payload: dict) -> None:
+            message = json.dumps(payload)
+            for queue in list(self._subscribers):
+                await queue.put(message)
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(MockRobotCommand))
+        await session.execute(delete(RobotEvent))
+        await session.execute(delete(ItemLocation))
+        await session.execute(delete(Item))
+        await session.commit()
+
+    worker = QueueWorker()
+    listener = RobotEventListener(worker)  # type: ignore[arg-type]
+    await listener.start()
+    monkeypatch.setattr(robot_core, "robot_worker", worker)
+    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.development)
+
+    read_count = 0
+
+    async def counting_read_robot_events(since: int, limit: int) -> list[RobotEvent]:
+        nonlocal read_count
+        read_count += 1
+        return await event_log.read_robot_events(since, limit)
+
+    monkeypatch.setattr(robot_router, "read_robot_events", counting_read_robot_events)
+
+    hold_commit = asyncio.Event()
+    real_append = event_log.append_robot_event
+
+    async def held_append(payload: dict) -> int | None:
+        await hold_commit.wait()
+        return await real_append(payload)
+
+    monkeypatch.setattr(robot_events, "append_robot_event", held_append)
+
+    try:
+        # Four baseline events whose log rows commit before the subscriber
+        # connects.
+        for index in range(4):
+            await worker.publish_event(
+                {"kind": "safety_state", "payload": {"active": index % 2 == 1}}
+            )
+            hold_commit.set()
+            deadline = asyncio.get_running_loop().time() + 5.0
+            while asyncio.get_running_loop().time() < deadline:
+                if len(await _event_rows()) > index:
+                    break
+                await asyncio.sleep(0.01)
+            hold_commit.clear()
+
+        baseline = await _event_rows()
+        assert len(baseline) == 4
+
+        # Reconnect with a Last-Event-ID at least two rows below the log
+        # top, then publish a live event right after subscribing so its
+        # message is dequeued on the first iteration, before the replay is
+        # read. Its commit is released and committed before the next event
+        # is held.
+        stream = SseStream(
+            "/api/robot/events",
+            auth_headers,
+            extra={"Last-Event-ID": str(baseline[0].seq)},
+        )
+        await stream.start()
+        await worker.publish_event(
+            {"kind": "safety_state", "payload": {"active": True, "motion_blocked": False}}
+        )
+        hold_commit.set()
+        deadline = asyncio.get_running_loop().time() + 5.0
+        while asyncio.get_running_loop().time() < deadline:
+            if len(await _event_rows()) >= 5:
+                break
+            await asyncio.sleep(0.01)
+
+        # The stream has replayed the backlog and forwarded the live event
+        # (row 5, above the pre-subscribe log top: the single confirmation).
+        await stream.wait_for_frame(lambda frame: frame[0] == baseline[-1].seq + 1)
+        hold_commit.clear()
+
+        # The next event's log row commit is held behind the barrier: the
+        # listener fans the message out to the stream's queue, then blocks
+        # in the append, so the row is not yet committed.
+        expected_seq = baseline[-1].seq + 2
+        read_count = 0
+        await worker.publish_event(
+            {"kind": "safety_state", "payload": {"active": False, "motion_blocked": False}}
+        )
+        await asyncio.sleep(2.0)
+
+        # While the row is uncommitted the gate must be polling for it (the
+        # replayed backlog must not have created a confirmation surplus that
+        # silences it), and no frame for the new event may have been
+        # forwarded.
+        assert len(await _event_rows()) == 5, "append barrier did not hold the row"
+        assert read_count >= 10, (
+            f"Gate did not poll for the uncommitted row when a message was dequeued before the replay: {read_count} reads"
+        )
+        assert not any(seq == expected_seq for seq, _ in stream.frames()), (
+            "New event's frame was forwarded before its log row committed"
+        )
+
+        # Releasing the barrier commits the row; the still-running gate picks
+        # it up on its next poll and the frame arrives.
+        hold_commit.set()
+        new_seq, _ = await stream.wait_for_frame(
+            lambda frame: frame[0] == expected_seq, timeout=5.0
+        )
+        assert new_seq == expected_seq
+        await stream.stop()
     finally:
         await listener.stop()
         async with AsyncSessionLocal() as session:
