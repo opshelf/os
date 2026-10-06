@@ -54,11 +54,9 @@
 
 	// Multi-cell test walk (client-side equivalent of provision/scripts/cycle_test.py):
 	// walks the testable cells on the current side from the selected cell, one
-	// operation per cell, tracking the current cell and running pass count.
+	// operation per cell, and reports the outcome as a single toast.
 	let testRunning = $state<boolean>(false);
 	let testAborting = $state<boolean>(false);
-	let testCurrent = $state<string>('');
-	let testPassed = $state<number>(0);
 	let isMovingToCell = $state<boolean>(false);
 
 	const selectedSide = $derived.by(
@@ -1256,25 +1254,20 @@
 		}
 		testRunning = true;
 		testAborting = false;
-		testCurrent = '';
-		testPassed = 0;
 		try {
 			for (const target of queue) {
 				if (testAborting) {
 					break;
 				}
-				testCurrent = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
+				const cellLabel = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
 				if (result.ok === false) {
-					postToast('error', `failed at ${testCurrent}${result.error ? `: ${result.error}` : ''}`);
+					postToast('error', `failed at ${cellLabel}${result.error ? `: ${result.error}` : ''}`);
 					return;
 				}
-				testPassed += 1;
 			}
-			postToast(
-				'status',
-				testAborting ? `aborted — ${testPassed} passed` : `done — ${testPassed} passed`
-			);
+			// One summary toast per walk: a failure returned above with its own toast.
+			postToast('status', testAborting ? 'test aborted' : 'all tests passed');
 		} finally {
 			testRunning = false;
 		}
@@ -1668,11 +1661,17 @@
 					>
 						retrieve
 					</button>
+					{#if testRunning}
+						<button
+							type="button"
+							class="editor-abort-button"
+							onclick={() => didAbortTest()}
+							disabled={testAborting}
+						>
+							abort test
+						</button>
+					{/if}
 				</div>
-				{#if testRunning}
-					<p class="editor-test-progress">{testCurrent} • PASS: {testPassed}</p>
-					<button type="button" onclick={() => didAbortTest()} disabled={testAborting}>abort</button>
-				{/if}
 			</section>
 			<label class="editor-row editor-row-lock">
 				<input
@@ -2053,13 +2052,7 @@
 		cursor: not-allowed;
 	}
 
-	.editor-test-progress {
-		margin: 0 0 1em 0;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.editor-tests > button {
-		align-self: flex-start;
-		margin-top: 0;
+	.editor-abort-button {
+		grid-column: 1 / -1;
 	}
 </style>
