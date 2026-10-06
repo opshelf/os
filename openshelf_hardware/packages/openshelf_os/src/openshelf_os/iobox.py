@@ -532,13 +532,29 @@ class IOBox:
     def get_door_state(self) -> Optional[bool]:
         return self._door_open
 
+    def _door_zero_clamp_mm(self) -> float:
+        """How far below zero a closed door may read.
+
+        A torque-homed door springs back off its stop (lb2-3 reads -0.44 mm), and the door's
+        home_zero_tolerance_mm already accepts that as a good home; counting it as a bad
+        reading re-homed the door every few seconds, onto the same reading.
+        """
+        home_tolerance_mm = 0.0
+        try:
+            door_cfg = self._params.motors.by_name("door")
+            home_tolerance_mm = float(getattr(door_cfg, "home_zero_tolerance_mm", 0.0) or 0.0)
+        except Exception:
+            pass
+        return max(self._door_zero_position_tolerance_mm, home_tolerance_mm)
+
     def _normalize_door_position(self, position_mm: float) -> float:
-        if -self._door_zero_position_tolerance_mm <= position_mm < 0:
+        tolerance_mm = self._door_zero_clamp_mm()
+        if -tolerance_mm <= position_mm < 0:
             self._logger.debug(
                 "Clamping near-zero door position",
                 extra={
                     "position_mm": position_mm,
-                    "tolerance_mm": self._door_zero_position_tolerance_mm,
+                    "tolerance_mm": tolerance_mm,
                 },
             )
             return 0.0
