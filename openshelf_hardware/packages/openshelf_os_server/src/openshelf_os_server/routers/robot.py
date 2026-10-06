@@ -36,7 +36,6 @@ from sqlalchemy import select
 from openshelf_os_server.core.robot import get_robot_instance, get_robot_worker
 from openshelf_os_server.core.robot_events import (
     EVENT_FORWARD_WAIT_TIMEOUT_S,
-    event_processing_tracker,
     process_robot_event,
 )
 from openshelf_os_server.core.init_progress import get_init_tracker
@@ -2097,12 +2096,10 @@ async def stream_events(request: Request) -> EventSourceResponse:
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         sent_max = resume_from
+        rows_sent = 0
+        messages_dequeued = 0
         try:
             while True:
-                # The processed count is captured before the wait so the tracker
-                # release below maps onto exactly this queued message: the
-                # listener appends the durable log row before it releases.
-                processed_before = event_processing_tracker.processed_count()
                 message: Optional[str] = None
                 if event_queue is not None:
                     try:
@@ -2113,21 +2110,33 @@ async def stream_events(request: Request) -> EventSourceResponse:
                         message = None
 
                 if message is not None:
-                    settled = await event_processing_tracker.wait_until_processed(
-                        processed_before + 1, EVENT_FORWARD_WAIT_TIMEOUT_S
-                    )
-                    if settled is False:
-                        logging.warning(
-                            "Robot event log row not committed within %.1fs; "
-                            "the stream continues and the gap is visible in the log",
-                            EVENT_FORWARD_WAIT_TIMEOUT_S,
-                        )
+                    messages_dequeued += 1
+                    # Gate on the not-yet-sent row of the most recently dequeued message.
+                    # Rows are committed and forwarded in the same order as messages are
+                    # dequeued, so when rows_sent >= messages_dequeued the message's row
+                    # is already forwarded and the gate must be skipped entirely.
+                    if rows_sent < messages_dequeued:
+                        deadline = asyncio.get_running_loop().time() + EVENT_FORWARD_WAIT_TIMEOUT_S
+                        found_new_row = False
+                        while asyncio.get_running_loop().time() < deadline:
+                            rows = await read_robot_events(sent_max, EVENT_LOG_PAGE_LIMIT)
+                            if rows:
+                                found_new_row = True
+                                break
+                            await asyncio.sleep(0.05)
+                        if not found_new_row:
+                            logging.warning(
+                                "Robot event log row not committed within %.1fs; "
+                                "the stream continues and the gap is visible in the log",
+                                EVENT_FORWARD_WAIT_TIMEOUT_S,
+                            )
 
                 # Forward from the durable log so clients only ever see committed
                 # events, in `seq` order, with the ids resumption relies on.
                 for row in await read_robot_events(sent_max, EVENT_LOG_PAGE_LIMIT):
                     yield {"id": str(row.seq), "data": json.dumps(row.payload)}
                     sent_max = row.seq
+                    rows_sent += 1
 
                 if message is None:
                     # No queued message: rows committed while we were away are

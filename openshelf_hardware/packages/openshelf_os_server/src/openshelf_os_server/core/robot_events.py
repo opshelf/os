@@ -25,9 +25,8 @@ class EventProcessingTracker:
 
     The event listener commits DB state after the worker emits an event, so the
     durable event log row (which commits after the side effects) only exists once
-    processing has finished. `/api/robot/events` waits on this tracker for each
-    queued message before reading the log, so clients never observe an event
-    before its row is durable.
+    processing has finished. The tracker marks the release point after the log
+    append, so side-effect completeness is tracked for concurrent operations.
     """
 
     def __init__(self) -> None:
@@ -41,24 +40,12 @@ class EventProcessingTracker:
     def deactivate(self) -> None:
         self._active = False
 
-    def processed_count(self) -> int:
-        return self._processed
+
 
     async def record_processed(self) -> None:
         async with self._lock:
             self._processed += 1
             self._lock.notify_all()
-
-    async def wait_until_processed(self, target: int, timeout_s: float) -> bool:
-        async with self._lock:
-            if self._active is False or self._processed >= target:
-                return True
-            try:
-                while self._processed < target:
-                    await asyncio.wait_for(self._lock.wait(), timeout_s)
-            except asyncio.TimeoutError:
-                return False
-            return self._processed >= target
 
 
 event_processing_tracker = EventProcessingTracker()

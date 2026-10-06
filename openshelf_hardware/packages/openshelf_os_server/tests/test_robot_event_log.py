@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import delete, select
 
 from openshelf_os.operating_mode import OperatingMode
+from openshelf_os_server.core import event_log
 from openshelf_os_server.core import mock_robot as mock_core
 from openshelf_os_server.core import robot as robot_core
 from openshelf_os_server.core.mock_robot import MockRobotRuntime
@@ -362,6 +364,10 @@ async def test_listener_appends_hardware_events_to_the_log(
             for queue in list(self._subscribers):
                 await queue.put(message)
 
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(RobotEvent))
+        await session.commit()
+
     worker = QueueWorker()
     listener = RobotEventListener(worker)  # type: ignore[arg-type]
     await listener.start()
@@ -386,3 +392,162 @@ async def test_listener_appends_hardware_events_to_the_log(
         assert rows[0].command_id is None
     finally:
         await listener.stop()
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(RobotEvent))
+            await session.commit()
+
+
+@pytest.mark.anyio
+async def test_hardware_path_does_not_stall_on_event_log_polling(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify the hardware event path does not wait on the wrong tracker release.
+
+    When an event is queued and processed while the generator is idle, the log
+    row is committed before the generator re-checks. The fix gates on the
+    committed log row (polling until it appears) rather than on a tracker count
+    that may already reflect the release. This test reproduces the race: we start
+    the listener, let the generator settle into idle, then publish an event
+    directly to the queue, and assert delivery completes in under 2s (without a
+    false 5s timeout).
+    """
+
+    class QueueWorker:
+        def __init__(self) -> None:
+            self._subscribers: list[asyncio.Queue[str]] = []
+
+        async def subscribe_events(self) -> asyncio.Queue[str]:
+            queue: asyncio.Queue[str] = asyncio.Queue()
+            self._subscribers.append(queue)
+            return queue
+
+        async def unsubscribe_events(self, queue: asyncio.Queue[str]) -> None:
+            self._subscribers.remove(queue)
+
+        async def publish_event(self, payload: dict) -> None:
+            message = json.dumps(payload)
+            for queue in list(self._subscribers):
+                await queue.put(message)
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(MockRobotCommand))
+        await session.execute(delete(RobotEvent))
+        await session.execute(delete(ItemLocation))
+        await session.execute(delete(Item))
+        await session.commit()
+
+    worker = QueueWorker()
+    listener = RobotEventListener(worker)  # type: ignore[arg-type]
+    await listener.start()
+    monkeypatch.setattr(robot_core, "robot_worker", worker)
+    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.development)
+    try:
+        stream = SseStream("/api/robot/events", auth_headers)
+        await stream.start()
+        await asyncio.sleep(1.2)
+        await worker.publish_event({"kind": "safety_state", "payload": {"active": False}})
+        seq, data = await stream.wait_for_frame(
+            lambda frame: frame[0] is not None, timeout=2.0
+        )
+        assert isinstance(seq, int)
+        await stream.stop()
+    finally:
+        await listener.stop()
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(RobotEvent))
+            await session.commit()
+
+
+@pytest.mark.anyio
+async def test_burst_events_do_not_cause_false_gate_timeout(
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression test for event bursts causing false gate timeouts.
+
+    When two events are published back-to-back and both log rows commit before
+    the generator's first read, both rows are forwarded on that read. The second
+    dequeued message should skip the gate (since its row was already forwarded)
+    and not poll waiting for a non-existent row or log a false warning.
+    """
+
+    class QueueWorker:
+        def __init__(self) -> None:
+            self._subscribers: list[asyncio.Queue[str]] = []
+
+        async def subscribe_events(self) -> asyncio.Queue[str]:
+            queue: asyncio.Queue[str] = asyncio.Queue()
+            self._subscribers.append(queue)
+            return queue
+
+        async def unsubscribe_events(self, queue: asyncio.Queue[str]) -> None:
+            self._subscribers.remove(queue)
+
+        async def publish_event(self, payload: dict) -> None:
+            message = json.dumps(payload)
+            for queue in list(self._subscribers):
+                await queue.put(message)
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(RobotEvent))
+        await session.commit()
+
+    worker = QueueWorker()
+    listener = RobotEventListener(worker)  # type: ignore[arg-type]
+    await listener.start()
+    monkeypatch.setattr(robot_core, "robot_worker", worker)
+    monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.development)
+
+    read_count = 0
+
+    async def counting_read_robot_events(since: int, limit: int) -> list[robot_core.RobotEventLog]:
+        nonlocal read_count
+        read_count += 1
+        return await event_log.read_robot_events(since, limit)
+
+    monkeypatch.setattr(
+        robot_router, "read_robot_events", counting_read_robot_events
+    )
+
+    try:
+        with caplog.at_level(logging.WARNING):
+            stream = SseStream("/api/robot/events", auth_headers)
+            await stream.start()
+            await asyncio.sleep(1.2)
+            # Publish two events back-to-back.
+            await worker.publish_event(
+                {"kind": "safety_state", "payload": {"active": False, "motion_blocked": False}}
+            )
+            await worker.publish_event(
+                {"kind": "safety_state", "payload": {"active": True, "motion_blocked": False}}
+            )
+            # Wait for both frames to arrive.
+            first_seq, _ = await stream.wait_for_frame(
+                lambda frame: isinstance(frame[0], int), timeout=3.0
+            )
+            second_seq, _ = await stream.wait_for_frame(
+                lambda frame: isinstance(frame[0], int) and frame[0] != first_seq, timeout=3.0
+            )
+            assert first_seq is not None and second_seq is not None
+            assert second_seq == first_seq + 1
+            # Hold the stream open for ~5.5s to observe any gate timeouts.
+            await asyncio.sleep(5.5)
+            await stream.stop()
+
+            # Assert no false "row not committed" warnings were logged.
+            warnings = [
+                record.message
+                for record in caplog.records
+                if "row not committed" in record.message
+            ]
+            assert len(warnings) == 0, f"Unexpected warnings: {warnings}"
+            # Assert read_robot_events was called much fewer times than the buggy ~100 gate reads.
+            assert read_count < 60, f"Too many read_robot_events calls: {read_count}"
+    finally:
+        await listener.stop()
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(RobotEvent))
+            await session.commit()
