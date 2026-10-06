@@ -2066,8 +2066,10 @@ async def stream_events() -> EventSourceResponse:
     except ValueError:
         worker = None
 
+    received_before_subscribe = 0
     if worker is not None:
         event_queue = await worker.subscribe_events()
+        received_before_subscribe = event_processing_tracker.received_count()
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         try:
@@ -2080,9 +2082,13 @@ async def stream_events() -> EventSourceResponse:
                 forwarded += 1
                 # The event listener commits DB state after the worker emits, so
                 # wait for that work to settle before clients observe the event.
-                await event_processing_tracker.wait_until_processed(
-                    forwarded, EVENT_FORWARD_WAIT_TIMEOUT_S
+                settled = await event_processing_tracker.wait_until_processed(
+                    received_before_subscribe + forwarded, EVENT_FORWARD_WAIT_TIMEOUT_S
                 )
+                if settled is False:
+                    logging.warning(
+                        "Forwarding robot event before its inventory update settled"
+                    )
                 yield {"data": message}
         finally:
             if worker is not None and event_queue is not None:

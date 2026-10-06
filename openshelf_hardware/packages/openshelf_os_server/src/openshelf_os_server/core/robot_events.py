@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from sqlalchemy import select
 
@@ -25,20 +25,32 @@ class EventProcessingTracker:
     The event listener commits DB state after the worker emits an event, so SSE
     clients must not observe an event before that commit. The event stream waits
     on this tracker before forwarding each payload; fan-out preserves order in
-    every subscriber queue, so a per-connection sequence number maps 1:1 onto
-    the monotonically growing processed count.
+    every subscriber queue, so a connection's n-th event is the listener's
+    `received_count()` at subscribe time plus n. Counting from zero instead lets
+    every connection opened after the first event skip the wait entirely.
     """
 
     def __init__(self) -> None:
         self._lock = asyncio.Condition()
         self._processed = 0
         self._active = False
+        self._pending: Callable[[], int] = lambda: 0
 
-    def activate(self) -> None:
+    def activate(self, pending: Callable[[], int]) -> None:
+        self._pending = pending
         self._active = True
 
     def deactivate(self) -> None:
         self._active = False
+        self._pending = lambda: 0
+
+    def received_count(self) -> int:
+        """Events the listener has received: processed plus queued or in progress.
+
+        Read it right after subscribing, with no await in between, so no event can
+        be fanned out to one queue but not the other.
+        """
+        return self._processed + self._pending()
 
     async def record_processed(self) -> None:
         async with self._lock:
@@ -181,6 +193,11 @@ async def process_robot_event(
                         "Removed location for retrieved item: barcode=%s side=%s shelf=%s cell=%s",
                         barcode, side, shelf_idx_int, cell_idx_int,
                     )
+                else:
+                    logger.warning(
+                        "Retrieved item had no location to remove: barcode=%s side=%s shelf=%s cell=%s",
+                        barcode, side, shelf_idx_int, cell_idx_int,
+                    )
             except Exception as err:
                 logger.exception("Failed to process retrieve_item event for %s: %s", barcode, err)
 
@@ -288,6 +305,7 @@ class RobotEventListener:
         self._worker = worker
         self._queue: Optional[asyncio.Queue[str]] = None
         self._task: Optional[asyncio.Task[None]] = None
+        self._in_progress = 0
 
     async def start(self) -> None:
         if self._task is not None:
@@ -297,7 +315,11 @@ class RobotEventListener:
         logger.info("Starting robot event listener")
         self._queue = await self._worker.subscribe_events()
         self._task = asyncio.create_task(self._consume_events(), name="robot-event-listener")
-        event_processing_tracker.activate()
+        event_processing_tracker.activate(self._pending_count)
+
+    def _pending_count(self) -> int:
+        queued = self._queue.qsize() if self._queue is not None else 0
+        return queued + self._in_progress
 
     async def stop(self) -> None:
         if self._queue is not None:
@@ -342,6 +364,7 @@ class RobotEventListener:
 
         while True:
             payload_json = await queue.get()
+            self._in_progress = 1
             try:
                 logger.info("Received robot event message: %s", payload_json[:200] if payload_json else None)
 
@@ -352,6 +375,11 @@ class RobotEventListener:
                     continue
 
                 await process_robot_event(payload, self._worker)
+            except Exception as err:
+                # An escaping error would end this task and silently stop every later
+                # inventory update while commands keep reporting success.
+                logger.exception("Failed to process robot event %s: %s", payload_json[:200], err)
             finally:
+                self._in_progress = 0
                 queue.task_done()
                 await event_processing_tracker.record_processed()
