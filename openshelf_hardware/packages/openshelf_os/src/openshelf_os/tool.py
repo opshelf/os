@@ -33,6 +33,8 @@ DEFAULT_Z_RETRACT_TARGET_MM = 1.0
 DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM = 5.0
 DEFAULT_ROTATION_Z_MAX_EXTENSION_MM = 5.0
 MAX_PICK_LIFT_MM = 30.0
+Y_STARTUP_HOME_CLEARANCE_MM = 10.0
+Y_STARTUP_HOME_PEAK_CURRENT = 30
 
 
 class RotationHomeOrientation(Enum):
@@ -250,7 +252,11 @@ class Tool:
                 self._logger.info("Laser disabled via config")
 
             if home_on_init is True:
-                await self.home(isolate=isolate, failed_config_motors=failed_config_motors)
+                await self.home(
+                    isolate=isolate,
+                    failed_config_motors=failed_config_motors,
+                    y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM,
+                )
             else:
                 self._mark_configured_motors_ready(failed_config_motors)
         except Exception as e:
@@ -1238,7 +1244,7 @@ class Tool:
             await self._ms.ready()
             await self._ms.move_to_position_no_wait(slide_ext)
             await self._mg.move_to_position_no_wait(grip_ext, rpm=grip_rpm, accel=grip_accel)
-            await self.tool_wait()
+            await self.tool_wait(homing=False)
         except Exception as e:
             await self._handle_fault(e)
 
@@ -1310,6 +1316,7 @@ class Tool:
 
     async def tool_wait(
         self,
+        homing: bool,
         timeout_seconds: float = TOOL_OUTER_TIMEOUT,
         should_abort: Callable[[], bool] | None = None,
     ) -> None:
@@ -1327,11 +1334,13 @@ class Tool:
 
                 mg_f = await self._mg.wait_for_move(
                     timeout=TOOL_WAIT_TIMEOUT,
+                    homing=homing,
                     should_abort=should_abort,
                 )
 
                 ms_f = await self._ms.wait_for_move(
                     timeout=TOOL_WAIT_TIMEOUT,
+                    homing=homing,
                     should_abort=should_abort,
                 )
                 axis_statuses = {"z_axis": mg_f.name, "stage": ms_f.name}
@@ -1490,6 +1499,7 @@ class Tool:
         self,
         isolate: bool = False,
         failed_config_motors: Optional[List[Motor]] = None,
+        y_pre_home_clearance_mm: Optional[float] = None,
     ) -> None:
         failed_config_motors = failed_config_motors or []
         failed_home_motors: List[Motor] = []
@@ -1507,10 +1517,22 @@ class Tool:
             await self._home_rotate_sequence()
 
         for motor in (self._mx, self._my):
+            pre_home_clearance_mm = y_pre_home_clearance_mm if motor is self._my else None
             if isolate is True:
-                await self._home_step_isolated(motor, failed_config_motors)
+                await self._home_step_isolated(
+                    motor,
+                    failed_config_motors,
+                    pre_home_clearance_mm=pre_home_clearance_mm,
+                )
             elif motor is not None:
-                await motor.home()
+                if pre_home_clearance_mm is None:
+                    await motor.home()
+                else:
+                    await motor.home(
+                        pre_home_clearance_mm=pre_home_clearance_mm,
+                        skip_pre_home_approach=True,
+                        homing_peak_current=Y_STARTUP_HOME_PEAK_CURRENT,
+                    )
 
     def _did_motor_configure_fail(self, motor: Optional[Motor], failed_config_motors: List[Motor]) -> bool:
         if motor is None:
@@ -1521,13 +1543,21 @@ class Tool:
         self,
         motor: Optional[Motor],
         failed_config_motors: List[Motor],
+        pre_home_clearance_mm: Optional[float] = None,
     ) -> bool:
         if motor is None:
             return True
         if self._did_motor_configure_fail(motor, failed_config_motors) is True:
             return True
         try:
-            await motor.home()
+            if pre_home_clearance_mm is None:
+                await motor.home()
+            else:
+                await motor.home(
+                    pre_home_clearance_mm=pre_home_clearance_mm,
+                    skip_pre_home_approach=True,
+                    homing_peak_current=Y_STARTUP_HOME_PEAK_CURRENT,
+                )
             return True
         except Exception as e:
             self._logger.warning("init home step failed: %s", e)
@@ -1560,10 +1590,11 @@ class Tool:
         self,
         isolate: bool = False,
         failed_config_motors: Optional[List[Motor]] = None,
+        y_pre_home_clearance_mm: Optional[float] = None,
     ) -> None:
         if isolate is False:
             try:
-                await self._home_sequence()
+                await self._home_sequence(y_pre_home_clearance_mm=y_pre_home_clearance_mm)
             except Exception as e:
                 await self._handle_fault(e)
 
@@ -1575,4 +1606,5 @@ class Tool:
         await self._home_sequence(
             isolate=True,
             failed_config_motors=failed_config_motors,
+            y_pre_home_clearance_mm=y_pre_home_clearance_mm,
         )
