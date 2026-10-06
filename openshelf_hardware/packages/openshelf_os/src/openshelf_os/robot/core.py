@@ -1512,12 +1512,13 @@ class Robot:
             )
 
         self._state.current_cell = location
+        # The commanded barcode is the one the server located in this cell; the grid's
+        # in-memory item misses location edits made through the API, and reporting it
+        # instead would remove the wrong item's location.
         retrieved_barcode: str | None = barcode_hint
-        if cached_item is not None:
+        if retrieved_barcode is None and cached_item is not None:
             barcode_from_data = cached_item.data.get("barcode") if cached_item.data else None
-            cached_barcode = cached_item.barcode or (str(barcode_from_data) if barcode_from_data is not None else None)
-            if cached_barcode is not None:
-                retrieved_barcode = cached_barcode
+            retrieved_barcode = cached_item.barcode or (str(barcode_from_data) if barcode_from_data is not None else None)
 
         self.set_operation_context(command=command_name, phase="retrieve.moving_from_io_to_shelf", target_cell=location)
         try:

@@ -9,13 +9,22 @@ from openshelf_os.storage import CellItem, Dimensions, StorageModuleCellLocation
 
 
 @pytest.mark.asyncio
-async def test_retrieve_preserves_barcode_hint_for_cached_placeholder_item() -> None:
+@pytest.mark.parametrize(
+    "cached_barcode",
+    # A placeholder with no barcode, and an item the grid still remembers after the
+    # cell was reassigned through the API: the commanded barcode wins either way.
+    (None, "999900000002"),
+)
+async def test_retrieve_reports_the_commanded_barcode_over_the_cached_item(
+    cached_barcode: str | None,
+) -> None:
     location = StorageModuleCellLocation(
         side=StorageModuleSide.FRONT,
         shelf_idx=0,
         cell_idx=1,
     )
     placeholder_item = CellItem(
+        barcode=cached_barcode,
         dimensions=Dimensions(width=20, height=30, length=400),
         data={"name": "calibration test front_module:0:1"},
     )
