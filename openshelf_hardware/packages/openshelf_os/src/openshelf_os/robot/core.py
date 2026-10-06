@@ -1532,9 +1532,10 @@ class Robot:
                 await self.deliver_tray(coord)
             else:
                 await self.io_place(coord, nudge_override=nudge_override)
+            weight = await self._io.get_weight()
             self.set_operation_context(phase="retrieve.grid_clear_commit")
             self._grid.clear_item(location)
-            return RobotCommandSuccessful(command=command_name, location=location, barcode=retrieved_barcode)
+            return RobotCommandSuccessful(command=command_name, location=location, barcode=retrieved_barcode, weight=weight)
         except (MotorError, MovementError, ToolError) as err:
             self._capture_fault_context(err)
             raise
