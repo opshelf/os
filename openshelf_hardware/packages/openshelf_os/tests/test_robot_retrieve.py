@@ -8,8 +8,9 @@ from openshelf_os.robot import Robot, RobotCommandSuccessful
 from openshelf_os.storage import CellItem, Dimensions, StorageModuleCellLocation, StorageModuleSide
 
 
-@pytest.mark.asyncio
-async def test_retrieve_preserves_barcode_hint_for_cached_placeholder_item() -> None:
+def build_robot(*, weight: float | None) -> tuple[Robot, list[str], list[StorageModuleCellLocation]]:
+    calls: list[str] = []
+
     location = StorageModuleCellLocation(
         side=StorageModuleSide.FRONT,
         shelf_idx=0,
@@ -39,8 +40,25 @@ async def test_retrieve_preserves_barcode_hint_for_cached_placeholder_item() -> 
     async def io_place(coordinate: AxisCoordinate, nudge_override=None) -> None:
         assert coordinate == AxisCoordinate(x=10, y=20, s=0, z_offset=1)
         assert nudge_override is None
+        calls.append("io_place")
+
+    async def get_weight() -> float | None:
+        calls.append("get_weight")
+        return weight
 
     robot.io_place = io_place
+    robot._io = SimpleNamespace(get_weight=get_weight)
+    return robot, calls, cleared_locations
+
+
+@pytest.mark.asyncio
+async def test_retrieve_preserves_barcode_hint_for_cached_placeholder_item() -> None:
+    robot, _, cleared_locations = build_robot(weight=42.0)
+    location = StorageModuleCellLocation(
+        side=StorageModuleSide.FRONT,
+        shelf_idx=0,
+        cell_idx=1,
+    )
 
     result = await robot.retrieve_by_location(
         location.model_dump(),
@@ -50,4 +68,36 @@ async def test_retrieve_preserves_barcode_hint_for_cached_placeholder_item() -> 
     assert isinstance(result, RobotCommandSuccessful)
     assert result.barcode == "999900000001"
     assert result.location == location
+    assert cleared_locations == [location]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_weighes_after_io_placement() -> None:
+    robot, calls, _ = build_robot(weight=42.0)
+    location = StorageModuleCellLocation(
+        side=StorageModuleSide.FRONT,
+        shelf_idx=0,
+        cell_idx=1,
+    )
+
+    result = await robot.retrieve_by_location(location.model_dump())
+
+    assert isinstance(result, RobotCommandSuccessful)
+    assert result.weight == 42.0
+    assert calls == ["io_place", "get_weight"]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_succeeds_without_weight_when_scale_unavailable() -> None:
+    robot, _, cleared_locations = build_robot(weight=None)
+    location = StorageModuleCellLocation(
+        side=StorageModuleSide.FRONT,
+        shelf_idx=0,
+        cell_idx=1,
+    )
+
+    result = await robot.retrieve_by_location(location.model_dump())
+
+    assert isinstance(result, RobotCommandSuccessful)
+    assert result.weight is None
     assert cleared_locations == [location]
