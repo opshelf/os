@@ -13,6 +13,7 @@
 	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import InitProgress from '$lib/components/InitProgress.svelte';
+	import { activeVocabulary, sideIndex, sideInitial, vocabularyOfToken } from '$lib/side';
 
 	const RESTART_BUTTON_RESET_MS = 15000;
 
@@ -261,6 +262,8 @@
 		}
 	}
 
+	const HIDDEN_COMMAND_FIELDS = new Set(['command_id']);
+
 	function formatCommand(
 		command: Record<string, unknown> | null | undefined
 	): Array<{ field: string; value: string }> {
@@ -269,7 +272,11 @@
 		}
 		const entries: Array<{ field: string; value: string }> = [];
 		for (const [key, value] of Object.entries(command)) {
-			if (value === null || value === undefined) {
+			if (value === null || value === undefined || HIDDEN_COMMAND_FIELDS.has(key)) {
+				continue;
+			}
+			if (key === 'location') {
+				entries.push({ field: key, value: formatLocation(value) });
 				continue;
 			}
 			if (typeof value === 'object' && !Array.isArray(value)) {
@@ -281,6 +288,26 @@
 			}
 		}
 		return entries;
+	}
+
+	// Storage coordinates read as a single module:shelf:cell label (F:0:0), with
+	// the module initial taken from the vocabulary the location itself speaks.
+	function formatLocation(location: unknown): string {
+		if (!location || typeof location !== 'object') {
+			return formatValue(location);
+		}
+		const record = location as Record<string, unknown>;
+		const index = sideIndex(record.side);
+		if (index === null) {
+			return formatValue(location);
+		}
+		const vocabulary = vocabularyOfToken(record.side) ?? activeVocabulary();
+		const parts = [sideInitial(index, vocabulary)];
+		for (const key of ['shelf_idx', 'cell_idx']) {
+			const value = record[key];
+			parts.push(typeof value === 'number' ? String(value) : '?');
+		}
+		return parts.join(':');
 	}
 
 	function formatValue(value: unknown): string {
@@ -529,8 +556,10 @@
 						</td>
 					</tr>
 				</tbody>
+			</table>
 
-				{#if $robotStatus.current_command}
+			{#if $robotStatus.current_command}
+				<table>
 					<thead>
 						<tr>
 							<th colspan="2">current command</th>
@@ -544,8 +573,8 @@
 							</tr>
 						{/each}
 					</tbody>
-				{/if}
-			</table>
+				</table>
+			{/if}
 		{/if}
 	</div>
 </div>
