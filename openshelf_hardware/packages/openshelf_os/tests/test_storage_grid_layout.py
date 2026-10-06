@@ -1,5 +1,6 @@
 
 from openshelf_os.storage import (
+	CalibrationCoordinate,
 	Cell,
 	CellStatus,
 	Dimensions,
@@ -52,7 +53,8 @@ def test_add_shelf_appends_next_index_with_one_cell(tmp_path) -> None:
 	assert cell.dimensions == _cell(0).dimensions
 	assert cell.status == CellStatus.AVAILABLE
 	assert cell.item is None
-	assert cell.calibration_point is None
+	# new cells default to the side origin so they are movable before calibration
+	assert cell.calibration_point == CalibrationCoordinate(x=0.0, y=0.0, s=0, z_offset=0.0)
 	# the change is persisted
 	reloaded = StorageGrid.load_from_file(grid.filename)
 	assert [shelf.shelf_idx for shelf in reloaded.front_module] == [0, 1]
