@@ -28,6 +28,7 @@
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideInitial, sideLabel } from '$lib/side';
 	import type { SideIndex, SideVocabulary } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import { postToast } from '$lib/toasts';
 	import {
 		createReconnectingEventSource,
 		type ReconnectingEventSource
@@ -58,8 +59,6 @@
 	let testAborting = $state<boolean>(false);
 	let testCurrent = $state<string>('');
 	let testPassed = $state<number>(0);
-	let testNote = $state<string>('');
-	let testNoteIsError = $state<boolean>(false);
 	let isMovingToCell = $state<boolean>(false);
 
 	const selectedSide = $derived.by(
@@ -351,8 +350,6 @@
 
 	function closeOverlay(): void {
 		overlayOpen = false;
-		testNote = '';
-		testNoteIsError = false;
 	}
 
 	// A scrim click only counts when the press both started and ended in the dimmed area.
@@ -418,10 +415,11 @@
 
 	type EditorField = 'status' | 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
 	type NumericEditorField = 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
+	type DimensionField = 'width' | 'height' | 'length';
 
 	const EDITOR_FIELDS: EditorField[] = ['status', 'x', 'y', 'z', 'width', 'height', 'length'];
 	const XYZ_COLUMNS: NumericEditorField[] = ['x', 'y', 'z'];
-	const DIMENSION_COLUMNS: Array<{ field: NumericEditorField; label: string }> = [
+	const DIMENSION_COLUMNS: Array<{ field: DimensionField; label: string }> = [
 		{ field: 'width', label: 'width' },
 		{ field: 'height', label: 'height' },
 		{ field: 'length', label: 'length' }
@@ -645,6 +643,14 @@
 		if (editorValues[field].trim() === '' && selectionValues[field] === 'mixed') {
 			editorValues[field] = 'Mixed';
 		}
+		// An out-of-range dimension is reported once the technician leaves the field, so
+		// typing a value like ".5" does not fire a toast halfway through.
+		if (isDimensionField(field) === true) {
+			const issue = dimensionFieldIssue(field);
+			if (issue !== '') {
+				postToast('error', issue);
+			}
+		}
 	}
 
 	const selectionFingerprint = $derived(
@@ -732,7 +738,11 @@
 		return formatFieldValue(parsed) !== formatFieldValue(value);
 	}
 
-	function dimensionFieldIssue(field: NumericEditorField): string {
+	function isDimensionField(field: NumericEditorField): field is DimensionField {
+		return field === 'width' || field === 'height' || field === 'length';
+	}
+
+	function dimensionFieldIssue(field: DimensionField): string {
 		const raw = editorValues[field].trim();
 		if (raw === '' || raw.toLowerCase() === 'mixed') {
 			return '';
@@ -746,16 +756,6 @@
 		}
 		return '';
 	}
-
-	const dimensionIssue = $derived.by((): string => {
-		for (const column of DIMENSION_COLUMNS) {
-			const issue = dimensionFieldIssue(column.field);
-			if (issue !== '') {
-				return issue;
-			}
-		}
-		return '';
-	});
 
 	function isFieldValid(field: EditorField): boolean {
 		const raw = editorValues[field].trim();
@@ -1179,6 +1179,22 @@
 	// selection stays enabled: the queue skips its untestable cells.
 	const hasTestableSelection = $derived(selectedCells.some((entry) => isCellTestable(entry.cell)));
 
+	// The reason the testing buttons are inert is announced once per selection through the
+	// toast channel, which took over the overlay's inline message labels.
+	let didAnnounceUntestableSelection = false;
+
+	$effect(() => {
+		if (hasTestableSelection === true || overlayOpen === false) {
+			didAnnounceUntestableSelection = false;
+			return;
+		}
+
+		if (didAnnounceUntestableSelection === false) {
+			didAnnounceUntestableSelection = true;
+			postToast('status', 'no testable cells selected');
+		}
+	});
+
 	// The selected testable cells, one test each, in shelf/cell-ascending order
 	// (cycle_test.py walks cells one at a time).
 	function buildTestQueue(): Array<{ shelf: number; cell: Cell }> {
@@ -1235,16 +1251,13 @@
 		}
 		const queue = buildTestQueue();
 		if (queue.length === 0) {
-			testNote = 'no testable cells selected';
-			testNoteIsError = true;
+			postToast('error', 'no testable cells selected');
 			return;
 		}
 		testRunning = true;
 		testAborting = false;
 		testCurrent = '';
 		testPassed = 0;
-		testNote = '';
-		testNoteIsError = false;
 		try {
 			for (const target of queue) {
 				if (testAborting) {
@@ -1252,17 +1265,16 @@
 				}
 				testCurrent = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
-				if (result.ok) {
-				testPassed += 1;
-				} else {
-					testNote = `failed at ${testCurrent}${result.error ? `: ${result.error}` : ''}`;
-				testNoteIsError = true;
-					break;
+				if (result.ok === false) {
+					postToast('error', `failed at ${testCurrent}${result.error ? `: ${result.error}` : ''}`);
+					return;
 				}
+				testPassed += 1;
 			}
-			if (testNote === '') {
-				testNote = testAborting ? `aborted — ${testPassed} passed` : `done — ${testPassed} passed`;
-			}
+			postToast(
+				'status',
+				testAborting ? `aborted — ${testPassed} passed` : `done — ${testPassed} passed`
+			);
 		} finally {
 			testRunning = false;
 		}
@@ -1660,10 +1672,6 @@
 				{#if testRunning}
 					<p class="editor-test-progress">{testCurrent} • PASS: {testPassed}</p>
 					<button type="button" onclick={() => didAbortTest()} disabled={testAborting}>abort</button>
-				{:else if testNote !== ''}
-					<p class="editor-test-note" class:is-error={testNoteIsError}>{testNote}</p>
-				{:else if hasTestableSelection === false}
-					<p class="editor-test-note">no testable cells selected</p>
 				{/if}
 			</section>
 			<label class="editor-row editor-row-lock">
@@ -1694,9 +1702,6 @@
 					</label>
 				{/each}
 			</div>
-			{#if dimensionIssue !== ''}
-				<p class="editor-shelf-note is-error">{dimensionIssue}</p>
-			{/if}
 			{#if selectedSingle !== null}
 				<hr class="editor-hr" />
 				<label class="editor-row editor-row-tray">
@@ -2056,21 +2061,5 @@
 	.editor-tests > button {
 		align-self: flex-start;
 		margin-top: 0;
-	}
-
-	.editor-test-note {
-		margin: 0 0 1.5em 0;
-	}
-
-	.editor-test-note.is-error {
-		color: #b00020;
-	}
-
-	.editor-shelf-note {
-		margin: 0 0 1.5em 0;
-	}
-
-	.editor-shelf-note.is-error {
-		color: #b00020;
 	}
 </style>
