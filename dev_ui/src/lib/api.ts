@@ -774,15 +774,18 @@ export function buildLaserAutoCalibrationStreamUrl(
 		return url.toString();
 	}
 
-	if (request.side !== undefined) {
+	// The echoed scope in a snapshot spells absent selectors as null, so guard
+	// against null as well as undefined or they would reach the api as the
+	// literal string "null" and be rejected with 422.
+	if (request.side != null) {
 		url.searchParams.set('side', toDeviceSide(request.side));
 	}
 
-	if (request.shelf_idx !== undefined) {
+	if (request.shelf_idx != null) {
 		url.searchParams.set('shelf_idx', String(request.shelf_idx));
 	}
 
-	if (request.cell_idx !== undefined) {
+	if (request.cell_idx != null) {
 		url.searchParams.set('cell_idx', String(request.cell_idx));
 	}
 
