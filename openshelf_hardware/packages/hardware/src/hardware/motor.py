@@ -2059,13 +2059,14 @@ class Motor():
         the drive's zero at lim on an inverted axis and off zero on an offset one.
         """
         ppr = getattr(self._params, "ppr", 10000)
+        tolerance_mm = float(getattr(self._params, "home_zero_tolerance_mm", ZERO_TOLERANCE_MM))
         deadline = time.monotonic() + ZERO_SETTLE_TIMEOUT_S
         while True:
             # Also refreshes the cached logical position; the raw count is the drive's.
             await self.get_position()
             raw_position = self._last_raw_position
             position = None if raw_position is None else (raw_position / ppr) * self._params.mpr
-            if position is not None and abs(position) <= ZERO_TOLERANCE_MM:
+            if position is not None and abs(position) <= tolerance_mm:
                 return
 
             if time.monotonic() > deadline:

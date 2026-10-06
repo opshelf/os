@@ -60,3 +60,50 @@ async def test_retrieve_reports_the_commanded_barcode_over_the_cached_item(
     assert result.barcode == "999900000001"
     assert result.location == location
     assert cleared_locations == [location]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cycle", ("io_place", "io_pick"))
+async def test_io_cycle_homes_the_door_first_and_survives_a_failed_final_home(cycle: str) -> None:
+    calls: list[str] = []
+
+    class Tool:
+        _my = SimpleNamespace(move_to_position=lambda *_: _record("y_transfer"))
+
+        async def get_param(self, name: str) -> tuple[float, float]:
+            return (1.0, 2.0)
+
+        def __getattr__(self, name: str):
+            async def step(*_args, **_kwargs) -> None:
+                calls.append(name)
+
+            return step
+
+    async def _record(name: str) -> None:
+        calls.append(name)
+
+    class Io:
+        async def ensure_door_homed(self) -> None:
+            calls.append("ensure_door_homed")
+
+        async def open_door(self) -> None:
+            calls.append("open_door")
+
+        async def close_door(self) -> None:
+            calls.append("close_door")
+
+        async def home_door_after_cycle(self) -> bool:
+            calls.append("home_door_after_cycle")
+            return False
+
+    robot = Robot.__new__(Robot)
+    robot._logger = logging.getLogger("test_io_cycle")
+    robot._operation_context = {}
+    robot._tool = Tool()
+    robot._io = Io()
+
+    await getattr(robot, cycle)(AxisCoordinate(x=10, y=20, s=0, z_offset=1))
+
+    assert calls[0] == "ensure_door_homed"
+    assert calls.index("ensure_door_homed") < calls.index("pick")
+    assert calls[-2:] == ["home_door_after_cycle", "clear_alarms"]
