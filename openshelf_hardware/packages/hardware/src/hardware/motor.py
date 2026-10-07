@@ -845,7 +845,10 @@ class Motor():
         the motor stays energised across the transition; the sequencing delays
         land before SO2 becomes a brake output, because assigning SO2 can change
         the physical brake state immediately; DI1 is made inert last, since from
-        that point Pr0.07 is the only thing that can enable the drive.
+        that point Pr0.07 is the only thing that can enable the drive. Pr0.07
+        drops back to 0 before the save: the save commits every RAM parameter,
+        and a stored Pr0.07=1 powers the drive up force-enabled with the brake
+        released until the first park.
         """
         if self._park_when_idle:
             await self.set_param("Forced enable by software", SOFTWARE_ENABLE_ON)
@@ -870,12 +873,12 @@ class Motor():
                 )
             )
 
-        await self._save_parameters_to_eeprom()
-
         if self._park_when_idle:
             # Deliberate park: the brake sets through Pr4.20 / Pr4.21.
             await self.set_param("Forced enable by software", SOFTWARE_ENABLE_OFF)
             self._disabled_at = time.monotonic()
+
+        await self._save_parameters_to_eeprom()
 
     async def _configure_brake_control(self) -> None:
         """Audit the drive's persistent brake config; repair and save only if wrong.
