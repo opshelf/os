@@ -1190,8 +1190,8 @@ async def test_mismatched_persistent_brake_config_repairs_in_order_and_saves(
     assert order["engage"] < order["so2"]
     assert order["speed"] < order["so2"]
     assert order["so2"] < order["si1"] < order["save"]
-    # Parked deliberately once the save is confirmed.
-    assert calls.index(call(1, 0x000F, 0)) > order["save"]
+    # Parked before the save, so the EEPROM never powers the drive up force-enabled.
+    assert order["si1"] < calls.index(call(1, 0x000F, 0)) < order["save"]
     mock_controller.read_holding_registers.assert_any_call(1, 0x1901)
 
 
