@@ -520,7 +520,7 @@ class CurtainConfig(BaseModel):
 
 class ScaleConfig(BaseModel):
     enabled: bool = True
-    # Weight change, in grams, that stops y travel while the axis is moving.
+    # Weight change, in grams, that stops y travel while the axis is moving down.
     motion_guard_enabled: bool = True
     motion_guard_delta_grams: float = Field(10.0, gt=0)
     # Consecutive over-threshold readings before the interruption fires; 1 reacts

@@ -191,6 +191,12 @@ MOTION_FAULT_DUMP_MAX_FILES = 256
 MOTION_FAULT_DUMP_MAX_AGE_DAYS = 30.0
 
 
+def _direction_of(delta_mm: float | None) -> int:
+    if delta_mm is None or delta_mm == 0:
+        return 0
+    return 1 if delta_mm > 0 else -1
+
+
 def _prune_motion_fault_dumps(
     directory: Path,
     *,
@@ -282,6 +288,9 @@ class Motor():
         self._move_started_at: float | None = None
         self._move_start_position: float | None = None
         self._move_target_position: float | None = None
+        # Sign of the logical travel the drive was last commanded to make: -1 toward
+        # logical zero, +1 away from it, 0 when unknown.
+        self._commanded_direction = 0
         self._move_rpm: int | None = None
         self._move_accel: int | None = None
         self._last_raw_position: int | None = None
@@ -469,6 +478,17 @@ class Motor():
     def position_mm(self) -> Optional[float]:
         """Last position tracked in-process, without touching the bus."""
         return self._cur_pos
+
+    def commanded_direction(self) -> int:
+        """Logical direction of the move in flight: -1 toward zero, +1 away, 0 idle or unknown.
+
+        Read without touching the bus, like is_moving(), so a watcher can ask it on
+        every sample.
+        """
+        if self.is_moving() is False:
+            return 0
+
+        return self._commanded_direction
 
 
     def set_diagnostic_context(
@@ -1277,6 +1297,7 @@ class Motor():
 
         await asyncio.sleep(0.1)
 
+        self._commanded_direction = _direction_of(None if self._cur_pos is None else value - self._cur_pos)
         self._status = MotorStatus.MOVING
         self._pending_motion = functools.partial(self._start_absolute_move, value, rpm, accel)
         self._move_started_at = time.monotonic()
@@ -1408,6 +1429,7 @@ class Motor():
             # stopped halfway. The status still has to say MOVING or anything
             # watching this axis, such as the weight-change guard, reads the
             # pre-home clearance jog as idle.
+            self._commanded_direction = _direction_of(dist)
             self._status = MotorStatus.MOVING
 
             t0 = time.monotonic()
@@ -2044,6 +2066,8 @@ class Motor():
         await self._verify_brake_output_before_motion_trigger()
         await self._enable_for_motion()
         await self._controller.write_single_register(self._motor_id, motor_helpers.TRIGGER, HOMING_TRIGGER)
+        # The drive seeks its own zero, which is the logical far end on an inverted axis.
+        self._commanded_direction = 1 if self._is_physical_mapping_inverted() is True else -1
         self._status = MotorStatus.MOVING
 
     async def _read_pr_warning(self) -> int | None:
