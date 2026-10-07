@@ -1028,7 +1028,7 @@ class Robot:
         self._logger.info("Safety guard cleared")
 
     def _build_weight_guard(self) -> Optional[WeightChangeGuard]:
-        """Watch the scale during y travel so a crash into the cell stops motion.
+        """Watch the scale during downward y travel so a crash into the cell stops motion.
 
         Returns None when the scale or the y axis is absent, or when the guard is
         switched off in config, in which case the safety sources simply omit it.
