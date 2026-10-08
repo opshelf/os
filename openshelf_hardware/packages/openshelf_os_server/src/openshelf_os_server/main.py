@@ -46,7 +46,7 @@ from openshelf_os import (
     _strip_pymodbus_frame_dump,
 )
 from openshelf_os.common import CONFIG_PATH, OperatingMode
-from openshelf_os.operating_mode import should_enable_sentry
+from openshelf_os.operating_mode import is_service_process, should_enable_sentry
 from openshelf_os.runtime_state import RuntimeStatePaths
 from openshelf_os_server.core.logging_config import configure_logging, get_logger, get_correlation_id
 from openshelf_os_server.core.migrations import rename_module_side_values
@@ -500,6 +500,10 @@ def _configure_sentry() -> bool:
 
 	if should_enable_sentry(mode) is False:
 		logger.info("sentry_disabled_for_mode", mode=mode.value)
+		return False
+
+	if is_service_process() is False:
+		logger.info("sentry_disabled_outside_service", mode=mode.value)
 		return False
 
 	if sentry_dsn == "":
