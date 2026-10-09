@@ -325,7 +325,6 @@ class ImportJobUnit(Base):
 	job_id: Mapped[str] = mapped_column(String(36), ForeignKey("import_jobs.id", ondelete="CASCADE"), nullable=False)
 	position: Mapped[int] = mapped_column(Integer, nullable=False)
 	row_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-	sku: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 	barcode: Mapped[str] = mapped_column(String(BARCODE_MAX_LENGTH), nullable=False)
 	name: Mapped[str] = mapped_column(String(255), nullable=False)
 	small: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

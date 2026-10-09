@@ -348,7 +348,7 @@ async def test_mock_store_with_an_import_request_id_loads_the_unit(
 		await session.execute(delete(ImportJob))
 		await session.commit()
 		service = ImportJobService(session)
-		job = await service.create([ImportRowInput(name="Acetone", sku="MOCK-IMPORT-1")], "mock.csv")
+		job = await service.create([ImportRowInput(name="Acetone", barcode="MOCK-IMPORT-1")], "mock.csv")
 		unit = (await service.units(job))[0]
 		unit = await service.begin_unit(job, unit.id, {"width": 50, "height": 60, "length": 70})
 		job_id, request_id = job.id, unit.request_id

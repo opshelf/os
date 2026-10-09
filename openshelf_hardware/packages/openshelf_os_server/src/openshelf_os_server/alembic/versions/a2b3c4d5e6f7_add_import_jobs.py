@@ -47,7 +47,6 @@ def upgrade() -> None:
 			),
 			sa.Column("position", sa.Integer(), nullable=False),
 			sa.Column("row_number", sa.Integer(), nullable=True),
-			sa.Column("sku", sa.String(length=255), nullable=True),
 			sa.Column("barcode", sa.String(length=255), nullable=False),
 			sa.Column("name", sa.String(length=255), nullable=False),
 			sa.Column("small", sa.Boolean(), nullable=False),
