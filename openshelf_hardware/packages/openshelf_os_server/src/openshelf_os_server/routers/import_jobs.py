@@ -91,7 +91,6 @@ class ImportUnitResponse(BaseModel):
     stage: Optional[Literal["measured", "storing", "placed", "returning"]] = Field(
         description="Progress of an in-progress unit"
     )
-    skip_reason: Optional[str]
     error: Optional[str] = Field(description="Last store or tray return failure")
     request_id: Optional[str] = Field(description="Use as the store_item request_id for a measured unit")
     dimensions: Optional[dict[str, float]]
@@ -120,7 +119,7 @@ class ImportJobResponse(BaseModel):
     created_at: str
     updated_at: str
     completed_at: Optional[str]
-    skipped: list[ImportUnitResponse] = Field(description="Skipped units with their reasons")
+    skipped: list[ImportUnitResponse] = Field(description="Skipped units")
     in_progress: list[ImportUnitResponse]
     units: Optional[list[ImportUnitResponse]] = Field(default=None, description="Every unit, when requested")
     step: Optional[ImportStepResponse] = Field(default=None, description="The kiosk's next step")
@@ -133,6 +132,9 @@ class ImportJobEnvelope(BaseModel):
 class ImportStepResult(BaseModel):
     job: ImportJobResponse
     unit: Optional[ImportUnitResponse] = None
+    notice: Optional[str] = Field(
+        default=None, description="Why the machine skipped units during this call, for the operator"
+    )
 
 
 class UnitDimensions(BaseModel):
@@ -143,11 +145,6 @@ class UnitDimensions(BaseModel):
 
 class BeginUnitRequest(BaseModel):
     dimensions: UnitDimensions
-
-
-class SkipUnitRequest(BaseModel):
-    reason: Literal["not_present", "damaged", "other"]
-    detail: Optional[str] = Field(default=None, max_length=200)
 
 
 class PlaceInTrayRequest(BaseModel):
@@ -172,6 +169,7 @@ async def _result(service: ImportJobService, job: ImportJob, unit: Any = None) -
     return {
         "job": await service.detail(job, include_step=True),
         "unit": service.serialize_unit(unit) if unit is not None else None,
+        "notice": service.notice,
     }
 
 
@@ -297,8 +295,8 @@ async def begin_import_unit(
 
     Creates the inventory record with the measured dimensions so its label can be printed
     and scanned. Then submit `store_item` with the unit's `request_id`; the unit becomes
-    `loaded` when that command succeeds. When no free cell fits, the unit is skipped with
-    a reason instead. Calling again before storing updates the dimensions. Units load in
+    `loaded` when that command succeeds. When no free cell fits, the unit is skipped
+    instead and `notice` says why. Calling again before storing updates the dimensions. Units load in
     CSV order.
     """
     async with mutation_lock():
@@ -319,21 +317,19 @@ async def begin_import_unit(
 async def skip_import_unit(
     job_id: str,
     unit_id: int,
-    body: SkipUnitRequest,
     session: AsyncSession = Depends(get_db),
     _user: User = Depends(require_permissions("storage:write")),
 ) -> dict[str, Any]:
     """Skip a unit.
 
-    Records why the operator did not load it. The item created for a measured unit is
-    deleted. A unit whose store was submitted, or that is already in a tray, cannot be
-    skipped. `other` requires `detail`.
+    The operator leaves it unloaded. The item created for a measured unit is deleted. A
+    unit whose store was submitted, or that is already in a tray, cannot be skipped.
     """
     async with mutation_lock():
         service = ImportJobService(session)
         job = await _load(service, job_id)
         try:
-            unit = await service.skip_unit(job, unit_id, body.reason, body.detail)
+            unit = await service.skip_unit(job, unit_id)
         except ImportJobError as exc:
             raise _http(exc) from exc
         return await _result(service, job, unit)
@@ -353,8 +349,8 @@ async def start_import_tray(
 
     Picks the home tray that can take the most of the next group of small units (same
     access level) and delivers it to the IO box. Requires an empty IO box and an idle,
-    homed robot. When no tray could ever take the group, its units are skipped with a
-    reason and no tray moves; a tray that is outside returns `409 trays_outside` instead.
+    homed robot. When no tray could ever take the group, its units are skipped, `notice`
+    says why, and no tray moves; a tray that is outside returns `409 trays_outside` instead.
     """
     async with mutation_lock():
         service = ImportJobService(session)
@@ -413,8 +409,8 @@ async def place_import_unit_in_tray(
 
     Creates the item with the tray's compartment footprint and the measured height and
     records it in the next free compartment, returned as `unit.compartment`. Print and
-    scan its label before calling. A unit taller than the compartment is skipped with a
-    reason. A full tray returns `409 tray_full`; return it to continue with another tray.
+    scan its label before calling. A unit taller than the compartment is skipped and
+    `notice` says why. A full tray returns `409 tray_full`; return it to continue with another tray.
     """
     async with mutation_lock():
         service = ImportJobService(session)

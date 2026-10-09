@@ -337,7 +337,6 @@ class ImportJobUnit(Base):
 	unit_metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 	status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
 	stage: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
-	skip_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 	error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 	request_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 	attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
