@@ -520,3 +520,25 @@ async def test_router_cancel_source_and_permissions(mock_mode, client, unauthent
     invalid = await client.post("/api/import-jobs", json={"rows": [{"name": "A", "net_weight": 5}]})
     assert invalid.status_code == 422
     assert invalid.json()["detail"]["errors"][0]["field"] == "weight"
+
+
+@pytest.mark.anyio
+async def test_a_tray_return_is_only_moved_once(mock_mode, trays):
+    job_id = await create([row("Vial", small=True)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        await bins.transition(workflow, "awaiting_operator")
+        unit = (await units(job_id))[0]
+        await service.place_in_tray(job, unit.id, 30)
+        first = await service.begin_tray_return(job)
+        assert first is not None and first.state == "returning_bin"
+        # A stale retry that still sees the unit placed must not start a second motion.
+        stale = await db.get(ImportJobUnit, unit.id)
+        stale.stage = "placed"
+        await db.commit()
+        assert await service.begin_tray_return(job) is None
+        await db.refresh(stale)
+        assert stale.stage == "returning" and stale.request_id == first.id
