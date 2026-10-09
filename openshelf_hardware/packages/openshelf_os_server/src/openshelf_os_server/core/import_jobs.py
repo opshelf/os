@@ -971,7 +971,9 @@ class ImportJobService:
         """Close filling and open the tray's return with all known contents confirmed.
 
         Returns the prepared return workflow (in `returning_bin`) for the caller to move, or
-        None when the tray was already put back by crash recovery and nothing has to move.
+        None when nothing has to move: crash recovery already put the tray back, or this
+        return was already submitted. Internal motions are not deduplicated, so only a
+        return this call prepared may be enqueued.
         """
         tray = await self.tray_for_return(job)
         workflow = await self._tray_workflow(job)
@@ -997,7 +999,7 @@ class ImportJobService:
             if returning is None:
                 raise BinWorkflowConflict("Tray no longer exists")
             candidates = [int(i) for i in (returning.resolution or {}).get("candidate_item_ids", [])]
-            await self.bins.prepare_return(returning, candidates)
+            prepared = await self.bins.prepare_return(returning, candidates)
         except BinWorkflowConflict as exc:
             # Leave the tray as it was: the batch keeps filling and no return stays open.
             if returning is not None and returning.state == "awaiting_operator":
@@ -1010,7 +1012,7 @@ class ImportJobService:
             unit.request_id = returning.id
             unit.error = None
         await self.session.commit()
-        return returning
+        return returning if prepared else None
 
     async def apply_tray_return(self, returning: StorageBinWorkflow) -> None:
         """Mark units loaded once a return finished without a robot event (mock mode)."""
