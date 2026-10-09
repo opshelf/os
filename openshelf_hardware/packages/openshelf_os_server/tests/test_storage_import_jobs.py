@@ -636,3 +636,17 @@ async def test_detail_lists_skipped_and_in_progress_without_every_unit(mock_mode
         full = await service.detail(job, include_units=True, include_step=True)
         assert [unit["status"] for unit in full["units"]] == ["skipped", "in_progress", "pending"]
         assert full["step"]["unit"]["barcode"] == "ETH-7"
+
+
+@pytest.mark.anyio
+async def test_generated_barcodes_skip_existing_items_in_a_few_queries(mock_mode, monkeypatch):
+    async with AsyncSessionLocal() as db:
+        await StorageService(db).create_item(
+            barcode="200000000008", name="Existing", dimensions={"width": 1, "height": 1, "length": 1}
+        )
+    draws = iter(["200000000008", "200000000015", "200000000015", "200000000022", "200000000039"])
+    monkeypatch.setattr(import_jobs_core, "generate_barcode", lambda: next(draws))
+    job_id = await create([row("Vial", quantity=3)])
+    barcodes = [unit.barcode for unit in await units(job_id)]
+    # The existing item's barcode and the repeated draw are never handed out.
+    assert sorted(barcodes) == ["200000000015", "200000000022", "200000000039"]
