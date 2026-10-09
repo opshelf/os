@@ -1234,10 +1234,13 @@ async def emit_scanner_scan_event(
     payload = {"kind": "label_scanned", "payload": request.barcode}
     try:
         if get_operating_mode() == OperatingMode.mock:
-            # Mock mode does not run a RobotEventListener. Route the scan through
-            # the same handler directly so bin workflow events still use the mock
+            # Mock mode does not run a RobotEventListener. Publish the scan as the
+            # hardware worker does, so kiosks on the event stream see it, then route
+            # it through the same handler so bin workflow events still use the mock
             # runtime's SSE publisher.
-            await process_robot_event(payload, get_mock_robot_runtime())
+            runtime = get_mock_robot_runtime()
+            await runtime.publish_event(payload)
+            await process_robot_event(payload, runtime)
         else:
             if worker is None:
                 raise RuntimeError("Robot worker is unavailable")
