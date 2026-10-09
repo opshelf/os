@@ -265,10 +265,11 @@ async def cancel_import_job(
     """Cancel an import job.
 
     Never interrupts motion. The job becomes `cancelling` and offers no new units; loaded
-    units stay. From the relay, the kiosk finishes the unit or tray in hand and then shows
-    a notice. From the kiosk, a measured unit that was not yet submitted is released; a
-    tray that is outside must still be returned. The job becomes `cancelled` once nothing
-    is in flight. Repeated calls are harmless.
+    units stay. A tray out for the import is handed over as an ordinary outside tray: its
+    placed units count as loaded and it is returned with the usual tray barcode scan. From
+    the relay, a measured unit that was not yet submitted can still be stored or skipped;
+    from the kiosk it is released. The job becomes `cancelled` once no store or tray motion
+    is running. Repeated calls are harmless.
     """
     source = "relay" if getattr(request.state, "relay_service_authenticated", False) else "kiosk"
     async with mutation_lock():
@@ -436,8 +437,8 @@ async def return_import_tray(
 
     Ends filling and stores the tray with every item it holds. Requires the tray in the
     IO box and an idle, homed robot. Its units become `loaded` when the return succeeds;
-    a failed return can be retried with this call. Also used to return a tray after the
-    import was cancelled.
+    a failed return can be retried with this call. A stopped import's tray is returned
+    with the usual tray barcode scan instead.
     """
     async with mutation_lock():
         service = ImportJobService(session)
