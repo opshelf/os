@@ -5,8 +5,9 @@ active job after unlock and drives each step: measure, print, scan, and store a 
 unit through the IO box, or fetch one tray and place several small units in it.
 
 A unit is `pending` until the kiosk begins it, `in_progress` while its item exists but is
-not yet stored, then `loaded` once its store or tray return succeeds, or `skipped` with a
-reason. In-progress units carry a stage: `measured` (item created, label not yet stored),
+not yet stored, then `loaded` once its store or tray return succeeds, or `skipped`. When
+the machine skips a unit itself, the call that did it explains why in its `notice`.
+In-progress units carry a stage: `measured` (item created, label not yet stored),
 `storing` (its `store_item` command was admitted), `placed` (in a tray outside the system),
 and `returning` (that tray's return is running).
 
@@ -61,7 +62,6 @@ MAX_UNITS = 5000
 OPEN_STATES = ("active", "cancelling")
 TERMINAL_STATES = ("completed", "cancelled")
 UNIT_STATUSES = ("pending", "in_progress", "loaded", "skipped")
-SKIP_REASONS = {"not_present": "Not present", "damaged": "Damaged"}
 CANCEL_SOURCES = ("relay", "kiosk")
 
 # Every mutation reads and writes several rows; one device process serializes them.
@@ -193,6 +193,8 @@ class ImportJobService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.bins = BinStorageService(session)
+        # Why the machine skipped units during this call, for the operator; never stored.
+        self.notice: Optional[str] = None
 
     # ------------------------------------------------------------------ reads
 
@@ -559,7 +561,6 @@ class ImportJobService:
             "expires_at": unit.expires_at,
             "status": unit.status,
             "stage": unit.stage,
-            "skip_reason": unit.skip_reason,
             "error": unit.error,
             "request_id": unit.request_id,
             "dimensions": unit.dimensions,
@@ -693,11 +694,10 @@ class ImportJobService:
             return True
         return unit.barcode in await reserved_bin_barcodes(self.session)
 
-    async def _skip(self, unit: ImportJobUnit, reason: str) -> None:
+    async def _skip(self, unit: ImportJobUnit) -> None:
         await self._discard_item(unit)
         unit.status = "skipped"
         unit.stage = None
-        unit.skip_reason = reason[:255]
         unit.request_id = None
         unit.bin_id = None
         unit.compartment = None
@@ -743,9 +743,11 @@ class ImportJobService:
             raise ImportJobError(409, "unit_not_pending", "This item was already handled")
 
         if await self._barcode_taken(unit):
-            await self._skip(unit, "Barcode already exists on this machine")
+            await self._skip(unit)
+            self.notice = f"{unit.name} was skipped: its barcode already exists on this machine."
         elif not await self.free_cell_fits(measured):
-            await self._skip(unit, "No free storage cell fits this item")
+            await self._skip(unit)
+            self.notice = f"{unit.name} was skipped: no free storage cell fits it."
         else:
             item = await self._create_item(job, unit, measured)
             if unit.status == "pending":
@@ -768,18 +770,8 @@ class ImportJobService:
         )
         return status in ("queued", "running", "succeeded")
 
-    async def skip_unit(
-        self, job: ImportJob, unit_id: int, reason: str, detail: Optional[str] = None
-    ) -> ImportJobUnit:
+    async def skip_unit(self, job: ImportJob, unit_id: int) -> ImportJobUnit:
         unit = await self.unit(job, unit_id)
-        if reason == "other":
-            text = _clean(detail)
-            if text is None:
-                raise ImportJobError(422, "reason_required", "Describe why this item is skipped")
-        elif reason in SKIP_REASONS:
-            text = SKIP_REASONS[reason] + (f": {_clean(detail)}" if _clean(detail) else "")
-        else:
-            raise ImportJobError(422, "invalid_reason", "Reason must be not_present, damaged or other")
         if unit.status == "pending":
             if job.state != "active":
                 raise ImportJobError(409, "import_not_active", "This import is no longer running")
@@ -790,7 +782,7 @@ class ImportJobService:
                 raise ImportJobError(409, "unit_storing", "This item is already being stored")
         else:
             raise ImportJobError(409, "unit_not_skippable", "This item can no longer be skipped")
-        await self._skip(unit, text)
+        await self._skip(unit)
         await self.session.commit()
         await self.settle(job)
         return unit
@@ -852,7 +844,9 @@ class ImportJobService:
                     409, "trays_outside", "A tray is outside the system; return it, then fetch a tray again"
                 )
             for unit in group:
-                await self._skip(unit, "No tray has a free compartment for this access level")
+                await self._skip(unit)
+            count = f"{len(group)} small item was" if len(group) == 1 else f"{len(group)} small items were"
+            self.notice = f"No tray has a free compartment for this access level, so {count} skipped."
             await self.session.commit()
             await self.settle(job)
             return None
@@ -893,13 +887,15 @@ class ImportJobService:
         if any(level != unit.access_level_id for level in members):
             raise ImportJobError(409, "access_level_mismatch", "This item belongs in a tray of another access level")
         if await self._barcode_taken(unit):
-            await self._skip(unit, "Barcode already exists on this machine")
+            await self._skip(unit)
+            self.notice = f"{unit.name} was skipped: its barcode already exists on this machine."
             await self.session.commit()
             await self.settle(job)
             return unit
         maximum = self.bins.batch_max_height(tray)
         if measured_height > maximum:
-            await self._skip(unit, f"Too tall for the tray (at most {maximum:g} mm)")
+            await self._skip(unit)
+            self.notice = f"{unit.name} was skipped: it is too tall for the tray (at most {maximum:g} mm)."
             await self.session.commit()
             await self.settle(job)
             return unit
@@ -933,14 +929,6 @@ class ImportJobService:
         if item is not None:
             await self.session.delete(item)
             await self.session.commit()
-
-    async def skip_in_tray(
-        self, job: ImportJob, unit_id: int, reason: str, detail: Optional[str]
-    ) -> ImportJobUnit:
-        unit = await self.unit(job, unit_id)
-        if unit.status != "pending" or not unit.small:
-            raise ImportJobError(409, "unit_not_skippable", "This item can no longer be skipped")
-        return await self.skip_unit(job, unit_id, reason, detail)
 
     async def tray_for_return(self, job: ImportJob) -> StorageBin:
         """The tray the kiosk returns next: the filling batch tray or one whose return failed."""

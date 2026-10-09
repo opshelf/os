@@ -263,26 +263,27 @@ async def test_unit_is_auto_skipped_when_no_cell_fits(mock_mode):
         job = await service.get(job_id)
         unit = await service.begin_unit(job, (await units(job_id))[0].id, {"width": 900, "height": 10, "length": 10})
         assert unit.status == "skipped"
-        assert unit.skip_reason == "No free storage cell fits this item"
+        assert service.notice == "Acetone was skipped: no free storage cell fits it."
         assert unit.item_id is None
         assert await StorageService(db).get_item("HUGE-1") is None
         assert (await service.next_step(job))["unit"]["barcode"] == "NEXT-1"
 
 
 @pytest.mark.anyio
-async def test_skip_records_the_reason_and_deletes_the_measured_item(mock_mode):
+async def test_skip_deletes_the_measured_item(mock_mode):
     job_id = await create([row(barcode="ACE-1"), row("Other", barcode="OTH-1")])
     first, second = await units(job_id)
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
         job = await service.get(job_id)
         await service.begin_unit(job, first.id, DIMENSIONS)
-        with pytest.raises(ImportJobError):
-            await service.skip_unit(job, first.id, "other", "  ")
-        skipped = await service.skip_unit(job, first.id, "damaged", "label torn")
-        assert skipped.skip_reason == "Damaged: label torn"
+        skipped = await service.skip_unit(job, first.id)
+        assert skipped.status == "skipped"
+        assert service.notice is None
         assert await StorageService(db).get_item("ACE-1") is None
-        await service.skip_unit(job, second.id, "not_present")
+        with pytest.raises(ImportJobError):
+            await service.skip_unit(job, first.id)
+        await service.skip_unit(job, second.id)
         assert job.state == "completed"
 
 
@@ -374,9 +375,9 @@ async def test_too_tall_small_unit_is_skipped_and_no_tray_skips_the_group(mock_m
         first, second = await units(job_id)
         tall = await service.place_in_tray(job, first.id, 150)
         assert tall.status == "skipped"
-        assert tall.skip_reason == "Too tall for the tray (at most 100 mm)"
+        assert service.notice == "Vial was skipped: it is too tall for the tray (at most 100 mm)."
         assert await StorageService(db).get_item(first.barcode) is None
-        await service.skip_unit(job, second.id, "not_present")
+        await service.skip_unit(job, second.id)
         # The empty tray still has to go back before the job ends.
         assert job.state == "active"
         returning = await service.begin_tray_return(job)
@@ -392,7 +393,8 @@ async def test_too_tall_small_unit_is_skipped_and_no_tray_skips_the_group(mock_m
         job = await service.get(other)
         assert await service.start_tray(job, None) is None
         assert job.state == "completed"
-    assert (await units(other))[0].skip_reason == "No tray has a free compartment for this access level"
+        assert service.notice == "No tray has a free compartment for this access level, so 1 small item was skipped."
+    assert (await units(other))[0].status == "skipped"
 
 
 @pytest.mark.anyio
@@ -542,3 +544,30 @@ async def test_a_tray_return_is_only_moved_once(mock_mode, trays):
         assert await service.begin_tray_return(job) is None
         await db.refresh(stale)
         assert stale.stage == "returning" and stale.request_id == first.id
+
+
+@pytest.mark.anyio
+async def test_router_skips_without_a_reason_and_explains_automatic_skips(mock_mode, client):
+    created = await client.post(
+        "/api/import-jobs",
+        json={"rows": [{"name": "Drum", "barcode": "DRUM-1"}, {"name": "Acetone", "barcode": "ACE-2"}]},
+    )
+    assert created.status_code == 200, created.text
+    job_id = created.json()["job"]["id"]
+    drum, acetone = await units(job_id)
+
+    begun = await client.post(
+        f"/api/import-jobs/{job_id}/units/{drum.id}/begin",
+        json={"dimensions": {"width": 900, "height": 10, "length": 10}},
+    )
+    assert begun.status_code == 200, begun.text
+    assert begun.json()["unit"]["status"] == "skipped"
+    assert "skip_reason" not in begun.json()["unit"]
+    assert begun.json()["notice"] == "Drum was skipped: no free storage cell fits it."
+
+    skipped = await client.post(f"/api/import-jobs/{job_id}/units/{acetone.id}/skip")
+    assert skipped.status_code == 200, skipped.text
+    assert skipped.json()["unit"]["status"] == "skipped"
+    assert skipped.json()["notice"] is None
+    assert skipped.json()["job"]["state"] == "completed"
+    assert [unit["name"] for unit in skipped.json()["job"]["skipped"]] == ["Drum", "Acetone"]

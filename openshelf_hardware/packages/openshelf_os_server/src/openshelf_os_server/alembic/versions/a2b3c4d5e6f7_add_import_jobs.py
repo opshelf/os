@@ -58,7 +58,6 @@ def upgrade() -> None:
 			sa.Column("unit_metadata", sa.JSON(), nullable=False),
 			sa.Column("status", sa.String(length=16), nullable=False),
 			sa.Column("stage", sa.String(length=16), nullable=True),
-			sa.Column("skip_reason", sa.String(length=255), nullable=True),
 			sa.Column("error", sa.Text(), nullable=True),
 			sa.Column("request_id", sa.String(length=255), nullable=True),
 			sa.Column("attempts", sa.Integer(), nullable=False),
