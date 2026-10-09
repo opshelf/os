@@ -285,6 +285,21 @@ def require_relay_or_permissions(permissions: str | List[str]) -> Callable:
 	return permission_checker
 
 
+async def require_relay_or_admin(
+	request: Request,
+	current_user: User = Depends(get_relay_or_current_user),
+) -> User:
+	"""Allow the relay service credential or an administrator."""
+	if getattr(request.state, "relay_service_authenticated", False):
+		return current_user
+	if current_user.role.name != "admin":
+		raise HTTPException(
+			status_code=status.HTTP_403_FORBIDDEN,
+			detail="Only the relay or an administrator can do this",
+		)
+	return current_user
+
+
 def can_user_retrieve_item(user: User, item: Item) -> bool:
 	"""
 	Check if user can retrieve an item based on access level rules.

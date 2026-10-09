@@ -11,6 +11,7 @@ from openshelf_os.robot.worker import RobotWorker
 from openshelf_os_server.core.mass import apply_cycle_mass
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import BinStorageService, RobotEventPublisher
+from openshelf_os_server.core.import_jobs import notify_command_result
 from openshelf_os_server.database.models import Telemetry
 from openshelf_os_server.database.session import AsyncSessionLocal
 
@@ -123,7 +124,26 @@ async def process_robot_event(
 ) -> None:
     """
     Handle a single robot event payload, updating storage state when retrieval completes.
+
+    Import jobs follow terminal store and tray results once inventory is committed, so a
+    unit is reported loaded only after its location or tray membership is durable.
     """
+    await _apply_robot_event(payload, worker)
+    if payload.get("command") in {"store_item", "retrieve_item"} and payload.get("message") in {
+        "success",
+        "failed",
+    }:
+        request_id = payload.get("request_id")
+        await notify_command_result(
+            request_id if isinstance(request_id, str) else None,
+            payload,
+            worker or robot_core.robot_worker,
+        )
+
+
+async def _apply_robot_event(
+    payload: dict[str, Any], worker: Optional[RobotEventPublisher] = None
+) -> None:
     active_worker = worker or robot_core.robot_worker
     if active_worker is not None:
         bin_owned = False

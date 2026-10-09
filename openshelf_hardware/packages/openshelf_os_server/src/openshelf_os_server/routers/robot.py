@@ -1251,6 +1251,34 @@ async def emit_scanner_scan_event(
     return SuccessResponse()
 
 
+class IoBoxSimulationRequest(BaseModel):
+    occupied: bool = Field(description="Whether the simulated IO-box scale reports an item")
+
+
+@router.post(
+    "/debug/io-box",
+    dependencies=[Depends(require_permissions("robot:control"))],
+    summary="Simulate IO-box occupancy",
+    responses=response_docs(errors=(401, 403, 409)),
+)
+async def simulate_io_box(request: IoBoxSimulationRequest) -> SuccessResponse:
+    """Simulate IO-box occupancy.
+
+    Mock mode only: sets the simulated scale's `occupied` flag and pushes a status update,
+    so a kiosk can walk through placing an item in the IO box without hardware. The robot
+    clears it when it takes the item for a store. Hardware modes return `409`.
+    """
+    if get_operating_mode() != OperatingMode.mock:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="IO-box simulation is available only in mock mode",
+        )
+    runtime = get_mock_robot_runtime()
+    runtime.set_bin_io_box_occupied(request.occupied)
+    await runtime.publish_status()
+    return SuccessResponse()
+
+
 @router.get(
     "/debug/scale",
     dependencies=[Depends(get_current_user)],

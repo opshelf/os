@@ -86,7 +86,7 @@ from openshelf_os_server.database.models import AccessLevel, Role, User
 from openshelf_os_server.launcher import bootstrap_runtime_state
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
-from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, chemicals, demo, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
+from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, chemicals, demo, import_jobs, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
 from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings, get_operating_mode
 from openshelf_os_server.utils.cors_policy import allows_credentials, resolve_allowed_origins
 
@@ -1276,6 +1276,7 @@ app.include_router(iobox_sizer.router, prefix="/api/iobox/sizer")
 app.include_router(cabinet.router, prefix="/api/cabinet")
 app.include_router(robot.router, prefix="/api/robot")
 app.include_router(storage.router, prefix="/api/storage")
+app.include_router(import_jobs.router, prefix="/api/import-jobs")
 app.include_router(chemicals.router, prefix="/api/chemicals")
 app.include_router(printer.router, prefix="/api/print")
 app.include_router(calibration.router)
