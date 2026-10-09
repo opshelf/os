@@ -618,6 +618,9 @@ class Gripper(BaseModel):
     motor_id: int = Field(default=9, ge=0)
     control_reg: int = Field(default=0x03E8)
     status_reg: int = Field(default=0x07D0)
+    # Picks and tray returns fail unless the gripper reports object contact. Machines
+    # whose gripper never reports contact for a held cell turn the check off here.
+    object_detection_enabled: bool = Field(default=True)
 
 
 class Tool(BaseModel):

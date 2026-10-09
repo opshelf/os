@@ -42,8 +42,14 @@ class RotationHomeOrientation(Enum):
     BACK_MODULE = "back_module"
 
 
-def require_grip(state: GripState, phase: str) -> None:
-    """Raise unless the gripper reports object contact with no drop."""
+def require_grip(state: GripState, phase: str, *, is_enabled: bool = True) -> None:
+    """Raise unless the gripper reports object contact with no drop.
+
+    A machine with gripper.object_detection_enabled false passes is_enabled=False and
+    skips the check.
+    """
+    if is_enabled is False:
+        return
     if not state.gripped:
         raise GripperError(f"No grip on {phase}: {state}")
 
@@ -110,6 +116,9 @@ def derive_rotation_home_orientation(
 
 
 class Tool:
+    # Set from gripper.object_detection_enabled in __init__.
+    is_grip_detection_enabled: bool = True
+
     # ------------------------------------------------------------------ #
     #  Lifecycle
     # ------------------------------------------------------------------ #
@@ -170,6 +179,11 @@ class Tool:
             )
 
         self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
+        self.is_grip_detection_enabled = self._params.gripper.object_detection_enabled
+        if self.is_grip_detection_enabled is False:
+            self._logger.info(
+                "Gripper object detection disabled via config; picks and tray returns skip the grip check"
+            )
 
         self._laser_enabled = self._params.laser.enabled
         self._laser_ready = False
@@ -461,9 +475,9 @@ class Tool:
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
             await self.extend_empty(coordinate)
-            require_grip(await self._gs.open(), "grip")
+            require_grip(await self._gs.open(), "grip", is_enabled=self.is_grip_detection_enabled)
             await self.retract()
-            require_grip(await self._gs.read_state(), "retract")
+            require_grip(await self._gs.read_state(), "retract", is_enabled=self.is_grip_detection_enabled)
 
         except Exception as e:
             await self._handle_fault(e)
@@ -490,7 +504,7 @@ class Tool:
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
             await self.extend_empty(coordinate)
-            require_grip(await self._gs.open(), "grip")
+            require_grip(await self._gs.open(), "grip", is_enabled=self.is_grip_detection_enabled)
             original_stage_mm = await self._ms.get_position()
             await self._ms.move_to_position(0.0)
             await self._my.move_to_position(coordinate.y + lift_mm)
