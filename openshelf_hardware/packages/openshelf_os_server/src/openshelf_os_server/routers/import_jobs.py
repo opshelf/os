@@ -239,8 +239,8 @@ async def get_import_job(
 ) -> dict[str, Any]:
     """Read an import job.
 
-    Returns state, counts (loaded, skipped, in progress, pending), skipped units with their
-    reasons, and the units in progress. Finished jobs stay readable for their summary;
+    Returns state, counts (loaded, skipped, in progress, pending), the skipped units, and
+    the units in progress; `units=true` adds every unit. Finished jobs stay readable for their summary;
     `pending` units of a cancelled job were never loaded.
     """
     async with mutation_lock():

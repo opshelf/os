@@ -504,9 +504,8 @@ class ImportJobService:
         if measured is not None:
             return {"kind": "unit", "unit": self.serialize_unit(measured)}
         if job.state == "active":
-            pending = await self.units(job, ["pending"])
-            if pending:
-                first = pending[0]
+            first = await self._current_pending(job)
+            if first is not None:
                 if first.small:
                     group = await self._small_group(job, first)
                     return {
@@ -610,7 +609,8 @@ class ImportJobService:
         self, job: ImportJob, *, include_units: bool = False, include_step: bool = False
     ) -> dict[str, Any]:
         payload = await self.summary(job)
-        units = await self.units(job)
+        # Progress polls read this often; only load every unit when it was asked for.
+        units = await self.units(job) if include_units else await self.units(job, ["skipped", "in_progress"])
         payload["skipped"] = [self.serialize_unit(unit) for unit in units if unit.status == "skipped"]
         payload["in_progress"] = [
             self.serialize_unit(unit) for unit in units if unit.status == "in_progress"
