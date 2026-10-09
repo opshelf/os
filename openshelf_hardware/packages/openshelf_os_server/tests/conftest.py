@@ -31,6 +31,8 @@ from sqlalchemy import delete
 from openshelf_os_server.database.models import (
     AccessLevel,
     AuditLog,
+    ImportJob,
+    ImportJobUnit,
     Item,
     ItemLocation,
     Role,
@@ -126,6 +128,8 @@ async def reset_storage_tables(
 
     async def _clear(session: AsyncSession) -> None:
         if is_storage:
+            await session.execute(delete(ImportJobUnit))
+            await session.execute(delete(ImportJob))
             await session.execute(delete(StorageBinWorkflow))
             await session.execute(delete(StorageBinItem))
             await session.execute(delete(StorageBin))

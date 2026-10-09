@@ -293,6 +293,62 @@ class StorageBinWorkflow(Base):
 	updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 	completed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
 
+class ImportJob(Base):
+	"""A relay-created inventory import that the kiosk walks through unit by unit."""
+	__tablename__ = "import_jobs"
+	__table_args__ = (
+		Index("ix_import_jobs_state", "state"),
+		Index("ix_import_jobs_created_at", "created_at"),
+	)
+
+	id: Mapped[str] = mapped_column(String(36), primary_key=True)
+	state: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+	filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+	cancel_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+	tray_workflow_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+	created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc))
+	updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+	completed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class ImportJobUnit(Base):
+	"""One physical unit of an import job; a CSV row with quantity N expands to N units."""
+	__tablename__ = "import_job_units"
+	__table_args__ = (
+		UniqueConstraint("job_id", "position", name="uq_import_job_units_position"),
+		UniqueConstraint("job_id", "barcode", name="uq_import_job_units_barcode"),
+		Index("ix_import_job_units_job_status", "job_id", "status"),
+		Index("ix_import_job_units_request_id", "request_id"),
+	)
+
+	id: Mapped[int] = mapped_column(Integer, primary_key=True)
+	job_id: Mapped[str] = mapped_column(String(36), ForeignKey("import_jobs.id", ondelete="CASCADE"), nullable=False)
+	position: Mapped[int] = mapped_column(Integer, nullable=False)
+	row_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+	sku: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+	barcode: Mapped[str] = mapped_column(String(BARCODE_MAX_LENGTH), nullable=False)
+	name: Mapped[str] = mapped_column(String(255), nullable=False)
+	small: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+	access_level_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+	expires_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+	tare_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+	net_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+	full_net_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+	# `metadata` is reserved on declarative classes, as for Item.item_metadata.
+	unit_metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+	status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+	stage: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+	skip_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+	error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+	request_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+	attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+	dimensions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+	item_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
+	bin_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+	compartment: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+	updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
 class Telemetry(Base):
 	__tablename__ = "telemetry"
 

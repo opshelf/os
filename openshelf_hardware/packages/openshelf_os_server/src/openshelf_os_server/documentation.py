@@ -57,6 +57,10 @@ TAGS = [
         ),
         ("storage", STORAGE_DESCRIPTION),
         (
+            "import-jobs",
+            "Relay-created inventory imports. The device owns each job; the kiosk walks it unit by unit (measure, print, scan, store) and fills trays with small units. One job runs at a time.",
+        ),
+        (
             "printer",
             "Barcode labels and printer diagnostics. Mock printing produces no physical label.",
         ),

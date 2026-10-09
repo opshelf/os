@@ -34,7 +34,7 @@ from ..database.models import (
     StorageBinWorkflow,
     User,
 )
-from ..core.bin_storage import ACTIVE_STATES, BinStorageService, BinWorkflowConflict, ensure_worker_homed_for_bin_motion, ensure_worker_queue_empty_for_bin_start, is_io_box_occupied, is_reserved_bin_barcode
+from ..core.bin_storage import ACTIVE_STATES, BATCH_OPERATION, BinStorageService, BinWorkflowConflict, ensure_worker_homed_for_bin_motion, ensure_worker_queue_empty_for_bin_start, is_io_box_occupied, is_reserved_bin_barcode
 from ..core.mock_robot import get_mock_robot_runtime
 from ..core.storage import StorageService
 from ..core.validation import CellOccupiedError, ValidationError
@@ -800,9 +800,15 @@ async def unassign_tray(
 
 @router.get("/bin-workflows/active", responses=response_docs(model=BinWorkflowsResponse, errors=(401, 403)), dependencies=[Depends(require_relay_or_permissions("storage:read"))])
 async def get_active_bin_workflow(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
-    """List unfinished take, place, and return interactions. Outside trays do not reserve the robot; completed interactions are omitted."""
+    """List unfinished take, place, and return interactions. Outside trays do not reserve the robot; completed interactions are omitted, and so are import trays, which the import screen drives."""
     service = BinStorageService(session)
-    return {"workflows": [await service.serialize_workflow(w) for w in await service.active_workflows()]}
+    return {
+        "workflows": [
+            await service.serialize_workflow(w)
+            for w in await service.active_workflows()
+            if w.operation != BATCH_OPERATION
+        ]
+    }
 
 
 @router.post(

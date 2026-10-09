@@ -52,6 +52,11 @@ from openshelf_os_server.settings import get_root_config
 
 ACTIVE_STATES = {"retrieving_bin", "awaiting_operator", "returning_bin"}
 
+# An import fills one tray with several small items per trip. Its workflow names no single
+# item; members join the tray as each one is placed, and the tray goes back through the
+# ordinary return workflow.
+BATCH_OPERATION = "batch_store"
+
 # A tray's inner dimensions span its outer walls; the walls and every divider between
 # compartments share one thickness, and each compartment keeps some leeway for placement.
 TRAY_WALL_THICKNESS_MM = 5.0
@@ -1092,6 +1097,9 @@ class BinStorageService:
                 return
             raise BinWorkflowConflict("Wait for tray motion to finish")
         await self.session.refresh(workflow)
+        if workflow.operation == BATCH_OPERATION:
+            await self.session.rollback()
+            raise BinWorkflowConflict("Finish this tray on the import screen")
         if workflow.operation == "return":
             await self.transition(workflow, "cancelled")
             return
@@ -1152,6 +1160,11 @@ class BinStorageService:
             if workflow.operation == "return":
                 await self.session.commit()
                 return workflow
+            if workflow.operation == BATCH_OPERATION:
+                # A stray tray scan must not drop the import's placements; the import
+                # screen returns this tray once the operator has filled it.
+                await self.session.rollback()
+                raise BinWorkflowConflict("Finish this tray on the import screen")
             if workflow.state == "retrieving_bin":
                 await self.session.rollback()
                 raise BinWorkflowConflict("Tray delivery is still running")
@@ -1255,6 +1268,149 @@ class BinStorageService:
         except (TypeError, ValueError):
             pass
         await self.transition(workflow, "completed")
+
+    async def allocate_batch_tray(
+        self, access_level_id: Optional[int], wanted: int
+    ) -> Optional[StorageBin]:
+        """Choose a home tray that can take the most of `wanted` items of one access level.
+
+        A tray qualifies when it has a free compartment (or room under `max_items` when it
+        is undivided) and every current member shares the access level. Among trays that
+        take equally many items, a partially filled one is preferred to keep trays full.
+        """
+        bins = (
+            await self.session.scalars(
+                select(StorageBin).where(
+                    StorageBin.active.is_(True), StorageBin.status == "at_home"
+                )
+            )
+        ).all()
+        candidates: list[tuple[int, bool, str, int, int, StorageBin]] = []
+        for row in bins:
+            members = (
+                await self.session.scalars(
+                    select(Item)
+                    .join(StorageBinItem, StorageBinItem.item_id == Item.id)
+                    .where(StorageBinItem.bin_id == row.id)
+                )
+            ).all()
+            if any(member.access_level_id != access_level_id for member in members):
+                continue
+            capacity = self._batch_capacity(row, len(members))
+            if row.compartment_layout is not None and await self._free_compartment(row) is None:
+                continue
+            if capacity <= 0:
+                continue
+            candidates.append(
+                (
+                    -min(capacity, max(1, wanted)),
+                    len(members) == 0,
+                    row.side,
+                    row.shelf_idx,
+                    row.cell_idx,
+                    row,
+                )
+            )
+        if not candidates:
+            return None
+        return min(candidates, key=lambda entry: entry[:-1])[-1]
+
+    @staticmethod
+    def _batch_capacity(row: StorageBin, member_count: int) -> int:
+        layout = row.compartment_layout
+        slots = layout["rows"] * layout["columns"] if layout else row.max_items
+        return max(0, min(slots, row.max_items) - member_count)
+
+    def batch_item_dimensions(self, row: StorageBin, height: float) -> dict[str, float]:
+        """Small import items take the tray's largest allowed footprint and a measured height."""
+        footprint = self._max_item_dimensions(row)
+        return {"width": footprint["width"], "length": footprint["length"], "height": height}
+
+    def batch_max_height(self, row: StorageBin) -> float:
+        return float(self._compartment_dimensions(row)["height"])
+
+    async def begin_batch(
+        self, tray: StorageBin, user_id: Optional[int], import_job_id: str
+    ) -> StorageBinWorkflow:
+        claimed = await self.session.execute(
+            update(StorageBin)
+            .where(StorageBin.id == tray.id, StorageBin.status == "at_home")
+            .values(status="outside", gross_weight=None)
+        )
+        if cast(CursorResult, claimed).rowcount != 1:
+            await self.session.rollback()
+            raise BinWorkflowConflict("This tray is currently outside the system")
+        members = (
+            await self.session.execute(
+                select(StorageBinItem.item_id, StorageBinItem.compartment).where(
+                    StorageBinItem.bin_id == tray.id
+                )
+            )
+        ).all()
+        workflow = StorageBinWorkflow(
+            id=str(uuid4()),
+            operation=BATCH_OPERATION,
+            state="retrieving_bin",
+            bin_id=tray.id,
+            item_id=None,
+            user_id=user_id,
+            compartment=None,
+            history=[_history_entry("retrieving_bin")],
+            resolution={
+                "import_job_id": import_job_id,
+                "candidate_compartments": {str(i): c for i, c in members},
+                "placed_item_ids": [],
+            },
+        )
+        self.session.add(workflow)
+        await self.session.commit()
+        return workflow
+
+    async def batch_place_error(self, workflow: StorageBinWorkflow, item: Item) -> Optional[str]:
+        """Why `item` cannot join the batch tray now, or None when it can."""
+        if workflow.operation != BATCH_OPERATION:
+            return "Not an import tray"
+        if workflow.state != "awaiting_operator":
+            return "Wait for the tray to arrive"
+        tray = await self.session.get(StorageBin, workflow.bin_id)
+        if tray is None:
+            return "Tray no longer exists"
+        if tray.compartment_layout is not None and await self._free_compartment(tray) is None:
+            return "The tray is full"
+        return await self._store_invariant_error(tray, item)
+
+    async def place_in_batch(self, workflow: StorageBinWorkflow, item: Item) -> Optional[int]:
+        """Record `item` in the batch tray's next free compartment and return that number.
+
+        Membership is written when the operator places the item, as `close` does for a single
+        item, so the tray return that follows confirms it with the rest of the contents.
+        """
+        error = await self.batch_place_error(workflow, item)
+        if error:
+            raise BinWorkflowConflict(error)
+        tray = await self.session.get(StorageBin, workflow.bin_id)
+        assert tray is not None
+        compartment = await self._free_compartment(tray)
+        self.session.add(StorageBinItem(bin_id=tray.id, item_id=item.id, compartment=compartment))
+        item.enrollment_weight_pending = False
+        item.enrollment_storage_completed = True
+        resolution = dict(workflow.resolution or {})
+        positions = dict(resolution.get("candidate_compartments", {}))
+        positions[str(item.id)] = compartment
+        resolution["candidate_compartments"] = positions
+        resolution["placed_item_ids"] = [*resolution.get("placed_item_ids", []), item.id]
+        workflow.resolution = resolution
+        workflow.updated_at = _utc_now()
+        await self.session.commit()
+        return compartment
+
+    async def close_batch(self, workflow: StorageBinWorkflow) -> None:
+        """End the filling of a batch tray; its return is a separate workflow."""
+        if workflow.state in {"completed", "cancelled", "failed"}:
+            return
+        if workflow.state != "awaiting_operator":
+            raise BinWorkflowConflict("Wait for tray motion to finish")
+        await self.transition(workflow, "completed", "import tray filled")
 
     async def start_retrieval(self, workflow: StorageBinWorkflow, worker: RobotWorker) -> None:
         tray = await self.session.get(StorageBin, workflow.bin_id)
