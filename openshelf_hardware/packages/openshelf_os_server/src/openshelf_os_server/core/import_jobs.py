@@ -61,6 +61,8 @@ from openshelf_os_server.settings import get_operating_mode
 logger = logging.getLogger(__name__)
 
 MAX_UNITS = 5000
+# Barcodes per IN query, well under SQLite's bound-parameter limit.
+BARCODE_QUERY_CHUNK = 500
 OPEN_STATES = ("active", "cancelling")
 TERMINAL_STATES = ("completed", "cancelled")
 UNIT_STATUSES = ("pending", "in_progress", "loaded", "skipped")
@@ -318,9 +320,7 @@ class ImportJobService:
         if errors:
             raise ImportJobError(422, "invalid_rows", "Some rows cannot be imported", errors)
 
-        existing = set(
-            (await self.session.scalars(select(Item.barcode).where(Item.barcode.in_(list(labels))))).all()
-        ) if labels else set()
+        existing = await self._existing_barcodes(labels)
         reserved = await reserved_bin_barcodes(self.session)
         conflicts = sorted((existing | reserved) & set(labels))
         if conflicts:
@@ -333,14 +333,14 @@ class ImportJobService:
 
         job = ImportJob(id=str(uuid4()), state="active", filename=_clean(filename))
         self.session.add(job)
-        taken = set(labels) | reserved
+        unlabelled = sum(row.quantity - (1 if label is not None else 0) for row, label, _, _ in prepared)
+        generated = iter(await self._new_barcodes(unlabelled, set(labels) | reserved))
         position = 0
         for row, label, access_level_id, expires_at in prepared:
             name = _clean(row.name) or ""
             metadata = {str(key): value for key, value in (row.metadata or {}).items() if str(key).strip()}
             for copy in range(row.quantity):
-                barcode = label if copy == 0 and label is not None else await self._new_barcode(taken)
-                taken.add(barcode)
+                barcode = label if copy == 0 and label is not None else next(generated)
                 self.session.add(
                     ImportJobUnit(
                         job_id=job.id,
@@ -362,14 +362,33 @@ class ImportJobService:
         await self.session.commit()
         return job
 
-    async def _new_barcode(self, taken: set[str]) -> str:
+    async def _existing_barcodes(self, barcodes: Iterable[str]) -> set[str]:
+        """Which of `barcodes` items already use, in a few chunked queries."""
+        values = list(barcodes)
+        found: set[str] = set()
+        for start in range(0, len(values), BARCODE_QUERY_CHUNK):
+            chunk = values[start : start + BARCODE_QUERY_CHUNK]
+            found.update((await self.session.scalars(select(Item.barcode).where(Item.barcode.in_(chunk)))).all())
+        return found
+
+    async def _new_barcodes(self, count: int, taken: set[str]) -> list[str]:
+        """`count` generated barcodes that no item, tray, or `taken` barcode uses.
+
+        Candidates are checked in batches; only the rare collisions are drawn again.
+        """
+        fresh: list[str] = []
+        chosen: set[str] = set()
         for _ in range(100):
-            candidate = generate_barcode()
-            if candidate in taken:
-                continue
-            if await self.session.scalar(select(Item.id).where(Item.barcode == candidate)) is None:
-                return candidate
-        raise ImportJobError(503, "barcode_generation_failed", "Could not generate a unique barcode")
+            missing = count - len(fresh)
+            if missing <= 0:
+                return fresh
+            candidates = {generate_barcode() for _ in range(missing)} - taken - chosen
+            unused = candidates - await self._existing_barcodes(candidates)
+            fresh.extend(unused)
+            chosen.update(unused)
+        if len(fresh) >= count:
+            return fresh[:count]
+        raise ImportJobError(503, "barcode_generation_failed", "Could not generate unique barcodes")
 
     # ---------------------------------------------------------- reconciliation
 
