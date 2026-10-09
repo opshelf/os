@@ -617,3 +617,22 @@ async def test_router_skips_without_a_reason_and_explains_automatic_skips(mock_m
     assert skipped.json()["notice"] is None
     assert skipped.json()["job"]["state"] == "completed"
     assert [unit["name"] for unit in skipped.json()["job"]["skipped"]] == ["Drum", "Acetone"]
+
+
+@pytest.mark.anyio
+async def test_detail_lists_skipped_and_in_progress_without_every_unit(mock_mode):
+    job_id = await create([row("Acetone", barcode="ACE-7"), row("Ethanol", barcode="ETH-7"), row("Vial", barcode="VI-7")])
+    first, second, _ = await units(job_id)
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        job = await service.get(job_id)
+        await service.skip_unit(job, first.id)
+        await service.begin_unit(job, second.id, DIMENSIONS)
+        detail = await service.detail(job)
+        assert "units" not in detail
+        assert [unit["barcode"] for unit in detail["skipped"]] == ["ACE-7"]
+        assert [unit["barcode"] for unit in detail["in_progress"]] == ["ETH-7"]
+        assert detail["counts"]["pending"] == 1
+        full = await service.detail(job, include_units=True, include_step=True)
+        assert [unit["status"] for unit in full["units"]] == ["skipped", "in_progress", "pending"]
+        assert full["step"]["unit"]["barcode"] == "ETH-7"
