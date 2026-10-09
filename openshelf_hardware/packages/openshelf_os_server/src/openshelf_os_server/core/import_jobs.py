@@ -100,7 +100,6 @@ class ImportRowInput:
     name: str
     quantity: int = 1
     row_number: Optional[int] = None
-    sku: Optional[str] = None
     barcode: Optional[str] = None
     small: bool = False
     expires_at: Optional[str] = None
@@ -272,7 +271,7 @@ class ImportJobService:
                 error("name", "Name is longer than 255 characters")
             if row.quantity < 1:
                 error("quantity", "Quantity must be at least 1")
-            label = _clean(row.barcode) or _clean(row.sku)
+            label = _clean(row.barcode)
             if label is not None:
                 if len(label) > BARCODE_MAX_LENGTH or not _printable(label):
                     error("barcode", "Barcode must be printable ASCII up to 255 characters")
@@ -334,7 +333,6 @@ class ImportJobService:
         position = 0
         for row, label, access_level_id, expires_at in prepared:
             name = _clean(row.name) or ""
-            sku = _clean(row.sku)
             metadata = {str(key): value for key, value in (row.metadata or {}).items() if str(key).strip()}
             for copy in range(row.quantity):
                 barcode = label if copy == 0 and label is not None else await self._new_barcode(taken)
@@ -344,7 +342,6 @@ class ImportJobService:
                         job_id=job.id,
                         position=position,
                         row_number=row.row_number,
-                        sku=sku,
                         barcode=barcode,
                         name=name,
                         small=bool(row.small),
@@ -555,7 +552,6 @@ class ImportJobService:
             "id": unit.id,
             "position": unit.position,
             "row_number": unit.row_number,
-            "sku": unit.sku,
             "barcode": unit.barcode,
             "name": unit.name,
             "small": unit.small,
@@ -665,8 +661,6 @@ class ImportJobService:
     def _item_metadata(self, job: ImportJob, unit: ImportJobUnit) -> dict[str, Any]:
         metadata: dict[str, Any] = dict(unit.unit_metadata or {})
         metadata["name"] = unit.name
-        if unit.sku:
-            metadata["sku"] = unit.sku
         if unit.expires_at:
             metadata["expires_at"] = unit.expires_at
         metadata["import_job_id"] = job.id

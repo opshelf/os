@@ -120,8 +120,8 @@ def test_generated_barcodes_are_upc_a_with_a_valid_check_digit():
 @pytest.mark.anyio
 async def test_rows_expand_in_order_with_label_and_generated_barcodes(mock_mode):
     job_id = await create([
-        row("Acetone", sku="ACE-1", quantity=3, metadata={"Supplier": "Acme"}),
-        row("Ethanol", barcode="0123456789", sku="ETH-1"),
+        row("Acetone", barcode="ACE-1", quantity=3, metadata={"Supplier": "Acme"}),
+        row("Ethanol", barcode="0123456789"),
         row("Gloves", small=True, quantity=2),
     ])
     loaded = await units(job_id)
@@ -131,7 +131,6 @@ async def test_rows_expand_in_order_with_label_and_generated_barcodes(mock_mode)
     assert loaded[3].barcode == "0123456789"
     generated = [loaded[1].barcode, loaded[2].barcode, loaded[4].barcode, loaded[5].barcode]
     assert len(set(generated)) == 4 and all(len(code) == 12 for code in generated)
-    assert all(unit.sku == "ACE-1" for unit in loaded[:3])
     assert loaded[0].unit_metadata == {"Supplier": "Acme"}
     assert [unit.small for unit in loaded] == [False] * 4 + [True] * 2
 
@@ -141,7 +140,7 @@ async def test_create_rejects_existing_barcodes_invalid_rows_and_a_second_job(mo
     async with AsyncSessionLocal() as db:
         await StorageService(db).create_item("DUP-1", "Existing", DIMENSIONS)
     with pytest.raises(ImportJobError) as existing:
-        await create([row(barcode="DUP-1"), row(sku="NEW-1")])
+        await create([row(barcode="DUP-1"), row(barcode="NEW-1")])
     assert existing.value.status_code == 409
     assert existing.value.code == "barcodes_exist"
     assert [entry["barcode"] for entry in existing.value.errors] == ["DUP-1"]
@@ -184,7 +183,7 @@ async def test_access_levels_resolve_by_name_or_id(mock_mode):
 
 @pytest.mark.anyio
 async def test_unit_is_loaded_when_its_store_command_succeeds(mock_mode):
-    job_id = await create([row(sku="ACE-1"), row("Ethanol", sku="ETH-1")])
+    job_id = await create([row(barcode="ACE-1"), row("Ethanol", barcode="ETH-1")])
     first, second = await units(job_id)
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
@@ -200,7 +199,8 @@ async def test_unit_is_loaded_when_its_store_command_succeeds(mock_mode):
         item = await db.get(Item, unit.item_id)
         assert item.barcode == "ACE-1"
         assert item.dimensions == DIMENSIONS
-        assert item.item_metadata["sku"] == "ACE-1"
+        assert item.item_metadata["name"] == "Acetone"
+        assert "sku" not in item.item_metadata
         request_id = unit.request_id
         # The measured unit stays the kiosk's step until it is stored.
         assert (await service.next_step(job))["unit"]["id"] == first.id
@@ -215,7 +215,7 @@ async def test_unit_is_loaded_when_its_store_command_succeeds(mock_mode):
 
 @pytest.mark.anyio
 async def test_failed_store_keeps_the_unit_with_a_fresh_request_id(mock_mode):
-    job_id = await create([row(sku="ACE-1")])
+    job_id = await create([row(barcode="ACE-1")])
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
         job = await service.get(job_id)
@@ -232,7 +232,7 @@ async def test_failed_store_keeps_the_unit_with_a_fresh_request_id(mock_mode):
 
 @pytest.mark.anyio
 async def test_reconcile_applies_results_that_arrived_without_an_event(mock_mode):
-    job_id = await create([row(sku="ACE-1")])
+    job_id = await create([row(barcode="ACE-1")])
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
         job = await service.get(job_id)
@@ -257,7 +257,7 @@ async def test_reconcile_applies_results_that_arrived_without_an_event(mock_mode
 
 @pytest.mark.anyio
 async def test_unit_is_auto_skipped_when_no_cell_fits(mock_mode):
-    job_id = await create([row(sku="HUGE-1"), row("Next", sku="NEXT-1")])
+    job_id = await create([row(barcode="HUGE-1"), row("Next", barcode="NEXT-1")])
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
         job = await service.get(job_id)
@@ -271,7 +271,7 @@ async def test_unit_is_auto_skipped_when_no_cell_fits(mock_mode):
 
 @pytest.mark.anyio
 async def test_skip_records_the_reason_and_deletes_the_measured_item(mock_mode):
-    job_id = await create([row(sku="ACE-1"), row("Other", sku="OTH-1")])
+    job_id = await create([row(barcode="ACE-1"), row("Other", barcode="OTH-1")])
     first, second = await units(job_id)
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
@@ -288,7 +288,7 @@ async def test_skip_records_the_reason_and_deletes_the_measured_item(mock_mode):
 
 @pytest.mark.anyio
 async def test_relay_cancel_lets_the_measured_unit_finish(mock_mode):
-    job_id = await create([row(sku="ACE-1"), row("Later", sku="LATER-1")])
+    job_id = await create([row(barcode="ACE-1"), row("Later", barcode="LATER-1")])
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
         job = await service.get(job_id)
@@ -305,7 +305,7 @@ async def test_relay_cancel_lets_the_measured_unit_finish(mock_mode):
 
 @pytest.mark.anyio
 async def test_kiosk_stop_releases_an_unsubmitted_unit(mock_mode):
-    job_id = await create([row(sku="ACE-1")])
+    job_id = await create([row(barcode="ACE-1")])
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
         job = await service.get(job_id)
@@ -321,7 +321,7 @@ async def test_kiosk_stop_releases_an_unsubmitted_unit(mock_mode):
 async def test_small_units_fill_one_tray_and_load_on_return(mock_mode, trays):
     job_id = await create([
         row("Vial", small=True, quantity=2),
-        row("Bottle", sku="BOT-1"),
+        row("Bottle", barcode="BOT-1"),
         row("Pipette", small=True),
     ])
     async with AsyncSessionLocal() as db:
@@ -447,7 +447,7 @@ async def test_router_flow_for_relay_and_kiosk(mock_mode, trays, client, unauthe
         "/api/import-jobs",
         headers=relay,
         json={"filename": "stock.csv", "rows": [
-            {"row_number": 2, "sku": "ACE-1", "name": "Acetone", "quantity": 1},
+            {"row_number": 2, "barcode": "ACE-1", "name": "Acetone", "quantity": 1},
             {"row_number": 3, "name": "Vial", "quantity": 1, "small": True},
         ]},
     )
@@ -501,7 +501,7 @@ async def test_router_cancel_source_and_permissions(mock_mode, client, unauthent
     await _ensure_developer_user()
     monkeypatch.setenv(RELAY_SERVICE_TOKEN_SHA256_ENV, hashlib.sha256(RELAY_SERVICE_TOKEN.encode()).hexdigest())
     relay = {"Authorization": f"Bearer {RELAY_SERVICE_TOKEN}"}
-    created = await client.post("/api/import-jobs", json={"rows": [{"name": "Acetone", "sku": "ACE-9"}]})
+    created = await client.post("/api/import-jobs", json={"rows": [{"name": "Acetone", "barcode": "ACE-9"}]})
     assert created.status_code == 200, created.text
     job_id = created.json()["job"]["id"]
 

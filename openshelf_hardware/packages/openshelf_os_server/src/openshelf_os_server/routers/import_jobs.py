@@ -46,11 +46,10 @@ class ImportRow(BaseModel):
     """One CSV row. `quantity` expands into that many units, each with its own label."""
 
     row_number: Optional[int] = Field(default=None, ge=1, description="Source CSV row, for reporting")
-    sku: Optional[str] = Field(default=None, max_length=255, description="Stored in each unit's item metadata as `sku`")
     barcode: Optional[str] = Field(
         default=None,
         max_length=BARCODE_MAX_LENGTH,
-        description="Label barcode for the first unit; the SKU is used when omitted, and the device generates the rest.",
+        description="Label barcode for the first unit; the device generates the rest, and all of them when omitted.",
     )
     name: str = Field(min_length=1, max_length=255)
     quantity: int = Field(default=1, ge=1, le=MAX_UNITS)
@@ -67,7 +66,7 @@ class ImportJobCreate(BaseModel):
     filename: Optional[str] = Field(default=None, max_length=255)
     rows: list[ImportRow] = Field(
         min_length=1,
-        examples=[[{"row_number": 2, "sku": "ACE-500", "name": "Acetone 500 ml", "quantity": 2}]],
+        examples=[[{"row_number": 2, "barcode": "880000000500", "name": "Acetone 500 ml", "quantity": 2}]],
     )
 
 
@@ -83,7 +82,6 @@ class ImportUnitResponse(BaseModel):
     id: int
     position: int = Field(description="Zero-based load order")
     row_number: Optional[int]
-    sku: Optional[str]
     barcode: str
     name: str
     small: bool
@@ -190,7 +188,7 @@ async def create_import_job(
     """Create an import job.
 
     Expands each row into `quantity` units in row order and assigns label barcodes: the row
-    barcode or SKU for the first unit, generated unique barcodes for the rest. The kiosk
+    barcode for the first unit, generated unique barcodes for the rest. The kiosk
     shows the job after the next PIN unlock. Rejects a second running job (`409
     import_active`), barcodes already on the device (`409 barcodes_exist`, listed in
     `detail.errors`), and invalid rows (`422 invalid_rows`, per row and field). At most
