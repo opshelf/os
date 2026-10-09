@@ -29,6 +29,7 @@ from openshelf_os_server.database.models import (
     RobotCommand,
     StorageBin,
     StorageBinItem,
+    StorageBinWorkflow,
 )
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.main import _ensure_developer_user
@@ -416,7 +417,7 @@ async def test_stray_tray_scan_cannot_cancel_the_import_tray(mock_mode, trays):
 
 
 @pytest.mark.anyio
-async def test_cancel_during_a_tray_waits_for_its_return(mock_mode, trays):
+async def test_stopping_hands_the_tray_to_the_standard_return(mock_mode, trays):
     job_id = await create([row("Vial", small=True, quantity=2)])
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
@@ -425,18 +426,63 @@ async def test_cancel_during_a_tray_waits_for_its_return(mock_mode, trays):
         workflow = await service.start_tray(job, None)
         await bins.transition(workflow, "awaiting_operator")
         first = (await units(job_id))[0]
-        await service.place_in_tray(job, first.id, 30)
+        placed = await service.place_in_tray(job, first.id, 30)
+        await service.cancel(job, "kiosk")
+        # Nothing is moving, so the import ends at once and leaves the tray outside.
+        assert job.state == "cancelled"
+        await db.refresh(workflow)
+        assert workflow.state == "completed"
+        assert await service.next_step(job) is None
+
+        returning = await bins.begin_return("900000000000")
+        assert returning.operation == "return"
+        assert returning.resolution["candidate_item_ids"] == [placed.item_id]
+        assert await bins.prepare_return(returning, [placed.item_id]) is True
+        await bins.complete_return(returning)
+        tray_row = await db.scalar(select(StorageBin))
+        assert tray_row.status == "at_home"
+        member = await db.scalar(select(StorageBinItem).where(StorageBinItem.item_id == placed.item_id))
+        assert member is not None and member.compartment == 1
+    assert [unit.status for unit in await units(job_id)] == ["loaded", "pending"]
+
+
+@pytest.mark.anyio
+async def test_stopping_during_tray_delivery_releases_the_tray_when_it_arrives(mock_mode, trays):
+    job_id = await create([row("Vial", small=True)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        await service.cancel(job, "relay")
+        assert job.state == "cancelling"
+        assert (await service.next_step(job))["phase"] == "fetching"
+        await bins.transition(workflow, "awaiting_operator")
+    await notify_command_result(workflow.id, {"command": "retrieve_item", "message": "success"})
+    assert await job_state(job_id) == "cancelled"
+    async with AsyncSessionLocal() as db:
+        assert (await db.get(StorageBinWorkflow, workflow.id)).state == "completed"
+
+
+@pytest.mark.anyio
+async def test_stopping_waits_for_a_tray_return_that_is_moving(mock_mode, trays):
+    job_id = await create([row("Vial", small=True)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        await bins.transition(workflow, "awaiting_operator")
+        await service.place_in_tray(job, (await units(job_id))[0].id, 30)
+        returning = await service.begin_tray_return(job)
         await service.cancel(job, "kiosk")
         assert job.state == "cancelling"
-        step = await service.next_step(job)
-        assert step["kind"] == "tray" and step["phase"] == "filling"
-        assert [unit["status"] for unit in step["units"]] == ["in_progress"]
-        returning = await service.begin_tray_return(job)
+        assert (await service.next_step(job))["phase"] == "returning"
         await bins.complete_return(returning)
         await service.apply_tray_return(returning)
         await service.settle(job)
         assert job.state == "cancelled"
-    assert [unit.status for unit in await units(job_id)] == ["loaded", "pending"]
+    assert [unit.status for unit in await units(job_id)] == ["loaded"]
 
 
 @pytest.mark.anyio

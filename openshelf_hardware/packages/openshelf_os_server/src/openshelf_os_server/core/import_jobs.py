@@ -11,8 +11,10 @@ In-progress units carry a stage: `measured` (item created, label not yet stored)
 `storing` (its `store_item` command was admitted), `placed` (in a tray outside the system),
 and `returning` (that tray's return is running).
 
-Cancelling never interrupts motion. A cancelled job stops offering new units; the unit or
-tray the operator is handling finishes first, and units that never started stay `pending`.
+Cancelling never interrupts motion. A cancelled job stops offering new units; a store or
+tray motion already running finishes first, and units that never started stay `pending`.
+A tray out for the import is handed over as an ordinary outside tray: its placed units
+count as loaded, and the operator returns it with the usual tray barcode scan.
 """
 
 from __future__ import annotations
@@ -436,6 +438,8 @@ class ImportJobService:
         """Finish a job whose remaining work is done, or whose cancellation has drained."""
         if job.state not in OPEN_STATES:
             return False
+        if job.state == "cancelling":
+            await self._release_tray(job)
         counts = await self.counts(job)
         tray_busy = await self._tray_workflow_active(job)
         if job.state == "active" and counts["pending"] == 0 and counts["in_progress"] == 0 and not tray_busy:
@@ -448,6 +452,27 @@ class ImportJobService:
         job.tray_workflow_id = None
         await self.session.commit()
         return True
+
+    async def _release_tray(self, job: ImportJob) -> None:
+        """Hand a stopped import's tray to the standard return procedure.
+
+        Its placed items are already recorded in the tray, so they count as loaded; the
+        operator returns the tray by scanning its barcode. A tray still being delivered is
+        released once it arrives, and a return already moving finishes on its own.
+        """
+        workflow = await self._tray_workflow(job)
+        if workflow is not None and workflow.state == "retrieving_bin":
+            return
+        changed = False
+        if workflow is not None and workflow.state == "awaiting_operator":
+            await self.bins.close_batch(workflow)
+            changed = True
+        for unit in await self.units(job, ["in_progress"]):
+            if unit.stage == "placed":
+                self._mark_loaded(unit)
+                changed = True
+        if changed:
+            await self.session.commit()
 
     async def _tray_workflow(self, job: ImportJob) -> Optional[StorageBinWorkflow]:
         if job.tray_workflow_id is None:
@@ -799,7 +824,7 @@ class ImportJobService:
         job.cancel_source = source
         if source == "kiosk":
             # The operator stopped here: a measured item that never reached the robot goes
-            # back to pending with its record removed. A tray outside still has to return.
+            # back to pending with its record removed.
             for unit in await self.units(job, ["in_progress"]):
                 if unit.stage == "measured" and not await self._command_admitted(unit):
                     await self._discard_item(unit)
@@ -864,7 +889,7 @@ class ImportJobService:
         if workflow is None or workflow.state != "awaiting_operator":
             raise ImportJobError(409, "tray_not_ready", "Wait for the tray to arrive")
         if job.state != "active":
-            raise ImportJobError(409, "import_not_active", "This import is being stopped; return the tray")
+            raise ImportJobError(409, "import_not_active", "This import was stopped")
         unit = await self.unit(job, unit_id)
         if unit.status != "pending" or not unit.small:
             raise ImportJobError(409, "unit_not_pending", "This item was already handled")
