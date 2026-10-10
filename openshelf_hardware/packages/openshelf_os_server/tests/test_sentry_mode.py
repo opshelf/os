@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
+import openshelf_os
 import sentry_sdk
 import pytest
 from openshelf_os_server import main
@@ -30,6 +31,45 @@ async def test_configure_sentry_skips_development(tmp_path) -> None:
 		clear_config_cache()
 		assert main._configure_sentry() is False
 		init_mock.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("service_flag", "expected"), [("1", True), ("", False)])
+async def test_configure_sentry_reports_only_from_the_service_process(tmp_path, service_flag, expected) -> None:
+	# docker exec and one-off compose runs share the service's DSNs but not its entrypoint.
+	mode_file = _set_mode_file(tmp_path, "production")
+
+	with (
+		patch("openshelf_os_server.settings.MODE_FILE", mode_file),
+		patch("openshelf_os.operating_mode.MODE_FILE", mode_file),
+		patch.dict(
+			os.environ,
+			{"SENTRY_DSN_API": "https://example.invalid/1", "OPSHELF_SERVICE_PROCESS": service_flag},
+			clear=False,
+		),
+		patch.object(sentry_sdk, "init") as init_mock,
+		patch.object(sentry_sdk, "set_tag"),
+		patch.object(sentry_sdk, "set_context"),
+	):
+		clear_config_cache()
+		assert main._configure_sentry() is expected
+		assert init_mock.called is expected
+
+
+@pytest.mark.parametrize(("service_flag", "expected"), [("1", True), ("", False)])
+def test_hardware_sentry_reports_only_from_the_service_process(tmp_path, service_flag, expected) -> None:
+	mode_file = _set_mode_file(tmp_path, "production")
+
+	with (
+		patch("openshelf_os.operating_mode.MODE_FILE", mode_file),
+		patch.object(openshelf_os, "sentry_dsn", "https://example.invalid/2"),
+		patch.dict(os.environ, {"OPSHELF_SERVICE_PROCESS": service_flag}, clear=False),
+		patch.object(sentry_sdk, "init") as init_mock,
+		patch.object(sentry_sdk, "set_tag"),
+		patch.object(sentry_sdk, "set_context"),
+	):
+		assert openshelf_os._configure_sentry() is expected
+		assert init_mock.called is expected
 
 
 def test_before_send_sentry_event_drops_sse_cancel_on_finish_cancelled_error() -> None:
