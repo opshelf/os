@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
@@ -126,6 +127,21 @@ INSECURE_PUBLISHED_SECRETS = frozenset({
     # Was the hard-coded non-development default; stays in PUBLISHED_HMAC_KEYS["v1"] so rows it signed remain verifiable.
     "development-audit-hmac-key-not-for-production",
 })
+
+# SHA-256 digests of secrets published only in old revisions of the repository, kept as
+# digests so this file does not republish them. Checked the same way as the set above.
+INSECURE_PUBLISHED_SECRET_DIGESTS = frozenset({
+    # The dev JWT secret committed in the early settings.json.
+    "72d9cf86bb582245d27129204e0a75630cb6bf7958f4e11524901469b49ba7a9",
+})
+
+
+def is_insecure_published_secret(value: Optional[str]) -> bool:
+    if value is None:
+        return False
+    if value in INSECURE_PUBLISHED_SECRETS:
+        return True
+    return hashlib.sha256(value.encode("utf-8")).hexdigest() in INSECURE_PUBLISHED_SECRET_DIGESTS
 
 
 class AuthSettings(BaseModel):

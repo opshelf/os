@@ -1,11 +1,13 @@
 """Audit signing key resolution and the legacy key ring."""
 
+import hashlib
 import pathlib
 from types import SimpleNamespace
 from typing import Optional
 
 import pytest
 
+from openshelf_os.config import settings as settings_module
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os_server.utils import audit_integrity
 
@@ -49,7 +51,7 @@ def _restart(monkeypatch: pytest.MonkeyPatch, mode: OperatingMode) -> None:
 	audit_integrity.reset_generated_key_cache()
 
 
-@pytest.mark.parametrize("published_key", sorted(audit_integrity.INSECURE_PUBLISHED_SECRETS))
+@pytest.mark.parametrize("published_key", sorted(settings_module.INSECURE_PUBLISHED_SECRETS))
 def test_published_default_key_never_signs(
 	monkeypatch: pytest.MonkeyPatch,
 	published_key: str,
@@ -63,6 +65,19 @@ def test_published_default_key_never_signs(
 	assert audit_integrity.get_hmac_key_id() == "v2-mock"
 	published_mac = audit_integrity.hmac_sha256_hex(BINDING, published_key.encode("utf-8"))
 	assert audit_integrity.verify_binding_hmac(published_mac, BINDING, "v2-mock") == "HMAC mismatch"
+
+
+def test_key_published_only_as_a_digest_never_signs(monkeypatch: pytest.MonkeyPatch) -> None:
+	published_key = "key-published-in-an-old-revision"
+	digest = hashlib.sha256(published_key.encode("utf-8")).hexdigest()
+	monkeypatch.setattr(settings_module, "INSECURE_PUBLISHED_SECRET_DIGESTS", frozenset({digest}))
+	_stub_settings(monkeypatch, audit_hmac_key=None)
+	monkeypatch.setenv("AUDIT_HMAC_KEY", published_key)
+
+	key = audit_integrity._load_hmac_key()
+
+	assert key != published_key.encode("utf-8")
+	assert audit_integrity.get_hmac_key_id() == "v2-mock"
 
 
 def test_configured_key_signs_when_env_is_unset(monkeypatch: pytest.MonkeyPatch) -> None:

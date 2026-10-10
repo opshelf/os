@@ -38,7 +38,7 @@ from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.bin_storage import reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.errors import error_detail
-from openshelf_os_server.routers.auth_deps import get_current_user_for_stream
+from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, require_permissions_for_stream
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
 
@@ -64,6 +64,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
 	prefix="/api/calibration", tags=["calibration"], dependencies=[Depends(get_current_user_for_stream)]
 )
+
+# Reading calibration state needs only a login; every route that moves hardware,
+# starts or aborts a run, or saves calibration also needs robot:control, which the
+# default viewer role lacks. Stream-safe for the same reason as the router gate.
+ROBOT_CONTROL = Depends(require_permissions_for_stream("robot:control"))
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
 P = ParamSpec("P")
@@ -819,9 +824,10 @@ async def get_laser_auto_calibration_status() -> LaserAutoCalibrationSnapshot:
 
 @router.post(
     "/laser/abort",
+    dependencies=[ROBOT_CONTROL],
     response_model=LaserAutoCalibrationSnapshot,
     summary="Abort automatic laser calibration",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
 	"""Abort automatic laser calibration.
@@ -846,9 +852,10 @@ TERMINAL_LASER_AUTO_CALIBRATION_STATES = {"completed", "failed", "cancelled"}
 
 @router.get(
     "/laser/stream",
+    dependencies=[ROBOT_CONTROL],
     summary="Start or observe automatic laser calibration",
     responses=response_docs(
-        errors=(400, 401, 409, 503),
+        errors=(400, 401, 403, 409, 503),
         existing=stream_docs(
             "text/event-stream",
             "Automatic calibration snapshots encoded as JSON in SSE data frames. GET may start motion unless subscribe_only=true.",
@@ -984,9 +991,10 @@ async def stream_laser_auto_calibration(
 
 @router.post(
     "/move",
+    dependencies=[ROBOT_CONTROL],
     response_model=PositionResponse,
     summary="Move to a cell calibration point",
-    responses=response_docs(errors=(400, 401, 409, 503)),
+    responses=response_docs(errors=(400, 401, 403, 409, 503)),
 )
 @serialize_calibration_state
 async def move_to_cell(request: MoveRequest) -> PositionResponse:
@@ -1026,9 +1034,10 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 
 @router.post(
     "/move/position",
+    dependencies=[ROBOT_CONTROL],
     response_model=PositionResponse,
     summary="Move to a calibration coordinate",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 @serialize_calibration_state
 async def move_to_position(request: MovePositionRequest) -> PositionResponse:
@@ -1052,9 +1061,10 @@ async def move_to_position(request: MovePositionRequest) -> PositionResponse:
 
 @router.post(
     "/jog",
+    dependencies=[ROBOT_CONTROL],
     response_model=PositionResponse,
     summary="Jog the active calibration position",
-    responses=response_docs(errors=(400, 401, 409, 500, 503)),
+    responses=response_docs(errors=(400, 401, 403, 409, 500, 503)),
 )
 @serialize_calibration_state
 async def jog_axis(request: JogRequest) -> PositionResponse:
@@ -1158,8 +1168,9 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 
 @router.post(
     "/test",
+    dependencies=[ROBOT_CONTROL],
     summary="Test a cell pick or place",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 503)),
 )
 @serialize_calibration_state
 async def test_gripper(
@@ -1227,8 +1238,9 @@ async def test_gripper(
 
 @router.post(
     "/test/cycle",
+    dependencies=[ROBOT_CONTROL],
     summary="Test an IO transfer cycle",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 500, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 500, 503)),
 )
 async def test_cycle(request: TestRequest):
 	"""Test an IO transfer cycle.
@@ -1301,8 +1313,9 @@ def _validate_saved_dimensions(dimensions: Dimensions) -> None:
 
 @router.post(
     "/save",
+    dependencies=[ROBOT_CONTROL],
     summary="Save a cell calibration point",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 503)),
 )
 async def save_calibration(request: SaveRequest):
 	"""Save a cell calibration point.
@@ -1382,9 +1395,10 @@ async def save_calibration(request: SaveRequest):
 
 @router.post(
     "/home_tool_motors",
+    dependencies=[ROBOT_CONTROL],
     response_model=CalibrationStatusResponse,
     summary="Home the tool stage and gripper",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 async def home_tool_motors() -> CalibrationStatusResponse:
 	"""Home the tool stage and gripper.
@@ -1538,8 +1552,9 @@ async def get_iobox_door_position() -> IOBoxDoorPositionResponse:
 
 @router.post(
     "/iobox/door/move",
+    dependencies=[ROBOT_CONTROL],
     summary="Test an IO door position",
-    responses=response_docs(model=DoorMoveResponse, errors=(400, 401, 409, 503)),
+    responses=response_docs(model=DoorMoveResponse, errors=(400, 401, 403, 409, 503)),
 )
 async def move_iobox_door(request: IOBoxDoorMoveRequest):
 	"""Test an IO door position.
@@ -1586,8 +1601,9 @@ async def move_iobox_door(request: IOBoxDoorMoveRequest):
 
 @router.post(
     "/iobox/door/save",
+    dependencies=[ROBOT_CONTROL],
     summary="Save IO door travel limits",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 503)),
 )
 async def save_iobox_door_position(request: IOBoxDoorPositionRequest):
 	"""Save IO door travel limits.
@@ -1666,9 +1682,10 @@ async def _get_iobox_current_or_error() -> IOBoxPositionResponse:
 
 @router.post(
     "/iobox/move",
+    dependencies=[ROBOT_CONTROL],
     response_model=IOBoxPositionResponse,
     summary="Move to an IO pickup position",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 @serialize_calibration_state
 async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPositionResponse:
@@ -1721,9 +1738,10 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 
 @router.post(
     "/iobox/jog",
+    dependencies=[ROBOT_CONTROL],
     response_model=IOBoxPositionResponse,
     summary="Jog an IO pickup position",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 @serialize_calibration_state
 async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
@@ -1821,8 +1839,9 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 
 @router.post(
     "/iobox/test",
+    dependencies=[ROBOT_CONTROL],
     summary="Test the IO pickup sequence",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 500, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 500, 503)),
 )
 @serialize_calibration_state
 async def test_iobox_sequence(with_gripper: bool = False):
@@ -1898,8 +1917,9 @@ async def test_iobox_sequence(with_gripper: bool = False):
 
 @router.post(
     "/iobox/save",
+    dependencies=[ROBOT_CONTROL],
     summary="Save IO pickup calibration",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 503)),
 )
 @serialize_calibration_state
 async def save_iobox_calibration(request: IOBoxSaveRequest):
@@ -1996,8 +2016,9 @@ async def get_rotation_angles() -> RotationAnglesResponse:
 
 @router.post(
     "/rotation/rotate",
+    dependencies=[ROBOT_CONTROL],
     summary="Test tool rotation",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 503)),
 )
 async def rotate_to_angle(angle: float):
 	"""Test tool rotation.
@@ -2051,8 +2072,9 @@ async def rotate_to_angle(angle: float):
 
 @router.post(
     "/rotation/save",
+    dependencies=[ROBOT_CONTROL],
     summary="Save tool orientation positions",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 409, 503)),
 )
 async def save_rotation_angles(request: RotateSaveRequest):
 	"""Save tool orientation positions.
@@ -2113,8 +2135,9 @@ async def get_shelf_stage_extension() -> ShelfStageExtensionResponse:
 
 @router.post(
     "/shelf/save",
+    dependencies=[ROBOT_CONTROL],
     summary="Save shelf stage extensions",
-    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 409, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 503)),
 )
 async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 	"""Save shelf stage extensions.
@@ -2164,8 +2187,9 @@ class StageMoveRequest(BaseModel):
 
 @router.post(
     "/stage/move",
+    dependencies=[ROBOT_CONTROL],
     summary="Test a stage extension",
-    responses=response_docs(model=StageMoveResponse, errors=(401, 409, 503)),
+    responses=response_docs(model=StageMoveResponse, errors=(401, 403, 409, 503)),
 )
 async def move_stage(request: StageMoveRequest):
 	"""Test a stage extension.
@@ -2206,8 +2230,9 @@ async def move_stage(request: StageMoveRequest):
 
 @router.post(
     "/abort",
+    dependencies=[ROBOT_CONTROL],
     summary="Abort manual calibration and home the tool",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 409, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 409, 503)),
 )
 async def abort_calibration():
 	"""Abort manual calibration and home the tool.

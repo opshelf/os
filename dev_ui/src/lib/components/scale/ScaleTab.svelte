@@ -271,9 +271,6 @@
 			{:else if calibrationError === ''}
 				<tr><td colspan="2">loading...</td></tr>
 			{/if}
-			{#if calibrationError !== ''}
-				<tr><td colspan="2">{calibrationError.toUpperCase()}</td></tr>
-			{/if}
 		</tbody>
 		<thead><tr><th colspan="2">calibration parameters</th></tr></thead>
 		<tbody>
