@@ -18,7 +18,7 @@ from openshelf_os_server.core.robot import get_robot_worker
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.core.storage_module import side_to_s
-from openshelf_os_server.routers.auth_deps import get_current_user
+from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 from openshelf_os_server.routers.calibration import _ensure_ready, _clear_motors_for_move
 
 logger = logging.getLogger(__name__)
@@ -116,9 +116,10 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 
 @router.post(
     "/cycle/start",
+    dependencies=[Depends(require_permissions("robot:control"))],
     response_model=SuccessResponse,
     summary="Start the demonstration cycle",
-    responses=response_docs(errors=(400, 401, 409, 503)),
+    responses=response_docs(errors=(400, 401, 403, 409, 503)),
 )
 async def start_demo_cycle() -> SuccessResponse:
 	"""Start the demonstration cycle.
@@ -185,9 +186,10 @@ async def shutdown_demo_cycle() -> None:
 
 @router.post(
     "/cycle/stop",
+    dependencies=[Depends(require_permissions("robot:control"))],
     response_model=SuccessResponse,
     summary="Request demonstration stop",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 async def stop_demo_cycle() -> SuccessResponse:
 	"""Request demonstration stop.

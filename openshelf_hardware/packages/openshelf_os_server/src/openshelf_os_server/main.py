@@ -5,6 +5,7 @@ import asyncio
 import fcntl
 import json
 import os
+import secrets
 import subprocess
 import sys
 from contextlib import asynccontextmanager
@@ -21,6 +22,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from fastapi import FastAPI, Request
 from openshelf_os_server.documentation import DESCRIPTION, TAGS, configure_security_documentation
 from fastapi.middleware.cors import CORSMiddleware
@@ -88,7 +90,13 @@ from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
 from openshelf_os_server.middleware.inventory_events import InventoryEventsMiddleware
 from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, chemicals, demo, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
-from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings, get_operating_mode
+from openshelf_os_server.settings import (
+	DEFAULT_DEVELOPER_PIN,
+	DEVELOPER_SYSTEM_USER_EMAIL,
+	configured_developer_pin,
+	get_operating_mode,
+	get_settings,
+)
 from openshelf_os_server.utils.cors_policy import allows_credentials, resolve_allowed_origins
 
 configure_logging()
@@ -790,9 +798,37 @@ DEFAULT_ROLES: dict[str, list[str]] = {
 }
 
 
+def _pin_matches(ph: PasswordHasher, pin_hash: str, pin: str) -> bool:
+	try:
+		return ph.verify(pin_hash, pin)
+	except (VerifyMismatchError, InvalidHashError):
+		return False
+
+
+def _developer_pin_hash(ph: PasswordHasher, pin: Optional[str]) -> str:
+	# Without a known PIN the user is locked with a random one; the relay identity
+	# and the system-user filters still rely on the row existing.
+	return ph.hash(pin if pin is not None else secrets.token_urlsafe(32))
+
+
+def _developer_pin_source(pin: Optional[str]) -> str:
+	if pin is None:
+		return "random"
+	return "default" if pin == DEFAULT_DEVELOPER_PIN else "configured"
+
+
 async def _ensure_developer_user() -> None:
 	"""Recreate the developer system user on every startup, including after a
-	database wipe, so the device can never end up fully locked out."""
+	database wipe, so the device can never end up fully locked out, and keep its
+	PIN on the one the mode calls for (see `configured_developer_pin`).
+
+	A production or demo device without a configured PIN must not keep the published
+	default, so a hash that still verifies against it is replaced with a random one;
+	the released migration that seeded it stays untouched.
+	"""
+	desired_pin = configured_developer_pin(get_operating_mode())
+	ph = PasswordHasher()
+
 	async with AsyncSessionLocal() as db:
 		result = await db.execute(
 			select(User).filter(User.email == DEVELOPER_SYSTEM_USER_EMAIL)
@@ -800,10 +836,25 @@ async def _ensure_developer_user() -> None:
 		existing_user = result.scalar_one_or_none()
 
 		if existing_user is not None:
+			changed = False
 			if existing_user.is_system is False:
 				existing_user.is_system = True
-				await db.commit()
+				changed = True
 				logger.info("developer_user_marked_system", email=DEVELOPER_SYSTEM_USER_EMAIL)
+			if desired_pin is not None:
+				needs_pin = _pin_matches(ph, existing_user.pin_hash, desired_pin) is False
+			else:
+				needs_pin = _pin_matches(ph, existing_user.pin_hash, DEFAULT_DEVELOPER_PIN) is True
+			if needs_pin is True:
+				existing_user.pin_hash = _developer_pin_hash(ph, desired_pin)
+				changed = True
+				logger.info(
+					"developer_user_pin_reset",
+					email=DEVELOPER_SYSTEM_USER_EMAIL,
+					pin_source=_developer_pin_source(desired_pin),
+				)
+			if changed is True:
+				await db.commit()
 			logger.info("developer_user_exists", email=DEVELOPER_SYSTEM_USER_EMAIL)
 			return
 
@@ -814,8 +865,7 @@ async def _ensure_developer_user() -> None:
 			logger.warning("admin_role_not_found", action="skipping_developer_user_creation")
 			return
 
-		ph = PasswordHasher()
-		pin_hash = ph.hash("1111")
+		pin_hash = _developer_pin_hash(ph, desired_pin)
 
 		developer_user = User(
 			email=DEVELOPER_SYSTEM_USER_EMAIL,
@@ -848,7 +898,7 @@ async def _dev_auto_user_is_resolvable(email: str) -> bool:
 async def _ensure_dev_auto_user(email: str) -> None:
 	"""Create the configured dev auto user so the unauthenticated fallback
 	resolves on any database (e.g. a fresh one created on first start in this
-	mode). Mirrors _ensure_developer_user: admin role, PIN 1111, is_system.
+	mode). Mirrors _ensure_developer_user in development: admin role, PIN 1111, is_system.
 	An existing inactive user is activated instead of duplicated."""
 	if await _dev_auto_user_is_resolvable(email) is True:
 		return
@@ -872,7 +922,7 @@ async def _ensure_dev_auto_user(email: str) -> None:
 			return
 
 		ph = PasswordHasher()
-		pin_hash = ph.hash("1111")
+		pin_hash = ph.hash(DEFAULT_DEVELOPER_PIN)
 		local_part = email.partition("@")[0]
 
 		db.add(

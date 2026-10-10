@@ -28,6 +28,7 @@
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideInitial, sideLabel } from '$lib/side';
 	import type { SideIndex, SideVocabulary } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import { postToast } from '$lib/toasts';
 	import {
 		createReconnectingEventSource,
 		type ReconnectingEventSource
@@ -53,13 +54,9 @@
 
 	// Multi-cell test walk (client-side equivalent of provision/scripts/cycle_test.py):
 	// walks the testable cells on the current side from the selected cell, one
-	// operation per cell, tracking the current cell and running pass count.
+	// operation per cell, and reports the outcome as a single toast.
 	let testRunning = $state<boolean>(false);
 	let testAborting = $state<boolean>(false);
-	let testCurrent = $state<string>('');
-	let testPassed = $state<number>(0);
-	let testNote = $state<string>('');
-	let testNoteIsError = $state<boolean>(false);
 	let isMovingToCell = $state<boolean>(false);
 
 	const selectedSide = $derived.by(
@@ -351,8 +348,6 @@
 
 	function closeOverlay(): void {
 		overlayOpen = false;
-		testNote = '';
-		testNoteIsError = false;
 	}
 
 	// A scrim click only counts when the press both started and ended in the dimmed area.
@@ -418,10 +413,11 @@
 
 	type EditorField = 'status' | 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
 	type NumericEditorField = 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
+	type DimensionField = 'width' | 'height' | 'length';
 
 	const EDITOR_FIELDS: EditorField[] = ['status', 'x', 'y', 'z', 'width', 'height', 'length'];
 	const XYZ_COLUMNS: NumericEditorField[] = ['x', 'y', 'z'];
-	const DIMENSION_COLUMNS: Array<{ field: NumericEditorField; label: string }> = [
+	const DIMENSION_COLUMNS: Array<{ field: DimensionField; label: string }> = [
 		{ field: 'width', label: 'width' },
 		{ field: 'height', label: 'height' },
 		{ field: 'length', label: 'length' }
@@ -645,6 +641,14 @@
 		if (editorValues[field].trim() === '' && selectionValues[field] === 'mixed') {
 			editorValues[field] = 'Mixed';
 		}
+		// An out-of-range dimension is reported once the technician leaves the field, so
+		// typing a value like ".5" does not fire a toast halfway through.
+		if (isDimensionField(field) === true) {
+			const issue = dimensionFieldIssue(field);
+			if (issue !== '') {
+				postToast('error', issue);
+			}
+		}
 	}
 
 	const selectionFingerprint = $derived(
@@ -732,7 +736,11 @@
 		return formatFieldValue(parsed) !== formatFieldValue(value);
 	}
 
-	function dimensionFieldIssue(field: NumericEditorField): string {
+	function isDimensionField(field: NumericEditorField): field is DimensionField {
+		return field === 'width' || field === 'height' || field === 'length';
+	}
+
+	function dimensionFieldIssue(field: DimensionField): string {
 		const raw = editorValues[field].trim();
 		if (raw === '' || raw.toLowerCase() === 'mixed') {
 			return '';
@@ -746,16 +754,6 @@
 		}
 		return '';
 	}
-
-	const dimensionIssue = $derived.by((): string => {
-		for (const column of DIMENSION_COLUMNS) {
-			const issue = dimensionFieldIssue(column.field);
-			if (issue !== '') {
-				return issue;
-			}
-		}
-		return '';
-	});
 
 	function isFieldValid(field: EditorField): boolean {
 		const raw = editorValues[field].trim();
@@ -1174,6 +1172,27 @@
 		return UNTESTABLE_CELL_STATUSES.has(cell.status.toLowerCase()) === false;
 	}
 
+	// The backend rejects every testing action on disabled and maintenance cells, so the
+	// testing buttons go inert when none of the selected cells can be tested. A mixed
+	// selection stays enabled: the queue skips its untestable cells.
+	const hasTestableSelection = $derived(selectedCells.some((entry) => isCellTestable(entry.cell)));
+
+	// The reason the testing buttons are inert is announced once per selection through the
+	// toast channel, which took over the overlay's inline message labels.
+	let didAnnounceUntestableSelection = false;
+
+	$effect(() => {
+		if (hasTestableSelection === true || overlayOpen === false) {
+			didAnnounceUntestableSelection = false;
+			return;
+		}
+
+		if (didAnnounceUntestableSelection === false) {
+			didAnnounceUntestableSelection = true;
+			postToast('status', 'no testable cells selected');
+		}
+	});
+
 	// The selected testable cells, one test each, in shelf/cell-ascending order
 	// (cycle_test.py walks cells one at a time).
 	function buildTestQueue(): Array<{ shelf: number; cell: Cell }> {
@@ -1230,34 +1249,25 @@
 		}
 		const queue = buildTestQueue();
 		if (queue.length === 0) {
-			testNote = 'no testable cells selected';
-			testNoteIsError = true;
+			postToast('error', 'no testable cells selected');
 			return;
 		}
 		testRunning = true;
 		testAborting = false;
-		testCurrent = '';
-		testPassed = 0;
-		testNote = '';
-		testNoteIsError = false;
 		try {
 			for (const target of queue) {
 				if (testAborting) {
 					break;
 				}
-				testCurrent = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
+				const cellLabel = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
-				if (result.ok) {
-				testPassed += 1;
-				} else {
-					testNote = `failed at ${testCurrent}${result.error ? `: ${result.error}` : ''}`;
-				testNoteIsError = true;
-					break;
+				if (result.ok === false) {
+					postToast('error', `failed at ${cellLabel}${result.error ? `: ${result.error}` : ''}`);
+					return;
 				}
 			}
-			if (testNote === '') {
-				testNote = testAborting ? `aborted — ${testPassed} passed` : `done — ${testPassed} passed`;
-			}
+			// One summary toast per walk: a failure returned above with its own toast.
+			postToast('status', testAborting ? 'test aborted' : 'all tests passed');
 		} finally {
 			testRunning = false;
 		}
@@ -1623,17 +1633,45 @@
 			<section class="editor-tests">
 				<p class="editor-section-label">testing</p>
 				<div class="editor-group editor-group-tests">
-					<button type="button" onclick={() => void didStartTest('quick')} disabled={testRunning}>quick</button>
-					<button type="button" onclick={() => void didStartTest('cycle')} disabled={testRunning}>cycle</button>
-					<button type="button" onclick={() => void didStartTest('store')} disabled={testRunning}>store</button>
-					<button type="button" onclick={() => void didStartTest('retrieve')} disabled={testRunning}>retrieve</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('quick')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						quick
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('cycle')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						cycle
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('store')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						store
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('retrieve')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						retrieve
+					</button>
+					{#if testRunning}
+						<button
+							type="button"
+							class="editor-abort-button"
+							onclick={() => didAbortTest()}
+							disabled={testAborting}
+						>
+							abort test
+						</button>
+					{/if}
 				</div>
-				{#if testRunning}
-					<p class="editor-test-progress">{testCurrent} • PASS: {testPassed}</p>
-					<button type="button" onclick={() => didAbortTest()} disabled={testAborting}>abort</button>
-				{:else if testNote !== ''}
-					<p class="editor-test-note" class:is-error={testNoteIsError}>{testNote}</p>
-				{/if}
 			</section>
 			<label class="editor-row editor-row-lock">
 				<input
@@ -1663,9 +1701,6 @@
 					</label>
 				{/each}
 			</div>
-			{#if dimensionIssue !== ''}
-				<p class="editor-shelf-note is-error">{dimensionIssue}</p>
-			{/if}
 			{#if selectedSingle !== null}
 				<hr class="editor-hr" />
 				<label class="editor-row editor-row-tray">
@@ -2012,29 +2047,12 @@
 		margin-top: 0;
 	}
 
-	.editor-test-progress {
-		margin: 0 0 1em 0;
-		font-variant-numeric: tabular-nums;
+	.editor-group-tests button:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 
-	.editor-tests > button {
-		align-self: flex-start;
-		margin-top: 0;
-	}
-
-	.editor-test-note {
-		margin: 0 0 1.5em 0;
-	}
-
-	.editor-test-note.is-error {
-		color: #b00020;
-	}
-
-	.editor-shelf-note {
-		margin: 0 0 1.5em 0;
-	}
-
-	.editor-shelf-note.is-error {
-		color: #b00020;
+	.editor-abort-button {
+		grid-column: 1 / -1;
 	}
 </style>
