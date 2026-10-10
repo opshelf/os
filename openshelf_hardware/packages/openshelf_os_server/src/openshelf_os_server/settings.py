@@ -27,7 +27,7 @@ from openshelf_os.common import (
     RobotAppSettings,
     ConfigValidationError,
     CONFIG_PATH,
-    INSECURE_PUBLISHED_SECRETS,
+    is_insecure_published_secret,
     OperatingMode,
     write_json_file_with_backup,
     load_and_validate_config,
@@ -233,7 +233,7 @@ def _apply_env_overrides(data: dict) -> dict:
     # repository could forge a session with it, and it leaked into config.json on
     # devices that saved their config while it was in effect.
     jwt_secret = os.getenv("JWT_SECRET") or data["auth"].get("jwt_secret")
-    if not jwt_secret or jwt_secret in INSECURE_PUBLISHED_SECRETS:
+    if not jwt_secret or is_insecure_published_secret(jwt_secret):
         if jwt_secret:
             logger.warning(
                 "JWT_SECRET is a published default, using a generated secret instead; "
