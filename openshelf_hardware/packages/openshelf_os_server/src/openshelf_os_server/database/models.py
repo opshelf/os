@@ -135,6 +135,24 @@ class RobotCommand(Base):
 # mock-only name. The persisted table is now shared by both runtimes.
 MockRobotCommand = RobotCommand
 
+class RobotEvent(Base):
+	"""Durable append-only log of the events streamed on `/api/robot/events`.
+
+	`seq` is monotonic per device; `Last-Event-ID` resumption and
+	`/api/robot/events/log` replay rely on it.
+	"""
+	__tablename__ = "robot_events"
+	__table_args__ = (
+		Index("ix_robot_events_command_id", "command_id"),
+	)
+
+	seq: Mapped[int] = mapped_column(Integer, primary_key=True)
+	created_at: Mapped[datetime] = mapped_column(
+		UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc)
+	)
+	command_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+	payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+
 class Item(Base):
 	"""Item model for storing inventory items."""
 	__tablename__ = "items"

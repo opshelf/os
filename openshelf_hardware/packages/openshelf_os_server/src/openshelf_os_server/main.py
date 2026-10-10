@@ -48,7 +48,7 @@ from openshelf_os import (
     _strip_pymodbus_frame_dump,
 )
 from openshelf_os.common import CONFIG_PATH, OperatingMode
-from openshelf_os.operating_mode import should_enable_sentry
+from openshelf_os.operating_mode import is_service_process, should_enable_sentry
 from openshelf_os.runtime_state import RuntimeStatePaths
 from openshelf_os_server.core.logging_config import configure_logging, get_logger, get_correlation_id
 from openshelf_os_server.core.migrations import rename_module_side_values
@@ -88,6 +88,7 @@ from openshelf_os_server.database.models import AccessLevel, Role, User
 from openshelf_os_server.launcher import bootstrap_runtime_state
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
+from openshelf_os_server.middleware.inventory_events import InventoryEventsMiddleware
 from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, chemicals, demo, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
 from openshelf_os_server.settings import (
 	DEFAULT_DEVELOPER_PIN,
@@ -508,6 +509,10 @@ def _configure_sentry() -> bool:
 
 	if should_enable_sentry(mode) is False:
 		logger.info("sentry_disabled_for_mode", mode=mode.value)
+		return False
+
+	if is_service_process() is False:
+		logger.info("sentry_disabled_outside_service", mode=mode.value)
 		return False
 
 	if sentry_dsn == "":
@@ -1206,6 +1211,7 @@ app.add_middleware(
 	allow_methods=["*"],
 	allow_headers=["*"],
 )
+app.add_middleware(InventoryEventsMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(AuditMiddleware, sentry_enabled=sentry_enabled)
 register_mapped_handlers(app)

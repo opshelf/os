@@ -52,6 +52,23 @@ async def _clear_production_commands() -> None:
 		await session.commit()
 
 
+async def _finish_production_commands() -> None:
+	"""Complete queued rows so a later command may target the same item."""
+	async with AsyncSessionLocal() as session:
+		rows = (
+			await session.execute(
+				select(RobotCommand).where(
+					RobotCommand.runtime == "production",
+					RobotCommand.status.in_(("queued", "running")),
+				)
+			)
+		).scalars().all()
+		for row in rows:
+			row.status = "succeeded"
+			row.completed_at = datetime.now(timezone.utc)
+		await session.commit()
+
+
 def _store(request_id: str, *, name: str = "Lifecycle item") -> StoreItemCommand:
 	return StoreItemCommand(
 		request_id=request_id,
@@ -180,6 +197,7 @@ async def test_new_store_requires_valid_dimensions_before_enrollment(
 		assert row.payload["item"]["dimensions"] == geometry
 
 		# A registered item's geometry stays authoritative on later attempts.
+		await _finish_production_commands()
 		await robot_router.robot_commands(
 			StoreItemCommand(item={"barcode": item_data["barcode"], "dimensions": {}}, request_id="geometry-existing"),
 			worker=worker, current_user=SimpleNamespace(id=1), db=db,
@@ -255,6 +273,7 @@ async def test_new_store_preserves_valid_and_unspecified_gross(
 		# Existing measured zero remains authoritative over submitted gross.
 		item.weight = 0
 		await db.commit()
+		await _finish_production_commands()
 		await robot_router.robot_commands(
 			StoreItemCommand(item={"barcode": item.barcode, "weight": -1}, request_id="gross-registered"),
 			worker=worker, current_user=SimpleNamespace(id=1), db=db,
