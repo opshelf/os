@@ -74,3 +74,14 @@ def test_degraded_tracker_stays_degraded_until_all_failures_recover():
     assert tracker.snapshot()["phase"] == OVERALL_DEGRADED
 
 
+
+
+def test_failure_reasons_report_why_each_component_failed():
+    tracker = RobotInitTracker()
+    tracker.register_components(["rotate", "x_axis"])
+    tracker.report("rotate", "failed", reason="Movement failed for motor 5 (status=FAULT)")
+    tracker.report("x_axis", "ready")
+
+    assert tracker.failure_reasons(tracker.failed_components()) == {
+        "rotate": "Movement failed for motor 5 (status=FAULT)"
+    }
