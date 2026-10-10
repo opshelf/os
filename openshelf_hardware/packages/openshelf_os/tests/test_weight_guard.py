@@ -66,12 +66,16 @@ class FakeAxis:
     def __init__(self) -> None:
         self.moving = False
         self.position = 412.5
+        self.direction = 0
 
     def is_moving(self) -> bool:
         return self.moving
 
     def position_mm(self) -> Optional[float]:
         return self.position
+
+    def commanded_direction(self) -> int:
+        return self.direction if self.moving else 0
 
 
 class FakeClock:
@@ -117,8 +121,21 @@ class GuardHarness:
         )
         self.guard.set_listener(self.trips.append)
 
-    def sample(self, grams: float, *, moving: bool) -> None:
+    def sample(
+        self,
+        grams: float,
+        *,
+        moving: bool,
+        direction: int = -1,
+        travel_mm: Optional[float] = None,
+    ) -> None:
+        """One guard sample; a moving sample travels 1 mm in `direction` first by default."""
         self.axis.moving = moving
+        self.axis.direction = direction
+
+        if moving is True:
+            self.axis.position += direction * 1.0 if travel_mm is None else travel_mm
+
         self.guard._sample(FakeReading(grams=grams), moving=moving)
 
     def record_payload(self) -> dict[str, Any]:
@@ -158,7 +175,7 @@ class WeightChangeDetectionTests(unittest.TestCase):
         self.assertEqual(trip["axis"], "y_axis")
         self.assertAlmostEqual(trip["delta_grams"], 11.0)
         self.assertAlmostEqual(trip["baseline_grams"], 100.0)
-        self.assertEqual(trip["axis_position_mm"], 412.5)
+        self.assertEqual(trip["axis_position_mm"], 411.5)
 
     def test_decrease_over_threshold_trips(self):
         self.harness.sample(100.0, moving=False)
@@ -242,7 +259,7 @@ class WeightChangeDetectionTests(unittest.TestCase):
         self.assertEqual(payload["sample_count"], 3)
         self.assertEqual(
             sorted(payload["samples"][1]),
-            ["axis_position_mm", "delta_grams", "elapsed_s", "stable", "valid", "weight_grams"],
+            ["axis_direction", "axis_position_mm", "delta_grams", "elapsed_s", "stable", "valid", "weight_grams"],
         )
         self.assertEqual(self.harness.guard.source_state()["record_path"].endswith(".json"), True)
         self.assertTrue(self.harness.flushed_path.endswith(".json"))
@@ -255,6 +272,63 @@ class WeightChangeDetectionTests(unittest.TestCase):
 
         self.assertEqual(len(self.harness.trips), 1)
         self.assertEqual(self.harness.guard.source_state()["delta_grams"], 40.0)
+
+
+class WeightChangeDirectionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.harness = GuardHarness()
+        self.addCleanup(self.harness.cleanup)
+
+    def test_upward_travel_never_trips(self):
+        # Lifting a tray off the cell drops the weight while y rises.
+        self.harness.sample(1400.0, moving=False)
+        self.harness.sample(1400.0, moving=True, direction=1)
+        self.harness.sample(200.0, moving=True, direction=1)
+        self.harness.sample(150.0, moving=True, direction=1)
+
+        self.assertFalse(self.harness.guard.is_latched)
+        self.assertEqual(self.harness.trips, [])
+
+    def test_unknown_direction_never_trips(self):
+        self.harness.sample(100.0, moving=False)
+        self.harness.sample(160.0, moving=True, direction=0, travel_mm=-5.0)
+
+        self.assertFalse(self.harness.guard.is_latched)
+
+    def test_commanded_down_waits_for_the_axis_to_descend(self):
+        self.harness.sample(100.0, moving=False)
+        self.harness.sample(160.0, moving=True, travel_mm=0.0)
+        self.harness.sample(160.0, moving=True, travel_mm=-0.3)
+
+        self.assertFalse(self.harness.guard.is_latched)
+
+        self.harness.sample(160.0, moving=True, travel_mm=-0.3)
+
+        self.assertTrue(self.harness.guard.is_latched)
+        # Measured against the resting weight, not one read while waiting to descend.
+        self.assertAlmostEqual(self.harness.trips[0]["delta_grams"], 60.0)
+
+    def test_crash_that_stops_the_descent_still_trips(self):
+        self.harness.guard._min_samples = 3
+        self.harness.sample(100.0, moving=False)
+        self.harness.sample(100.0, moving=True, travel_mm=-20.0)
+        for grams in (130.0, 160.0, 190.0):
+            self.harness.sample(grams, moving=True, travel_mm=0.0)
+
+        self.assertTrue(self.harness.guard.is_latched)
+
+    def test_descent_after_an_upward_move_compares_against_the_new_rest(self):
+        self.harness.sample(1400.0, moving=False)
+        self.harness.sample(200.0, moving=True, direction=1)
+        self.harness.sample(200.0, moving=False)
+        self.harness.sample(204.0, moving=True)
+
+        self.assertFalse(self.harness.guard.is_latched)
+
+        self.harness.sample(215.0, moving=True)
+
+        self.assertTrue(self.harness.guard.is_latched)
+        self.assertAlmostEqual(self.harness.trips[0]["delta_grams"], 15.0)
 
 
 class WeightChangeAcknowledgementTests(unittest.TestCase):
@@ -448,7 +522,11 @@ class WeightChangeGuardLoopTests(unittest.IsolatedAsyncioTestCase):
         await guard.start()
         self.addAsyncCleanup(guard.stop)
 
+        # At rest first, as on a running machine, so the guard knows where the move starts.
+        await asyncio.sleep(0.03)
         axis.moving = True
+        axis.direction = -1
+        axis.position -= 10.0
         await asyncio.sleep(0.05)
         self.assertGreater(scale.reads, 3)
 
