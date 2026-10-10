@@ -5,6 +5,10 @@ wedged between the gantry and the scale, which in practice happens when a bottle
 or a tray is dropped in the IO box. The cell itself is the earliest sensor for
 that event, so while y is in motion this samples the scale as fast as the bus
 allows and raises the same interruption the light curtain does.
+
+Only descending travel can wedge something against the cell, and lifting a tray
+or bottle off it legitimately changes the weight, so the guard arms only while y
+is commanded down and has actually moved down.
 """
 
 from __future__ import annotations
@@ -45,6 +49,9 @@ READ_ERROR_SUSPEND_MAX_S = 30.0
 # legitimately while nothing was watching, so the baseline is retaken rather than
 # compared against a stale sample.
 BASELINE_MAX_GAP_S = 1.0
+# Descent that confirms the axis is travelling down rather than settling at the
+# start of the move; well above encoder jitter, well below a crash distance.
+MIN_DESCENT_MM = 0.5
 
 WeightTripListener = Callable[[dict[str, Any]], None]
 
@@ -54,16 +61,18 @@ class WeightSample(NamedTuple):
     weight_grams: float
     delta_grams: Optional[float]
     axis_position_mm: Optional[float]
+    axis_direction: int
     stable: bool
     valid: bool
 
 
 class WeightChangeGuard:
-    """Watch the scale while the y axis moves and interrupt on a sudden delta.
+    """Watch the scale while the y axis moves down and interrupt on a sudden delta.
 
     The baseline is the weight read while the axis was last idle, so a legitimate
     deposit or lift that happens during travel is measured against the resting
-    weight of the machine rather than against a reading taken mid-move.
+    weight of the machine rather than against a reading taken mid-move. Upward
+    travel only keeps the baseline current; it never trips.
     """
 
     def __init__(
@@ -103,6 +112,8 @@ class WeightChangeGuard:
         self._samples: deque[WeightSample] = deque(maxlen=record_size)
         self._baseline_grams: Optional[float] = None
         self._moving_since: Optional[float] = None
+        self._move_start_mm: Optional[float] = None
+        self._rest_position_mm: Optional[float] = None
         self._grace_until: Optional[float] = None
         self._streak = 0
         self._latched = False
@@ -272,12 +283,14 @@ class WeightChangeGuard:
             if self._baseline_grams is None
             else reading.grams - self._baseline_grams
         )
+        direction = self._axis.commanded_direction()
         self._samples.append(
             WeightSample(
                 elapsed_s=now - self._epoch,
                 weight_grams=reading.grams,
                 delta_grams=delta,
                 axis_position_mm=self._axis.position_mm(),
+                axis_direction=direction,
                 stable=reading.stable,
                 valid=reading.valid,
             )
@@ -291,12 +304,21 @@ class WeightChangeGuard:
         if moving is False:
             self._baseline_grams = reading.grams
             self._moving_since = None
+            self._move_start_mm = None
+            self._rest_position_mm = self._axis.position_mm()
             self._streak = 0
 
             return
 
         if self._moving_since is None:
             self._moving_since = now
+            # The last idle sample is where the move began; the first moving one may
+            # already be a few millimetres into it.
+            self._move_start_mm = (
+                self._rest_position_mm
+                if self._rest_position_mm is not None
+                else self._axis.position_mm()
+            )
 
         if gap_s is not None and gap_s > BASELINE_MAX_GAP_S:
             self._baseline_grams = reading.grams
@@ -319,6 +341,20 @@ class WeightChangeGuard:
 
             return
 
+        if direction >= 0:
+            # Lifting a load off the cell is a legitimate change, so upward (or
+            # unknown) travel keeps the baseline current instead of comparing.
+            self._baseline_grams = reading.grams
+            self._streak = 0
+
+            return
+
+        if self._has_descended() is False:
+            # Commanded down but not moving yet: keep the resting baseline.
+            self._streak = 0
+
+            return
+
         if now - self._moving_since < self._arm_delay_s:
             return
 
@@ -335,6 +371,24 @@ class WeightChangeGuard:
             return
 
         self._trip(delta_grams=delta, weight_grams=reading.grams)
+
+    def _has_descended(self) -> bool:
+        """Whether the axis has travelled down since the move started.
+
+        Measured from the start rather than between samples: a crash stops the
+        axis, and the guard must still fire once it has stopped moving.
+        """
+        position_mm = self._axis.position_mm()
+
+        if position_mm is None:
+            return False
+
+        if self._move_start_mm is None:
+            self._move_start_mm = position_mm
+
+            return False
+
+        return self._move_start_mm - position_mm >= MIN_DESCENT_MM
 
     def _trip(self, *, delta_grams: float, weight_grams: float) -> None:
         self._latched = True
