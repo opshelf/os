@@ -104,6 +104,13 @@ class RobotInitTracker:
             ]
         return [name for name in self._order if self._components[name].get("phase") == FAILED]
 
+    def failure_reasons(self, names: list[str]) -> dict[str, str]:
+        return {
+            name: str(self._components[name].get("reason") or "")
+            for name in names
+            if name in self._components
+        }
+
     def _all_components_ready(self) -> bool:
         return all(
             self._components[name].get("phase") == READY

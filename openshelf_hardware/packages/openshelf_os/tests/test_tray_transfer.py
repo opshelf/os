@@ -19,6 +19,7 @@ def build_robot():
         'retract_empty', 'retract', 'clear_alarms',
     )})
     tool.get_param = AsyncMock(return_value=(100, 200))
+    tool.is_grip_detection_enabled = True
     gripped = GripState(0x71, 0x9000, 0x90, 0x40)
     tool._gs = SimpleNamespace(
         open=AsyncMock(return_value=gripped), close=AsyncMock(), read_state=AsyncMock(return_value=gripped),
@@ -49,3 +50,14 @@ async def test_return_tray_requires_grip_before_and_after_retract(grip_obj, retr
         await robot.return_tray(AxisCoordinate(10, 20))
     assert call.close_door() not in ops.mock_calls
     robot._tool.place.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_return_tray_skips_grip_check_when_object_detection_disabled():
+    robot, ops = build_robot()
+    robot._tool.is_grip_detection_enabled = False
+    robot._tool._gs.open.return_value = GripState(0xF1, 0, 0, 0)
+    robot._tool._gs.read_state.return_value = GripState(0xF1, 0, 0, 0)
+    await robot.return_tray(AxisCoordinate(10, 20))
+    assert call.close_door() in ops.mock_calls
+    robot._tool.place.assert_awaited_once()
