@@ -1159,6 +1159,9 @@ class Tool:
                 f"({upper_lim - lower_lim} < {margin_mm * 2})"
             )
 
+        if getattr(x_motor, "_is_homed", True) is False:
+            raise MotorError("X axis is not homed; home X before rotating")
+
         current_x = await x_motor.get_position()
 
         if current_x < lower_lim + margin_mm:
@@ -1485,6 +1488,11 @@ class Tool:
         original_x = None
 
         if self._mx is not None:
+            # The clearance move below is in X coordinates; after a power cycle the drive
+            # reads 0 wherever the carriage stands, so X must be homed before it moves.
+            if getattr(self._mx, "_is_homed", True) is False:
+                await self._mx.home()
+
             rotation_front = await self.get_param("ROTATION_FRONT")
 
             if rotation_front is None:
@@ -1518,7 +1526,9 @@ class Tool:
         failed_config_motors = failed_config_motors or []
         failed_home_motors: List[Motor] = []
 
-        for motor in (self._mg, self._ms):
+        # X homes before rotate: the rotate step moves X out for clearance, which is only
+        # safe once X knows where it is.
+        for motor in (self._mg, self._ms, self._mx):
             if isolate is True:
                 if await self._home_step_isolated(motor, failed_config_motors) is False and motor is not None:
                     failed_home_motors.append(motor)
@@ -1530,23 +1540,21 @@ class Tool:
         elif self._mr is not None:
             await self._home_rotate_sequence()
 
-        for motor in (self._mx, self._my):
-            pre_home_clearance_mm = y_pre_home_clearance_mm if motor is self._my else None
-            if isolate is True:
-                await self._home_step_isolated(
-                    motor,
-                    failed_config_motors,
-                    pre_home_clearance_mm=pre_home_clearance_mm,
+        if isolate is True:
+            await self._home_step_isolated(
+                self._my,
+                failed_config_motors,
+                pre_home_clearance_mm=y_pre_home_clearance_mm,
+            )
+        elif self._my is not None:
+            if y_pre_home_clearance_mm is None:
+                await self._my.home()
+            else:
+                await self._my.home(
+                    pre_home_clearance_mm=y_pre_home_clearance_mm,
+                    skip_pre_home_approach=True,
+                    homing_peak_current=Y_STARTUP_HOME_PEAK_CURRENT,
                 )
-            elif motor is not None:
-                if pre_home_clearance_mm is None:
-                    await motor.home()
-                else:
-                    await motor.home(
-                        pre_home_clearance_mm=pre_home_clearance_mm,
-                        skip_pre_home_approach=True,
-                        homing_peak_current=Y_STARTUP_HOME_PEAK_CURRENT,
-                    )
 
     def _did_motor_configure_fail(self, motor: Optional[Motor], failed_config_motors: List[Motor]) -> bool:
         if motor is None:
