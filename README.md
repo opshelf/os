@@ -149,6 +149,10 @@ prefer a scanner by-id path or a scanner-specific udev symlink. do not use `/dev
 - api health: `http://localhost:8000/api/health`
 - developer login: `developer@opshelf.com` with pin `1111` in development and mock mode
 
+### roles
+
+routes that move hardware, start or abort calibration, save calibration, run the demo cycle, or restart the api need `robot:control` (the default `admin` and `operator` roles; `viewer` has only `storage:read`). reading state needs only a login. `store_item` and `retrieve_item` commands stay open to every signed-in user, with retrieve still checking the item's access level, but a store that creates a new item needs `storage:write`. the relay keeps its scoped access.
+
 ### developer account
 
 every database gets the system user `developer@opshelf.com` (admin role, hidden from user lists). its pin follows the mode on every start:

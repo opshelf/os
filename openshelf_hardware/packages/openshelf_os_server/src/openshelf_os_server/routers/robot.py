@@ -12,8 +12,9 @@ import re
 from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Iterable, List, Literal, NoReturn, Optional, cast
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
 from openshelf_os.common import ConfigError
 from openshelf_os.config.settings import BARCODE_MAX_LENGTH
 from openshelf_os.operating_mode import OperatingMode
@@ -81,6 +82,7 @@ from .auth_deps import (
     get_current_user,
     get_relay_or_current_user,
     get_relay_or_current_user_for_stream,
+    ensure_permissions,
     require_permissions,
     can_user_retrieve_item,
 )
@@ -389,6 +391,45 @@ async def get_optional_command_worker_for_mode() -> RobotWorker | None:
         return None
 
 
+_ROBOT_COMMANDS_ADAPTER: TypeAdapter[RobotCommands] = TypeAdapter(RobotCommands)
+
+
+async def get_command_submitter(
+    request: Request,
+    current_user: User = Depends(get_relay_or_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Authenticate a command submission and check it against the submitter's role.
+
+    Store and retrieve stay open to any signed-in user (retrieve checks the item's
+    access level later); every other command moves the robot directly and needs
+    robot:control. A store that names an unknown barcode creates the item, which
+    /api/storage/items guards with storage:write, so the same permission applies here.
+    The relay keeps its scoped access to both.
+
+    The body is parsed here rather than declared, so an invalid one is reported
+    once, by the endpoint's own validation.
+    """
+    if getattr(request.state, "relay_service_authenticated", False) is True:
+        return current_user
+    try:
+        command = _ROBOT_COMMANDS_ADAPTER.validate_python(await request.json())
+    except (ValueError, PydanticValidationError):
+        return current_user
+    if not isinstance(command, (StoreItemCommand, RetrieveItemCommand)):
+        ensure_permissions(current_user, "robot:control")
+        return current_user
+    if not isinstance(command, StoreItemCommand):
+        return current_user
+    barcode = (command.item or {}).get("barcode")
+    if not isinstance(barcode, str):
+        return current_user
+    existing = (await db.execute(select(Item.id).where(Item.barcode == barcode))).scalar_one_or_none()
+    if existing is None:
+        ensure_permissions(current_user, "storage:write")
+    return current_user
+
+
 def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: RobotWorker) -> None:
     if worker.needs_home() is False:
         return
@@ -668,7 +709,6 @@ async def _validate_mock_retrieve(
 
 @router.post(
     "/commands",
-    dependencies=[Depends(get_relay_or_current_user)],
     response_model=CommandAcceptedResponse,
     responses=response_docs(
         errors=(400, 401, 403, 404, 409, 422, 429, 503),
@@ -685,7 +725,7 @@ async def _validate_mock_retrieve(
 async def robot_commands(
     command: RobotCommands,
     worker: RobotWorker | None = Depends(get_optional_command_worker_for_mode),
-    current_user: User = Depends(get_relay_or_current_user),
+    current_user: User = Depends(get_command_submitter),
     db: AsyncSession = Depends(get_db),
 ) -> CommandAcceptedResponse:
     """Queue a robot command.
@@ -1094,9 +1134,9 @@ async def clear_robot_commands(
 
 @router.post(
     "/gripper",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_permissions("robot:control"))],
     summary="Grip or release directly",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 async def control_gripper(
     state: Literal["grip", "release"],
@@ -1121,9 +1161,9 @@ async def control_gripper(
 
 @router.post(
     "/safety/acknowledge",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Acknowledge a cleared safety interruption",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 async def acknowledge_safety_guard(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1354,9 +1394,9 @@ async def get_scale_calibration_params(
 
 @router.post(
     "/debug/scale/calibration/params",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Write scale calibration parameters",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 404, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 503)),
 )
 async def set_scale_calibration_params(
     request: ScaleCalibrationParamsRequest,
@@ -1394,9 +1434,9 @@ async def set_scale_calibration_params(
 
 @router.post(
     "/debug/scale/calibration/zero",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Calibrate the scale zero point",
-    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 404, 503)),
+    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 403, 404, 503)),
 )
 async def calibrate_scale_zero(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1427,9 +1467,9 @@ async def calibrate_scale_zero(
 
 @router.post(
     "/debug/scale/calibration/weight",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Calibrate with a known weight",
-    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 404, 503)),
+    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 403, 404, 503)),
 )
 async def calibrate_scale_weight(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1460,9 +1500,9 @@ async def calibrate_scale_weight(
 
 @router.post(
     "/debug/scale/calibration/tare",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Tare the physical scale",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 404, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 503)),
 )
 async def scale_tare(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1521,9 +1561,9 @@ async def get_motors() -> dict:
 
 @router.post(
     "/debug/motors/{motor_name}/crash",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Inject a motor crash",
-    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 503)),
+    responses=response_docs(model=MotorOperationResponse, errors=(401, 403, 404, 503)),
 )
 async def simulate_motor_crash(
     motor_name: str,
@@ -1547,9 +1587,9 @@ async def simulate_motor_crash(
 
 @router.post(
     "/debug/motors/{motor_name}/clear",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Clear a motor alarm",
-    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 503)),
+    responses=response_docs(model=MotorOperationResponse, errors=(401, 403, 404, 503)),
 )
 async def clear_motor_alarm(
     motor_name: str,
@@ -1594,7 +1634,7 @@ async def clear_motor_alarm(
 
 @router.post(
     "/debug/motors/{motor_name}/home",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Home one motor",
     responses=response_docs(model=MotorOperationResponse, errors=(400, 401, 403, 404, 503)),
 )
@@ -1708,9 +1748,9 @@ async def get_power_rails() -> dict:
 
 @router.post(
     "/debug/power/{rail}/cycle",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Power-cycle a switched rail",
-    responses=response_docs(model=PowerCycleResponse, errors=(401, 404, 409, 503)),
+    responses=response_docs(model=PowerCycleResponse, errors=(401, 403, 404, 409, 503)),
 )
 async def power_cycle_rail(
     rail: str,
@@ -1754,9 +1794,9 @@ async def power_cycle_rail(
 
 @router.post(
     "/debug/motors/probe",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Probe motor responsiveness",
-    responses=response_docs(errors=(401, 503)),
+    responses=response_docs(errors=(401, 403, 503)),
 )
 async def probe_motors(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1816,9 +1856,9 @@ async def probe_motors(
 
 @router.post(
     "/debug/motors/{motor_name}/move",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Move one motor to a position",
-    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 503)),
+    responses=response_docs(model=MotorOperationResponse, errors=(401, 403, 404, 503)),
 )
 async def move_motor(
     motor_name: str,
@@ -1867,9 +1907,9 @@ async def move_motor(
 
 @router.post(
     "/debug/door",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Operate the IO box door",
-    responses=response_docs(model=DoorOperationResponse, errors=(401, 503)),
+    responses=response_docs(model=DoorOperationResponse, errors=(401, 403, 503)),
 )
 async def control_door(
     action: Literal["open", "close", "home"],
