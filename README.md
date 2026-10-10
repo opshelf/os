@@ -83,7 +83,7 @@ chmod 600 .env
 ./scripts/start --mode mock --detached
 ```
 
-the normal developer account (`developer@opshelf.com`, pin `1111`) is seeded, but authentication remains required. existing item CRUD, users, roles, access levels, permissions, audit logging, correlation-id propagation, and response schemas continue to use sqlite.
+the developer account (`developer@opshelf.com`, pin `1111` unless `DEVELOPER_PIN` is set; see [developer account](#developer-account)) is seeded, but authentication remains required. existing item CRUD, users, roles, access levels, permissions, audit logging, correlation-id propagation, and response schemas continue to use sqlite.
 
 the virtual cabinet has 80 deterministic cells: front module then back module, four shelves per side, and ten cells per shelf. `items` and `item_locations` in `base.mock.db` are the occupancy source of truth. the runtime exposes:
 
@@ -147,7 +147,17 @@ prefer a scanner by-id path or a scanner-specific udev symlink. do not use `/dev
 
 - ui: `http://localhost:8080`
 - api health: `http://localhost:8000/api/health`
-- developer login: `developer@opshelf.com` with pin `1111`
+- developer login: `developer@opshelf.com` with pin `1111` in development and mock mode
+
+### developer account
+
+every database gets the system user `developer@opshelf.com` (admin role, hidden from user lists). its pin follows the mode on every start:
+
+- development and mock: `1111`, so the dev ui signs in by itself
+- production and demo: the value of `DEVELOPER_PIN` in the api environment (the checkout `.env`, next to `JWT_SECRET`); without one the user is locked with a random pin, and a device still carrying `1111` from an older release is moved off it at startup
+- `DEVELOPER_PIN` overrides the pin in every mode
+
+when the device rejects `1111`, the dev ui asks for the pin once and keeps it in memory for the tab. `scripts/y_first_home_diagnostic.py` reads it from `OPENSHELF_DIAGNOSTIC_PIN` or prompts.
 
 ### relay service authentication
 
