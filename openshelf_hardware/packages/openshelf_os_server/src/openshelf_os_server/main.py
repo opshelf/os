@@ -86,6 +86,7 @@ from openshelf_os_server.database.models import AccessLevel, Role, User
 from openshelf_os_server.launcher import bootstrap_runtime_state
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
+from openshelf_os_server.middleware.inventory_events import InventoryEventsMiddleware
 from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, chemicals, demo, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
 from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings, get_operating_mode
 from openshelf_os_server.utils.cors_policy import allows_credentials, resolve_allowed_origins
@@ -1156,6 +1157,7 @@ app.add_middleware(
 	allow_methods=["*"],
 	allow_headers=["*"],
 )
+app.add_middleware(InventoryEventsMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(AuditMiddleware, sentry_enabled=sentry_enabled)
 register_mapped_handlers(app)
