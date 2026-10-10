@@ -24,7 +24,6 @@ GANTRY_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
-ROTATION_HOME_SAFE_X_MM = 475.0
 ROTATION_SAFE_X_MARGIN_MM = 200.0
 ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
 ROTATION_POSITION_EPSILON_DEG = 0.05
@@ -1493,17 +1492,7 @@ class Tool:
             if getattr(self._mx, "_is_homed", True) is False:
                 await self._mx.home()
 
-            rotation_front = await self.get_param("ROTATION_FRONT")
-
-            if rotation_front is None:
-                raise ConfigError("Missing ROTATION_FRONT parameter")
-
-            current_rotation = await rotate_motor.get_position()
-
-            if current_rotation > float(rotation_front):
-                await self._mx.move_to_position(ROTATION_HOME_SAFE_X_MM)
-            else:
-                original_x = await self.ensure_safe_rotation_x_position()
+            original_x = await self.ensure_safe_rotation_x_position()
 
         try:
             did_extend_stage = await self.ensure_safe_rotation_stage_extension()

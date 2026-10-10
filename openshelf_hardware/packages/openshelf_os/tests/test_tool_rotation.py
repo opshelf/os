@@ -107,7 +107,29 @@ async def test_home_rotate_sequence_homes_unhomed_x_before_clearance_move() -> N
 
     await tool._home_rotate_sequence()
 
-    assert events[:3] == ["home_x", "x:200.0", "home_rotate"]
+    assert events == ["home_x", "x:200.0", "home_rotate", "x:0.0"]
+
+
+@pytest.mark.parametrize("rotation", [0.0, 2.7036, 183.0])
+@pytest.mark.asyncio
+async def test_home_rotate_sequence_uses_edge_margin_and_returns_x(rotation: float) -> None:
+    events: list[str] = []
+    tool = Tool.__new__(Tool)
+    tool._mx = _mock_x_motor(position=0.0)
+    tool._mx._is_homed = True
+    tool._mx.move_to_position = AsyncMock(side_effect=lambda mm: events.append(f"x:{mm}"))
+    tool._mr = AsyncMock()
+    tool._mr.get_position = AsyncMock(return_value=rotation)
+    tool._mr.home = AsyncMock(side_effect=lambda: events.append("home_rotate"))
+    tool._ms = None
+    tool.get_param = AsyncMock(return_value=2.7)
+    tool.ensure_safe_rotation_stage_extension = AsyncMock(return_value=False)
+    tool.rotate_to_home_orientation = AsyncMock()
+
+    await tool._home_rotate_sequence()
+
+    # Whatever angle the tool rests at, X only clears the edge margin and comes back to 0.
+    assert events == ["x:200.0", "home_rotate", "x:0.0"]
 
 
 @pytest.mark.asyncio
