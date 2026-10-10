@@ -1028,7 +1028,7 @@ class Robot:
         self._logger.info("Safety guard cleared")
 
     def _build_weight_guard(self) -> Optional[WeightChangeGuard]:
-        """Watch the scale during y travel so a crash into the cell stops motion.
+        """Watch the scale during downward y travel so a crash into the cell stops motion.
 
         Returns None when the scale or the y axis is absent, or when the guard is
         switched off in config, in which case the safety sources simply omit it.
@@ -1135,6 +1135,8 @@ class Robot:
         if self._tool._my is None:
             raise ConfigError("Y-axis motor not configured")
 
+        self.set_operation_context(phase="io_place.ensure_door_homed")
+        await self._io.ensure_door_homed()
         self.set_operation_context(phase="io_place.pick_from_shelf", target_coordinate=coord)
         await self._tool.pick(coord)
         self.set_operation_context(phase="io_place.rotate_to_front")
@@ -1157,7 +1159,7 @@ class Robot:
         await self._tool.place(coord)
 
         self.set_operation_context(phase="io_place.home_door")
-        await self._io.home_door()
+        await self._io.home_door_after_cycle()
         self.set_operation_context(phase="io_place.clear_alarms")
         await self._tool.clear_alarms()
 
@@ -1170,6 +1172,8 @@ class Robot:
         if self._tool._my is None:
             raise ConfigError("Y-axis motor not configured")
 
+        self.set_operation_context(phase="io_pick.ensure_door_homed")
+        await self._io.ensure_door_homed()
         self.set_operation_context(phase="io_pick.pick_from_shelf_cell", target_coordinate=coord)
         await self._tool.pick(coord)
         self.set_operation_context(phase="io_pick.rotate_to_front")
@@ -1192,7 +1196,7 @@ class Robot:
         await self._tool.place(coord)
 
         self.set_operation_context(phase="io_pick.home_door")
-        await self._io.home_door()
+        await self._io.home_door_after_cycle()
         self.set_operation_context(phase="io_pick.clear_alarms")
         await self._tool.clear_alarms()
 
@@ -1200,7 +1204,11 @@ class Robot:
         """Route tray servo failures through the command hardware-fault interlock."""
         try:
             if engaged:
-                require_grip(await self._tool._gs.open(), "tray grip")
+                require_grip(
+                    await self._tool._gs.open(),
+                    "tray grip",
+                    is_enabled=self._tool.is_grip_detection_enabled,
+                )
             else:
                 await self.release_gripper()
         except Exception as exc:
@@ -1254,7 +1262,11 @@ class Robot:
         self.set_operation_context(phase="return_tray.retract")
         await self._tool.retract()
         try:
-            require_grip(await self._tool._gs.read_state(), "tray retract")
+            require_grip(
+                await self._tool._gs.read_state(),
+                "tray retract",
+                is_enabled=self._tool.is_grip_detection_enabled,
+            )
         except Exception as exc:
             raise GripperError(f"Tray retract grip verification failed: {exc}") from exc
         self.set_operation_context(phase="return_tray.close_door")
@@ -1512,12 +1524,13 @@ class Robot:
             )
 
         self._state.current_cell = location
+        # The commanded barcode is the one the server located in this cell; the grid's
+        # in-memory item misses location edits made through the API, and reporting it
+        # instead would remove the wrong item's location.
         retrieved_barcode: str | None = barcode_hint
-        if cached_item is not None:
+        if retrieved_barcode is None and cached_item is not None:
             barcode_from_data = cached_item.data.get("barcode") if cached_item.data else None
-            cached_barcode = cached_item.barcode or (str(barcode_from_data) if barcode_from_data is not None else None)
-            if cached_barcode is not None:
-                retrieved_barcode = cached_barcode
+            retrieved_barcode = cached_item.barcode or (str(barcode_from_data) if barcode_from_data is not None else None)
 
         self.set_operation_context(command=command_name, phase="retrieve.moving_from_io_to_shelf", target_cell=location)
         try:

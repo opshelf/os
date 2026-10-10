@@ -7,8 +7,10 @@ import pytest
 from sqlalchemy import select
 
 import openshelf_os_server.core.robot as robot_core
+import openshelf_os_server.core.robot_events as robot_events
 from openshelf_os_server.core import bin_storage
 from openshelf_os_server.core.bin_storage import BinStorageService
+from openshelf_os_server.core.event_log import latest_robot_event_seq, read_robot_events
 from openshelf_os_server.core.robot_events import (
     RobotEventListener,
     process_robot_event,
@@ -318,3 +320,86 @@ async def test_released_bin_barcode_and_home_allow_legacy_mutation(
         )
         assert {item.barcode for item in items} == {barcode, "direct-released"}
 
+
+
+class _FanoutWorker:
+    """Fans each published event out to every subscriber, like RobotWorker."""
+
+    def __init__(self) -> None:
+        self._subscribers: list[asyncio.Queue[str]] = []
+
+    async def subscribe_events(self) -> asyncio.Queue[str]:
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        self._subscribers.append(queue)
+        return queue
+
+    async def unsubscribe_events(self, queue: asyncio.Queue[str]) -> None:
+        self._subscribers.remove(queue)
+
+    async def publish_event(self, payload: dict[str, str]) -> None:
+        for queue in list(self._subscribers):
+            await queue.put(json.dumps(payload))
+
+
+@pytest.mark.anyio
+async def test_late_event_subscriber_waits_for_the_inventory_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A kiosk reload opens its event stream long after the API started. Its first event
+    # must still wait for the listener's commit, or its inventory refresh reads the old cell.
+    # The stream forwards only logged events, so the log row must wait for that commit.
+    release = asyncio.Event()
+    processed: list[str] = []
+
+    async def process(payload: dict[str, str], worker: object) -> None:
+        if payload["barcode"] == "late":
+            await release.wait()
+        processed.append(payload["barcode"])
+
+    monkeypatch.setattr(robot_events, "process_robot_event", process)
+    worker = _FanoutWorker()
+    listener = RobotEventListener(worker)  # type: ignore[arg-type]
+    await listener.start()
+    try:
+        await worker.publish_event({"barcode": "early"})
+        await listener.drain()
+
+        await worker.subscribe_events()
+        top = await latest_robot_event_seq()
+        await worker.publish_event({"barcode": "late"})
+
+        await asyncio.sleep(0.05)
+        assert await read_robot_events(top, 10) == []
+        release.set()
+        await listener.drain()
+        assert [row.payload["barcode"] for row in await read_robot_events(top, 10)] == ["late"]
+        assert processed == ["early", "late"]
+    finally:
+        await listener.stop()
+
+
+@pytest.mark.anyio
+async def test_event_listener_survives_a_failing_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    processed: list[str] = []
+
+    async def process(payload: dict[str, str], worker: object) -> None:
+        if payload["barcode"] == "broken":
+            raise RuntimeError("database is locked")
+        processed.append(payload["barcode"])
+
+    monkeypatch.setattr(robot_events, "process_robot_event", process)
+    worker = _FanoutWorker()
+    listener = RobotEventListener(worker)  # type: ignore[arg-type]
+    await listener.start()
+    try:
+        top = await latest_robot_event_seq()
+        await worker.publish_event({"barcode": "broken"})
+        await worker.publish_event({"barcode": "next"})
+        await listener.drain()
+
+        assert processed == ["next"]
+        # The failed event is still logged, so stream clients get its command result.
+        logged = [row.payload["barcode"] for row in await read_robot_events(top, 10)]
+        assert logged == ["broken", "next"]
+    finally:
+        await listener.stop()

@@ -172,6 +172,11 @@ async def process_robot_event(
                         "Removed location for retrieved item: barcode=%s side=%s shelf=%s cell=%s",
                         barcode, side, shelf_idx_int, cell_idx_int,
                     )
+                else:
+                    logger.warning(
+                        "Retrieved item had no location to remove: barcode=%s side=%s shelf=%s cell=%s",
+                        barcode, side, shelf_idx_int, cell_idx_int,
+                    )
             except Exception as err:
                 logger.exception("Failed to process retrieve_item event for %s: %s", barcode, err)
 
@@ -342,9 +347,15 @@ class RobotEventListener:
                     logger.warning("Received malformed robot event: %s", payload_json)
                     continue
 
-                await process_robot_event(payload, self._worker)
-                # The log row commits before the tracker release, so SSE clients
-                # can only observe the event once it is durable and replayable.
+                try:
+                    await process_robot_event(payload, self._worker)
+                except Exception as err:
+                    # An escaping error would end this task and silently stop every later
+                    # inventory update while commands keep reporting success.
+                    logger.exception("Failed to process robot event %s: %s", payload_json[:200], err)
+                # The log row commits after the side effects, and is written even when
+                # they failed so clients still get the command result. SSE clients can
+                # only observe the event once it is durable and replayable.
                 await append_robot_event(payload)
             finally:
                 queue.task_done()

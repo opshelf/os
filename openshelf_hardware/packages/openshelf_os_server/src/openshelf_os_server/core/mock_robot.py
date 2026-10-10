@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 
 from openshelf_os_server.core.bin_storage import reserved_bin_locations
+from openshelf_os_server.core.command_lifecycle import ensure_target_not_in_flight
 from openshelf_os_server.core.event_log import append_robot_event
 from openshelf_os_server.database.models import (
 	Item,
@@ -192,6 +193,8 @@ class MockRobotRuntime:
 						if existing.payload != payload:
 							raise MockRequestConflictError
 						return existing, True
+
+				await ensure_target_not_in_flight(session, payload, runtime="mock")
 
 				active_count = await session.scalar(
 					select(func.count())

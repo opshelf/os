@@ -5,7 +5,7 @@ from typing import Any, List, cast
 import sentry_sdk
 
 from openshelf_os.device import get_device_id
-from openshelf_os.operating_mode import get_operating_mode, should_enable_sentry
+from openshelf_os.operating_mode import get_operating_mode, is_service_process, should_enable_sentry
 
 try:
 	from sentry_sdk.integrations.logging import LoggingIntegration
@@ -20,6 +20,10 @@ def _configure_sentry() -> bool:
 	mode = get_operating_mode()
 	if should_enable_sentry(mode) is False:
 		logging.debug("Sentry disabled for openshelf_os: mode=%s", mode.value)
+		return False
+
+	if is_service_process() is False:
+		logging.debug("Sentry disabled for openshelf_os: not the service process")
 		return False
 
 	if sentry_dsn == "":
