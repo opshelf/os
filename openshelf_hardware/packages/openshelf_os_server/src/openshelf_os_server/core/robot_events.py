@@ -20,37 +20,6 @@ EVENT_DRAIN_TIMEOUT_S = 5.0
 EVENT_FORWARD_WAIT_TIMEOUT_S = 5.0
 
 
-class EventProcessingTracker:
-    """Track worker events whose side effects have finished.
-
-    The event listener commits DB state after the worker emits an event, so the
-    durable event log row (which commits after the side effects) only exists once
-    processing has finished. The tracker marks the release point after the log
-    append, so side-effect completeness is tracked for concurrent operations.
-    """
-
-    def __init__(self) -> None:
-        self._lock = asyncio.Condition()
-        self._processed = 0
-        self._active = False
-
-    def activate(self) -> None:
-        self._active = True
-
-    def deactivate(self) -> None:
-        self._active = False
-
-
-
-    async def record_processed(self) -> None:
-        async with self._lock:
-            self._processed += 1
-            self._lock.notify_all()
-
-
-event_processing_tracker = EventProcessingTracker()
-
-
 async def _refresh_status_after_commit(worker: Optional[RobotEventPublisher]) -> None:
     """Push a fresh status snapshot so SSE overlays reflect committed DB state.
 
@@ -293,7 +262,6 @@ class RobotEventListener:
         logger.info("Starting robot event listener")
         self._queue = await self._worker.subscribe_events()
         self._task = asyncio.create_task(self._consume_events(), name="robot-event-listener")
-        event_processing_tracker.activate()
 
     async def stop(self) -> None:
         if self._queue is not None:
@@ -314,8 +282,6 @@ class RobotEventListener:
                 logger.warning("Failed to stop robot event listener task: %s", err)
 
             self._task = None
-
-        event_processing_tracker.deactivate()
 
     async def drain(self) -> None:
         """Wait briefly for events already emitted by the worker to be persisted."""
@@ -359,4 +325,3 @@ class RobotEventListener:
                 await append_robot_event(payload)
             finally:
                 queue.task_done()
-                await event_processing_tracker.record_processed()
