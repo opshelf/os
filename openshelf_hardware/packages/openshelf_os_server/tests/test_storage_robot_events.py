@@ -10,9 +10,9 @@ import openshelf_os_server.core.robot as robot_core
 import openshelf_os_server.core.robot_events as robot_events
 from openshelf_os_server.core import bin_storage
 from openshelf_os_server.core.bin_storage import BinStorageService
+from openshelf_os_server.core.event_log import latest_robot_event_seq, read_robot_events
 from openshelf_os_server.core.robot_events import (
     RobotEventListener,
-    event_processing_tracker,
     process_robot_event,
 )
 from openshelf_os_server.core.storage import StorageService
@@ -347,6 +347,7 @@ async def test_late_event_subscriber_waits_for_the_inventory_commit(
 ) -> None:
     # A kiosk reload opens its event stream long after the API started. Its first event
     # must still wait for the listener's commit, or its inventory refresh reads the old cell.
+    # The stream forwards only logged events, so the log row must wait for that commit.
     release = asyncio.Event()
     processed: list[str] = []
 
@@ -364,12 +365,14 @@ async def test_late_event_subscriber_waits_for_the_inventory_commit(
         await listener.drain()
 
         await worker.subscribe_events()
-        baseline = event_processing_tracker.received_count()
+        top = await latest_robot_event_seq()
         await worker.publish_event({"barcode": "late"})
 
-        assert await event_processing_tracker.wait_until_processed(baseline + 1, 0.05) is False
+        await asyncio.sleep(0.05)
+        assert await read_robot_events(top, 10) == []
         release.set()
-        assert await event_processing_tracker.wait_until_processed(baseline + 1, 1.0) is True
+        await listener.drain()
+        assert [row.payload["barcode"] for row in await read_robot_events(top, 10)] == ["late"]
         assert processed == ["early", "late"]
     finally:
         await listener.stop()
@@ -389,10 +392,14 @@ async def test_event_listener_survives_a_failing_event(monkeypatch: pytest.Monke
     listener = RobotEventListener(worker)  # type: ignore[arg-type]
     await listener.start()
     try:
+        top = await latest_robot_event_seq()
         await worker.publish_event({"barcode": "broken"})
         await worker.publish_event({"barcode": "next"})
         await listener.drain()
 
         assert processed == ["next"]
+        # The failed event is still logged, so stream clients get its command result.
+        logged = [row.payload["barcode"] for row in await read_robot_events(top, 10)]
+        assert logged == ["broken", "next"]
     finally:
         await listener.stop()
