@@ -25,9 +25,9 @@ from alembic.script import ScriptDirectory
 from openshelf_os_server import main
 from openshelf_os_server.database.base import Base
 
-# The data-only revision under test and the head it extends.
+# The data-only revision under test and the current head the runner migrates to.
 PREVIOUS_HEAD = "d8e9f0a1b2c3"
-SIDE_VALUE_REVISION = "f9a0b1c2d3e4"
+HEAD_REVISION = "a5b6c7d8e9f0"
 
 
 class _RecordingLogger:
@@ -130,7 +130,7 @@ def test_migrations_baseline_stamp_renames_module_side_values(
     engine = _field_engine(tmp_path)
     url = str(engine.url)
     head = _alembic_head(url)
-    assert head == SIDE_VALUE_REVISION
+    assert head == HEAD_REVISION
 
     _stamp(engine, PREVIOUS_HEAD)
     _insert_old_side_values(engine)
@@ -141,7 +141,7 @@ def test_migrations_baseline_stamp_renames_module_side_values(
     stamped = recorder.named("migrations_baseline_stamped")
     assert stamped[0]["reason"] == "schema_matches_models"
     assert stamped[0]["previous_revision"] == PREVIOUS_HEAD
-    assert _alembic_version(engine) == [SIDE_VALUE_REVISION]
+    assert _alembic_version(engine) == [HEAD_REVISION]
     # The stamp alone would have skipped the data-only revision; the
     # post-stamp re-run must have renamed every row.
     assert _sides(engine, "item_locations") == ["front_module", "back_module"]
@@ -154,7 +154,7 @@ def test_migrations_replay_renames_module_side_values(
     engine = _field_engine(tmp_path)
     url = str(engine.url)
     head = _alembic_head(url)
-    assert head == SIDE_VALUE_REVISION
+    assert head == HEAD_REVISION
 
     _stamp(engine, PREVIOUS_HEAD)
     _insert_old_side_values(engine)
@@ -171,7 +171,7 @@ def test_migrations_replay_renames_module_side_values(
 
     assert recorder.failures() == [], f"migration_failed: {recorder.failures()}"
     assert "migrations_baseline_stamped" not in recorder.names()
-    assert _alembic_version(engine) == [SIDE_VALUE_REVISION]
+    assert _alembic_version(engine) == [HEAD_REVISION]
     assert _sides(engine, "item_locations") == ["front_module", "back_module"]
     assert _sides(engine, "storage_bins") == ["front_module", "back_module"]
 
@@ -182,7 +182,7 @@ def test_migrations_reapplies_the_rename_on_a_later_start(
     engine = _field_engine(tmp_path)
     url = str(engine.url)
     head = _alembic_head(url)
-    assert head == SIDE_VALUE_REVISION
+    assert head == HEAD_REVISION
 
     _insert_old_side_values(engine)
 
@@ -204,7 +204,7 @@ def test_migrations_reapplies_the_rename_on_a_later_start(
     assert recorder.failures() == [], f"migration_failed: {recorder.failures()}"
     assert recorder.names().count("migrations_baseline_stamped") == 0
     assert recorder.names().count("running_database_migrations") == 1
-    assert _alembic_version(engine) == [SIDE_VALUE_REVISION]
+    assert _alembic_version(engine) == [HEAD_REVISION]
     assert _sides(engine, "item_locations") == ["front_module", "back_module", "front_module"]
 
 
