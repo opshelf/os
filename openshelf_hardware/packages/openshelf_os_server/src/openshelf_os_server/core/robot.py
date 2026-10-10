@@ -278,7 +278,10 @@ async def init_robot_worker() -> None:
     failed = tracker.failed_components(degrading_only=True)
     if failed:
         tracker.set_overall(OVERALL_DEGRADED)
-        logger.warning("robot_initialized_degraded: failed_components=%s", failed)
+        reasons = tracker.failure_reasons(failed)
+        # Error level so Sentry gets an event: a degraded start leaves axes unhomed and
+        # every robot command refused until an operator homes them.
+        logger.error("robot_initialized_degraded: failed_components=%s reasons=%s", failed, reasons)
     else:
         tracker.set_overall(OVERALL_READY)
         logger.info("robot_initialized_ready")

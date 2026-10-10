@@ -1204,7 +1204,11 @@ class Robot:
         """Route tray servo failures through the command hardware-fault interlock."""
         try:
             if engaged:
-                require_grip(await self._tool._gs.open(), "tray grip")
+                require_grip(
+                    await self._tool._gs.open(),
+                    "tray grip",
+                    is_enabled=self._tool.is_grip_detection_enabled,
+                )
             else:
                 await self.release_gripper()
         except Exception as exc:
@@ -1258,7 +1262,11 @@ class Robot:
         self.set_operation_context(phase="return_tray.retract")
         await self._tool.retract()
         try:
-            require_grip(await self._tool._gs.read_state(), "tray retract")
+            require_grip(
+                await self._tool._gs.read_state(),
+                "tray retract",
+                is_enabled=self._tool.is_grip_detection_enabled,
+            )
         except Exception as exc:
             raise GripperError(f"Tray retract grip verification failed: {exc}") from exc
         self.set_operation_context(phase="return_tray.close_door")
