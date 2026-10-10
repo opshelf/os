@@ -60,6 +60,7 @@ from openshelf_os_server.core.mock_robot import (
 from openshelf_os_server.core.command_lifecycle import (
     CommandQueueFullError,
     CommandRequestConflictError,
+    CommandTargetInFlightError,
     admit as admit_robot_command,
     enqueue_persisted,
     get_command as get_lifecycle_command,
@@ -620,6 +621,16 @@ async def _validate_mock_store_location(
         )
 
 
+def _target_in_flight_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=error_detail(
+            "Another queued or running command already targets this item or cell",
+            "target_in_flight",
+        ),
+    )
+
+
 async def _validate_mock_retrieve(
     command: RetrieveItemCommand,
     current_user: User,
@@ -716,7 +727,8 @@ async def robot_commands(
     For retrieval, read the item first and supply its `location` (`side`, zero-based
     `shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box
     before retrieving. Home when `home_required` is reported. An item reserved by a tray interaction returns
-    `409`; a full queue returns `429` with `Retry-After`.
+    `409`, as does a store or retrieval whose barcode or cell is already targeted by a
+    queued or running command (`target_in_flight`); a full queue returns `429` with `Retry-After`.
 
     Mock mode supports only store/retrieve, with one FIFO worker and simulated completion.
     Hardware modes also accept the engineering commands in the schema. A queued stop is not
@@ -765,6 +777,8 @@ async def robot_commands(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="request_id was already used with a different payload",
                 ) from exc
+            except CommandTargetInFlightError as exc:
+                raise _target_in_flight_error() from exc
             except MockQueueFullError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -980,6 +994,8 @@ async def robot_commands(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="request_id was already used with a different payload",
             ) from exc
+        except CommandTargetInFlightError as exc:
+            raise _target_in_flight_error() from exc
         except CommandQueueFullError as exc:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -2052,7 +2068,8 @@ async def stream_events() -> EventSourceResponse:
 
     Server-Sent Events with JSON in each `data:` frame. Subscribe before submitting
     commands: this is a live stream without historical replay. Events include terminal
-    command results, scanner events, and bin-workflow updates; dispatch by `command`,
+    command results, scanner events, bin-workflow updates, and `inventory_changed` notices
+    after storage API writes (refetch inventory on these); dispatch by `command`,
     `message`, or `kind`, rather than assuming every frame is a completion.
 
     A terminal result includes `command_id`; use durable command polling after a disconnect.
