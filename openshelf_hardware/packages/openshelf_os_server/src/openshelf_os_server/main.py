@@ -893,7 +893,7 @@ async def _dev_auto_user_is_resolvable(email: str) -> bool:
 async def _ensure_dev_auto_user(email: str) -> None:
 	"""Create the configured dev auto user so the unauthenticated fallback
 	resolves on any database (e.g. a fresh one created on first start in this
-	mode). Mirrors _ensure_developer_user: admin role, PIN 1111, is_system.
+	mode). Mirrors _ensure_developer_user in development: admin role, PIN 1111, is_system.
 	An existing inactive user is activated instead of duplicated."""
 	if await _dev_auto_user_is_resolvable(email) is True:
 		return
@@ -917,7 +917,7 @@ async def _ensure_dev_auto_user(email: str) -> None:
 			return
 
 		ph = PasswordHasher()
-		pin_hash = ph.hash("1111")
+		pin_hash = ph.hash(DEFAULT_DEVELOPER_PIN)
 		local_part = email.partition("@")[0]
 
 		db.add(
