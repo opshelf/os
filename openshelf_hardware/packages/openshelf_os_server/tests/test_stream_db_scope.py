@@ -26,6 +26,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.routing import iter_route_contexts
 from httpx import AsyncClient
 
 from openshelf_os_server.core.camera import camera_registry
@@ -65,7 +66,7 @@ def _dependency_calls(dependant: Any) -> set[Callable[..., Any] | None]:
 
 
 def _route_calls(path: str) -> set[Callable[..., Any] | None]:
-    for route in app.routes:
+    for route in iter_route_contexts(app.routes):
         methods = getattr(route, "methods", None) or set()
         if getattr(route, "path", None) == path and "GET" in methods:
             return _dependency_calls(route.dependant)
