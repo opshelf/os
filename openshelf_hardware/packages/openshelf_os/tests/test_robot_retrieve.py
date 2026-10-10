@@ -9,7 +9,9 @@ from openshelf_os.robot import Robot, RobotCommandSuccessful
 from openshelf_os.storage import CellItem, Dimensions, StorageModuleCellLocation, StorageModuleSide
 
 
-def build_robot(*, weight: float | None) -> tuple[Robot, list[str], list[StorageModuleCellLocation]]:
+def build_robot(
+    *, weight: float | None, cached_barcode: str | None = None
+) -> tuple[Robot, list[str], list[StorageModuleCellLocation]]:
     calls: list[str] = []
 
     location = StorageModuleCellLocation(
@@ -18,6 +20,7 @@ def build_robot(*, weight: float | None) -> tuple[Robot, list[str], list[Storage
         cell_idx=1,
     )
     placeholder_item = CellItem(
+        barcode=cached_barcode,
         dimensions=Dimensions(width=20, height=30, length=400),
         data={"name": "calibration test front_module:0:1"},
     )
@@ -53,8 +56,16 @@ def build_robot(*, weight: float | None) -> tuple[Robot, list[str], list[Storage
 
 
 @pytest.mark.asyncio
-async def test_retrieve_preserves_barcode_hint_for_cached_placeholder_item() -> None:
-    robot, _, cleared_locations = build_robot(weight=42.0)
+@pytest.mark.parametrize(
+    "cached_barcode",
+    # A placeholder with no barcode, and an item the grid still remembers after the
+    # cell was reassigned through the API: the commanded barcode wins either way.
+    (None, "999900000002"),
+)
+async def test_retrieve_reports_the_commanded_barcode_over_the_cached_item(
+    cached_barcode: str | None,
+) -> None:
+    robot, _, cleared_locations = build_robot(weight=42.0, cached_barcode=cached_barcode)
     location = StorageModuleCellLocation(
         side=StorageModuleSide.FRONT,
         shelf_idx=0,
@@ -128,3 +139,50 @@ async def test_retrieve_cancelled_while_weighing_still_clears_grid_cell() -> Non
         await task
 
     assert cleared_locations == [location]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cycle", ("io_place", "io_pick"))
+async def test_io_cycle_homes_the_door_first_and_survives_a_failed_final_home(cycle: str) -> None:
+    calls: list[str] = []
+
+    class Tool:
+        _my = SimpleNamespace(move_to_position=lambda *_: _record("y_transfer"))
+
+        async def get_param(self, name: str) -> tuple[float, float]:
+            return (1.0, 2.0)
+
+        def __getattr__(self, name: str):
+            async def step(*_args, **_kwargs) -> None:
+                calls.append(name)
+
+            return step
+
+    async def _record(name: str) -> None:
+        calls.append(name)
+
+    class Io:
+        async def ensure_door_homed(self) -> None:
+            calls.append("ensure_door_homed")
+
+        async def open_door(self) -> None:
+            calls.append("open_door")
+
+        async def close_door(self) -> None:
+            calls.append("close_door")
+
+        async def home_door_after_cycle(self) -> bool:
+            calls.append("home_door_after_cycle")
+            return False
+
+    robot = Robot.__new__(Robot)
+    robot._logger = logging.getLogger("test_io_cycle")
+    robot._operation_context = {}
+    robot._tool = Tool()
+    robot._io = Io()
+
+    await getattr(robot, cycle)(AxisCoordinate(x=10, y=20, s=0, z_offset=1))
+
+    assert calls[0] == "ensure_door_homed"
+    assert calls.index("ensure_door_homed") < calls.index("pick")
+    assert calls[-2:] == ["home_door_after_cycle", "clear_alarms"]

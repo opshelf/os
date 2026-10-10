@@ -64,6 +64,7 @@ from openshelf_os_server.core.event_log import (
 from openshelf_os_server.core.command_lifecycle import (
     CommandQueueFullError,
     CommandRequestConflictError,
+    CommandTargetInFlightError,
     admit as admit_robot_command,
     enqueue_persisted,
     get_command as get_lifecycle_command,
@@ -624,6 +625,16 @@ async def _validate_mock_store_location(
         )
 
 
+def _target_in_flight_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=error_detail(
+            "Another queued or running command already targets this item or cell",
+            "target_in_flight",
+        ),
+    )
+
+
 async def _validate_mock_retrieve(
     command: RetrieveItemCommand,
     current_user: User,
@@ -720,7 +731,8 @@ async def robot_commands(
     For retrieval, read the item first and supply its `location` (`side`, zero-based
     `shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box
     before retrieving. Home when `home_required` is reported. An item reserved by a tray interaction returns
-    `409`; a full queue returns `429` with `Retry-After`.
+    `409`, as does a store or retrieval whose barcode or cell is already targeted by a
+    queued or running command (`target_in_flight`); a full queue returns `429` with `Retry-After`.
 
     Mock mode supports only store/retrieve, with one FIFO worker and simulated completion.
     Hardware modes also accept the engineering commands in the schema. A queued stop is not
@@ -769,6 +781,8 @@ async def robot_commands(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="request_id was already used with a different payload",
                 ) from exc
+            except CommandTargetInFlightError as exc:
+                raise _target_in_flight_error() from exc
             except MockQueueFullError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -984,6 +998,8 @@ async def robot_commands(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="request_id was already used with a different payload",
             ) from exc
+        except CommandTargetInFlightError as exc:
+            raise _target_in_flight_error() from exc
         except CommandQueueFullError as exc:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -1604,15 +1620,28 @@ async def clear_motor_alarm(
 )
 async def home_motor(
     motor_name: str,
+    skip_pre_home_approach: bool = False,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Home one motor.
 
     Runs the selected motor's homing operation with manual-motion guards. This moves
-    hardware and may also position the tool for safe rotation. Unknown names return `404`;
-    motion that another operation already holds returns `409`.
+    hardware and may also position the tool for safe rotation. `skip_pre_home_approach=true`
+    is restricted to the Y axis in development mode. Unknown names return `404`; motion that
+    another operation already holds returns `409`.
     """
+    if skip_pre_home_approach is True:
+        if get_operating_mode() != OperatingMode.development:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Skipping the pre-home approach is only available in development mode",
+            )
+        if motor_name != "y_axis":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Skipping the pre-home approach is only supported for y_axis diagnostics",
+            )
 
     motor = worker._robot._get_motor_by_name(motor_name)
 
@@ -1634,7 +1663,10 @@ async def home_motor(
                     await worker._robot._tool.restore_safe_rotation_x_position(original_x)
             else:
                 await motor.clear_alarm()
-                await motor.home()
+                if skip_pre_home_approach is True:
+                    await motor.home(skip_pre_home_approach=True)
+                else:
+                    await motor.home()
             if motor_name == "rotate":
                 await worker._robot._tool.rotate_to_home_orientation(
                     should_ensure_safe_stage_extension=False,
@@ -2057,9 +2089,10 @@ async def stream_events(request: Request) -> EventSourceResponse:
 
     Server-Sent Events; each event carries an `id:` line with its durable log
     `seq` and a `data:` frame with the event JSON. Events include terminal
-    command results, scanner events, and bin-workflow updates; dispatch by
-    `command`, `message`, or `kind`, rather than assuming every frame is a
-    completion.
+    command results, scanner events, bin-workflow updates, and
+    `inventory_changed` notices after storage API writes (refetch inventory on
+    these); dispatch by `command`, `message`, or `kind`, rather than assuming
+    every frame is a completion.
 
     A fresh subscription starts live at the top of the log and receives no
     earlier events. Reconnect with the `Last-Event-ID` header set to the last
