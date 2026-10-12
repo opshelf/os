@@ -437,6 +437,13 @@ class MockRobotRuntime:
 			)
 			await session.commit()
 
+		try:
+			from openshelf_os_server.routers.import_jobs import note_unit_stored
+
+			await note_unit_stored(barcode)
+		except Exception:
+			logger.warning("import unit was not marked loaded", exc_info=True)
+
 		return {
 			"message": "success",
 			"command": "store_item",

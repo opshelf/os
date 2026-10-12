@@ -1311,6 +1311,28 @@ async def emit_scanner_scan_event(
     return SuccessResponse()
 
 
+class IoBoxSimulationRequest(BaseModel):
+    occupied: bool
+
+
+@router.post(
+    "/debug/io-box",
+    dependencies=[Depends(require_permissions("robot:control"))],
+    summary="Set the simulated IO box occupancy",
+    responses=response_docs(errors=(401, 403, 404)),
+)
+async def set_simulated_io_box(body: IoBoxSimulationRequest) -> SuccessResponse:
+    """Mark the mock IO box occupied or empty.
+
+    The import screen uses this in place of a scale on a mock machine. Hardware mode has no
+    simulated box, so the route is absent there.
+    """
+    if get_operating_mode() != OperatingMode.mock:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    get_mock_robot_runtime().set_bin_io_box_occupied(body.occupied)
+    return SuccessResponse()
+
+
 @router.get(
     "/debug/scale",
     dependencies=[Depends(get_current_user)],
