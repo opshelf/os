@@ -52,12 +52,6 @@ from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.settings import get_settings
 
 
-@pytest.fixture(scope="session")
-def anyio_backend() -> str:
-    # httpx AsyncClient uses asyncio
-    return "asyncio"
-
-
 @pytest_asyncio.fixture(scope="session")
 async def seeded_db() -> AsyncGenerator[None, None]:
     # Ensure tables exist, then seed roles and an admin user

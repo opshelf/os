@@ -9,7 +9,7 @@
 ## Runtime
 - Keep released config migration steps immutable, register new steps in `runner.MIGRATIONS`, and bump `config.schema.CURRENT_SCHEMA_VERSION`; never stamp the new schema version onto unmigrated data, and never restore an old snapshot without migrating it first.
 - Do not reintroduce digit-only or fixed-length barcode validation, and do not remove the `upca` → `barcode` read-time shim in `CellItem`.
-- Tests marked `pytest.mark.anyio` must use AnyIO-owned async fixtures (`@pytest.fixture`); mixing them with `@pytest_asyncio.fixture` can attach the worker to a different event loop in the full suite.
+- Server tests run every async test and fixture under pytest-asyncio auto mode; `pytest.ini` disables AnyIO's pytest plugin (`-p no:anyio`). Do not re-enable it: with both plugins loaded, a plain async fixture of an anyio-marked test runs on whichever plugin registered last (site-packages order), so a fixture-started worker such as the mock robot can land on a different event loop than the test.
 - The backend suite is order-dependent only because collection order is stable — before landing test changes, run it shuffled at least once: `uv run pytest --random-order` (`--random-order-bucket=global` to interleave modules, `--random-order-seed=<seed>` to replay a failing order).
 
 ## Device signing keys
