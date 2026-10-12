@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import {
 		ApiError,
 		getCalibrationStatus,
@@ -43,10 +43,12 @@
 		vocabulary = v;
 	}));
 
-	const normalizedInitialSide =
+	// The initial side seeds the selection once; later prop changes must not reset it.
+	const normalizedInitialSide = untrack(() =>
 		initialSide !== undefined && sideIndex(initialSide) !== null
 			? (sideIndex(initialSide) === 1 ? 'back_module' : 'front_module')
-			: 'front_module';
+			: 'front_module'
+	);
 
 	let selectedSide = $state<'front_module' | 'back_module'>(normalizedInitialSide);
 	let selectedShelf = $state<number>(0);

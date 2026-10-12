@@ -1028,7 +1028,7 @@ class Robot:
         self._logger.info("Safety guard cleared")
 
     def _build_weight_guard(self) -> Optional[WeightChangeGuard]:
-        """Watch the scale during y travel so a crash into the cell stops motion.
+        """Watch the scale during downward y travel so a crash into the cell stops motion.
 
         Returns None when the scale or the y axis is absent, or when the guard is
         switched off in config, in which case the safety sources simply omit it.
@@ -1204,7 +1204,11 @@ class Robot:
         """Route tray servo failures through the command hardware-fault interlock."""
         try:
             if engaged:
-                require_grip(await self._tool._gs.open(), "tray grip")
+                require_grip(
+                    await self._tool._gs.open(),
+                    "tray grip",
+                    is_enabled=self._tool.is_grip_detection_enabled,
+                )
             else:
                 await self.release_gripper()
         except Exception as exc:
@@ -1258,7 +1262,11 @@ class Robot:
         self.set_operation_context(phase="return_tray.retract")
         await self._tool.retract()
         try:
-            require_grip(await self._tool._gs.read_state(), "tray retract")
+            require_grip(
+                await self._tool._gs.read_state(),
+                "tray retract",
+                is_enabled=self._tool.is_grip_detection_enabled,
+            )
         except Exception as exc:
             raise GripperError(f"Tray retract grip verification failed: {exc}") from exc
         self.set_operation_context(phase="return_tray.close_door")
@@ -1539,7 +1547,8 @@ class Robot:
                 await self.io_place(coord, nudge_override=nudge_override)
             self.set_operation_context(phase="retrieve.grid_clear_commit")
             self._grid.clear_item(location)
-            return RobotCommandSuccessful(command=command_name, location=location, barcode=retrieved_barcode)
+            weight = await self._io.get_weight()
+            return RobotCommandSuccessful(command=command_name, location=location, barcode=retrieved_barcode, weight=weight)
         except (MotorError, MovementError, ToolError) as err:
             self._capture_fault_context(err)
             raise

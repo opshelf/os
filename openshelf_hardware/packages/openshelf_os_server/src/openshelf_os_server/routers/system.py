@@ -100,9 +100,9 @@ async def set_home_on_init(request: HomeOnInitUpdateRequest) -> HomeOnInitRespon
 @router.post(
     "/restart",
     response_model=RestartResponse,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_permissions("robot:control"))],
     summary="Request an API restart",
-    responses=response_docs(errors=(401,)),
+    responses=response_docs(errors=(401, 403)),
 )
 async def restart_api() -> RestartResponse:
 	"""Request an API restart.

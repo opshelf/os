@@ -4,7 +4,7 @@
 - Run frontend commands from `dev_ui/` and backend commands from `openshelf_hardware/`. Full stack: `./scripts/start` / `./scripts/stop` from the repo root — never restart repo-managed containers with raw `docker compose up/down/restart` or `docker restart` (the API container can come back without the hardware compose overlay and lose USB/device passthrough).
 - On hardware devices, restart with `./scripts/stop` then `./scripts/start -d -h` (with the appropriate `--mode`/`--build` flags); on deployed devices prefer `--pull` (prebuilt images from the team registry).
 - Always sync the backend with `uv sync --all-packages` — bare `uv sync` only syncs the workspace root project and prunes the dependencies the members need, leaving the venv unable to import `sqlalchemy`/`fastapi` until re-synced.
-- For on-device inspection, use the sibling `../provision/remote` helper instead of guessing SSH details (`list`, plain shell, `-t "<command>"`, `-f <port>` forwards). Do not make persistent source edits on a device — change, check, commit, push, then pull on the device and restart through the repo-managed scripts.
+- For on-device inspection, use the team's device access helper instead of guessing SSH details. Do not make persistent source edits on a device — change, check, commit, push, then pull on the device and restart through the repo-managed scripts.
 
 ## Runtime
 - Keep released config migration steps immutable, register new steps in `runner.MIGRATIONS`, and bump `config.schema.CURRENT_SCHEMA_VERSION`; never stamp the new schema version onto unmigrated data, and never restore an old snapshot without migrating it first.

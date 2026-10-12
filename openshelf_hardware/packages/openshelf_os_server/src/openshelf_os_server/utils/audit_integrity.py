@@ -14,7 +14,7 @@ import secrets
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from openshelf_os.common import INSECURE_PUBLISHED_SECRETS
+from openshelf_os.common import is_insecure_published_secret
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.runtime_state import DATA_DIR_ENV
 from openshelf_os_server.settings import get_operating_mode, get_settings
@@ -57,7 +57,7 @@ def _key_bytes(raw: str) -> bytes:
 
 
 def _is_published_key(raw: Optional[str]) -> bool:
-    return raw is not None and raw in INSECURE_PUBLISHED_SECRETS
+    return is_insecure_published_secret(raw)
 
 
 def _usable_key(raw: Optional[str], source: str) -> Optional[str]:

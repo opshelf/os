@@ -5,6 +5,7 @@
 	import {
 		buildAuthenticatedUrl,
 		createReconnectingEventSource,
+		developerPinRequest,
 		isApiConnected,
 		isAuthenticated,
 		loginAsDeveloper,
@@ -19,6 +20,7 @@
 	import NeedsHomeAlert from '$lib/components/NeedsHomeAlert.svelte';
 	import SafetyAckAlert from '$lib/components/SafetyAckAlert.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
+	import DeveloperPinPrompt from '$lib/components/DeveloperPinPrompt.svelte';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -92,7 +94,7 @@
 				try {
 					await loginAsDeveloper();
 				} catch (error) {
-					console.error('failed to authenticate as developer:', error);
+					console.error('failed to sign in as developer:', error);
 				}
 			}
 
@@ -195,7 +197,7 @@
 	<div class="connection-overlay">
 		<div class="connection-message">DEVICE OR API IS UNREACHABLE</div>
 	</div>
-{:else if authReady === false}
+{:else if authReady === false && $developerPinRequest === null}
 	<div class="connection-overlay">
 		<div class="connection-message">AUTHENTICATING, PLEASE WAIT</div>
 	</div>
@@ -206,3 +208,4 @@
 {/if}
 
 <ToastStack />
+<DeveloperPinPrompt />

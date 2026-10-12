@@ -12,8 +12,9 @@ import re
 from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Iterable, List, Literal, NoReturn, Optional, cast
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
 from openshelf_os.common import ConfigError
 from openshelf_os.config.settings import BARCODE_MAX_LENGTH
 from openshelf_os.operating_mode import OperatingMode
@@ -36,7 +37,6 @@ from sqlalchemy import select
 from openshelf_os_server.core.robot import get_robot_instance, get_robot_worker
 from openshelf_os_server.core.robot_events import (
     EVENT_FORWARD_WAIT_TIMEOUT_S,
-    event_processing_tracker,
     process_robot_event,
 )
 from openshelf_os_server.core.init_progress import get_init_tracker
@@ -54,12 +54,18 @@ from openshelf_os_server.core.mock_robot import (
     MOCK_SIDES,
     MockQueueFullError,
     MockRequestConflictError,
+    MockRobotRuntime,
     get_mock_robot_runtime,
     mock_cell_fits,
+)
+from openshelf_os_server.core.event_log import (
+    latest_robot_event_seq,
+    read_robot_events,
 )
 from openshelf_os_server.core.command_lifecycle import (
     CommandQueueFullError,
     CommandRequestConflictError,
+    CommandTargetInFlightError,
     admit as admit_robot_command,
     enqueue_persisted,
     get_command as get_lifecycle_command,
@@ -81,6 +87,7 @@ from .auth_deps import (
     get_current_user,
     get_relay_or_current_user,
     get_relay_or_current_user_for_stream,
+    ensure_permissions,
     require_permissions,
     can_user_retrieve_item,
 )
@@ -389,6 +396,45 @@ async def get_optional_command_worker_for_mode() -> RobotWorker | None:
         return None
 
 
+_ROBOT_COMMANDS_ADAPTER: TypeAdapter[RobotCommands] = TypeAdapter(RobotCommands)
+
+
+async def get_command_submitter(
+    request: Request,
+    current_user: User = Depends(get_relay_or_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Authenticate a command submission and check it against the submitter's role.
+
+    Store and retrieve stay open to any signed-in user (retrieve checks the item's
+    access level later); every other command moves the robot directly and needs
+    robot:control. A store that names an unknown barcode creates the item, which
+    /api/storage/items guards with storage:write, so the same permission applies here.
+    The relay keeps its scoped access to both.
+
+    The body is parsed here rather than declared, so an invalid one is reported
+    once, by the endpoint's own validation.
+    """
+    if getattr(request.state, "relay_service_authenticated", False) is True:
+        return current_user
+    try:
+        command = _ROBOT_COMMANDS_ADAPTER.validate_python(await request.json())
+    except (ValueError, PydanticValidationError):
+        return current_user
+    if not isinstance(command, (StoreItemCommand, RetrieveItemCommand)):
+        ensure_permissions(current_user, "robot:control")
+        return current_user
+    if not isinstance(command, StoreItemCommand):
+        return current_user
+    barcode = (command.item or {}).get("barcode")
+    if not isinstance(barcode, str):
+        return current_user
+    existing = (await db.execute(select(Item.id).where(Item.barcode == barcode))).scalar_one_or_none()
+    if existing is None:
+        ensure_permissions(current_user, "storage:write")
+    return current_user
+
+
 def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: RobotWorker) -> None:
     if worker.needs_home() is False:
         return
@@ -620,6 +666,16 @@ async def _validate_mock_store_location(
         )
 
 
+def _target_in_flight_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=error_detail(
+            "Another queued or running command already targets this item or cell",
+            "target_in_flight",
+        ),
+    )
+
+
 async def _validate_mock_retrieve(
     command: RetrieveItemCommand,
     current_user: User,
@@ -668,7 +724,6 @@ async def _validate_mock_retrieve(
 
 @router.post(
     "/commands",
-    dependencies=[Depends(get_relay_or_current_user)],
     response_model=CommandAcceptedResponse,
     responses=response_docs(
         errors=(400, 401, 403, 404, 409, 422, 429, 503),
@@ -685,7 +740,7 @@ async def _validate_mock_retrieve(
 async def robot_commands(
     command: RobotCommands,
     worker: RobotWorker | None = Depends(get_optional_command_worker_for_mode),
-    current_user: User = Depends(get_relay_or_current_user),
+    current_user: User = Depends(get_command_submitter),
     db: AsyncSession = Depends(get_db),
 ) -> CommandAcceptedResponse:
     """Queue a robot command.
@@ -716,7 +771,8 @@ async def robot_commands(
     For retrieval, read the item first and supply its `location` (`side`, zero-based
     `shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box
     before retrieving. Home when `home_required` is reported. An item reserved by a tray interaction returns
-    `409`; a full queue returns `429` with `Retry-After`.
+    `409`, as does a store or retrieval whose barcode or cell is already targeted by a
+    queued or running command (`target_in_flight`); a full queue returns `429` with `Retry-After`.
 
     Mock mode supports only store/retrieve, with one FIFO worker and simulated completion.
     Hardware modes also accept the engineering commands in the schema. A queued stop is not
@@ -765,6 +821,8 @@ async def robot_commands(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="request_id was already used with a different payload",
                 ) from exc
+            except CommandTargetInFlightError as exc:
+                raise _target_in_flight_error() from exc
             except MockQueueFullError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -980,6 +1038,8 @@ async def robot_commands(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="request_id was already used with a different payload",
             ) from exc
+        except CommandTargetInFlightError as exc:
+            raise _target_in_flight_error() from exc
         except CommandQueueFullError as exc:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -1094,9 +1154,9 @@ async def clear_robot_commands(
 
 @router.post(
     "/gripper",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_permissions("robot:control"))],
     summary="Grip or release directly",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 async def control_gripper(
     state: Literal["grip", "release"],
@@ -1121,9 +1181,9 @@ async def control_gripper(
 
 @router.post(
     "/safety/acknowledge",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Acknowledge a cleared safety interruption",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 async def acknowledge_safety_guard(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1385,9 +1445,9 @@ async def get_scale_calibration_params(
 
 @router.post(
     "/debug/scale/calibration/params",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Write scale calibration parameters",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 404, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 503)),
 )
 async def set_scale_calibration_params(
     request: ScaleCalibrationParamsRequest,
@@ -1425,9 +1485,9 @@ async def set_scale_calibration_params(
 
 @router.post(
     "/debug/scale/calibration/zero",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Calibrate the scale zero point",
-    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 404, 503)),
+    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 403, 404, 503)),
 )
 async def calibrate_scale_zero(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1458,9 +1518,9 @@ async def calibrate_scale_zero(
 
 @router.post(
     "/debug/scale/calibration/weight",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Calibrate with a known weight",
-    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 404, 503)),
+    responses=response_docs(model=ScaleCalibrationResult, errors=(401, 403, 404, 503)),
 )
 async def calibrate_scale_weight(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1491,9 +1551,9 @@ async def calibrate_scale_weight(
 
 @router.post(
     "/debug/scale/calibration/tare",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Tare the physical scale",
-    responses=response_docs(model=BooleanSuccess, errors=(401, 404, 503)),
+    responses=response_docs(model=BooleanSuccess, errors=(401, 403, 404, 503)),
 )
 async def scale_tare(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1552,9 +1612,9 @@ async def get_motors() -> dict:
 
 @router.post(
     "/debug/motors/{motor_name}/crash",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Inject a motor crash",
-    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 503)),
+    responses=response_docs(model=MotorOperationResponse, errors=(401, 403, 404, 503)),
 )
 async def simulate_motor_crash(
     motor_name: str,
@@ -1578,9 +1638,9 @@ async def simulate_motor_crash(
 
 @router.post(
     "/debug/motors/{motor_name}/clear",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Clear a motor alarm",
-    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 503)),
+    responses=response_docs(model=MotorOperationResponse, errors=(401, 403, 404, 503)),
 )
 async def clear_motor_alarm(
     motor_name: str,
@@ -1625,21 +1685,34 @@ async def clear_motor_alarm(
 
 @router.post(
     "/debug/motors/{motor_name}/home",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Home one motor",
     responses=response_docs(model=MotorOperationResponse, errors=(400, 401, 403, 404, 503)),
 )
 async def home_motor(
     motor_name: str,
+    skip_pre_home_approach: bool = False,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Home one motor.
 
     Runs the selected motor's homing operation with manual-motion guards. This moves
-    hardware and may also position the tool for safe rotation. Unknown names return `404`;
-    motion that another operation already holds returns `409`.
+    hardware and may also position the tool for safe rotation. `skip_pre_home_approach=true`
+    is restricted to the Y axis in development mode. Unknown names return `404`; motion that
+    another operation already holds returns `409`.
     """
+    if skip_pre_home_approach is True:
+        if get_operating_mode() != OperatingMode.development:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Skipping the pre-home approach is only available in development mode",
+            )
+        if motor_name != "y_axis":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Skipping the pre-home approach is only supported for y_axis diagnostics",
+            )
 
     motor = worker._robot._get_motor_by_name(motor_name)
 
@@ -1661,7 +1734,10 @@ async def home_motor(
                     await worker._robot._tool.restore_safe_rotation_x_position(original_x)
             else:
                 await motor.clear_alarm()
-                await motor.home()
+                if skip_pre_home_approach is True:
+                    await motor.home(skip_pre_home_approach=True)
+                else:
+                    await motor.home()
             if motor_name == "rotate":
                 await worker._robot._tool.rotate_to_home_orientation(
                     should_ensure_safe_stage_extension=False,
@@ -1723,9 +1799,9 @@ async def get_power_rails() -> dict:
 
 @router.post(
     "/debug/power/{rail}/cycle",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Power-cycle a switched rail",
-    responses=response_docs(model=PowerCycleResponse, errors=(401, 404, 409, 503)),
+    responses=response_docs(model=PowerCycleResponse, errors=(401, 403, 404, 409, 503)),
 )
 async def power_cycle_rail(
     rail: str,
@@ -1769,9 +1845,9 @@ async def power_cycle_rail(
 
 @router.post(
     "/debug/motors/probe",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Probe motor responsiveness",
-    responses=response_docs(errors=(401, 503)),
+    responses=response_docs(errors=(401, 403, 503)),
 )
 async def probe_motors(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
@@ -1831,9 +1907,9 @@ async def probe_motors(
 
 @router.post(
     "/debug/motors/{motor_name}/move",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Move one motor to a position",
-    responses=response_docs(model=MotorOperationResponse, errors=(401, 404, 503)),
+    responses=response_docs(model=MotorOperationResponse, errors=(401, 403, 404, 503)),
 )
 async def move_motor(
     motor_name: str,
@@ -1882,9 +1958,9 @@ async def move_motor(
 
 @router.post(
     "/debug/door",
-    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
     summary="Operate the IO box door",
-    responses=response_docs(model=DoorOperationResponse, errors=(401, 503)),
+    responses=response_docs(model=DoorOperationResponse, errors=(401, 403, 503)),
 )
 async def control_door(
     action: Literal["open", "close", "home"],
@@ -2048,6 +2124,23 @@ async def stream_sse() -> EventSourceResponse:
     )
 
 
+# `/api/robot/events` pacing: how long the stream waits for a queued message
+# before polling the log, and how long it idles between log reads.
+EVENT_STREAM_QUEUE_WAIT_S = 1.0
+EVENT_STREAM_IDLE_SLEEP_S = 0.5
+# One log read page; the stream re-reads until the page is exhausted.
+EVENT_LOG_PAGE_LIMIT = 1000
+
+
+def _parse_last_event_id(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value.strip())
+    except ValueError:
+        return None
+
+
 @router.get(
     "/events",
     dependencies=[Depends(get_relay_or_current_user_for_stream)],
@@ -2056,73 +2149,198 @@ async def stream_sse() -> EventSourceResponse:
         errors=(401, 503),
         existing=stream_docs(
             "text/event-stream",
-            "Live JSON robot events in SSE data frames; command, scanner, safety and workflow events share this stream.",
-            'data: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"front_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
+            "Durable robot events in SSE frames: an `id:` line carries the event's log `seq`, the `data:` frame the event JSON. Command, scanner, safety and workflow events share this stream.",
+            'id: 12\ndata: {"message":"success","command":"store_item","command_id":"00000000-0000-4000-8000-000000000001","barcode":"880000000001","location":{"side":"front_module","shelf_idx":0,"cell_idx":0},"weight":350}\n\n',
         ),
     ),
     response_class=Response,
 )
-async def stream_events() -> EventSourceResponse:
+async def stream_events(request: Request) -> EventSourceResponse:
     """Stream robot events and command results.
 
-    Server-Sent Events with JSON in each `data:` frame. Subscribe before submitting
-    commands: this is a live stream without historical replay. Events include terminal
-    command results, scanner events, and bin-workflow updates; dispatch by `command`,
-    `message`, or `kind`, rather than assuming every frame is a completion.
+    Server-Sent Events; each event carries an `id:` line with its durable log
+    `seq` and a `data:` frame with the event JSON. Events include terminal
+    command results, scanner events, bin-workflow updates, and
+    `inventory_changed` notices after storage API writes (refetch inventory on
+    these); dispatch by `command`, `message`, or `kind`, rather than assuming
+    every frame is a completion.
 
-    A terminal result includes `command_id`; use durable command polling after a disconnect.
-    `weight`, when present, is the cycle's gross reading in grams, not container net mass.
-    Physical retrieval currently supplies no weight reading. Inventory changes are
-    committed before an event is forwarded. User tokens can be supplied through the
-    bearer header or `?token=`.
+    A fresh subscription starts live at the top of the log and receives no
+    earlier events. Reconnect with the `Last-Event-ID` header set to the last
+    `id:` you processed and the stream replays every event above that `seq`
+    before resuming live, so a disconnect loses no events. Explicit replay of
+    the log is available at `/api/robot/events/log?since=<seq>`. An event is
+    forwarded only once its log row is committed; inventory changes commit
+    before the event is forwarded. A terminal result includes `command_id`; use
+    durable command polling to reconcile after long outages. `weight`, when
+    present, is the cycle's gross reading in grams, not container net mass;
+    both store and retrieve cycles supply it when a scale reading is
+    available. A cursor above the log top (e.g. after a database reset or
+    from another device) is clamped to the top: the stream starts live at
+    the top and the gap is visible in the log. User tokens can be supplied
+    through the bearer header or `?token=`.
     """
-    if get_operating_mode() == OperatingMode.mock:
-        runtime = get_mock_robot_runtime()
-        mock_event_queue = await runtime.subscribe_events()
-
-        async def mock_event_generator() -> AsyncGenerator[dict[str, str], None]:
-            try:
-                while True:
-                    yield {"data": await mock_event_queue.get()}
-            finally:
-                await runtime.unsubscribe_events(mock_event_queue)
-
-        return EventSourceResponse(mock_event_generator())
+    last_event_id = _parse_last_event_id(request.headers.get("Last-Event-ID"))
+    latest_seq = await latest_robot_event_seq()
+    # Resumption is exclusive of the acknowledged id: everything above it is
+    # replayed. A fresh subscriber starts live at the top of the log. A cursor
+    # above the log top (a reset or re-provisioned device, or a cursor from
+    # another device) would sit above every row and the stream would go
+    # silent, so fall back to live at the top.
+    if last_event_id is not None and last_event_id > latest_seq:
+        logging.warning(
+            "Last-Event-ID %d is above the robot event log top %d; "
+            "falling back to live at the top",
+            last_event_id,
+            latest_seq,
+        )
+        resume_from = latest_seq
+    else:
+        resume_from = last_event_id if last_event_id is not None else latest_seq
 
     event_queue: Optional[asyncio.Queue[str]] = None
-    worker: Optional[RobotWorker]
-
-    try:
-        worker = await get_robot_worker()
-    except ValueError:
-        worker = None
-
-    received_before_subscribe = 0
-    if worker is not None:
-        event_queue = await worker.subscribe_events()
-        received_before_subscribe = event_processing_tracker.received_count()
+    worker: Optional[RobotWorker] = None
+    runtime: Optional[MockRobotRuntime] = None
+    if get_operating_mode() == OperatingMode.mock:
+        runtime = get_mock_robot_runtime()
+        event_queue = await runtime.subscribe_events()
+    else:
+        try:
+            worker = await get_robot_worker()
+        except ValueError:
+            worker = None
+        if worker is not None:
+            event_queue = await worker.subscribe_events()
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
+        sent_max = resume_from
+        # Gate pacing, not correctness: the stream forwards only committed
+        # rows, so the gate exists to keep an event from waiting out an idle
+        # poll. It compares the dequeued messages against the rows above the
+        # pre-subscribe log top that have already been delivered: rows commit
+        # in the same order as messages are dequeued, so a message whose row
+        # was already delivered by an earlier page (e.g. a burst) skips the
+        # gate. There is no write-off and no independent confirmation: a
+        # message whose row times out is not counted, and a row that commits
+        # late counts for the message it belongs to, so the comparison cannot
+        # accumulate a surplus or go silent. A timeout warns and continues;
+        # a late row is delivered by the next forward read, and the next
+        # message gates independently with its own full wait.
+        messages_dequeued = 0
+        new_rows_delivered = 0
         try:
-            if event_queue is None:
-                return
-
-            forwarded = 0
             while True:
-                message = await event_queue.get()
-                forwarded += 1
-                # The event listener commits DB state after the worker emits, so
-                # wait for that work to settle before clients observe the event.
-                settled = await event_processing_tracker.wait_until_processed(
-                    received_before_subscribe + forwarded, EVENT_FORWARD_WAIT_TIMEOUT_S
-                )
-                if settled is False:
-                    logging.warning(
-                        "Forwarding robot event before its inventory update settled"
+                message: Optional[str] = None
+                if event_queue is not None:
+                    try:
+                        message = await asyncio.wait_for(
+                            event_queue.get(), timeout=EVENT_STREAM_QUEUE_WAIT_S
+                        )
+                    except asyncio.TimeoutError:
+                        message = None
+
+                if message is not None:
+                    messages_dequeued += 1
+                    # Gate on this message's not-yet-delivered row. Skipped
+                    # when the already-delivered rows above the pre-subscribe
+                    # log top have caught up with the dequeued messages, so a
+                    # burst whose rows one page delivered cannot wait on a row
+                    # that no longer exists. Replay backlog (at or below the
+                    # pre-subscribe log top) never counts, so it cannot build
+                    # a surplus that silences the gate.
+                    if messages_dequeued > new_rows_delivered:
+                        deadline = asyncio.get_running_loop().time() + EVENT_FORWARD_WAIT_TIMEOUT_S
+                        found_new_row = False
+                        while asyncio.get_running_loop().time() < deadline:
+                            rows = await read_robot_events(sent_max, EVENT_LOG_PAGE_LIMIT)
+                            if rows:
+                                found_new_row = True
+                                break
+                            await asyncio.sleep(0.05)
+                        if not found_new_row:
+                            # The row has not committed yet: warn and continue;
+                            # a late row is delivered by the next forward
+                            # read and the next message gates independently.
+                            logging.warning(
+                                "Robot event log row not committed within %.1fs; "
+                                "the stream continues and the gap is visible in the log",
+                                EVENT_FORWARD_WAIT_TIMEOUT_S,
+                            )
+
+                # Forward from the durable log so clients only ever see committed
+                # events, in `seq` order, with the ids resumption relies on.
+                for row in await read_robot_events(sent_max, EVENT_LOG_PAGE_LIMIT):
+                    yield {"id": str(row.seq), "data": json.dumps(row.payload)}
+                    sent_max = row.seq
+                    if row.seq > latest_seq:
+                        new_rows_delivered += 1
+
+                if message is None:
+                    # No queued message: rows committed while we were away are
+                    # picked up by the read above; pace the poll (slower while
+                    # the queue itself is absent, i.e. the worker is down).
+                    await asyncio.sleep(
+                        5.0 if event_queue is None else EVENT_STREAM_IDLE_SLEEP_S
                     )
-                yield {"data": message}
         finally:
             if worker is not None and event_queue is not None:
                 await worker.unsubscribe_events(event_queue)
+            if runtime is not None and event_queue is not None:
+                await runtime.unsubscribe_events(event_queue)
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        event_generator(),
+        ping=15,
+        send_timeout=30,
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+class RobotEventLogEntry(BaseModel):
+    seq: int
+    created_at: datetime
+    command_id: Optional[str]
+    payload: dict[str, Any]
+
+
+class RobotEventLogResponse(BaseModel):
+    events: list[RobotEventLogEntry]
+    latest_seq: int
+    next_since: int
+
+
+@router.get(
+    "/events/log",
+    dependencies=[Depends(get_relay_or_current_user)],
+    response_model=RobotEventLogResponse,
+    responses=response_docs(errors=(401, 503)),
+    summary="Replay the durable robot event log",
+)
+async def get_robot_event_log(
+    since: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=1000),
+) -> RobotEventLogResponse:
+    """Replay the durable robot event log.
+
+    Returns events with `seq > since`, oldest first, at most `limit` per page.
+    `since=0` reads from the start of the log; after a page, request the next
+    with `since=next_since` until `next_since` reaches `latest_seq` for a
+    complete catch-up. `next_since` stays `since` for an empty page. This is
+    the reconciliation path for `/api/robot/events` subscribers after a
+    disconnect.
+    """
+    rows = await read_robot_events(since, limit)
+    latest_seq = await latest_robot_event_seq()
+    return RobotEventLogResponse(
+        events=[
+            RobotEventLogEntry(
+                seq=row.seq,
+                created_at=row.created_at,
+                command_id=row.command_id,
+                payload=row.payload,
+            )
+            for row in rows
+        ],
+        latest_seq=latest_seq,
+        next_since=rows[-1].seq if rows else since,
+    )

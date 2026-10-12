@@ -8,7 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import delete
 
 from openshelf_os.robot.commands import StoreItemCommand
-from openshelf_os_server.database.models import Item, ItemSizerMeasurement
+from openshelf_os_server.database.models import Item, ItemSizerMeasurement, RobotCommand
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import robot as robot_router
 
@@ -19,6 +19,8 @@ async def _clear_sizer_rows() -> None:
     async with AsyncSessionLocal() as session:
         await session.execute(delete(ItemSizerMeasurement))
         await session.execute(delete(Item).where(Item.barcode == _TEST_BARCODE))
+        # Stores from earlier tests stay queued on the mock worker and would block this barcode.
+        await session.execute(delete(RobotCommand).where(RobotCommand.runtime == "production"))
         await session.commit()
 
 

@@ -10,14 +10,6 @@ services:
       - ./openshelf_hardware/packages/openshelf_os_server/src/openshelf_os_server:/app/openshelf_hardware/packages/openshelf_os_server/src/openshelf_os_server
     environment:
       - UVICORN_RELOAD=${UVICORN_RELOAD:-true}
-    command:
-      - /app/openshelf_hardware/.venv/bin/python
-      - -m
-      - debugpy
-      - --listen
-      - 0.0.0.0:5678
-      - -c
-      - from openshelf_os_server.launcher import start; start()
 
 
   dev_ui:
