@@ -111,6 +111,9 @@ class ImportRowInput:
     tare_weight: Optional[float] = None
     net_weight: Optional[float] = None
     full_net_weight: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
+    length: Optional[float] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -262,7 +265,7 @@ class ImportJobService:
         levels_by_name = {level.name.strip().lower(): level for level in levels}
         errors: list[dict[str, Any]] = []
         labels: dict[str, int] = {}
-        prepared: list[tuple[ImportRowInput, Optional[str], Optional[int], Optional[str]]] = []
+        prepared: list[tuple[ImportRowInput, Optional[str], Optional[int], Optional[str], Optional[dict[str, float]]]] = []
 
         for index, row in enumerate(rows):
             number = row.row_number or index + 1
@@ -315,7 +318,16 @@ class ImportJobService:
                 validate_mass(masses)
             except ValidationError as exc:
                 error("weight", str(exc))
-            prepared.append((row, label, access_level_id, expires_at))
+            planned: dict[str, float] = {}
+            for key in ("width", "height", "length"):
+                value = getattr(row, key)
+                if value is None:
+                    continue
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                    error(key, f"{key.capitalize()} must be a positive number of millimetres")
+                else:
+                    planned[key] = float(value)
+            prepared.append((row, label, access_level_id, expires_at, planned or None))
 
         if errors:
             raise ImportJobError(422, "invalid_rows", "Some rows cannot be imported", errors)
@@ -333,10 +345,10 @@ class ImportJobService:
 
         job = ImportJob(id=str(uuid4()), state="active", filename=_clean(filename))
         self.session.add(job)
-        unlabelled = sum(row.quantity - (1 if label is not None else 0) for row, label, _, _ in prepared)
+        unlabelled = sum(row.quantity - (1 if label is not None else 0) for row, label, _, _, _ in prepared)
         generated = iter(await self._new_barcodes(unlabelled, set(labels) | reserved))
         position = 0
-        for row, label, access_level_id, expires_at in prepared:
+        for row, label, access_level_id, expires_at, planned_dimensions in prepared:
             name = _clean(row.name) or ""
             metadata = {str(key): value for key, value in (row.metadata or {}).items() if str(key).strip()}
             for copy in range(row.quantity):
@@ -354,6 +366,7 @@ class ImportJobService:
                         tare_weight=row.tare_weight,
                         net_weight=row.net_weight,
                         full_net_weight=row.full_net_weight,
+                        planned_dimensions=dict(planned_dimensions) if planned_dimensions else None,
                         unit_metadata=metadata,
                         status="pending",
                     )
@@ -606,6 +619,7 @@ class ImportJobService:
             "stage": unit.stage,
             "error": unit.error,
             "request_id": unit.request_id,
+            "planned_dimensions": unit.planned_dimensions,
             "dimensions": unit.dimensions,
             "item_id": unit.item_id,
             "bin_id": unit.bin_id,

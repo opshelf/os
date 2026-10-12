@@ -59,6 +59,15 @@ class ImportRow(BaseModel):
     tare_weight: Optional[float] = Field(default=None, description="Container mass in grams")
     net_weight: Optional[float] = Field(default=None, description="Contents mass in grams; requires tare_weight")
     full_net_weight: Optional[float] = Field(default=None, description="Full contents reference in grams")
+    width: Optional[float] = Field(
+        default=None, gt=0, allow_inf_nan=False, description="Known item width in millimetres; the kiosk skips measuring it"
+    )
+    height: Optional[float] = Field(
+        default=None, gt=0, allow_inf_nan=False, description="Known item height in millimetres; the kiosk skips measuring it"
+    )
+    length: Optional[float] = Field(
+        default=None, gt=0, allow_inf_nan=False, description="Known item length in millimetres; the kiosk skips measuring it"
+    )
     metadata: dict[str, Any] = Field(default_factory=dict, description="Custom item metadata")
 
 
@@ -93,6 +102,9 @@ class ImportUnitResponse(BaseModel):
     )
     error: Optional[str] = Field(description="Last store or tray return failure")
     request_id: Optional[str] = Field(description="Use as the store_item request_id for a measured unit")
+    planned_dimensions: Optional[dict[str, float]] = Field(
+        default=None, description="Width, height and length in millimetres given by the import file (any subset)"
+    )
     dimensions: Optional[dict[str, float]]
     item_id: Optional[int]
     bin_id: Optional[int]

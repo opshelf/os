@@ -650,3 +650,52 @@ async def test_generated_barcodes_skip_existing_items_in_a_few_queries(mock_mode
     barcodes = [unit.barcode for unit in await units(job_id)]
     # The existing item's barcode and the repeated draw are never handed out.
     assert sorted(barcodes) == ["200000000015", "200000000022", "200000000039"]
+
+
+@pytest.mark.anyio
+async def test_units_carry_the_planned_dimensions_of_their_row(mock_mode):
+    job_id = await create([
+        row("All", quantity=2, width=40, height=120.5, length=60),
+        row("Partial", height=45),
+        row("None"),
+    ])
+    loaded = await units(job_id)
+    assert [unit.planned_dimensions for unit in loaded] == [
+        {"width": 40.0, "height": 120.5, "length": 60.0},
+        {"width": 40.0, "height": 120.5, "length": 60.0},
+        {"height": 45.0},
+        None,
+    ]
+    assert [ImportJobService.serialize_unit(unit)["planned_dimensions"] for unit in loaded[2:]] == [{"height": 45.0}, None]
+    assert all(unit.dimensions is None for unit in loaded)
+
+
+@pytest.mark.anyio
+async def test_create_rejects_invalid_planned_dimensions_per_field(mock_mode):
+    with pytest.raises(ImportJobError) as invalid:
+        await create([
+            row(width=0, row_number=2),
+            row(height=-1, row_number=3),
+            row(length=float("nan"), row_number=4),
+            row(width=float("inf"), height=5, row_number=5),
+        ])
+    assert invalid.value.status_code == 422
+    assert [(entry["row"], entry["field"]) for entry in invalid.value.errors] == [
+        (2, "width"), (3, "height"), (4, "length"), (5, "width")
+    ]
+
+
+@pytest.mark.anyio
+async def test_router_accepts_dimensions_and_rejects_invalid_ones(mock_mode, client):
+    created = await client.post("/api/import-jobs", json={"rows": [{"name": "A", "quantity": 2, "height": 45, "width": 30.5}]})
+    assert created.status_code == 200, created.text
+    active = await client.get("/api/import-jobs/active")
+    step_unit = active.json()["job"]["step"]["unit"]
+    assert step_unit["planned_dimensions"] == {"width": 30.5, "height": 45.0}
+    assert step_unit["dimensions"] is None
+    await client.post(f"/api/import-jobs/{created.json()['job']['id']}/cancel")
+
+    for bad in (0, -3, "wide", "NaN", "Infinity"):
+        for field in ("width", "height", "length"):
+            response = await client.post("/api/import-jobs", json={"rows": [{"name": "A", field: bad}]})
+            assert response.status_code == 422, (field, bad)

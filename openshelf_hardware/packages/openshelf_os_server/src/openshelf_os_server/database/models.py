@@ -358,6 +358,8 @@ class ImportJobUnit(Base):
 	error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 	request_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 	attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+	# Millimetre dimensions the import file supplied (any subset of width/height/length); `dimensions` is what was measured.
+	planned_dimensions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 	dimensions: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 	item_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
 	bin_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
