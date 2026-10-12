@@ -17,6 +17,7 @@ from openshelf_os.robot.commands import (
     StopCommand,
     HomeCommand,
     InitializeCommand,
+    DeliverTrayCommand,
     RetrieveItemCommand,
     StoreItemCommand,
 )
@@ -44,6 +45,8 @@ SCALE_OCCUPIED_THRESHOLD_GRAMS = 5.0
 SCALE_POLL_INTERVAL_SECONDS = 1.0
 SCALE_STATUS_FRESH_SECONDS = 3.0
 SCALE_WEIGHT_PUBLISH_DELTA_GRAMS = 1.0
+SCALE_PRE_RETRIEVE_READ_TIMEOUT_SECONDS = 2.0
+IO_BOX_OCCUPIED_ERROR = "Please remove the item from the IO box before retrieving another"
 ESTOP_POLL_INTERVAL_SECONDS = 0.05
 ESTOP_UNAVAILABLE_REASON = "Emergency stop input unavailable"
 PHYSICAL_ESTOP_REASON = "Physical emergency stop triggered"
@@ -439,6 +442,24 @@ class RobotWorker:
         if result is True:
             self.invalidate_cached_scale_status()
         return result
+
+    async def _is_io_box_occupied_before_retrieve(self, command: RobotCommands) -> bool:
+        """Re-read the IO box when a queued retrieval is about to move.
+
+        Admission only saw the box at submit time; an earlier queued retrieval may have
+        filled it since. The cached poll can predate that delivery, so read directly.
+        """
+        if isinstance(command, RetrieveItemCommand) is False or isinstance(command, DeliverTrayCommand) is True:
+            return False
+        if self._safety_guard_bypassed is True:
+            return False
+        try:
+            data = await asyncio.wait_for(self.get_scale_data(), SCALE_PRE_RETRIEVE_READ_TIMEOUT_SECONDS)
+            weight = abs(float(data["weight"]))
+        except Exception as err:
+            logging.warning("Scale read failed before retrieve; proceeding: %s", err)
+            return False
+        return weight > SCALE_OCCUPIED_THRESHOLD_GRAMS
 
     def invalidate_cached_scale_status(self) -> None:
         """Force the next bin admission to sample the scale after calibration changes."""
@@ -1653,8 +1674,26 @@ class RobotWorker:
                                     if operation is not queued_operation
                                 ]
                             continue
-                        self._current_command = command
-                        self._current_operation = queued_operation
+                        if await self._is_io_box_occupied_before_retrieve(command) is True:
+                            await self._publish_command_failure(
+                                command,
+                                IO_BOX_OCCUPIED_ERROR,
+                                queued_operation,
+                                code="io_box_occupied",
+                            )
+                            self._queued_commands = [
+                                operation
+                                for operation in self._queued_commands
+                                if operation is not queued_operation
+                            ]
+                            is_rejected_before_start = True
+                        else:
+                            is_rejected_before_start = False
+                            self._current_command = command
+                            self._current_operation = queued_operation
+                    if is_rejected_before_start is True:
+                        await self._publish_status()
+                        continue
                     await self._notify_command_lifecycle("running", queued_operation, None)
                     await self._publish_status()
 

@@ -27,7 +27,7 @@ from openshelf_os.common import (
     RobotAppSettings,
     ConfigValidationError,
     CONFIG_PATH,
-    INSECURE_PUBLISHED_SECRETS,
+    is_insecure_published_secret,
     OperatingMode,
     write_json_file_with_backup,
     load_and_validate_config,
@@ -49,6 +49,26 @@ LEGACY_SETTINGS_PATH = Path(os.getenv(DATA_DIR_ENV, "data")) / "settings.json"
 # otherwise unauthenticated requests answer 503 "Dev auto-user not found in
 # database". main._ensure_developer_user recreates this one on every startup.
 DEVELOPER_SYSTEM_USER_EMAIL = "developer@opshelf.com"
+
+# The developer user's PIN. Development and mock keep the well-known 1111 so the dev
+# UI can sign in by itself; production and demo devices are reachable on customer
+# networks and this repository is public, so they take a per-device PIN from the
+# environment (delivered by provisioning like JWT_SECRET) or, without one, an
+# unguessable PIN nobody knows.
+DEVELOPER_PIN_ENV = "DEVELOPER_PIN"
+DEFAULT_DEVELOPER_PIN = "1111"
+_DEVELOPER_PIN_DEFAULT_MODES = frozenset({OperatingMode.development, OperatingMode.mock})
+
+
+def configured_developer_pin(mode: OperatingMode) -> Optional[str]:
+    """Return the PIN the developer user must have in `mode`, or None when the
+    mode has no known PIN and the user should be locked with a random one."""
+    pin = os.getenv(DEVELOPER_PIN_ENV, "")
+    if pin != "":
+        return pin
+    if mode in _DEVELOPER_PIN_DEFAULT_MODES:
+        return DEFAULT_DEVELOPER_PIN
+    return None
 
 
 def _config_paths() -> list[Path]:
@@ -233,7 +253,7 @@ def _apply_env_overrides(data: dict) -> dict:
     # repository could forge a session with it, and it leaked into config.json on
     # devices that saved their config while it was in effect.
     jwt_secret = os.getenv("JWT_SECRET") or data["auth"].get("jwt_secret")
-    if not jwt_secret or jwt_secret in INSECURE_PUBLISHED_SECRETS:
+    if not jwt_secret or is_insecure_published_secret(jwt_secret):
         if jwt_secret:
             logger.warning(
                 "JWT_SECRET is a published default, using a generated secret instead; "

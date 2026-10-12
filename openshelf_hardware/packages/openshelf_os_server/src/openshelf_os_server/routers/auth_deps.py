@@ -238,24 +238,39 @@ async def get_relay_or_current_user_for_stream(
 		return await get_relay_or_current_user(request=request, token=token, db=db)
 
 
-def require_permissions(permissions: str | List[str]) -> Callable:
-	"""Dependency to require specific permissions."""
+def ensure_permissions(user: User, permissions: str | List[str]) -> None:
+	"""Raise 403 unless the user's role grants every permission."""
 	if isinstance(permissions, str):
 		permissions = [permissions]
 
+	user_permissions = user.role.permissions or []
+	for permission in permissions:
+		if not has_permission(user_permissions, permission):
+			raise HTTPException(
+				status_code=status.HTTP_403_FORBIDDEN,
+				detail=f"Missing required permission: {permission}"
+			)
+
+
+def require_permissions(permissions: str | List[str]) -> Callable:
+	"""Dependency to require specific permissions."""
 	async def permission_checker(
 		current_user: User = Depends(get_current_user)
 	) -> User:
 		"""Check if user has required permissions."""
-		user_permissions = current_user.role.permissions or []
+		ensure_permissions(current_user, permissions)
+		return current_user
 
-		for permission in permissions:
-			if not has_permission(user_permissions, permission):
-				raise HTTPException(
-					status_code=status.HTTP_403_FORBIDDEN,
-					detail=f"Missing required permission: {permission}"
-				)
+	return permission_checker
 
+
+def require_permissions_for_stream(permissions: str | List[str]) -> Callable:
+	"""`require_permissions` for routes that may answer with a long-lived stream, so
+	the check holds no pooled connection (see `get_current_user_for_stream`)."""
+	async def permission_checker(
+		current_user: User = Depends(get_current_user_for_stream)
+	) -> User:
+		ensure_permissions(current_user, permissions)
 		return current_user
 
 	return permission_checker
@@ -263,9 +278,6 @@ def require_permissions(permissions: str | List[str]) -> Callable:
 
 def require_relay_or_permissions(permissions: str | List[str]) -> Callable:
 	"""Allow the relay service on explicitly opted-in routes, otherwise enforce user permissions."""
-	if isinstance(permissions, str):
-		permissions = [permissions]
-
 	async def permission_checker(
 		request: Request,
 		current_user: User = Depends(get_relay_or_current_user),
@@ -273,13 +285,7 @@ def require_relay_or_permissions(permissions: str | List[str]) -> Callable:
 		if getattr(request.state, "relay_service_authenticated", False):
 			return current_user
 
-		user_permissions = current_user.role.permissions or []
-		for permission in permissions:
-			if not has_permission(user_permissions, permission):
-				raise HTTPException(
-					status_code=status.HTTP_403_FORBIDDEN,
-					detail=f"Missing required permission: {permission}",
-				)
+		ensure_permissions(current_user, permissions)
 		return current_user
 
 	return permission_checker

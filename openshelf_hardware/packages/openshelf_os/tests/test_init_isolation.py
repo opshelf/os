@@ -40,6 +40,20 @@ async def test_home_uses_same_motor_order_for_startup_and_manual_homing(isolate:
 
     await tool.home(isolate=isolate)
 
-    assert events == ["z_axis", "stage", "rotate", "x_axis", "y_axis"]
+    assert events == ["z_axis", "stage", "x_axis", "rotate", "y_axis"]
 
 
+
+
+@pytest.mark.asyncio
+async def test_isolated_home_skips_rotate_when_x_home_fails():
+    tool = _make_tool()
+    tool._mr = AsyncMock()
+    tool._emit_init = lambda *args: None
+    events = _record_home_order(tool)
+    tool._mx.home.side_effect = RuntimeError("x fault")
+
+    await tool.home(isolate=True)
+
+    assert "rotate" not in events
+    assert events == ["z_axis", "stage", "y_axis"]
