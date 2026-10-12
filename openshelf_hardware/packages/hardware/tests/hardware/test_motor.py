@@ -209,6 +209,21 @@ async def test_repairing_di1_demands_a_drive_power_cycle(mock_controller, caplog
 
 
 @pytest.mark.asyncio
+async def test_enable_on_another_input_is_cleared_keeping_polarity(mock_controller, caplog):
+    """An unwired N.C. ENABLE on any input holds the drive enabled when Pr0.07=0."""
+    motor = Motor(mock_controller, y_axis_params())
+    registers = echo_registers(mock_controller, persistent_brake_registers({0x0149: 0x0388}))
+
+    await motor.configure()
+
+    calls = mock_controller.write_single_register.await_args_list
+    assert registers[0x0149] == 0x0380  # SI3 inert; N.C. polarity and filter bits kept
+    assert calls.index(call(1, 0x0149, 0x0380)) < calls.index(call(1, 0x1801, 0x2211))
+    assert not any(c.args[1] in (0x0147, 0x014B, 0x014D, 0x014F, 0x0151) for c in calls)
+    assert "POWER-CYCLE THE DRIVE" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_non_parked_axis_leaves_other_enable_inputs_alone(mock_controller):
     motor = Motor(mock_controller, make_motor_params(motor_name="z_axis", brake_output_function=0x24))
     echo_registers(mock_controller, persistent_brake_registers({0x0191: 10, 0x0149: 0x88}))
