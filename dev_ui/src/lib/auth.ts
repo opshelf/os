@@ -1,4 +1,3 @@
-import { writable } from 'svelte/store';
 import { getApiBase } from './api';
 
 interface TokenResponse {
@@ -93,58 +92,35 @@ export function logout(): void {
 }
 
 const DEVELOPER_EMAIL = 'developer@opshelf.com';
+const DEVELOPER_PIN_COOKIE = 'opshelf_developer_pin';
 
-// Development and mock devices keep this PIN so the UI signs in by itself.
-// Production and demo devices reject it and have their own, which the UI asks
-// for once and keeps in memory for the tab.
-const DEFAULT_DEVELOPER_PIN = '1111';
+// The relay serving dev.opshelf.com sets the developer PIN as a cookie, so the PIN
+// never lives in this public repository and the UI never asks for it. Without the
+// cookie (a development or mock device reached directly) the API serves the
+// developer user without a token, so there is nothing to sign in to.
+export function developerPin(): string | null {
+	for (const part of document.cookie.split(';')) {
+		const [name, ...value] = part.trim().split('=');
+		if (name === DEVELOPER_PIN_COOKIE) {
+			const pin = decodeURIComponent(value.join('='));
+			return pin === '' ? null : pin;
+		}
+	}
+	return null;
+}
 
-let developerPin: string | null = null;
 let developerSignIn: Promise<void> | null = null;
-let resolvePinRequest: ((pin: string) => void) | null = null;
-
-export type DeveloperPinRequest = { error: string };
-
-// Non-null while the UI must ask for the developer PIN; the layout renders the prompt.
-export const developerPinRequest = writable<DeveloperPinRequest | null>(null);
-
-export function submitDeveloperPin(pin: string): void {
-	const resolve = resolvePinRequest;
-	resolvePinRequest = null;
-	developerPinRequest.set(null);
-	resolve?.(pin);
-}
-
-function askForDeveloperPin(error: string): Promise<string> {
-	return new Promise((resolve) => {
-		resolvePinRequest = resolve;
-		developerPinRequest.set({ error });
-	});
-}
 
 async function signInAsDeveloper(): Promise<void> {
-	let pin = developerPin ?? DEFAULT_DEVELOPER_PIN;
-	let error = '';
-
-	for (;;) {
-		try {
-			await login(DEVELOPER_EMAIL, pin);
-			developerPin = pin;
-			return;
-		} catch (err) {
-			if (err instanceof LoginRejectedError === false) {
-				throw err;
-			}
-		}
-
-		developerPin = null;
-		pin = await askForDeveloperPin(error);
-		error = 'wrong pin';
+	const pin = developerPin();
+	if (pin === null) {
+		throw new Error('no developer pin cookie');
 	}
+	await login(DEVELOPER_EMAIL, pin);
 }
 
 // The api client, the status stream, and the layout all sign in on demand, so
-// concurrent callers share one attempt and at most one prompt is on screen.
+// concurrent callers share one attempt.
 export function loginAsDeveloper(): Promise<void> {
 	if (developerSignIn === null) {
 		developerSignIn = signInAsDeveloper().finally(() => {

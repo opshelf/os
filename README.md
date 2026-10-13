@@ -157,11 +157,11 @@ routes that move hardware, start or abort calibration, save calibration, run the
 
 every database gets the system user `developer@opshelf.com` (admin role, hidden from user lists). its pin follows the mode on every start:
 
-- development and mock: `1111`, so the dev ui signs in by itself
+- development and mock: `1111`
 - production and demo: the value of `DEVELOPER_PIN` in the api environment (the checkout `.env`, next to `JWT_SECRET`); without one the user is locked with a random pin, and a device still carrying `1111` from an older release is moved off it at startup
 - `DEVELOPER_PIN` overrides the pin in every mode
 
-when the device rejects `1111`, the dev ui asks for the pin once and keeps it in memory for the tab. `scripts/y_first_home_diagnostic.py` reads it from `OPENSHELF_DIAGNOSTIC_PIN` or prompts.
+the dev ui never asks for the pin: behind the relay it signs in with the pin from the `opshelf_developer_pin` cookie the relay sets, and on a development or mock device reached directly it needs no sign-in. `scripts/y_first_home_diagnostic.py` reads the pin from `OPENSHELF_DIAGNOSTIC_PIN` or prompts.
 
 ### relay service authentication
 
