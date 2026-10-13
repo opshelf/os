@@ -5,7 +5,7 @@
 	import {
 		buildAuthenticatedUrl,
 		createReconnectingEventSource,
-		developerPinRequest,
+		developerPin,
 		isApiConnected,
 		isAuthenticated,
 		loginAsDeveloper,
@@ -20,7 +20,6 @@
 	import NeedsHomeAlert from '$lib/components/NeedsHomeAlert.svelte';
 	import SafetyAckAlert from '$lib/components/SafetyAckAlert.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
-	import DeveloperPinPrompt from '$lib/components/DeveloperPinPrompt.svelte';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
@@ -90,7 +89,7 @@
 		async function startStatusStream(): Promise<void> {
 			void probeApiState();
 
-			if (isAuthenticated() === false) {
+			if (isAuthenticated() === false && developerPin() !== null) {
 				try {
 					await loginAsDeveloper();
 				} catch (error) {
@@ -197,7 +196,7 @@
 	<div class="connection-overlay">
 		<div class="connection-message">DEVICE OR API IS UNREACHABLE</div>
 	</div>
-{:else if authReady === false && $developerPinRequest === null}
+{:else if authReady === false}
 	<div class="connection-overlay">
 		<div class="connection-message">AUTHENTICATING, PLEASE WAIT</div>
 	</div>
@@ -208,4 +207,3 @@
 {/if}
 
 <ToastStack />
-<DeveloperPinPrompt />
