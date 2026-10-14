@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.common import Parameters
-from openshelf_os.tool import MAX_PICK_LIFT_MM
+from openshelf_os.tool import MAX_PICK_LIFT_MM, require_grip
 from openshelf_os.storage import (
 	CalibrationCoordinate,
 	Cell,
@@ -1437,6 +1437,22 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 	)
 
 
+IOBoxPositionName = Literal["low", "high", "multi_item"]
+IOBoxAxis = Literal["x", "y", "z", "stage"]
+
+# Pickup low/high share one tool extension; the multi-item tray pose has its own.
+IOBOX_POSITION_FIELDS: dict[str, dict[str, str]] = {
+	"low": {"x": "pickup_low_x", "y": "pickup_low_y", "z": "z_extension", "stage": "stage_extension"},
+	"high": {"x": "pickup_high_x", "y": "pickup_high_y", "z": "z_extension", "stage": "stage_extension"},
+	"multi_item": {
+		"x": "multi_item_x",
+		"y": "multi_item_y",
+		"z": "multi_item_z_extension",
+		"stage": "multi_item_stage_extension",
+	},
+}
+
+
 class IOBoxPositionResponse(BaseModel):
 	pickup_low_x: float = Field(description="Position or extension in millimeters")
 	pickup_low_y: float = Field(description="Position or extension in millimeters")
@@ -1444,6 +1460,10 @@ class IOBoxPositionResponse(BaseModel):
 	pickup_high_y: float = Field(description="Position or extension in millimeters")
 	z_extension: float = Field(description="Position or extension in millimeters")
 	stage_extension: float = Field(description="Position or extension in millimeters")
+	multi_item_x: float = Field(description="Position or extension in millimeters")
+	multi_item_y: float = Field(description="Position or extension in millimeters")
+	multi_item_z_extension: float = Field(description="Position or extension in millimeters")
+	multi_item_stage_extension: float = Field(description="Position or extension in millimeters")
 	warnings: Optional[list[str]] = None
 
 
@@ -1461,12 +1481,16 @@ def _round_iobox_position(position: IOBoxPositionResponse) -> IOBoxPositionRespo
 	position.pickup_high_y = _round_iobox_calibration_value(position.pickup_high_y)
 	position.z_extension = _round_iobox_calibration_value(position.z_extension)
 	position.stage_extension = _round_iobox_calibration_value(position.stage_extension)
+	position.multi_item_x = _round_iobox_calibration_value(position.multi_item_x)
+	position.multi_item_y = _round_iobox_calibration_value(position.multi_item_y)
+	position.multi_item_z_extension = _round_iobox_calibration_value(position.multi_item_z_extension)
+	position.multi_item_stage_extension = _round_iobox_calibration_value(position.multi_item_stage_extension)
 	return position
 
 
 class IOBoxJogRequest(BaseModel):
-	position: Literal["low", "high"]
-	axis: Literal["x", "y", "z", "stage"]
+	position: IOBoxPositionName
+	axis: IOBoxAxis
 	delta: float = Field(description="Signed displacement in millimeters")
 
 
@@ -1477,6 +1501,10 @@ class IOBoxSaveRequest(BaseModel):
 	pickup_high_y: float = Field(description="Position or extension in millimeters")
 	z_extension: float = Field(description="Position or extension in millimeters")
 	stage_extension: float = Field(description="Position or extension in millimeters")
+	multi_item_x: float = Field(description="Position or extension in millimeters")
+	multi_item_y: float = Field(description="Position or extension in millimeters")
+	multi_item_z_extension: float = Field(description="Position or extension in millimeters")
+	multi_item_stage_extension: float = Field(description="Position or extension in millimeters")
 
 
 class IOBoxDoorPositionResponse(BaseModel):
@@ -1493,7 +1521,7 @@ class IOBoxDoorMoveRequest(IOBoxDoorPositionRequest):
 	position: Literal["close", "open"]
 
 
-_iobox_position: Literal["low", "high"] = "low"
+_iobox_position: IOBoxPositionName = "low"
 _iobox_current: Optional[IOBoxPositionResponse] = None
 
 
@@ -1652,6 +1680,10 @@ def _load_iobox_calibration() -> IOBoxPositionResponse:
 		pickup_high_y=_round_iobox_calibration_value(params.PICKUP_POSITION_H[1]),
 		z_extension=_round_iobox_calibration_value(params.Z_EXTENSION_IO),
 		stage_extension=_round_iobox_calibration_value(params.STAGE_EXTENSION_IO_BOX),
+		multi_item_x=_round_iobox_calibration_value(params.PICKUP_POSITION_MULTI_ITEM[0]),
+		multi_item_y=_round_iobox_calibration_value(params.PICKUP_POSITION_MULTI_ITEM[1]),
+		multi_item_z_extension=_round_iobox_calibration_value(params.Z_EXTENSION_IO_MULTI_ITEM),
+		multi_item_stage_extension=_round_iobox_calibration_value(params.STAGE_EXTENSION_IO_BOX_MULTI_ITEM),
 	)
 
 	return _iobox_current
@@ -1667,8 +1699,8 @@ def _load_iobox_calibration() -> IOBoxPositionResponse:
 async def get_iobox_calibration() -> IOBoxPositionResponse:
 	"""Read IO box pickup calibration.
 
-	Returns configured low/high pickup coordinates and tool extensions in millimeters. Does
-	not move hardware.
+	Returns configured low/high pickup and multi-item tray coordinates and tool extensions in
+	millimeters. Does not move hardware.
 	"""
 	return _load_iobox_calibration()
 
@@ -1688,11 +1720,11 @@ async def _get_iobox_current_or_error() -> IOBoxPositionResponse:
     responses=response_docs(errors=(401, 403, 409, 503)),
 )
 @serialize_calibration_state
-async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPositionResponse:
+async def move_to_iobox_position(position: IOBoxPositionName) -> IOBoxPositionResponse:
 	"""Move to an IO pickup position.
 
-	Opens the IO door, faces the tool forward, and moves to the configured low or high
-	pickup point. Updates the in-memory IO calibration state returned by the endpoint.
+	Opens the IO door, faces the tool forward, and moves to the configured low, high, or
+	multi-item point. Updates the in-memory IO calibration state returned by the endpoint.
 	"""
 	global _iobox_position, _iobox_current
 
@@ -1707,12 +1739,9 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 	tool = worker._robot._tool
 	io = worker._robot._io
 
-	if position == "low":
-		x = iobox_current.pickup_low_x
-		y = iobox_current.pickup_low_y
-	else:
-		x = iobox_current.pickup_high_x
-		y = iobox_current.pickup_high_y
+	fields = IOBOX_POSITION_FIELDS[position]
+	x = getattr(iobox_current, fields["x"])
+	y = getattr(iobox_current, fields["y"])
 
 	async with manual_motion_guard("calibration_iobox_move", worker=worker):
 		try:
@@ -1747,8 +1776,9 @@ async def move_to_iobox_position(position: Literal["low", "high"]) -> IOBoxPosit
 async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	"""Jog an IO pickup position.
 
-	Moves the selected low/high pickup axis by signed `delta` millimeters. Updates in-memory
-	calibration; call the IO save endpoint to persist changes.
+	Moves the selected low, high, or multi-item axis by signed `delta` millimeters. Pickup
+	low and high share one Z and stage extension; the multi-item pose has its own. Updates
+	in-memory calibration; call the IO save endpoint to persist changes.
 	"""
 	global _iobox_current, _iobox_position
 
@@ -1763,8 +1793,8 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	tool = worker._robot._tool
 	_iobox_position = request.position
 
-	x_limit = tool._mx._params.lim if tool._mx is not None else 1000
-	y_limit = tool._my._params.lim if tool._my is not None else 1500
+	field = IOBOX_POSITION_FIELDS[request.position][request.axis]
+	current_value = getattr(iobox_current, field)
 
 	warnings: list[str] = []
 
@@ -1777,16 +1807,9 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 						detail="X motor not configured",
 					)
 				await _clear_motors_for_move(tool, gantry=True)
-				if request.position == "low":
-					new_x = _clamp_value(iobox_current.pickup_low_x + request.delta, x_limit, "X axis", warnings)
-					new_x = _round_iobox_calibration_value(new_x)
-					await tool._mx.move_to_position(new_x)
-					iobox_current.pickup_low_x = new_x
-				else:
-					new_x = _clamp_value(iobox_current.pickup_high_x + request.delta, x_limit, "X axis", warnings)
-					new_x = _round_iobox_calibration_value(new_x)
-					await tool._mx.move_to_position(new_x)
-					iobox_current.pickup_high_x = new_x
+				new_value = _clamp_value(current_value + request.delta, tool._mx._params.lim, "X axis", warnings)
+				new_value = _round_iobox_calibration_value(new_value)
+				await tool._mx.move_to_position(new_value)
 			elif request.axis == "y":
 				if tool._my is None:
 					raise HTTPException(
@@ -1794,36 +1817,26 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 						detail="Y motor not configured",
 					)
 				await _clear_motors_for_move(tool, gantry=True)
-				if request.position == "low":
-					new_y = _clamp_value(iobox_current.pickup_low_y + request.delta, y_limit, "Y axis", warnings)
-					new_y = _round_iobox_calibration_value(new_y)
-					await tool._my.move_to_position(new_y)
-					iobox_current.pickup_low_y = new_y
-				else:
-					new_y = _clamp_value(iobox_current.pickup_high_y + request.delta, y_limit, "Y axis", warnings)
-					new_y = _round_iobox_calibration_value(new_y)
-					await tool._my.move_to_position(new_y)
-					iobox_current.pickup_high_y = new_y
+				new_value = _clamp_value(current_value + request.delta, tool._my._params.lim, "Y axis", warnings)
+				new_value = _round_iobox_calibration_value(new_value)
+				await tool._my.move_to_position(new_value)
 			elif request.axis == "z":
 				if tool._mg is None:
 					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
 				await _clear_motors_for_move(tool, gripper=True)
-				z_limit = tool._mg._params.lim
-				new_z = _clamp_value(iobox_current.z_extension + request.delta, z_limit, "Z axis", warnings)
-				new_z = _round_iobox_calibration_value(new_z)
+				new_value = _clamp_value(current_value + request.delta, tool._mg._params.lim, "Z axis", warnings)
+				new_value = _round_iobox_calibration_value(new_value)
 				grip_rpm = await tool.get_param("Z_MOVE_RPM")
 				grip_accel = await tool.get_param("Z_MOVE_ACCEL")
-				await tool._mg.move_to_position(new_z, rpm=grip_rpm, accel=grip_accel)
-				iobox_current.z_extension = new_z
-			elif request.axis == "stage":
+				await tool._mg.move_to_position(new_value, rpm=grip_rpm, accel=grip_accel)
+			else:
 				if tool._ms is None:
 					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stage motor not configured")
 				await _clear_motors_for_move(tool, stage=True)
-				stage_limit = tool._ms._params.lim
-				new_stage = _clamp_value(iobox_current.stage_extension + request.delta, stage_limit, "Stage", warnings)
-				new_stage = _round_iobox_calibration_value(new_stage)
-				await tool._ms.move_to_position(new_stage)
-				iobox_current.stage_extension = new_stage
+				new_value = _clamp_value(current_value + request.delta, tool._ms._params.lim, "Stage", warnings)
+				new_value = _round_iobox_calibration_value(new_value)
+				await tool._ms.move_to_position(new_value)
+			setattr(iobox_current, field, new_value)
 	except (MotorError, HardwareMotorError) as e:
 		axes: Optional[list[str]] = None
 		if request.axis == "z":
@@ -1916,6 +1929,71 @@ async def test_iobox_sequence(with_gripper: bool = False):
 
 
 @router.post(
+    "/iobox/test/multi-item",
+    dependencies=[ROBOT_CONTROL],
+    summary="Test the multi-item tray cycle",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 503)),
+)
+@serialize_calibration_state
+async def test_iobox_multi_item_cycle():
+	"""Test the multi-item tray cycle.
+
+	With a tray waiting in the IO box, releases the gripper, moves to the multi-item pose,
+	extends, grips the tray, retracts it into the tool, then extends again, releases it, and
+	retracts empty. This moves physical hardware using the current in-memory calibration.
+	"""
+	await ensure_laser_auto_calibration_not_running()
+
+	iobox_current = await _get_iobox_current_or_error()
+
+	worker = await get_robot_worker_or_503()
+
+	_ensure_ready(worker)
+
+	tool = worker._robot._tool
+	io = worker._robot._io
+
+	if tool._ms is None or tool._mg is None:
+		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Motors not configured")
+
+	stage_ext = iobox_current.multi_item_stage_extension
+	grip_ext = iobox_current.multi_item_z_extension
+	_validate_stage_target(stage_ext, _get_stage_limit(tool), "STAGE_EXTENSION_IO_BOX_MULTI_ITEM")
+	grip_rpm = await tool.get_param("Z_MOVE_RPM")
+	grip_accel = await tool.get_param("Z_MOVE_ACCEL")
+
+	async def extend() -> None:
+		await tool._ms.move_to_position(stage_ext)
+		await tool._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+
+	async with manual_motion_guard("calibration_iobox_multi_item_test", worker=worker):
+		try:
+			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			await tool.rotate_to_position("front")
+		except (MotorError, HardwareMotorError) as e:
+			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+
+		try:
+			await io.open_door()
+		except (IOBoxError, MotorError, HardwareMotorError) as e:
+			logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
+
+		try:
+			await tool._gs.close()
+			await tool.move(AxisCoordinate(iobox_current.multi_item_x, iobox_current.multi_item_y))
+			await extend()
+			require_grip(await tool._gs.open(), "tray grip", is_enabled=tool.is_grip_detection_enabled)
+			await tool.retract()
+			require_grip(await tool._gs.read_state(), "tray retract", is_enabled=tool.is_grip_detection_enabled)
+			await extend()
+			await tool._gs.close()
+			await tool.retract_empty()
+		except (MotorError, HardwareMotorError, ToolError) as e:
+			await _raise_motor_error(worker, f"Multi-item test failed: {str(e)}", e)
+	return {"success": True}
+
+
+@router.post(
     "/iobox/save",
     dependencies=[ROBOT_CONTROL],
     summary="Save IO pickup calibration",
@@ -1940,6 +2018,7 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	stage_nudge = config.robot.tool.parameters.STAGE_NUDGE
 	_validate_stage_target(request.stage_extension, stage_limit, "STAGE_EXTENSION_IO_BOX")
 	_validate_stage_target(request.stage_extension + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
+	_validate_stage_target(request.multi_item_stage_extension, stage_limit, "STAGE_EXTENSION_IO_BOX_MULTI_ITEM")
 
 	async with manual_motion_guard("calibration_iobox_save_home", worker=worker):
 		params_dict = config.robot.tool.parameters.model_dump()
@@ -1947,6 +2026,11 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 		params_dict["PICKUP_POSITION_H"] = (int(request.pickup_high_x), int(request.pickup_high_y))
 		params_dict["Z_EXTENSION_IO"] = _round_iobox_calibration_value(request.z_extension)
 		params_dict["STAGE_EXTENSION_IO_BOX"] = _round_iobox_calibration_value(request.stage_extension)
+		params_dict["PICKUP_POSITION_MULTI_ITEM"] = (int(request.multi_item_x), int(request.multi_item_y))
+		params_dict["Z_EXTENSION_IO_MULTI_ITEM"] = _round_iobox_calibration_value(request.multi_item_z_extension)
+		params_dict["STAGE_EXTENSION_IO_BOX_MULTI_ITEM"] = _round_iobox_calibration_value(
+			request.multi_item_stage_extension
+		)
 
 		config.robot.tool.parameters = Parameters.model_validate(params_dict)
 		save_root_config(config)
@@ -1975,6 +2059,10 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 				pickup_high_y=request.pickup_high_y,
 				z_extension=request.z_extension,
 				stage_extension=request.stage_extension,
+				multi_item_x=request.multi_item_x,
+				multi_item_y=request.multi_item_y,
+				multi_item_z_extension=request.multi_item_z_extension,
+				multi_item_stage_extension=request.multi_item_stage_extension,
 			)
 		)
 	worker.clear_needs_home()

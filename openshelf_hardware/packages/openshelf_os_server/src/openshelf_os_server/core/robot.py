@@ -101,6 +101,7 @@ def validate_robot_config() -> None:
             "robot.tool.parameters.IDLE_POSITION",
             "robot.tool.parameters.PICKUP_POSITION_L",
             "robot.tool.parameters.PICKUP_POSITION_H",
+            "robot.tool.parameters.PICKUP_POSITION_MULTI_ITEM",
         ])
         logger.info("Robot config validated successfully")
     except ConfigMissingError as err:
