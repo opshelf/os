@@ -172,6 +172,8 @@ class MotionRecordEntry:
     safety_blocked: bool
     run_id: str | None
     correlation_id: str | None
+    # Pr4.29 on axes with a drive-controlled brake: whether SO2 held the brake released.
+    digital_output_state: int | None = None
 
 
 MOTION_FLIGHT_RECORDER_SIZE = 256
@@ -493,6 +495,7 @@ class Motor():
         alarm_state: MotionAlarmState | None,
         state: MotionWaitState,
         position_delta: float | None,
+        digital_output_state: int | None = None,
     ) -> None:
         now = time.monotonic()
 
@@ -519,8 +522,19 @@ class Motor():
                 safety_blocked=bool(self._safety and self._safety.blocked),
                 run_id=self._diagnostic_run_id,
                 correlation_id=self._diagnostic_correlation_id,
+                digital_output_state=digital_output_state,
             )
         )
+
+    async def _read_brake_output_for_recorder(self) -> int | None:
+        """Diagnostic only: a failed read must never fail the move it records."""
+        if self._configured_brake_output_function is None:
+            return None
+
+        try:
+            return await self.get_param("Digital output state")
+        except Exception:
+            return None
 
     def _dump_flight_recorder(
         self,
@@ -1489,7 +1503,13 @@ class Motor():
                     return await self._finish_completed_move(homing, state)
 
                 alarm_state = await self._read_alarm_state(homing, state)
-                self._record_flight_snapshot(snapshot, alarm_state, state, position_delta)
+                self._record_flight_snapshot(
+                    snapshot,
+                    alarm_state,
+                    state,
+                    position_delta,
+                    await self._read_brake_output_for_recorder(),
+                )
 
                 if self._is_homing_limit_stop(homing, alarm_state, state):
                     return await self._finish_homing_limit_stop(snapshot, alarm_state, state)
