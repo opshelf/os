@@ -12,6 +12,10 @@
 - Server tests run every async test and fixture under pytest-asyncio auto mode; `pytest.ini` disables AnyIO's pytest plugin (`-p no:anyio`). Do not re-enable it: with both plugins loaded, a plain async fixture of an anyio-marked test runs on whichever plugin registered last (site-packages order), so a fixture-started worker such as the mock robot can land on a different event loop than the test.
 - The backend suite is order-dependent only because collection order is stable — before landing test changes, run it shuffled at least once: `uv run pytest --random-order` (`--random-order-bucket=global` to interleave modules, `--random-order-seed=<seed>` to replay a failing order).
 
+## Dev UI
+- Report errors through the toast system (`postToast('error', …)` from `$lib/toasts`), not inline error text in pages, dialogs, or components.
+- Keep a button's label unchanged while its action is busy or queued — only disable it; do not swap in "homing…"/"queued"-style titles.
+
 ## Device signing keys
 - Only the unanchored `data/` gitignore rule keeps signing-key files out of git — never `git add -f` one.
 - Never give a device a second key under an id another key already used, and never let a locally generated key take the provisioned id `v2`: `verify_audit_chain` selects the key by the id recorded on each row, so a reused id turns a key change into a tampering report.
