@@ -1217,9 +1217,9 @@ class Robot:
 
     async def deliver_tray(self, coord: AxisCoordinate) -> None:
         """Leave the entire tray supported in the IO box, with the tool clear."""
-        position = await self._tool.get_param("PICKUP_POSITION_L")
+        position = await self._tool.get_param("PICKUP_POSITION_MULTI_ITEM")
         if position is None:
-            raise ConfigError("Missing PICKUP_POSITION_L parameter")
+            raise ConfigError("Missing PICKUP_POSITION_MULTI_ITEM parameter")
         self.set_operation_context(phase="deliver_tray.pick_from_shelf", target_coordinate=coord)
         await self._tool.pick(coord)
         self.set_operation_context(phase="deliver_tray.rotate_to_front")
@@ -1231,7 +1231,7 @@ class Robot:
         self.set_operation_context(phase="deliver_tray.extend_into_io")
         # Use the same supported pose for delivery and collection. No item-transfer
         # Y motion: the tray itself stays here instead of lifting off its contents.
-        await self._tool.extend_IO(nudge_override=0.0)
+        await self._tool.extend_IO_multi_item()
         self.set_operation_context(phase="deliver_tray.release")
         await self._set_tray_grip(engaged=False)
         self.set_operation_context(phase="deliver_tray.retract_empty")
@@ -1244,9 +1244,9 @@ class Robot:
 
     async def return_tray(self, coord: AxisCoordinate) -> None:
         """Collect the released tray at the delivery pose, then replace it at home."""
-        position = await self._tool.get_param("PICKUP_POSITION_L")
+        position = await self._tool.get_param("PICKUP_POSITION_MULTI_ITEM")
         if position is None:
-            raise ConfigError("Missing PICKUP_POSITION_L parameter")
+            raise ConfigError("Missing PICKUP_POSITION_MULTI_ITEM parameter")
         self.set_operation_context(phase="return_tray.release")
         await self._set_tray_grip(engaged=False)
         self.set_operation_context(phase="return_tray.rotate_to_front")
@@ -1256,7 +1256,7 @@ class Robot:
         self.set_operation_context(phase="return_tray.open_door")
         await self._io.open_door()
         self.set_operation_context(phase="return_tray.extend_into_io")
-        await self._tool.extend_IO(nudge_override=0.0)
+        await self._tool.extend_IO_multi_item()
         self.set_operation_context(phase="return_tray.grip")
         await self._set_tray_grip(engaged=True)
         self.set_operation_context(phase="return_tray.retract")
