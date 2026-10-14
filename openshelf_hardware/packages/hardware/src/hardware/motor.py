@@ -1251,11 +1251,13 @@ class Motor():
         ppr = getattr(self._params, "ppr", 10000)
         pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_pos, self._params.mpr), ppr)
 
-        if rpm is not None:
-            await self.set_param("Velocity", int(rpm))
-        if accel is not None:
-            await self.set_param("Acceleration", int(accel))
-            await self.set_param("Deceleration", int(accel))
+        # Every move writes its own profile: the registers otherwise keep whatever the
+        # last move, home or move_config() left, and the logged rpm/accel would lie.
+        move_rpm = int(rpm or self._params.rpm)
+        move_accel = int(accel or self._params.accel)
+        await self.set_param("Velocity", move_rpm)
+        await self.set_param("Acceleration", move_accel)
+        await self.set_param("Deceleration", move_accel)
 
         await self.set_param("Position High", pulse[0])
         await self.set_param("Position Low", pulse[1])
@@ -1288,8 +1290,8 @@ class Motor():
         self._move_started_at = time.monotonic()
         self._move_start_position = self._cur_pos
         self._move_target_position = value
-        self._move_rpm = int(rpm or self._params.rpm)
-        self._move_accel = int(accel or self._params.accel)
+        self._move_rpm = move_rpm
+        self._move_accel = move_accel
         self._flight_recorder.clear()
 
         self._logger.info(
