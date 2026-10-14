@@ -120,6 +120,10 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Wifi • Openshelf</title>
+</svelte:head>
+
 <table class="connect-table">
 	<thead>
 		<tr>
