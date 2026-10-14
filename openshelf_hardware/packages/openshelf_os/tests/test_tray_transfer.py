@@ -15,7 +15,7 @@ def build_robot():
     robot._operation_context = {}
     operations = Mock()
     tool = SimpleNamespace(**{name: AsyncMock() for name in (
-        'pick', 'place', 'rotate_to_position', 'move', 'extend_IO',
+        'pick', 'place', 'rotate_to_position', 'move', 'extend_IO_multi_item',
         'retract_empty', 'retract', 'clear_alarms',
     )})
     tool.get_param = AsyncMock(return_value=(100, 200))
@@ -61,3 +61,14 @@ async def test_return_tray_skips_grip_check_when_object_detection_disabled():
     await robot.return_tray(AxisCoordinate(10, 20))
     assert call.close_door() in ops.mock_calls
     robot._tool.place.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('method', ['deliver_tray', 'return_tray'])
+async def test_tray_transfers_use_the_multi_item_io_pose(method):
+    robot, _ = build_robot()
+    poses = {'PICKUP_POSITION_L': (100, 200), 'PICKUP_POSITION_MULTI_ITEM': (300, 400)}
+    robot._tool.get_param = AsyncMock(side_effect=lambda name: poses.get(name))
+    await getattr(robot, method)(AxisCoordinate(10, 20))
+    robot._tool.move.assert_any_await(AxisCoordinate(300, 400))
+    robot._tool.extend_IO_multi_item.assert_awaited_once_with()

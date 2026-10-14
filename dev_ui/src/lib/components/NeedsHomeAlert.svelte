@@ -2,6 +2,7 @@
 	import { homeMotor } from '$lib/api';
 	import { devicePath } from '$lib/nav';
 	import { robotStatus } from '$lib/stores';
+	import { postToast } from '$lib/toasts';
 
 	// The global /robot/status stream is the single source of truth: a motor
 	// crash publishes a snapshot with needs_home + needs_home_axes immediately,
@@ -14,35 +15,43 @@
 	// Dismissal is tracked per motor set so a cancelled alert does not reappear
 	// on the next snapshot, while a new crash (a different set) re-opens it.
 	let dismissedKey = $state<string | null>(null);
-	let isHoming = $state<boolean>(false);
-	let homeError = $state<string>('');
+	let homingMotor = $state<string | null>(null);
+	let queuedMotors = $state<string[]>([]);
 
 	const isVisible = $derived(needsHome && dismissedKey !== motorsKey);
+	const isBusy = $derived(homingMotor !== null || queuedMotors.length > 0);
 
 	$effect(() => {
 		if (needsHome === false) {
 			dismissedKey = null;
-			isHoming = false;
-			homeError = '';
+			queuedMotors = [];
 		}
 	});
 
-	async function didHome(): Promise<void> {
-		if (isHoming === true || motors.length === 0) {
+	// The server rejects concurrent motion with 409, so clicks queue up and the
+	// motors home one at a time. A successful home republishes status without
+	// that motor, which removes its button.
+	async function didHome(motor: string): Promise<void> {
+		if (homingMotor === motor || queuedMotors.includes(motor)) {
 			return;
 		}
-		isHoming = true;
-		homeError = '';
-		// One motor at a time: the server guards concurrent motion.
-		for (const motor of motors) {
+		queuedMotors = [...queuedMotors, motor];
+		if (homingMotor !== null) {
+			return;
+		}
+		while (queuedMotors.length > 0) {
+			const [next, ...rest] = queuedMotors;
+			queuedMotors = rest;
+			homingMotor = next;
 			try {
-				await homeMotor(motor);
+				await homeMotor(next);
 			} catch (err) {
-				homeError = `${err instanceof Error ? err.message : 'home failed'} (during ${motor})`;
-				break;
+				// Stop the queue so the operator sees the failure before more motion.
+				postToast('error', `${err instanceof Error ? err.message : 'home failed'} (during ${next})`);
+				queuedMotors = [];
 			}
 		}
-		isHoming = false;
+		homingMotor = null;
 	}
 
 	function didCancel(): void {
@@ -53,25 +62,28 @@
 {#if isVisible}
 	<div class="needs-home-scrim"></div>
 	<aside class="needs-home-alert" role="alert">
-		<p class="needs-home-title">
-			motor needs homing{motors.length > 0 ? `: ${motors.join(', ')}` : ''}
-		</p>
+		<p class="needs-home-title">motor needs homing</p>
 		<div class="needs-home-actions">
-			<button type="button" onclick={didCancel} disabled={isHoming === true}>
+			<button type="button" onclick={didCancel} disabled={isBusy}>
 				cancel
 			</button>
 			<div class="needs-home-spacer"></div>
 			{#if motors.length > 0}
-				<button type="button" onclick={() => void didHome()} disabled={isHoming === true}>
-					{isHoming ? 'homing...' : 'home'}
-				</button>
+				<div class="needs-home-buttons">
+					{#each motors as motor (motor)}
+						<button
+							type="button"
+							onclick={() => void didHome(motor)}
+							disabled={homingMotor === motor || queuedMotors.includes(motor)}
+						>
+							home {motor}
+						</button>
+					{/each}
+				</div>
 			{:else}
 				<a class="needs-home-link" href={devicePath('/motors')}>open motors page</a>
 			{/if}
 		</div>
-		{#if homeError !== ''}
-			<p class="needs-home-error">{homeError}</p>
-		{/if}
 	</aside>
 {/if}
 
@@ -106,8 +118,15 @@
 	.needs-home-actions {
 		display: flex;
 		gap: 1em;
-		align-items: center;
+		align-items: flex-end;
 		margin-top: 1.5em;
+	}
+
+	.needs-home-buttons {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 0.5em;
 	}
 
 	.needs-home-spacer {
@@ -115,15 +134,8 @@
 	}
 
 	.needs-home-actions button,
+	.needs-home-buttons button,
 	.needs-home-link {
 		margin-top: 0;
-	}
-
-	.needs-home-error {
-		margin-top: 1em;
-		max-width: 32em;
-		color: #c40000;
-		text-transform: none;
-		white-space: pre-wrap;
 	}
 </style>

@@ -164,7 +164,7 @@
 
 <svelte:head>
 	<link rel="icon" href="/favicon.svg" />
-	<title>openshelf ┈ dev ui</title>
+	<title>Dev UI • Openshelf</title>
 </svelte:head>
 
 <nav>

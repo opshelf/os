@@ -508,6 +508,10 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Cameras • Openshelf</title>
+</svelte:head>
+
 {#if loading}
 	<p>loading cameras...</p>
 {:else if statusError !== ''}

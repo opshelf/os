@@ -72,12 +72,12 @@ def test_migrates_in_place_with_backup_then_noop(tmp_path, v4_config):
     path, raw = _write(tmp_path, "config.json", v4_config)
     changed, changes, backup = apply.migrate_config_file(path)
     assert changed is True
-    assert len(changes) > 1 and changes[-1] == "schema_version: 4 -> 5"
+    assert len(changes) > 1 and changes[-1] == "schema_version: 5 -> 6"
     assert any("front_shelf_scout_x_mm" in c for c in changes)
     assert backup == path.with_name("config.json.schema-v4.bak")
     assert backup.read_bytes() == raw
     migrated = json.loads(path.read_bytes())
-    assert migrated["schema_version"] == 5
+    assert migrated["schema_version"] == 6
     assert "front_shelf_scout_x_mm" in migrated["robot"]["grid"]["scan"]
     assert migrated["storage"]["bins"][0]["home_location"]["side"] == "front_module"
 
@@ -121,7 +121,7 @@ def test_cli_preview_reports_migrating_file_with_existing_backup(tmp_path, v4_co
 
 
 def test_future_version_is_rejected_without_touching_file(tmp_path, v4_config):
-    future = {**v4_config, "schema_version": 6}
+    future = {**v4_config, "schema_version": 7}
     path, raw = _write(tmp_path, "config.json", future)
     with pytest.raises(ValueError, match="newer than supported"):
         apply.migrate_config_file(path)
@@ -156,7 +156,7 @@ def test_failed_temp_write_leaves_no_backup_and_retries_cleanly(tmp_path, v4_con
     assert changed is True
     assert backup == path.with_name("config.json.schema-v4.bak")
     assert backup.read_bytes() == raw
-    assert json.loads(path.read_bytes())["schema_version"] == 5
+    assert json.loads(path.read_bytes())["schema_version"] == 6
 
 
 def test_failed_backup_write_leaves_no_backup_and_retries_cleanly(tmp_path, v4_config, monkeypatch):
@@ -182,7 +182,7 @@ def test_failed_backup_write_leaves_no_backup_and_retries_cleanly(tmp_path, v4_c
     assert changed is True
     assert backup == path.with_name("config.json.schema-v4.bak")
     assert backup.read_bytes() == raw
-    assert json.loads(path.read_bytes())["schema_version"] == 5
+    assert json.loads(path.read_bytes())["schema_version"] == 6
 
 
 def test_symlink_is_refused(tmp_path, v4_config):
@@ -195,9 +195,13 @@ def test_symlink_is_refused(tmp_path, v4_config):
 
 
 def test_current_version_is_a_noop(tmp_path, v4_config):
-    current, _ = _write(tmp_path, "config.json", {**v4_config, "schema_version": 5})
-    # v5 content: the scan keys must already be renamed for the no-op claim.
+    current, _ = _write(tmp_path, "config.json", {**v4_config, "schema_version": 6})
+    # v6 content: the scan keys must already be renamed and the multi-item pose seeded.
     data = json.loads(current.read_bytes())
+    parameters = data["robot"]["tool"]["parameters"]
+    parameters["PICKUP_POSITION_MULTI_ITEM"] = parameters["PICKUP_POSITION_L"]
+    parameters["STAGE_EXTENSION_IO_BOX_MULTI_ITEM"] = parameters["STAGE_EXTENSION_IO_BOX"]
+    parameters["Z_EXTENSION_IO_MULTI_ITEM"] = parameters["Z_EXTENSION_IO"]
     scan = data["robot"]["grid"]["scan"]
     scan["front_shelf_scout_x_mm"] = scan.pop("left_shelf_scout_x_mm")
     scan["back_shelf_scout_x_mm"] = scan.pop("right_shelf_scout_x_mm")
