@@ -30,6 +30,7 @@ async def probe_line_from_center(
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
 	should_abort: Callable[[], bool] | None = None,
 	should_infer_far_edge: bool = False,
+	should_infer_near_edge: bool = False,
 ) -> Optional[LineGapSegment]:
 	left_gap_idx: Optional[int] = None
 	right_gap_idx: Optional[int] = None
@@ -154,7 +155,32 @@ async def probe_line_from_center(
 		return None
 
 	if left_wall_found is False:
-		return None
+		# A bottom-row opening can extend below the axis floor, so the gap runs out of window
+		# at index 0 and its lower edge is never seen. Mirror the far-edge rule: only infer
+		# from a measured upper edge and a hole-sized measured span.
+		if should_infer_near_edge is False or right_wall_found is False or left_gap_idx != 0:
+			return None
+
+		measured_span_mm = float(positions[right_gap_idx] - positions[left_gap_idx])
+
+		if measured_span_mm < (float(expected_span_mm) / 2.0):
+			return None
+
+		inferred_end_mm = positions[right_gap_idx] + (step_mm / 2.0)
+		inferred_start_mm = inferred_end_mm - float(expected_span_mm)
+		print_status(
+			f"{progress_prefix}=inferred_near_edge measured_span_mm={measured_span_mm:.2f} "
+			f"assumed_span_mm={float(expected_span_mm):.2f}"
+		)
+
+		return LineGapSegment(
+			start_idx=left_gap_idx,
+			end_idx=right_gap_idx,
+			start_mm=inferred_start_mm,
+			end_mm=inferred_end_mm,
+			width_mm=float(inferred_end_mm - inferred_start_mm),
+			center_mm=float((inferred_start_mm + inferred_end_mm) / 2.0),
+		)
 
 	if right_wall_found is False:
 		if should_infer_far_edge is False:
@@ -699,6 +725,8 @@ async def capture_cross_scan(
 		on_update=on_update,
 		should_abort=should_abort,
 		should_infer_far_edge=True,
+		# Y cannot travel below 0, so a window starting there is cut off by the axis floor.
+		should_infer_near_edge=float(y_positions[0]) <= Y_AXIS_FLOOR_MM,
 	)
 
 	if vertical_segment is None:
