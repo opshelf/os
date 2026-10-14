@@ -86,6 +86,10 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Power • Openshelf</title>
+</svelte:head>
+
 {#if isLoading === true}
 	<p>loading power rails...</p>
 {:else}

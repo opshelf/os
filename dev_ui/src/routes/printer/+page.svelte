@@ -135,6 +135,10 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Printer • Openshelf</title>
+</svelte:head>
+
 {#if isLoading === true}
 	<p>loading printer data...</p>
 {:else}
