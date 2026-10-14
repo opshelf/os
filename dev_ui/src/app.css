@@ -96,6 +96,11 @@ nav a.active {
 	color: white;
 }
 
+a.close-btn {
+	background-color: black;
+	color: white;
+}
+
 .connection-overlay {
 	position: fixed;
 	inset: 0;

@@ -180,7 +180,7 @@
 		<li class="spacer-flexible"></li>
 
 		<li>
-			<a href={`http://${document.location.hostname}:8888/`}>Ray</a>
+			<a href={`http://${document.location.hostname}:8888/`} class="close-btn">Close</a>
 		</li>
 	</ul>
 </nav>
