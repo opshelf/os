@@ -570,14 +570,17 @@ class Parameters(BaseModel):
     IDLE_POSITION: TwoInt
     PICKUP_POSITION_L: TwoInt
     PICKUP_POSITION_H: TwoInt
+    PICKUP_POSITION_MULTI_ITEM: TwoInt
     SCAN_POSITION: TwoInt
     STAGE_EXTENSION_IO_BOX: Union[int, float]
+    STAGE_EXTENSION_IO_BOX_MULTI_ITEM: Union[int, float]
     STAGE_NUDGE: Union[int, float]
     STAGE_EXTENSION_SHELF_FRONT: Union[int, float]
     STAGE_EXTENSION_SHELF_BACK: Union[int, float]
     Z_EXTENSION_PICK: float
     Z_EXTENSION_PLACE: float
     Z_EXTENSION_IO: float
+    Z_EXTENSION_IO_MULTI_ITEM: float
     Z_MOVE_RPM: int = Field(..., gt=0)
     Z_MOVE_ACCEL: int = Field(..., gt=0)
     STAGE_RETRACT_POSITION_MM: float = Field(default=3.0, ge=0)
@@ -604,6 +607,7 @@ class Parameters(BaseModel):
         "IDLE_POSITION",
         "PICKUP_POSITION_L",
         "PICKUP_POSITION_H",
+        "PICKUP_POSITION_MULTI_ITEM",
         "SCAN_POSITION",
         mode="before",
     )

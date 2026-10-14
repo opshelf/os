@@ -1341,21 +1341,27 @@ export interface IOBoxPosition {
 	pickup_high_y: number;
 	z_extension: number;
 	stage_extension: number;
+	multi_item_x: number;
+	multi_item_y: number;
+	multi_item_z_extension: number;
+	multi_item_stage_extension: number;
 	warnings?: string[];
 }
+
+export type IOBoxPositionName = 'low' | 'high' | 'multi_item';
 
 export async function getIOBoxCalibration(): Promise<IOBoxPosition> {
 	return apiFetch<IOBoxPosition>('/calibration/iobox');
 }
 
-export async function moveToIOBoxPosition(position: 'low' | 'high'): Promise<IOBoxPosition> {
+export async function moveToIOBoxPosition(position: IOBoxPositionName): Promise<IOBoxPosition> {
 	return apiFetch<IOBoxPosition>(`/calibration/iobox/move?position=${position}`, {
 		method: 'POST'
 	});
 }
 
 export async function jogIOBoxAxis(
-	position: 'low' | 'high',
+	position: IOBoxPositionName,
 	axis: 'x' | 'y' | 'z' | 'stage',
 	delta: number
 ): Promise<IOBoxPosition> {
@@ -1379,6 +1385,12 @@ export async function testIOBoxSequence(
 	const url = `/calibration/iobox/test${query !== '' ? `?${query}` : ''}`;
 
 	return apiFetch<{ success: boolean }>(url, {
+		method: 'POST'
+	});
+}
+
+export async function testIOBoxMultiItemCycle(): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>('/calibration/iobox/test/multi-item', {
 		method: 'POST'
 	});
 }
