@@ -100,6 +100,26 @@ class AuthService:
 			"jti": secrets.token_urlsafe(32)
 		}
 		return jwt.encode(data, self.secret_key, algorithm=self.algorithm)
+
+	def create_scan_token(self, event_seq: int, expires_seconds: int) -> str:
+		"""Create a short-lived token naming one durable scanner event."""
+		now = datetime.now(timezone.utc)
+		data = {
+			"iat": now,
+			"exp": now + timedelta(seconds=expires_seconds),
+			"type": "login_scan",
+			"seq": event_seq,
+			"jti": secrets.token_urlsafe(16),
+		}
+		return jwt.encode(data, self.secret_key, algorithm=self.algorithm)
+
+	def decode_scan_token(self, token: str) -> Optional[int]:
+		"""Return the durable event sequence carried by a valid scan token."""
+		payload = self.decode_token(token)
+		if payload is None or payload.get("type") != "login_scan":
+			return None
+		seq = payload.get("seq")
+		return seq if isinstance(seq, int) and not isinstance(seq, bool) else None
 	
 	def decode_token(self, token: str) -> Optional[Dict[str, Any]]:
 		"""Decode and validate a JWT token."""
