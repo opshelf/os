@@ -263,3 +263,52 @@ def test_motion_fault_detects_stall_when_no_progress_is_observed(mock_controller
 
     assert fault_state.is_fault is True
     assert fault_state.stall_detected is True
+
+
+@pytest.mark.asyncio
+async def test_flight_recorder_samples_brake_output_on_braked_axis(mock_controller):
+    motor = Motor(mock_controller, make_motor_params(motor_name="y_axis", brake_output_function=0x24))
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.get_position = mock_position_reader(motor, [0.0, 1.0])
+    reads = {"Current alarm": 0, "Digital output state": 0b10}
+    motor.get_param = AsyncMock(side_effect=lambda name: reads[name])
+    mock_controller.read_holding_registers.side_effect = [0, 1 << 5]
+
+    status = await motor.wait_for_move(timeout=0.5)
+
+    assert status == MotorStatus.STOPPED
+    assert [entry.digital_output_state for entry in motor._flight_recorder] == [0b10]
+
+
+@pytest.mark.asyncio
+async def test_flight_recorder_brake_output_read_failure_does_not_fail_move(mock_controller):
+    motor = Motor(mock_controller, make_motor_params(motor_name="y_axis", brake_output_function=0x24))
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.get_position = mock_position_reader(motor, [0.0, 1.0])
+
+    async def did_get_param(name):
+        if name == "Digital output state":
+            raise MotorError("bus timeout")
+        return 0
+
+    motor.get_param = AsyncMock(side_effect=did_get_param)
+    mock_controller.read_holding_registers.side_effect = [0, 1 << 5]
+
+    status = await motor.wait_for_move(timeout=0.5)
+
+    assert status == MotorStatus.STOPPED
+    assert [entry.digital_output_state for entry in motor._flight_recorder] == [None]
+
+
+@pytest.mark.asyncio
+async def test_flight_recorder_skips_brake_output_read_on_unbraked_axis(mock_controller):
+    motor = Motor(mock_controller, make_motor_params(motor_name="x_axis"))
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.get_position = mock_position_reader(motor, [0.0, 1.0])
+    motor.get_param = AsyncMock(return_value=0)
+    mock_controller.read_holding_registers.side_effect = [0, 1 << 5]
+
+    await motor.wait_for_move(timeout=0.5)
+
+    assert all(call.args[0] != "Digital output state" for call in motor.get_param.await_args_list)
+    assert [entry.digital_output_state for entry in motor._flight_recorder] == [None]
