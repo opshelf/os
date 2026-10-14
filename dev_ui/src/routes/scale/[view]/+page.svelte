@@ -27,6 +27,10 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Scale • Openshelf</title>
+</svelte:head>
+
 <div class="toggle-group">
 	<a class:selected={selectedView === 'status'} href={tabHref('/scale/status')}>status</a>
 	<a class:selected={selectedView === 'calibration'} href={tabHref('/scale/calibration')}>calibration</a>

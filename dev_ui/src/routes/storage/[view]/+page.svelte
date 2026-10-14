@@ -27,4 +27,8 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Storage • Openshelf</title>
+</svelte:head>
+
 <CalibrationPage {selectedView} />
