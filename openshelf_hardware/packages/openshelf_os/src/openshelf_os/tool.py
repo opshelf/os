@@ -1242,6 +1242,33 @@ class Tool:
 
             raise MovementError(f"Tool IO extension failed: {str(e)}") from e
 
+    async def extend_IO_multi_item(self) -> None:
+        """Extend to the multi-item tray pose in the IO box; trays need no stage nudge."""
+        if self._mg is None or self._ms is None:
+            raise MotorError("Tool motors (z_axis, stage) required for IO extension")
+
+        slide_ext = await self.get_param("STAGE_EXTENSION_IO_BOX_MULTI_ITEM")
+        grip_ext = await self.get_param("Z_EXTENSION_IO_MULTI_ITEM")
+        grip_rpm = await self.get_param("Z_MOVE_RPM")
+        grip_accel = await self.get_param("Z_MOVE_ACCEL")
+
+        if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
+            raise ConfigError("Missing multi-item IO box extension parameters")
+
+        self._warn_stage_target(slide_ext, "STAGE_EXTENSION_IO_BOX_MULTI_ITEM")
+
+        try:
+            await self._ms.ready()
+            await self._ms.move_to_position(slide_ext)
+            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+        except Exception as e:
+            await self._handle_fault(e)
+
+            if isinstance(e, ConfigError):
+                raise
+
+            raise MovementError(f"Tool multi-item IO extension failed: {str(e)}") from e
+
     async def extend_empty(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for empty extension")

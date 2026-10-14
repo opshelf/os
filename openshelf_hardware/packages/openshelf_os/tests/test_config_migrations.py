@@ -19,6 +19,7 @@ from openshelf_os.config_migrations import (
     cli,
     runner,
     v005_module_side_names as v005,
+    v006_multi_item_io_pose as v006,
 )
 from openshelf_os.config_migrations.v002_laser_parameter_names import (
     SCAN_KEY_RENAMES,
@@ -112,15 +113,15 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
     original = copy.deepcopy(legacy_config)
     migrated, changes = runner.migrate_config(legacy_config)
     assert legacy_config == original
-    assert migrated["schema_version"] == 5
+    assert migrated["schema_version"] == 6
     assert migrated["version"] == original["version"]
     assert migrated["auth"] == original["auth"]
     assert migrated["unknown_root_setting"] == original["unknown_root_setting"]
-    assert migrated["robot"]["tool"] == original["robot"]["tool"]
+    assert migrated["robot"]["tool"] == _with_multi_item_pose(original)["robot"]["tool"]
     assert migrated["robot"]["grid"]["scan"]["unknown_scan_setting"] == {"preserve": True}
     assert not set(REMOVED_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
     assert not set(UNUSED_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
-    assert changes[-1] == "schema_version: 4 -> 5"
+    assert changes[-1] == "schema_version: 5 -> 6"
     config = RootConfig.model_validate(migrated)
     scan = config.robot.grid.scan
 
@@ -309,7 +310,7 @@ def v4_side_config():
 
 def test_v5_renames_module_side_scan_keys_and_bin_sides(v4_side_config):
     migrated, changes = runner.migrate_config(v4_side_config)
-    assert migrated["schema_version"] == 5
+    assert migrated["schema_version"] == 6
     scan = migrated["robot"]["grid"]["scan"]
     assert scan["front_shelf_scout_x_mm"] == 120.0
     assert scan["back_shelf_scout_x_mm"] == 45.0
@@ -329,6 +330,33 @@ def test_v5_renames_module_side_scan_keys_and_bin_sides(v4_side_config):
     RootConfig.model_validate(migrated)
 
 
+def _with_multi_item_pose(config):
+    seeded = copy.deepcopy(config)
+    parameters = seeded["robot"]["tool"]["parameters"]
+    for new, old in v006.SEEDED_KEYS.items():
+        parameters[new] = copy.deepcopy(parameters[old])
+    return seeded
+
+
+def test_v6_seeds_the_multi_item_pose_from_pickup_low_and_keeps_existing_values(v4_side_config):
+    parameters = v4_side_config["robot"]["tool"]["parameters"]
+    parameters["PICKUP_POSITION_L"] = [120, 340]
+    parameters["STAGE_EXTENSION_IO_BOX"] = 52.0
+    parameters["Z_EXTENSION_IO"] = 163.5
+    migrated, changes = runner.migrate_config(v4_side_config)
+    seeded = migrated["robot"]["tool"]["parameters"]
+    assert seeded["PICKUP_POSITION_MULTI_ITEM"] == [120, 340]
+    assert seeded["STAGE_EXTENSION_IO_BOX_MULTI_ITEM"] == 52.0
+    assert seeded["Z_EXTENSION_IO_MULTI_ITEM"] == 163.5
+    assert "robot.tool.parameters.PICKUP_POSITION_MULTI_ITEM seeded from PICKUP_POSITION_L" in changes
+    assert RootConfig.model_validate(migrated).robot.tool.parameters.PICKUP_POSITION_MULTI_ITEM == (120, 340)
+
+    calibrated = {**copy.deepcopy(migrated), "schema_version": 5}
+    calibrated["robot"]["tool"]["parameters"]["PICKUP_POSITION_MULTI_ITEM"] = [10, 20]
+    remigrated, _ = runner.migrate_config(calibrated)
+    assert remigrated["robot"]["tool"]["parameters"]["PICKUP_POSITION_MULTI_ITEM"] == [10, 20]
+
+
 @pytest.mark.parametrize(
     "grid",
     ["storage.json", {"path": "storage.json"}, {"file": "storage.json"}, {"storage": "storage.json"}],
@@ -338,12 +366,14 @@ def test_legacy_grid_path_forms_migrate_without_rewriting(tmp_path, legacy_confi
     original = copy.deepcopy(legacy_config)
     migrated, changes = runner.migrate_config(legacy_config)
     assert legacy_config == original
-    assert migrated == {**original, "schema_version": 5}
+    assert migrated == {**_with_multi_item_pose(original), "schema_version": 6}
     assert changes == [
         "schema_version: 1 -> 2",
         "schema_version: 2 -> 3",
         "schema_version: 3 -> 4",
         "schema_version: 4 -> 5",
+        *(f"robot.tool.parameters.{new} seeded from {old}" for new, old in v006.SEEDED_KEYS.items()),
+        "schema_version: 5 -> 6",
     ]
     assert RootConfig.model_validate(migrated).robot.grid.path == "storage.json"
 
@@ -376,7 +406,7 @@ def test_chain_runs_in_order_and_advances_only_after_success(legacy_config, monk
     assert "schema_version" not in legacy_config
 
 
-@pytest.mark.parametrize("version", [0, -1, True, "2", 2.0, None, 6])
+@pytest.mark.parametrize("version", [0, -1, True, "2", 2.0, None, 7])
 def test_bad_or_future_versions_are_rejected(legacy_config, version):
     legacy_config["schema_version"] = version
     with pytest.raises(ValueError):
@@ -389,7 +419,7 @@ def test_startup_rejects_unmigrated_config_without_writing(tmp_path, legacy_conf
     path = tmp_path / "config.json"
     raw = json.dumps(legacy_config).encode()
     path.write_bytes(raw)
-    with pytest.raises(ConfigValidationError, match="requires migration to 5"):
+    with pytest.raises(ConfigValidationError, match="requires migration to 6"):
         load_config_file(path)
     assert path.read_bytes() == raw
     assert list(tmp_path.iterdir()) == [path]
@@ -442,7 +472,7 @@ def test_cli_preview_write_backup_permissions_and_idempotency(tmp_path, legacy_c
     for path in paths:
         assert path.with_name(path.name + ".schema-v1.bak").read_bytes() == originals[path]
         assert stat.S_IMODE(path.stat().st_mode) == 0o640
-        assert load_config_file(path).schema_version == 5
+        assert load_config_file(path).schema_version == 6
     modified_times = [path.stat().st_mtime_ns for path in paths]
     assert cli.main([str(tmp_path), "--write"]) == 0
     assert [path.stat().st_mtime_ns for path in paths] == modified_times

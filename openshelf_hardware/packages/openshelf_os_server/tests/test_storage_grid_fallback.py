@@ -9,7 +9,7 @@ from openshelf_os_server.routers.storage import _get_robot_grid
 
 MINIMAL_CONFIG = {
 	"name": "test",
-	"schema_version": 5,
+	"schema_version": 6,
 	"version": "0.1.0",
 	"robot": {
 		"tool": {
@@ -17,14 +17,17 @@ MINIMAL_CONFIG = {
 				"IDLE_POSITION": [0, 0],
 				"PICKUP_POSITION_L": [0, 0],
 				"PICKUP_POSITION_H": [0, 0],
+				"PICKUP_POSITION_MULTI_ITEM": [0, 0],
 				"SCAN_POSITION": [0, 0],
 				"STAGE_EXTENSION_IO_BOX": 0,
+				"STAGE_EXTENSION_IO_BOX_MULTI_ITEM": 0,
 				"STAGE_NUDGE": 0,
 				"STAGE_EXTENSION_SHELF_FRONT": 0,
 				"STAGE_EXTENSION_SHELF_BACK": 0,
 				"Z_EXTENSION_PICK": 0,
 				"Z_EXTENSION_PLACE": 0,
 				"Z_EXTENSION_IO": 0,
+				"Z_EXTENSION_IO_MULTI_ITEM": 0,
 				"Z_MOVE_RPM": 1,
 				"Z_MOVE_ACCEL": 1,
 				"ROTATION_FRONT": 0,
