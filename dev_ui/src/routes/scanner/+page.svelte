@@ -141,6 +141,10 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Scanner • Openshelf</title>
+</svelte:head>
+
 {#if isLoading === true}
 	<p>loading scanner data...</p>
 {:else}
