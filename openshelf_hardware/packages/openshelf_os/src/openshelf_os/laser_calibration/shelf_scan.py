@@ -65,6 +65,22 @@ def resolve_lower_boundary_shelf_edge(
 	)
 
 
+def build_seeded_edge_probe_y_offsets_mm(hole_probe_y_offsets_mm: list[float]) -> list[float]:
+	"""Probe rows for the shelf whose edge was seeded at the scan floor, not detected.
+
+	Its real edge lies below the floor, so its openings can sit lower above the seed than the
+	configured rows expect (a device tuned to probe high misses them entirely). Add the default
+	rows that fall below the lowest configured one.
+	"""
+	lowest_configured_mm = min(hole_probe_y_offsets_mm)
+	lower_default_offsets_mm = [
+		float(offset_mm)
+		for offset_mm in SHELF_HOLE_SWEEP_OFFSETS_MM
+		if float(offset_mm) < lowest_configured_mm
+	]
+	return lower_default_offsets_mm + list(hole_probe_y_offsets_mm)
+
+
 async def capture_shelf_candidates(
 	tool: Any,
 	*,
@@ -162,6 +178,8 @@ async def capture_shelf_candidates(
 		y_max_mm=bounds.y_max,
 	)
 
+	lower_boundary_edge: ShelfSurfaceEdge | None = None
+
 	if known_shelf_edge_y is None:
 		lower_boundary_edge = resolve_lower_boundary_shelf_edge(
 			bounds=bounds,
@@ -186,7 +204,12 @@ async def capture_shelf_candidates(
 
 	for shelf_idx, shelf_edge in enumerate(filtered_shelf_edges, start=1):
 		raise_if_cancelled(should_abort)
-		for offset_idx, offset_mm in enumerate(hole_probe_y_offsets_mm, start=1):
+		shelf_probe_y_offsets_mm = hole_probe_y_offsets_mm
+
+		if shelf_edge is lower_boundary_edge:
+			shelf_probe_y_offsets_mm = build_seeded_edge_probe_y_offsets_mm(hole_probe_y_offsets_mm)
+
+		for offset_idx, offset_mm in enumerate(shelf_probe_y_offsets_mm, start=1):
 			raise_if_cancelled(should_abort)
 			sweep_y_mm = shelf_edge.y_mm + offset_mm
 
@@ -195,7 +218,7 @@ async def capture_shelf_candidates(
 
 			print_status(
 				f"phase=shelf-hole-scan shelf={shelf_idx}/{len(filtered_shelf_edges)} "
-				f"offset={offset_idx}/{len(hole_probe_y_offsets_mm)} y={sweep_y_mm:.2f}"
+				f"offset={offset_idx}/{len(shelf_probe_y_offsets_mm)} y={sweep_y_mm:.2f}"
 			)
 			sweep_depth_values = await scan_line_positions(
 				tool,
@@ -221,7 +244,7 @@ async def capture_shelf_candidates(
 					"shelf_idx": shelf_idx,
 					"shelf_count": len(filtered_shelf_edges),
 					"offset_idx": offset_idx,
-					"offset_count": len(hole_probe_y_offsets_mm),
+					"offset_count": len(shelf_probe_y_offsets_mm),
 					"y_position": sweep_y_mm,
 				},
 			)
