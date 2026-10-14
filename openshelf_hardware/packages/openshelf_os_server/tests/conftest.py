@@ -49,7 +49,14 @@ from openshelf_os_server.database.session import AsyncSessionLocal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from openshelf_os_server.core.auth import AuthService
+from openshelf_os_server.core.login import login_backoff
 from openshelf_os_server.settings import get_settings
+
+
+@pytest.fixture(autouse=True)
+def reset_login_backoff() -> None:
+    """Login backoff is process-wide; one test must not throttle the next."""
+    login_backoff.reset()
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -67,6 +74,7 @@ async def seeded_db() -> AsyncGenerator[None, None]:
                 "roles:read", "roles:write", "roles:delete",
                 "robot:control",
                 "storage:read", "storage:write", "storage:delete", "storage:access",
+				"printer:print",
                 "audit:read"
             ],
             "operator": [
@@ -154,7 +162,7 @@ def auth_headers(seeded_db: AsyncGenerator[None, None]) -> dict[str, str]:
         user_id=1,
         email="admin@opshelf.com",
         role="admin",
-        permissions=["users:read", "users:write", "robot:control", "storage:read", "storage:write", "storage:access"],
+        permissions=["users:read", "users:write", "printer:print", "robot:control", "storage:read", "storage:write", "storage:access"],
         access_level=None,
         expires_minutes=60,
     )

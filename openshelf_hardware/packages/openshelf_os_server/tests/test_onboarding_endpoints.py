@@ -6,6 +6,7 @@ from httpx import AsyncClient
 from sqlalchemy import delete, select, update
 
 from openshelf_os_server.core.auth import AuthService
+from openshelf_os_server.core.login import login_backoff
 from openshelf_os_server.database.models import AuditLog, Role, User
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import onboarding
@@ -163,6 +164,8 @@ async def test_pending_admin_user_retry_resets_the_interrupted_admin_pin(
         "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
     )
     assert stale_login.status_code == 401
+    # This test covers the interrupted-onboarding PIN reset, not login throttling.
+    login_backoff.reset()
 
     new_login = await unauthenticated_client.post(
         "/api/auth/login/json", json={"email": "owner@example.com", "pin": "9876"}

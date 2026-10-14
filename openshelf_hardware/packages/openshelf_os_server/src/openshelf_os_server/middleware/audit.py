@@ -39,10 +39,13 @@ SUCCESSFUL_READ_METHODS = frozenset(["GET", "HEAD"])
 # like their GET counterparts, and only failures are recorded.
 SUCCESSFUL_READ_POST_ENDPOINTS = frozenset([
     "/api/storage/items/lookup",
+	"/api/users/login-barcode/resolve",
 ])
 SUCCESSFUL_READ_EXCLUDED_ENDPOINTS = frozenset([
     "/api/auth/me",
+	"/api/auth/experience",
     "/api/auth/users",
+	"/api/auth/scans",
     "/api/access_levels",
     "/api/access-levels",
     "/api/storage/items",
@@ -66,6 +69,9 @@ SUCCESSFUL_READ_EXCLUDED_PREFIXES = (
 )
 SENSITIVE_FIELD_NAMES = frozenset([
     "pin",
+	"identifier",
+	"scan_token",
+	"login_barcode",
     "password",
     "token",
     "access_token",
@@ -205,7 +211,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				user = await get_current_user_optional(token=token, db=db)
 
 				now = datetime.now(timezone.utc)
-				user_id = user.id if user else None
+				authenticated_user_id = getattr(
+					request.state, "authenticated_user_id", None
+				)
+				user_id = authenticated_user_id if authenticated_user_id is not None else (user.id if user else None)
 				method = request.method
 				endpoint = str(request.url.path)
 				command_records = command_records_context.get()

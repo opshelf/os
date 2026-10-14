@@ -61,6 +61,7 @@ class User(Base):
 	first_name: Mapped[str] = mapped_column(String(50), nullable=False)
 	last_name: Mapped[str] = mapped_column(String(50), nullable=False)
 	pin_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+	login_barcode: Mapped[Optional[str]] = mapped_column(String(64), unique=True, nullable=True, index=True)
 	role_id: Mapped[int] = mapped_column(Integer, ForeignKey("roles.id"), nullable=False)
 	access_level_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("access_levels.id"), nullable=True)
 	is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
