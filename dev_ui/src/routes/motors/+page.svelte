@@ -502,6 +502,10 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Motors • Openshelf</title>
+</svelte:head>
+
 {#if isLoading === true}
 	<p>loading motors...</p>
 {:else if motors !== null}
