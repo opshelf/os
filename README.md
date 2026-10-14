@@ -221,7 +221,7 @@ npm run build
 
 ## config schema migrations
 
-`schema_version` is a top-level positive integer in the config files, independent of the application's `version` string. a missing `schema_version` means **1** (the pre-versioning provisioning schema); the current schema is **5** (`config.schema.CURRENT_SCHEMA_VERSION`). the server auto-migrates the active config file on startup (with an exclusive `.schema-v<N>.bak` rollback backup) and refuses a newer schema before parsing nested config models; device scripts and other offline entry points require the manual command instead. do not fix a startup error by changing only `schema_version`: the old field names would then lose their meaning.
+`schema_version` is a top-level positive integer in the config files, independent of the application's `version` string. a missing `schema_version` means **1** (the pre-versioning provisioning schema); the current schema is **6** (`config.schema.CURRENT_SCHEMA_VERSION`). the server auto-migrates the active config file on startup (with an exclusive `.schema-v<N>.bak` rollback backup) and refuses a newer schema before parsing nested config models; device scripts and other offline entry points require the manual command instead. do not fix a startup error by changing only `schema_version`: the old field names would then lose their meaning.
 
 ### applying a migration
 
@@ -259,7 +259,7 @@ at release time, migrate any config template you ship to devices with the same r
 
 ### adding a migration
 
-add `v006_<description>.py` under `openshelf_hardware/packages/openshelf_os/src/openshelf_os/config_migrations/`. its `migrate(config)` function accepts the raw previous-schema dictionary and returns the transformed dictionary plus a list of changed field paths. register it under the destination version in `runner.MIGRATIONS` and increment `config.schema.CURRENT_SCHEMA_VERSION`. the runner advances the version only after each step succeeds and validates the complete result before persistence.
+add `v007_<description>.py` under `openshelf_hardware/packages/openshelf_os/src/openshelf_os/config_migrations/`. its `migrate(config)` function accepts the raw previous-schema dictionary and returns the transformed dictionary plus a list of changed field paths. register it under the destination version in `runner.MIGRATIONS` and increment `config.schema.CURRENT_SCHEMA_VERSION`. the runner advances the version only after each step succeeds and validates the complete result before persistence.
 
 never modify a released migration; append a new step. test value preservation, conflicting keys, optional fields, the whole migration chain, and startup rejection. update generated config defaults, fixtures, release notes, and the provisioning template for each new schema; do not include secrets in migration diagnostics.
 

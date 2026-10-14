@@ -13,14 +13,17 @@ def build_tool_parameters() -> calibration.Parameters:
 			"IDLE_POSITION": [0, 0],
 			"PICKUP_POSITION_L": [100, 200],
 			"PICKUP_POSITION_H": [110, 210],
+			"PICKUP_POSITION_MULTI_ITEM": [100, 200],
 			"SCAN_POSITION": [0, 0],
 			"STAGE_EXTENSION_IO_BOX": 20.0,
+			"STAGE_EXTENSION_IO_BOX_MULTI_ITEM": 20.0,
 			"STAGE_NUDGE": 1.0,
 			"STAGE_EXTENSION_SHELF_FRONT": 30.0,
 			"STAGE_EXTENSION_SHELF_BACK": 31.0,
 			"Z_EXTENSION_PICK": 1.0,
 			"Z_EXTENSION_PLACE": 2.0,
 			"Z_EXTENSION_IO": 3.0,
+			"Z_EXTENSION_IO_MULTI_ITEM": 3.0,
 			"Z_MOVE_RPM": 800,
 			"Z_MOVE_ACCEL": 1200,
 			"ROTATION_FRONT": 45.0,
@@ -136,6 +139,10 @@ async def test_iobox_save_persists_reloads_and_updates_cache_after_admission(mon
 				pickup_high_y=230.0,
 				z_extension=10.0,
 				stage_extension=25.0,
+				multi_item_x=140.0,
+				multi_item_y=240.0,
+				multi_item_z_extension=12.0,
+				multi_item_stage_extension=27.0,
 			)
 		) == {"success": True}
 
@@ -144,11 +151,15 @@ async def test_iobox_save_persists_reloads_and_updates_cache_after_admission(mon
 		assert params.PICKUP_POSITION_H == (130, 230)
 		assert params.Z_EXTENSION_IO == 10.0
 		assert params.STAGE_EXTENSION_IO_BOX == 25.0
+		assert params.PICKUP_POSITION_MULTI_ITEM == (140, 240)
+		assert params.Z_EXTENSION_IO_MULTI_ITEM == 12.0
+		assert params.STAGE_EXTENSION_IO_BOX_MULTI_ITEM == 27.0
 		assert save_config.call_args.args == (config,)
 		assert worker._robot.reload_parameters.call_count == 1
 		assert calibration._iobox_current is not None
 		assert calibration._iobox_current.pickup_low_x == 120.0
 		assert calibration._iobox_current.stage_extension == 25.0
+		assert calibration._iobox_current.multi_item_stage_extension == 27.0
 	finally:
 		calibration._iobox_current = None
 

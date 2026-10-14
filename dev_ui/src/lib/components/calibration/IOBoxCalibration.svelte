@@ -15,26 +15,56 @@
 		moveToIOBoxPosition,
 		jogIOBoxAxis,
 		testIOBoxSequence,
+		testIOBoxMultiItemCycle,
 		saveIOBoxCalibration,
 		saveIOBoxDoorPosition,
 		type ApiErrorDetail,
 		type CalibrationStatus,
 		type IOBoxDoorPosition,
-		type IOBoxPosition
+		type IOBoxPosition,
+		type IOBoxPositionName
 	} from '$lib/api';
+	import { robotStatus } from '$lib/stores';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
-	type IOBoxEditField = 'lowX' | 'lowY' | 'highX' | 'highY' | 'z' | 'stage';
+	type IOBoxAxis = 'x' | 'y' | 'z' | 'stage';
+	type IOBoxEditField = Exclude<keyof IOBoxPosition, 'warnings'>;
+	type IOBoxEditValues = Record<IOBoxEditField, number>;
 
-	interface IOBoxEditValues {
-		lowX: number;
-		lowY: number;
-		highX: number;
-		highY: number;
-		z: number;
-		stage: number;
-	}
+	const POSITIONS: IOBoxPositionName[] = ['low', 'high', 'multi_item'];
+	const POSITION_LABELS: Record<IOBoxPositionName, string> = {
+		low: 'pickup low',
+		high: 'pickup high',
+		multi_item: 'multi-item'
+	};
+	// Pickup low and high share one z/stage extension; the multi-item tray pose has its own.
+	const POSITION_FIELDS: Record<IOBoxPositionName, Record<IOBoxAxis, IOBoxEditField>> = {
+		low: { x: 'pickup_low_x', y: 'pickup_low_y', z: 'z_extension', stage: 'stage_extension' },
+		high: { x: 'pickup_high_x', y: 'pickup_high_y', z: 'z_extension', stage: 'stage_extension' },
+		multi_item: {
+			x: 'multi_item_x',
+			y: 'multi_item_y',
+			z: 'multi_item_z_extension',
+			stage: 'multi_item_stage_extension'
+		}
+	};
+	const EDIT_FIELDS: IOBoxEditField[] = [
+		'pickup_low_x',
+		'pickup_low_y',
+		'pickup_high_x',
+		'pickup_high_y',
+		'z_extension',
+		'stage_extension',
+		'multi_item_x',
+		'multi_item_y',
+		'multi_item_z_extension',
+		'multi_item_stage_extension'
+	];
+	const AXIS_ROWS: IOBoxAxis[][] = [
+		['x', 'y'],
+		['z', 'stage']
+	];
 
 	let ioboxPosition = $state<IOBoxPosition | null>(null);
 	let doorPosition = $state<IOBoxDoorPosition | null>(null);
@@ -46,20 +76,17 @@
 	let needsHome = $state<boolean>(false);
 	let needsHomeReason = $state<string>('');
 	let needsHomeAxes = $state<string[]>([]);
-	let isHoming = $state<boolean>(false);
-	let selectedPosition = $state<'low' | 'high'>('low');
+	let lastStreamNeedsHome = $state<boolean>(false);
+	let selectedPosition = $state<IOBoxPositionName>('low');
 	let isMoving = $state<boolean>(false);
 	let isTesting = $state<boolean>(false);
 	let isSaving = $state<boolean>(false);
 	let isPositioned = $state<boolean>(false);
 	let jogStep = $state<number>(1);
 
-	let editLowX = $state<number>(0);
-	let editLowY = $state<number>(0);
-	let editHighX = $state<number>(0);
-	let editHighY = $state<number>(0);
-	let editZ = $state<number>(0);
-	let editStage = $state<number>(0);
+	let editValues = $state<IOBoxEditValues>(
+		Object.fromEntries(EDIT_FIELDS.map((field) => [field, 0])) as IOBoxEditValues
+	);
 	let editDoorClose = $state<number>(0);
 	let editDoorOpen = $state<number>(0);
 
@@ -76,33 +103,22 @@
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
 
-	const needsToolHome = $derived(needsHome && needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
 	const needsOtherHome = $derived(
 		needsHome && (needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
 	);
 	const homeMessage = $derived(
 		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
 	);
-	const isLowXDirty = $derived(ioboxPosition !== null && editLowX !== ioboxPosition.pickup_low_x);
-	const isLowYDirty = $derived(ioboxPosition !== null && editLowY !== ioboxPosition.pickup_low_y);
-	const isHighXDirty = $derived(
-		ioboxPosition !== null && editHighX !== ioboxPosition.pickup_high_x
+	const selectedFields = $derived(POSITION_FIELDS[selectedPosition]);
+	const isMultiItem = $derived(selectedPosition === 'multi_item');
+	const dirtyAxes = $derived(
+		(['x', 'y', 'z', 'stage'] as IOBoxAxis[]).filter(
+			(axis) =>
+				ioboxPosition !== null &&
+				editValues[selectedFields[axis]] !== ioboxPosition[selectedFields[axis]]
+		)
 	);
-	const isHighYDirty = $derived(
-		ioboxPosition !== null && editHighY !== ioboxPosition.pickup_high_y
-	);
-	const isZDirty = $derived(ioboxPosition !== null && editZ !== ioboxPosition.z_extension);
-	const isStageDirty = $derived(
-		ioboxPosition !== null && editStage !== ioboxPosition.stage_extension
-	);
-	const hasDirtyValues = $derived(
-		isLowXDirty === true ||
-			isLowYDirty === true ||
-			isHighXDirty === true ||
-			isHighYDirty === true ||
-			isZDirty === true ||
-			isStageDirty === true
-	);
+	const hasDirtyValues = $derived(dirtyAxes.length > 0);
 	const duplicateHomeError = $derived.by(() => {
 		if (needsHome !== true || error === '') {
 			return false;
@@ -117,22 +133,11 @@
 
 		return needsHomeReason === '' && errorLower.includes('home required');
 	});
-	const homingDisabled = $derived(
-		isHoming === true ||
-			isMoving === true ||
-			isTesting === true ||
-			isSaving === true ||
-			!needsToolHome
-	);
 	const editInputsDisabled = $derived(
-		isMoving === true || needsHome === true || isHoming === true || isPositioned === false
+		isMoving === true || needsHome === true || isPositioned === false
 	);
 	const doorControlsDisabled = $derived(
-		isMoving === true ||
-			isTesting === true ||
-			isSaving === true ||
-			needsHome === true ||
-			isHoming === true
+		isMoving === true || isTesting === true || isSaving === true || needsHome === true
 	);
 
 	onMount(function () {
@@ -250,29 +255,27 @@
 		}
 	}
 
-	async function didClickHomeToolMotors(): Promise<void> {
-		isHoming = true;
-		error = '';
-		message = '';
-		warning = '';
+	// Re-read /calibration/status when the shared stream reports the crashed
+	// motor was homed, so the calibration controls unblock. Only the
+	// true->false edge fetches; /calibration/status remains the source of truth.
+	// Homing moves the tool off the IO pose, so require [start calibration] again.
+	$effect(() => {
+		const streamNeedsHome = $robotStatus?.needs_home ?? false;
 
-		try {
-			const status = await homeToolMotors();
-			applyNeedsHomeStatus(status);
+		if (lastStreamNeedsHome === true && streamNeedsHome === false) {
 			isPositioned = false;
-			message = 'tool motors homed';
-		} catch (err) {
-			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to home tool motors';
-		} finally {
-			isHoming = false;
+			void loadCalibrationStatus();
 		}
-	}
+
+		lastStreamNeedsHome = streamNeedsHome;
+	});
 
 	function didChangePosition(event: Event): void {
 		const target = event.target as HTMLSelectElement;
 
-		selectedPosition = target.value as 'low' | 'high';
+		selectedPosition = target.value as IOBoxPositionName;
+		// Only the selected position's fields are shown, so drop typed values that were never moved.
+		syncEditValues();
 		isPositioned = false;
 		error = '';
 		message = '';
@@ -280,7 +283,7 @@
 	}
 
 	async function didClickMove(): Promise<void> {
-		const editValues = getEditValues();
+		const previousValues = getEditValues();
 
 		isMoving = true;
 		error = '';
@@ -290,9 +293,9 @@
 		try {
 			ioboxPosition = await moveToIOBoxPosition(selectedPosition);
 			syncEditValues();
-			restoreEditValues(editValues, []);
+			restoreEditValues(previousValues, []);
 			isPositioned = true;
-			message = `started ${selectedPosition} calibration`;
+			message = `started ${POSITION_LABELS[selectedPosition]} calibration`;
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'failed to move to io box position';
@@ -301,9 +304,9 @@
 		}
 	}
 
-	async function didClickJog(axis: 'x' | 'y' | 'z' | 'stage', delta: number): Promise<boolean> {
-		const editValues = getEditValues();
-		const movedField = getMovedField(selectedPosition, axis);
+	async function didClickJog(axis: IOBoxAxis, delta: number): Promise<boolean> {
+		const previousValues = getEditValues();
+		const movedField = selectedFields[axis];
 
 		isMoving = true;
 		error = '';
@@ -313,7 +316,7 @@
 		try {
 			ioboxPosition = await jogIOBoxAxis(selectedPosition, axis, delta);
 			syncEditValues();
-			restoreEditValues(editValues, [movedField]);
+			restoreEditValues(previousValues, [movedField]);
 			const warnings = ioboxPosition?.warnings ?? [];
 			warning = warnings.length > 0 ? warnings.join('; ') : '';
 			return true;
@@ -350,8 +353,13 @@
 		warning = '';
 
 		try {
-			await testIOBoxSequence(true);
-			message = 'io box test sequence with gripper completed';
+			if (isMultiItem === true) {
+				await testIOBoxMultiItemCycle();
+				message = 'multi-item tray cycle test completed';
+			} else {
+				await testIOBoxSequence(true);
+				message = 'io box test sequence with gripper completed';
+			}
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error =
@@ -422,123 +430,32 @@
 		if (ioboxPosition === null) {
 			return;
 		}
-		editLowX = ioboxPosition.pickup_low_x;
-		editLowY = ioboxPosition.pickup_low_y;
-		editHighX = ioboxPosition.pickup_high_x;
-		editHighY = ioboxPosition.pickup_high_y;
-		editZ = ioboxPosition.z_extension;
-		editStage = ioboxPosition.stage_extension;
+		for (const field of EDIT_FIELDS) {
+			editValues[field] = ioboxPosition[field];
+		}
 	}
 
 	function getEditValues(): IOBoxEditValues {
-		return {
-			lowX: editLowX,
-			lowY: editLowY,
-			highX: editHighX,
-			highY: editHighY,
-			z: editZ,
-			stage: editStage
-		};
+		return { ...editValues };
 	}
 
 	function restoreEditValues(values: IOBoxEditValues, movedFields: IOBoxEditField[]): void {
-		if (!movedFields.includes('lowX')) {
-			editLowX = values.lowX;
-		}
-		if (!movedFields.includes('lowY')) {
-			editLowY = values.lowY;
-		}
-		if (!movedFields.includes('highX')) {
-			editHighX = values.highX;
-		}
-		if (!movedFields.includes('highY')) {
-			editHighY = values.highY;
-		}
-		if (!movedFields.includes('z')) {
-			editZ = values.z;
-		}
-		if (!movedFields.includes('stage')) {
-			editStage = values.stage;
+		for (const field of EDIT_FIELDS) {
+			if (!movedFields.includes(field)) {
+				editValues[field] = values[field];
+			}
 		}
 	}
 
-	function getMovedField(
-		position: 'low' | 'high',
-		axis: 'x' | 'y' | 'z' | 'stage'
-	): IOBoxEditField {
-		if (axis === 'z' || axis === 'stage') {
-			return axis;
-		}
-
-		if (position === 'low') {
-			return axis === 'x' ? 'lowX' : 'lowY';
-		}
-
-		return axis === 'x' ? 'highX' : 'highY';
-	}
-
-	async function didClickMoveLowX(): Promise<boolean> {
+	async function didClickMoveAxis(axis: IOBoxAxis): Promise<boolean> {
 		if (ioboxPosition === null) {
 			return false;
 		}
 
-		const delta = editLowX - ioboxPosition.pickup_low_x;
+		const field = selectedFields[axis];
+		const delta = editValues[field] - ioboxPosition[field];
 
-		selectedPosition = 'low';
-		return didClickJog('x', delta);
-	}
-
-	async function didClickMoveLowY(): Promise<boolean> {
-		if (ioboxPosition === null) {
-			return false;
-		}
-
-		const delta = editLowY - ioboxPosition.pickup_low_y;
-
-		selectedPosition = 'low';
-		return didClickJog('y', delta);
-	}
-
-	async function didClickMoveHighX(): Promise<boolean> {
-		if (ioboxPosition === null) {
-			return false;
-		}
-
-		const delta = editHighX - ioboxPosition.pickup_high_x;
-
-		selectedPosition = 'high';
-		return didClickJog('x', delta);
-	}
-
-	async function didClickMoveHighY(): Promise<boolean> {
-		if (ioboxPosition === null) {
-			return false;
-		}
-
-		const delta = editHighY - ioboxPosition.pickup_high_y;
-
-		selectedPosition = 'high';
-		return didClickJog('y', delta);
-	}
-
-	async function didClickMoveZ(): Promise<boolean> {
-		if (ioboxPosition === null) {
-			return false;
-		}
-
-		const delta = editZ - ioboxPosition.z_extension;
-
-		return didClickJog('z', delta);
-	}
-
-	async function didClickMoveStage(): Promise<boolean> {
-		if (ioboxPosition === null) {
-			return false;
-		}
-
-		const delta = editStage - ioboxPosition.stage_extension;
-
-		return didClickJog('stage', delta);
+		return didClickJog(axis, delta);
 	}
 
 	async function didClickMoveAll(): Promise<void> {
@@ -547,93 +464,48 @@
 		}
 
 		const targetValues = getEditValues();
+		const fields = selectedFields;
 		const moveWarnings: string[] = [];
 
-		async function didMoveChangedField(move: () => Promise<boolean>): Promise<boolean> {
-			const didMove = await move();
-
-			if (warning !== '') {
-				moveWarnings.push(warning);
-			}
-
-			return didMove;
+		function isTargetDirty(axis: IOBoxAxis): boolean {
+			return ioboxPosition !== null && targetValues[fields[axis]] !== ioboxPosition[fields[axis]];
 		}
 
-		async function didStartPosition(position: 'low' | 'high'): Promise<boolean> {
-			selectedPosition = position;
+		async function didMoveChangedAxes(axes: IOBoxAxis[]): Promise<boolean> {
+			for (const axis of axes) {
+				if (isTargetDirty(axis) === false) {
+					continue;
+				}
+
+				editValues[fields[axis]] = targetValues[fields[axis]];
+
+				const didMove = await didClickMoveAxis(axis);
+
+				if (warning !== '') {
+					moveWarnings.push(warning);
+				}
+
+				if (didMove === false) {
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+		if (isTargetDirty('x') === true || isTargetDirty('y') === true) {
 			await didClickMove();
 
-			return error === '';
-		}
-
-		if (
-			targetValues.lowX !== ioboxPosition.pickup_low_x ||
-			targetValues.lowY !== ioboxPosition.pickup_low_y
-		) {
-			if ((await didStartPosition('low')) === false) {
+			if (error !== '' || (await didMoveChangedAxes(['x', 'y'])) === false) {
 				return;
 			}
-
-			if (targetValues.lowX !== ioboxPosition.pickup_low_x) {
-				editLowX = targetValues.lowX;
-				if ((await didMoveChangedField(didClickMoveLowX)) === false) {
-					return;
-				}
-			}
-
-			if (targetValues.lowY !== ioboxPosition.pickup_low_y) {
-				editLowY = targetValues.lowY;
-				if ((await didMoveChangedField(didClickMoveLowY)) === false) {
-					return;
-				}
-			}
 		}
 
-		if (
-			targetValues.highX !== ioboxPosition.pickup_high_x ||
-			targetValues.highY !== ioboxPosition.pickup_high_y
-		) {
-			if ((await didStartPosition('high')) === false) {
-				return;
-			}
-
-			if (targetValues.highX !== ioboxPosition.pickup_high_x) {
-				editHighX = targetValues.highX;
-				if ((await didMoveChangedField(didClickMoveHighX)) === false) {
-					return;
-				}
-			}
-
-			if (targetValues.highY !== ioboxPosition.pickup_high_y) {
-				editHighY = targetValues.highY;
-				if ((await didMoveChangedField(didClickMoveHighY)) === false) {
-					return;
-				}
-			}
-		}
-
-		if (
-			targetValues.z !== ioboxPosition.z_extension ||
-			targetValues.stage !== ioboxPosition.stage_extension
-		) {
+		if (isTargetDirty('z') === true || isTargetDirty('stage') === true) {
 			await didClickExtend();
 
-			if (error !== '') {
+			if (error !== '' || (await didMoveChangedAxes(['z', 'stage'])) === false) {
 				return;
-			}
-
-			if (targetValues.z !== ioboxPosition.z_extension) {
-				editZ = targetValues.z;
-				if ((await didMoveChangedField(didClickMoveZ)) === false) {
-					return;
-				}
-			}
-
-			if (targetValues.stage !== ioboxPosition.stage_extension) {
-				editStage = targetValues.stage;
-				if ((await didMoveChangedField(didClickMoveStage)) === false) {
-					return;
-				}
 			}
 		}
 
@@ -652,8 +524,8 @@
 		warning = '';
 
 		try {
-			await moveMotor('z_axis', ioboxPosition.z_extension);
-			await moveStage(ioboxPosition.stage_extension);
+			await moveMotor('z_axis', ioboxPosition[selectedFields.z]);
+			await moveStage(ioboxPosition[selectedFields.stage]);
 			message = 'stage and z extended';
 		} catch (err) {
 			handleNeedsHomeError(err);
@@ -730,121 +602,59 @@
 		{:else if ioboxPosition !== null}
 			<tr>
 				<td colspan="2">
-					<span class="field-label">position</span>
-					<select value={selectedPosition} onchange={didChangePosition}>
-						<option value="low">pickup low</option>
-						<option value="high">pickup high</option>
-					</select>
-					<button
-						class="move-button"
-						type="button"
-						onclick={didClickMove}
-						disabled={isMoving === true ||
-							isTesting === true ||
-							needsHome === true ||
-							isHoming === true ||
-							isPositioned === true}
-					>
-						start calibration
-					</button>
+					<div class="field-row">
+						<span class="field-label">position</span>
+						<select
+							value={selectedPosition}
+							onchange={didChangePosition}
+							disabled={isMoving === true || isTesting === true || isSaving === true}
+						>
+							{#each POSITIONS as position}
+								<option value={position}>{POSITION_LABELS[position]}</option>
+							{/each}
+						</select>
+						<button
+							class="push-right"
+							type="button"
+							onclick={didClickMove}
+							disabled={isMoving === true ||
+								isTesting === true ||
+								needsHome === true ||
+								isPositioned === true}
+						>
+							start calibration
+						</button>
+					</div>
 				</td>
 			</tr>
-			<tr>
-				<td>
-					<span class="field-label">low x</span>
-					<input type="number" step="0.5" bind:value={editLowX} disabled={editInputsDisabled} />
-					<button
-						type="button"
-						onclick={didClickMoveLowX}
-						disabled={isMoving === true ||
-							needsHome === true ||
-							isHoming === true ||
-							isPositioned === false ||
-							isLowXDirty === false}
-					>
-						move
-					</button>
-				</td>
-				<td>
-					<span class="field-label">low y</span>
-					<input type="number" step="0.5" bind:value={editLowY} disabled={editInputsDisabled} />
-					<button
-						type="button"
-						onclick={didClickMoveLowY}
-						disabled={isMoving === true ||
-							needsHome === true ||
-							isHoming === true ||
-							isPositioned === false ||
-							isLowYDirty === false}
-					>
-						move
-					</button>
-				</td>
-			</tr>
-			<tr>
-				<td>
-					<span class="field-label">high x</span>
-					<input type="number" step="0.5" bind:value={editHighX} disabled={editInputsDisabled} />
-					<button
-						type="button"
-						onclick={didClickMoveHighX}
-						disabled={isMoving === true ||
-							needsHome === true ||
-							isHoming === true ||
-							isPositioned === false ||
-							isHighXDirty === false}
-					>
-						move
-					</button>
-				</td>
-				<td>
-					<span class="field-label">high y</span>
-					<input type="number" step="0.5" bind:value={editHighY} disabled={editInputsDisabled} />
-					<button
-						type="button"
-						onclick={didClickMoveHighY}
-						disabled={isMoving === true ||
-							needsHome === true ||
-							isHoming === true ||
-							isPositioned === false ||
-							isHighYDirty === false}
-					>
-						move
-					</button>
-				</td>
-			</tr>
-			<tr>
-				<td>
-					<span class="field-label">z</span>
-					<input type="number" step="0.5" bind:value={editZ} disabled={editInputsDisabled} />
-					<button
-						type="button"
-						onclick={didClickMoveZ}
-						disabled={isMoving === true ||
-							needsHome === true ||
-							isHoming === true ||
-							isPositioned === false ||
-							isZDirty === false}
-					>
-						move
-					</button>
-				</td>
-				<td>
-					<span class="field-label">stage</span>
-					<input type="number" step="0.5" bind:value={editStage} disabled={editInputsDisabled} />
-					<button
-						type="button"
-						onclick={didClickMoveStage}
-						disabled={isMoving === true ||
-							needsHome === true ||
-							isHoming === true ||
-							isPositioned === false ||
-							isStageDirty === false}
-					>
-						move
-					</button>
-				</td>
-			</tr>
+			{#each AXIS_ROWS as row}
+				<tr>
+					{#each row as axis}
+						<td>
+							<div class="field-row">
+								<span class="field-label">{axis}</span>
+								<input
+									type="number"
+									step="0.5"
+									bind:value={editValues[selectedFields[axis]]}
+									disabled={editInputsDisabled}
+								/>
+								<button
+									class="push-right"
+									type="button"
+									onclick={() => didClickMoveAxis(axis)}
+									disabled={isMoving === true ||
+										needsHome === true ||
+										isPositioned === false ||
+										dirtyAxes.includes(axis) === false}
+								>
+									move
+								</button>
+							</div>
+						</td>
+					{/each}
+				</tr>
+			{/each}
 			<tr>
 				<td colspan="2">
 					<button
@@ -852,49 +662,38 @@
 						onclick={didClickMoveAll}
 						disabled={isMoving === true ||
 							needsHome === true ||
-							isHoming === true ||
 							isPositioned === false ||
 							hasDirtyValues === false}
 					>
-						move all to changed values
+						move all
 					</button>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="2">
 					<button
 						type="button"
 						onclick={didClickExtend}
-						disabled={isMoving === true ||
-							needsHome === true ||
-							isHoming === true ||
-							isPositioned === false}
+						disabled={isMoving === true || needsHome === true || isPositioned === false}
 					>
 						extend
 					</button>
 					<button
 						type="button"
 						onclick={didClickRetract}
-						disabled={isMoving === true ||
-							needsHome === true ||
-							isHoming === true ||
-							isPositioned === false}
+						disabled={isMoving === true || needsHome === true || isPositioned === false}
 					>
 						retract
 					</button>
 					<button
 						type="button"
 						onclick={didClickGrip}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={isMoving === true || needsHome === true}
 					>
-						&#x2194;&#xFE0E;
+						grip
 					</button>
 					<button
 						type="button"
 						onclick={didClickRelease}
-						disabled={isMoving === true || needsHome === true || isHoming === true}
+						disabled={isMoving === true || needsHome === true}
 					>
-						&#x2192;&#x2190;
+						release
 					</button>
 				</td>
 			</tr>
@@ -910,14 +709,14 @@
 				<button
 					type="button"
 					onclick={() => didClickJog('x', -jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
 					onclick={() => didClickJog('x', jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					+
 				</button>
@@ -927,14 +726,14 @@
 				<button
 					type="button"
 					onclick={() => didClickJog('y', -jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
 					onclick={() => didClickJog('y', jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					+
 				</button>
@@ -946,14 +745,14 @@
 				<button
 					type="button"
 					onclick={() => didClickJog('z', -jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
 					onclick={() => didClickJog('z', jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					+
 				</button>
@@ -963,14 +762,14 @@
 				<button
 					type="button"
 					onclick={() => didClickJog('stage', -jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					-
 				</button>
 				<button
 					type="button"
 					onclick={() => didClickJog('stage', jogStep)}
-					disabled={isMoving === true || needsHome === true || isHoming === true}
+					disabled={isMoving === true || needsHome === true}
 				>
 					+
 				</button>
@@ -979,7 +778,7 @@
 		<div class="jog-controls">
 			<div class="jog-step">
 				<span class="axis-label">step</span>
-				<select bind:value={jogStep} disabled={needsHome === true || isHoming === true}>
+				<select bind:value={jogStep} disabled={needsHome === true}>
 					{#each JOG_STEPS as step}
 						<option value={step.value}>{step.label}</option>
 					{/each}
@@ -992,11 +791,11 @@
 		<button
 			type="button"
 			onclick={didClickTest}
-			disabled={isMoving === true ||
+			disabled={isMultiItem === true ||
+				isMoving === true ||
 				isTesting === true ||
 				isSaving === true ||
 				needsHome === true ||
-				isHoming === true ||
 				hasDirtyValues === true}
 		>
 			test
@@ -1008,7 +807,6 @@
 				isTesting === true ||
 				isSaving === true ||
 				needsHome === true ||
-				isHoming === true ||
 				hasDirtyValues === true}
 		>
 			test with gripper
@@ -1016,11 +814,7 @@
 		<button
 			type="button"
 			onclick={didClickReset}
-			disabled={isMoving === true ||
-				isTesting === true ||
-				isSaving === true ||
-				needsHome === true ||
-				isHoming === true}
+			disabled={isMoving === true || isTesting === true || isSaving === true || needsHome === true}
 		>
 			reset
 		</button>
@@ -1031,7 +825,6 @@
 				isTesting === true ||
 				isSaving === true ||
 				needsHome === true ||
-				isHoming === true ||
 				isPositioned === false ||
 				hasDirtyValues === true}
 		>
@@ -1118,14 +911,6 @@
 	<ErrorMessage message={error} />
 {/if}
 
-<div class="section-divider"></div>
-
-<div class="action-buttons home-actions">
-	<button type="button" onclick={didClickHomeToolMotors} disabled={homingDisabled}>
-		home tool motors
-	</button>
-</div>
-
 {#if homeMessage !== ''}
 	<ErrorMessage message={homeMessage} />
 {/if}
@@ -1137,6 +922,20 @@
 <style>
 	.field-label {
 		margin-right: 0.5em;
+	}
+
+	.field-row {
+		display: flex;
+		align-items: center;
+	}
+
+	.field-row input,
+	.field-row select {
+		margin-right: 0.5em;
+	}
+
+	.push-right {
+		margin-left: auto;
 	}
 
 	.jog-controls {
@@ -1180,19 +979,6 @@
 	.section-divider {
 		margin-top: 1.5em;
 		border-top: 2px black dashed;
-	}
-
-	.home-actions {
-		margin-top: 1.5em;
-		align-items: center;
-	}
-
-	.home-actions button {
-		margin-top: 0;
-	}
-
-	.move-button {
-		margin-top: 0;
 	}
 
 	input[type='number'] {
