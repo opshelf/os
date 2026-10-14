@@ -354,6 +354,10 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Status • Openshelf</title>
+</svelte:head>
+
 {#if $robotInit !== null && $robotInit.phase !== 'ready' && $robotInit.phase !== 'disabled'}
 	<InitProgress init={$robotInit} />
 {/if}

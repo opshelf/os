@@ -8,6 +8,10 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Scale • Openshelf</title>
+</svelte:head>
+
 <div class="toggle-group">
 	<a class:selected={true} href={tabHref('/scale/status')}>status</a>
 	<a href={tabHref('/scale/calibration')}>calibration</a>
