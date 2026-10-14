@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Prepares a fresh Amp orb for backend (uv) and frontend (npm) checks.
+# Must stay non-interactive and idempotent: it reruns on stale snapshots.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+step() {
+	local name="$1"
+	shift
+	local start=$SECONDS
+	echo "==> $name"
+	"$@"
+	echo "<== $name ($((SECONDS - start))s)"
+}
+
+install_system_packages() {
+	# libglib2.0-0 (opencv-python-headless) and libusb-1.0-0 (pyusb) are runtime libs
+	# the api image installs; check first so warm runs skip apt-get update.
+	local missing=()
+	for pkg in libglib2.0-0 libusb-1.0-0; do
+		dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' || missing+=("$pkg")
+	done
+	if ((${#missing[@]})); then
+		sudo apt-get update
+		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+	fi
+}
+
+sync_backend() {
+	# --all-packages is required: bare `uv sync` prunes workspace members' dependencies.
+	# uv does not see the repo-root .python-version from this workspace and would pick the
+	# newest CPython; lgpio only ships x86_64 wheels for 3.12, otherwise it needs swig + liblgpio.
+	cd "$repo_root/openshelf_hardware"
+	uv sync --frozen --all-packages --python "$(cat "$repo_root/.python-version")"
+}
+
+install_frontend() {
+	cd "$repo_root/dev_ui"
+	# `prepare` runs svelte-kit sync; npm's cache keeps warm reinstalls to a few seconds.
+	npm ci --no-audit --no-fund --no-update-notifier
+}
+
+step "system packages" install_system_packages
+step "backend: uv sync --all-packages" sync_backend
+step "frontend: npm ci" install_frontend

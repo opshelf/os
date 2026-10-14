@@ -41,3 +41,6 @@ CLAUDE.md
 
 # Editor settings stay local.
 .vscode/
+
+# Amp orb portal registrations.
+.amp/portals/*
