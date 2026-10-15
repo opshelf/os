@@ -6,7 +6,9 @@
 		buildLaserAutoCalibrationStreamUrl,
 		getLaserAutoCalibrationStatus,
 		getLaserAutoCalibrationStreamError,
+		getLaserZStallEnabled,
 		getStorageGrid,
+		saveLaserZStallEnabled,
 		type LaserAutoCalibrationAngleResult,
 		type LaserAutoCalibrationRequest,
 		type LaserAutoCalibrationSnapshot,
@@ -15,6 +17,7 @@
 	import { normalizeLaserAutoCalibrationSnapshot } from '$lib/api';
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideLabel } from '$lib/side';
 	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
+	import { postToast } from '$lib/toasts';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -36,6 +39,8 @@
 	let isExtensionCalibrationSelected = $state<boolean>(true);
 	let preferredAngleCalibration = $state<boolean>(true);
 	let preferredExtensionCalibration = $state<boolean>(true);
+	let isZStallEnabled = $state<boolean>(false);
+	let isSavingZStall = $state<boolean>(false);
 	let selectedSide = $state<'' | 'front_module' | 'back_module'>('');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
@@ -118,12 +123,14 @@
 		error = '';
 
 		try {
-			const [nextSnapshot, nextStorageGrid] = await Promise.all([
+			const [nextSnapshot, nextStorageGrid, nextZStallEnabled] = await Promise.all([
 				getLaserAutoCalibrationStatus(),
-				getStorageGrid()
+				getStorageGrid(),
+				getLaserZStallEnabled()
 			]);
 
 			snapshot = nextSnapshot;
+			isZStallEnabled = nextZStallEnabled;
 
 			if (nextSnapshot.requested_scope !== undefined) {
 				activeRequestedScope = nextSnapshot.requested_scope;
@@ -510,6 +517,22 @@
 		message = '';
 	}
 
+	async function didChangeZStall(event: Event): Promise<void> {
+		const target = event.target as HTMLInputElement;
+		const requested = target.checked;
+
+		isSavingZStall = true;
+
+		try {
+			isZStallEnabled = await saveLaserZStallEnabled(requested);
+		} catch (err) {
+			target.checked = isZStallEnabled;
+			postToast('error', err instanceof Error ? err.message : 'failed to save the z stall probe setting');
+		} finally {
+			isSavingZStall = false;
+		}
+	}
+
 	async function didClickStart(): Promise<void> {
 		if (browser === false) {
 			return;
@@ -731,6 +754,19 @@
 								disabled={isExtensionCalibrationDisabled}
 							/>
 							<span>extension calibration</span>
+						</label>
+					</td>
+				</tr>
+				<tr>
+					<td colspan="3">
+						<label class="all-toggle" title="machine setting: press the tool against the shelf plate to fit the z model">
+							<input
+								type="checkbox"
+								checked={isZStallEnabled}
+								onchange={didChangeZStall}
+								disabled={isSavingZStall === true || isSelectionDisabled === true}
+							/>
+							<span>z stall probe</span>
 						</label>
 					</td>
 				</tr>
