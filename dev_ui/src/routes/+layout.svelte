@@ -19,7 +19,7 @@
 		type WorkerStatusPayload
 	} from '$lib';
 	import { devicePath, stripDeviceId } from '$lib/nav';
-	import NeedsHomeAlert from '$lib/components/NeedsHomeAlert.svelte';
+	import NeedsHomeToast from '$lib/components/NeedsHomeToast.svelte';
 	import SafetyAckAlert from '$lib/components/SafetyAckAlert.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
 	import '../app.css';
@@ -222,7 +222,7 @@
 	{@render children?.()}
 </main>
 
-<NeedsHomeAlert />
+<NeedsHomeToast />
 <SafetyAckAlert />
 
 {#if apiState === 'down'}
