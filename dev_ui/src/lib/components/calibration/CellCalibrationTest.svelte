@@ -435,54 +435,56 @@
 {:else if loadError !== ''}
 	<ErrorMessage message={loadError} />
 {:else if storageGrid !== null}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="3">cell selection</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td>
-					<span class="field-label">side</span>
-					<select value={selectedSide} onchange={didChangeSide}>
-						<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
-						<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
-					</select>
-				</td>
-				<td>
-					<span class="field-label">shelf</span>
-					<select value={selectedShelf} onchange={didChangeShelf}>
-						{#each getShelves() as shelf}
-							<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
-						{/each}
-					</select>
-				</td>
-				<td>
-					<span class="field-label">cell</span>
-					<select value={selectedCell} onchange={didChangeCell}>
-						{#each getCells() as cell}
-							<option value={cell.cell_idx} disabled={isCellTestable(cell) === false}>
-								{cell.cell_idx}{isCellTestable(cell) === false ? ` (${cell.status})` : ''}
-							</option>
-						{/each}
-					</select>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
-					<div class="action-row">
-						<button type="button" onclick={didClickQuick} disabled={actionsDisabled}>quick</button>
-						<button type="button" onclick={didClickCycle} disabled={actionsDisabled}>cycle</button>
-						<button type="button" onclick={didClickStore} disabled={actionsDisabled}>STORE</button>
-						<button type="button" onclick={didClickRetrieve} disabled={actionsDisabled}>
-							RETRIEVE
-						</button>
-					</div>
-				</td>
-			</tr>
-		</tbody>
-	</table>
+	<div class="scroll-x">
+		<table>
+			<thead>
+				<tr>
+					<th colspan="3">cell selection</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr>
+					<td>
+						<span class="field-label">side</span>
+						<select value={selectedSide} onchange={didChangeSide}>
+							<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
+							<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
+						</select>
+					</td>
+					<td>
+						<span class="field-label">shelf</span>
+						<select value={selectedShelf} onchange={didChangeShelf}>
+							{#each getShelves() as shelf}
+								<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
+							{/each}
+						</select>
+					</td>
+					<td>
+						<span class="field-label">cell</span>
+						<select value={selectedCell} onchange={didChangeCell}>
+							{#each getCells() as cell}
+								<option value={cell.cell_idx} disabled={isCellTestable(cell) === false}>
+									{cell.cell_idx}{isCellTestable(cell) === false ? ` (${cell.status})` : ''}
+								</option>
+							{/each}
+						</select>
+					</td>
+				</tr>
+				<tr>
+					<td colspan="3">
+						<div class="action-row">
+							<button type="button" onclick={didClickQuick} disabled={actionsDisabled}>quick</button>
+							<button type="button" onclick={didClickCycle} disabled={actionsDisabled}>cycle</button>
+							<button type="button" onclick={didClickStore} disabled={actionsDisabled}>STORE</button>
+							<button type="button" onclick={didClickRetrieve} disabled={actionsDisabled}>
+								RETRIEVE
+							</button>
+						</div>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
 {/if}
 
 {#if blockedCellMessage !== ''}

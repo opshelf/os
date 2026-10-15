@@ -134,76 +134,78 @@
 	}
 </script>
 
-<table>
-	<thead>
-		<tr>
-			<th colspan="2">shelf stage extension</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if loading === true}
+<div class="scroll-x">
+	<table>
+		<thead>
 			<tr>
-				<td colspan="2">loading...</td>
+				<th colspan="2">shelf stage extension</th>
 			</tr>
-		{:else if stageExtension !== null}
-			<tr>
-				<td>
-					<span class="field-label">front</span>
-					<input
-						type="number"
-						step="0.5"
-						bind:value={frontValue}
-						disabled={isSaving === true || disabled === true}
-					/>
-					<button
-						type="button"
-						on:click={() => didClickExtend(frontValue)}
-						disabled={isMovingStage === true || disabled === true}>extend</button
-					>
-				</td>
-				<td>
-					<span class="field-label">back</span>
-					<input
-						type="number"
-						step="0.5"
-						bind:value={backValue}
-						disabled={isSaving === true || disabled === true}
-					/>
-					<button
-						type="button"
-						on:click={() => didClickExtend(backValue)}
-						disabled={isMovingStage === true || disabled === true}>extend</button
-					>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="2">
-					<div class="action-buttons">
-						<button
-							type="button"
-							on:click={didClickRetract}
-							disabled={isMovingStage === true || disabled === true}>retract</button
-						>
-						<button
-							type="button"
-							on:click={didClickReset}
+		</thead>
+		<tbody>
+			{#if loading === true}
+				<tr>
+					<td colspan="2">loading...</td>
+				</tr>
+			{:else if stageExtension !== null}
+				<tr>
+					<td>
+						<span class="field-label">front</span>
+						<input
+							type="number"
+							step="0.5"
+							bind:value={frontValue}
 							disabled={isSaving === true || disabled === true}
-						>
-							reset
-						</button>
+						/>
 						<button
 							type="button"
-							on:click={didClickSave}
-							disabled={isSaving === true || disabled === true}
+							on:click={() => didClickExtend(frontValue)}
+							disabled={isMovingStage === true || disabled === true}>extend</button
 						>
-							save
-						</button>
-					</div>
-				</td>
-			</tr>
-		{/if}
-	</tbody>
-</table>
+					</td>
+					<td>
+						<span class="field-label">back</span>
+						<input
+							type="number"
+							step="0.5"
+							bind:value={backValue}
+							disabled={isSaving === true || disabled === true}
+						/>
+						<button
+							type="button"
+							on:click={() => didClickExtend(backValue)}
+							disabled={isMovingStage === true || disabled === true}>extend</button
+						>
+					</td>
+				</tr>
+				<tr>
+					<td colspan="2">
+						<div class="action-buttons">
+							<button
+								type="button"
+								on:click={didClickRetract}
+								disabled={isMovingStage === true || disabled === true}>retract</button
+							>
+							<button
+								type="button"
+								on:click={didClickReset}
+								disabled={isSaving === true || disabled === true}
+							>
+								reset
+							</button>
+							<button
+								type="button"
+								on:click={didClickSave}
+								disabled={isSaving === true || disabled === true}
+							>
+								save
+							</button>
+						</div>
+					</td>
+				</tr>
+			{/if}
+		</tbody>
+	</table>
+</div>
 
 {#if message !== ''}
 	<StatusMessage {message} />

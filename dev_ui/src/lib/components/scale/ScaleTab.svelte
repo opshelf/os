@@ -223,31 +223,33 @@
 {#if isLoading === true}
 	<p>loading scale data...</p>
 {:else if selectedView === 'status'}
-	<table style="margin-bottom: 1.5em">
-		<thead>
-			<tr>
-				<th colspan="2">scale reading</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#if scaleStatus !== null}
-				<tr><td>weight</td><td>{typeof scaleStatus.weight_grams === 'number' ? `${formatWeight(scaleStatus.weight_grams)} g` : '-'}</td></tr>
-				<tr><td>io box occupied</td><td class:status-error={scaleStatus.occupied === true} class:status-ok={scaleStatus.occupied === false}>{formatBoolean(scaleStatus.occupied)}</td></tr>
-				<tr><td>available</td><td class:status-ok={scaleStatus.available === true} class:status-error={scaleStatus.available === false}>{formatBoolean(scaleStatus.available)}</td></tr>
-				<tr><td>stable</td><td class:status-ok={scaleStatus.stable === true} class:status-error={scaleStatus.stable === false}>{formatBoolean(scaleStatus.stable)}</td></tr>
-				<tr><td>valid</td><td class:status-ok={scaleStatus.valid === true} class:status-error={scaleStatus.valid === false}>{formatBoolean(scaleStatus.valid)}</td></tr>
-				<tr><td>zero</td><td>{formatBoolean(scaleStatus.zero)}</td></tr>
-				<tr><td>overload</td><td class:status-error={scaleStatus.overload === true}>{formatBoolean(scaleStatus.overload)}</td></tr>
-				<tr><td>decimal position</td><td>{scaleStatus.decimal_position ?? '-'}</td></tr>
-				<tr><td>updated at</td><td>{scaleStatus.updated_at ?? '-'}</td></tr>
-				{#if scaleStatus.error}
-					<tr><td>error</td><td>{scaleStatus.error.toUpperCase()}</td></tr>
+	<div class="scroll-x" style="margin-bottom: 1.5em">
+		<table>
+			<thead>
+				<tr>
+					<th colspan="2">scale reading</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#if scaleStatus !== null}
+					<tr><td>weight</td><td>{typeof scaleStatus.weight_grams === 'number' ? `${formatWeight(scaleStatus.weight_grams)} g` : '-'}</td></tr>
+					<tr><td>io box occupied</td><td class:status-error={scaleStatus.occupied === true} class:status-ok={scaleStatus.occupied === false}>{formatBoolean(scaleStatus.occupied)}</td></tr>
+					<tr><td>available</td><td class:status-ok={scaleStatus.available === true} class:status-error={scaleStatus.available === false}>{formatBoolean(scaleStatus.available)}</td></tr>
+					<tr><td>stable</td><td class:status-ok={scaleStatus.stable === true} class:status-error={scaleStatus.stable === false}>{formatBoolean(scaleStatus.stable)}</td></tr>
+					<tr><td>valid</td><td class:status-ok={scaleStatus.valid === true} class:status-error={scaleStatus.valid === false}>{formatBoolean(scaleStatus.valid)}</td></tr>
+					<tr><td>zero</td><td>{formatBoolean(scaleStatus.zero)}</td></tr>
+					<tr><td>overload</td><td class:status-error={scaleStatus.overload === true}>{formatBoolean(scaleStatus.overload)}</td></tr>
+					<tr><td>decimal position</td><td>{scaleStatus.decimal_position ?? '-'}</td></tr>
+					<tr><td>updated at</td><td>{scaleStatus.updated_at ?? '-'}</td></tr>
+					{#if scaleStatus.error}
+						<tr><td>error</td><td>{scaleStatus.error.toUpperCase()}</td></tr>
+					{/if}
+				{:else}
+					<tr><td colspan="2">waiting for scale status...</td></tr>
 				{/if}
-			{:else}
-				<tr><td colspan="2">waiting for scale status...</td></tr>
-			{/if}
-		</tbody>
-	</table>
+			</tbody>
+		</table>
+	</div>
 
 	<div class="action-buttons">
 		<button type="button" onclick={didClickTare} disabled={isTaring === true}>tare</button>
@@ -261,25 +263,27 @@
 		<ErrorMessage message={calibrationError} />
 	{/if}
 {:else}
-	<table style="margin-bottom: 1.5em">
-		<thead><tr><th colspan="2">calibration status</th></tr></thead>
-		<tbody>
-			{#if calibrationStatus !== null}
-				<tr><td>zero calibrated</td><td class:status-ok={calibrationStatus.zero_ok === true} class:status-error={calibrationStatus.zero_ok === false}>{calibrationStatus.zero_ok ? 'yes' : 'no'}</td></tr>
-				<tr><td>weight calibrated</td><td class:status-ok={calibrationStatus.weight_ok === true} class:status-error={calibrationStatus.weight_ok === false}>{calibrationStatus.weight_ok ? 'yes' : 'no'}</td></tr>
-				<tr><td>raw status</td><td>{formatHex(calibrationStatus.raw)}</td></tr>
-			{:else if calibrationError === ''}
-				<tr><td colspan="2">loading...</td></tr>
-			{/if}
-		</tbody>
-		<thead><tr><th colspan="2">calibration parameters</th></tr></thead>
-		<tbody>
-			<tr><td>full scale (g)</td><td><input type="number" bind:value={fullScale} min="1" max="100000" /></td></tr>
-			<tr><td>calibration weight (g)</td><td><input type="number" bind:value={calibrationWeight} min="1" max="100000" /></td></tr>
-			<tr><td>precision (0-3)</td><td><input type="number" bind:value={precision} min="0" max="3" /></td></tr>
-			<tr><td>division</td><td><input type="number" bind:value={division} min="1" max="100" /></td></tr>
-		</tbody>
-	</table>
+	<div class="scroll-x" style="margin-bottom: 1.5em">
+		<table>
+			<thead><tr><th colspan="2">calibration status</th></tr></thead>
+			<tbody>
+				{#if calibrationStatus !== null}
+					<tr><td>zero calibrated</td><td class:status-ok={calibrationStatus.zero_ok === true} class:status-error={calibrationStatus.zero_ok === false}>{calibrationStatus.zero_ok ? 'yes' : 'no'}</td></tr>
+					<tr><td>weight calibrated</td><td class:status-ok={calibrationStatus.weight_ok === true} class:status-error={calibrationStatus.weight_ok === false}>{calibrationStatus.weight_ok ? 'yes' : 'no'}</td></tr>
+					<tr><td>raw status</td><td>{formatHex(calibrationStatus.raw)}</td></tr>
+				{:else if calibrationError === ''}
+					<tr><td colspan="2">loading...</td></tr>
+				{/if}
+			</tbody>
+			<thead><tr><th colspan="2">calibration parameters</th></tr></thead>
+			<tbody>
+				<tr><td>full scale (g)</td><td><input type="number" bind:value={fullScale} min="1" max="100000" /></td></tr>
+				<tr><td>calibration weight (g)</td><td><input type="number" bind:value={calibrationWeight} min="1" max="100000" /></td></tr>
+				<tr><td>precision (0-3)</td><td><input type="number" bind:value={precision} min="0" max="3" /></td></tr>
+				<tr><td>division</td><td><input type="number" bind:value={division} min="1" max="100" /></td></tr>
+			</tbody>
+		</table>
+	</div>
 
 	<div class="action-buttons">
 		<button type="button" onclick={didClickRefresh} disabled={isRefreshing === true || isCalibrating === true || isSavingParams === true}>refresh</button>

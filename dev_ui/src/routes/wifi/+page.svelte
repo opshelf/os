@@ -124,39 +124,41 @@
 	<title>Wifi • Openshelf</title>
 </svelte:head>
 
-<table class="connect-table">
-	<thead>
-		<tr>
-			<th colspan="2">connect</th>
-		</tr>
-	</thead>
-	<tbody>
-		<tr>
-			<td>network</td>
-			<td>
-				<input
-					type="text"
-					placeholder="ssid"
-					bind:value={ssid}
-					disabled={isConnecting === true}
-					on:input={didInputSsid}
-				/>
-			</td>
-		</tr>
-		<tr>
-			<td>password</td>
-			<td>
-				<input
-					type="password"
-					placeholder="password"
-					bind:value={password}
-					bind:this={passwordInput}
-					disabled={isConnecting === true}
-				/>
-			</td>
-		</tr>
-	</tbody>
-</table>
+<div class="scroll-x">
+	<table class="connect-table">
+		<thead>
+			<tr>
+				<th colspan="2">connect</th>
+			</tr>
+		</thead>
+		<tbody>
+			<tr>
+				<td>network</td>
+				<td>
+					<input
+						type="text"
+						placeholder="ssid"
+						bind:value={ssid}
+						disabled={isConnecting === true}
+						on:input={didInputSsid}
+					/>
+				</td>
+			</tr>
+			<tr>
+				<td>password</td>
+				<td>
+					<input
+						type="password"
+						placeholder="password"
+						bind:value={password}
+						bind:this={passwordInput}
+						disabled={isConnecting === true}
+					/>
+				</td>
+			</tr>
+		</tbody>
+	</table>
+</div>
 
 <div class="action-buttons">
 	<button type="button" on:click={didClickSave} disabled={isConnecting === true}>
@@ -172,38 +174,40 @@
 	<p class="hint">switching networks may briefly drop this connection; networks will refresh shortly.</p>
 {/if}
 
-<table class="networks-table">
-	<thead>
-		<tr>
-			<th class="network-name">network</th>
-			<th>signal</th>
-			<th>actions</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if networks.length === 0}
+<div class="scroll-x">
+	<table class="networks-table">
+		<thead>
 			<tr>
-				<td colspan="3">{isScanning === true ? 'scanning...' : 'no networks found'}</td>
+				<th class="network-name">network</th>
+				<th>signal</th>
+				<th>actions</th>
 			</tr>
-		{:else}
-			{#each networks as network (network.ssid)}
+		</thead>
+		<tbody>
+			{#if networks.length === 0}
 				<tr>
-					<td class="network-name">{network.ssid}</td>
-					<td>{network.signal}%</td>
-					<td>
-						<button
-							type="button"
-							on:click={() => didClickUse(network)}
-							disabled={network.in_use === true}
-						>
-							connect
-						</button>
-					</td>
+					<td colspan="3">{isScanning === true ? 'scanning...' : 'no networks found'}</td>
 				</tr>
-			{/each}
-		{/if}
-	</tbody>
-</table>
+			{:else}
+				{#each networks as network (network.ssid)}
+					<tr>
+						<td class="network-name">{network.ssid}</td>
+						<td>{network.signal}%</td>
+						<td>
+							<button
+								type="button"
+								on:click={() => didClickUse(network)}
+								disabled={network.in_use === true}
+							>
+								connect
+							</button>
+						</td>
+					</tr>
+				{/each}
+			{/if}
+		</tbody>
+	</table>
+</div>
 
 {#if message !== ''}
 	<StatusMessage {message} />

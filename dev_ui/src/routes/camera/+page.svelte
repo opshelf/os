@@ -541,47 +541,49 @@
 {:else if statusError !== ''}
 	<ErrorMessage message={statusError} />
 {:else}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="2">camera selection</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#if cameras.length === 0}
+	<div class="scroll-x">
+		<table>
+			<thead>
 				<tr>
-					<td colspan="2">no cameras available</td>
+					<th colspan="2">camera selection</th>
 				</tr>
-			{:else}
-				<tr>
-					<td>camera</td>
-					<td>
-						<select value={selectedCameraId} on:change={didSelectCamera}>
-							{#each cameras as camera}
-								<option value={camera.id}
-									>{camera.id} ({camera.type}){camera.online === false ? ' - offline' : ''}</option
-								>
-							{/each}
-						</select>
-					</td>
-				</tr>
-				{#if selectedCamera !== null}
+			</thead>
+			<tbody>
+				{#if cameras.length === 0}
 					<tr>
-						<td>type</td>
-						<td>{selectedCamera.type}</td>
+						<td colspan="2">no cameras available</td>
 					</tr>
+				{:else}
 					<tr>
-						<td>status</td>
-						<td>{selectedCamera.online === true ? 'online' : 'offline'}</td>
+						<td>camera</td>
+						<td>
+							<select value={selectedCameraId} on:change={didSelectCamera}>
+								{#each cameras as camera}
+									<option value={camera.id}
+										>{camera.id} ({camera.type}){camera.online === false ? ' - offline' : ''}</option
+									>
+								{/each}
+							</select>
+						</td>
 					</tr>
-					<tr>
-						<td>consumers</td>
-						<td>{selectedCamera.consumers}</td>
-					</tr>
+					{#if selectedCamera !== null}
+						<tr>
+							<td>type</td>
+							<td>{selectedCamera.type}</td>
+						</tr>
+						<tr>
+							<td>status</td>
+							<td>{selectedCamera.online === true ? 'online' : 'offline'}</td>
+						</tr>
+						<tr>
+							<td>consumers</td>
+							<td>{selectedCamera.consumers}</td>
+						</tr>
+					{/if}
 				{/if}
-			{/if}
-		</tbody>
-	</table>
+			</tbody>
+		</table>
+	</div>
 
 	<div style="height: 1.5em"></div>
 

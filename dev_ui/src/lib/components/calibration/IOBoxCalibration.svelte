@@ -588,118 +588,120 @@
 	}
 </script>
 
-<table>
-	<thead>
-		<tr>
-			<th colspan="2">io box calibration</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if loading === true}
+<div class="scroll-x">
+	<table>
+		<thead>
 			<tr>
-				<td colspan="2">loading io box calibration...</td>
+				<th colspan="2">io box calibration</th>
 			</tr>
-		{:else if ioboxPosition !== null}
-			<tr>
-				<td colspan="2">
-					<div class="field-row">
-						<span class="field-label">position</span>
-						<select
-							value={selectedPosition}
-							onchange={didChangePosition}
-							disabled={isMoving === true || isTesting === true || isSaving === true}
-						>
-							{#each POSITIONS as position}
-								<option value={position}>{POSITION_LABELS[position]}</option>
-							{/each}
-						</select>
-						<button
-							class="push-right"
-							type="button"
-							onclick={didClickMove}
-							disabled={isMoving === true ||
-								isTesting === true ||
-								needsHome === true ||
-								isPositioned === true}
-						>
-							start calibration
-						</button>
-					</div>
-				</td>
-			</tr>
-			{#each AXIS_ROWS as row}
+		</thead>
+		<tbody>
+			{#if loading === true}
 				<tr>
-					{#each row as axis}
-						<td>
-							<div class="field-row">
-								<span class="field-label">{axis}</span>
-								<input
-									type="number"
-									step="0.5"
-									bind:value={editValues[selectedFields[axis]]}
-									disabled={editInputsDisabled}
-								/>
-								<button
-									class="push-right"
-									type="button"
-									onclick={() => didClickMoveAxis(axis)}
-									disabled={isMoving === true ||
-										needsHome === true ||
-										isPositioned === false ||
-										dirtyAxes.includes(axis) === false}
-								>
-									move
-								</button>
-							</div>
-						</td>
-					{/each}
+					<td colspan="2">loading io box calibration...</td>
 				</tr>
-			{/each}
-			<tr>
-				<td colspan="2">
-					<button
-						type="button"
-						onclick={didClickMoveAll}
-						disabled={isMoving === true ||
-							needsHome === true ||
-							isPositioned === false ||
-							hasDirtyValues === false}
-					>
-						move all
-					</button>
-					<button
-						type="button"
-						onclick={didClickExtend}
-						disabled={isMoving === true || needsHome === true || isPositioned === false}
-					>
-						extend
-					</button>
-					<button
-						type="button"
-						onclick={didClickRetract}
-						disabled={isMoving === true || needsHome === true || isPositioned === false}
-					>
-						retract
-					</button>
-					<button
-						type="button"
-						onclick={didClickGrip}
-						disabled={isMoving === true || needsHome === true}
-					>
-						grip
-					</button>
-					<button
-						type="button"
-						onclick={didClickRelease}
-						disabled={isMoving === true || needsHome === true}
-					>
-						release
-					</button>
-				</td>
-			</tr>
-		{/if}
-	</tbody>
-</table>
+			{:else if ioboxPosition !== null}
+				<tr>
+					<td colspan="2">
+						<div class="field-row">
+							<span class="field-label">position</span>
+							<select
+								value={selectedPosition}
+								onchange={didChangePosition}
+								disabled={isMoving === true || isTesting === true || isSaving === true}
+							>
+								{#each POSITIONS as position}
+									<option value={position}>{POSITION_LABELS[position]}</option>
+								{/each}
+							</select>
+							<button
+								class="push-right"
+								type="button"
+								onclick={didClickMove}
+								disabled={isMoving === true ||
+									isTesting === true ||
+									needsHome === true ||
+									isPositioned === true}
+							>
+								start calibration
+							</button>
+						</div>
+					</td>
+				</tr>
+				{#each AXIS_ROWS as row}
+					<tr>
+						{#each row as axis}
+							<td>
+								<div class="field-row">
+									<span class="field-label">{axis}</span>
+									<input
+										type="number"
+										step="0.5"
+										bind:value={editValues[selectedFields[axis]]}
+										disabled={editInputsDisabled}
+									/>
+									<button
+										class="push-right"
+										type="button"
+										onclick={() => didClickMoveAxis(axis)}
+										disabled={isMoving === true ||
+											needsHome === true ||
+											isPositioned === false ||
+											dirtyAxes.includes(axis) === false}
+									>
+										move
+									</button>
+								</div>
+							</td>
+						{/each}
+					</tr>
+				{/each}
+				<tr>
+					<td colspan="2">
+						<button
+							type="button"
+							onclick={didClickMoveAll}
+							disabled={isMoving === true ||
+								needsHome === true ||
+								isPositioned === false ||
+								hasDirtyValues === false}
+						>
+							move all
+						</button>
+						<button
+							type="button"
+							onclick={didClickExtend}
+							disabled={isMoving === true || needsHome === true || isPositioned === false}
+						>
+							extend
+						</button>
+						<button
+							type="button"
+							onclick={didClickRetract}
+							disabled={isMoving === true || needsHome === true || isPositioned === false}
+						>
+							retract
+						</button>
+						<button
+							type="button"
+							onclick={didClickGrip}
+							disabled={isMoving === true || needsHome === true}
+						>
+							grip
+						</button>
+						<button
+							type="button"
+							onclick={didClickRelease}
+							disabled={isMoving === true || needsHome === true}
+						>
+							release
+						</button>
+					</td>
+				</tr>
+			{/if}
+		</tbody>
+	</table>
+</div>
 
 {#if ioboxPosition !== null}
 	{#if isPositioned === true}
@@ -835,69 +837,71 @@
 
 <div class="section-divider" style="margin: 1.5em 0;"></div>
 
-<table>
-	<thead>
-		<tr>
-			<th colspan="2">io door position</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if doorLoading === true}
+<div class="scroll-x">
+	<table>
+		<thead>
 			<tr>
-				<td colspan="2">loading io door position...</td>
+				<th colspan="2">io door position</th>
 			</tr>
-		{:else if doorPosition !== null}
-			<tr>
-				<td>
-					<span class="field-label">close</span>
-					<input
-						type="number"
-						min="0"
-						step="0.5"
-						bind:value={editDoorClose}
-						disabled={doorControlsDisabled}
-					/>
-					<button
-						type="button"
-						onclick={() => didClickMoveDoor('close')}
-						disabled={doorControlsDisabled}
-					>
-						move
-					</button>
-				</td>
-				<td>
-					<span class="field-label">open</span>
-					<input
-						type="number"
-						min="0"
-						step="0.5"
-						bind:value={editDoorOpen}
-						disabled={doorControlsDisabled}
-					/>
-					<button
-						type="button"
-						onclick={() => didClickMoveDoor('open')}
-						disabled={doorControlsDisabled}
-					>
-						move
-					</button>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="2">
-					<div class="door-action-buttons">
-						<button type="button" onclick={didClickResetDoor} disabled={doorControlsDisabled}>
-							reset
+		</thead>
+		<tbody>
+			{#if doorLoading === true}
+				<tr>
+					<td colspan="2">loading io door position...</td>
+				</tr>
+			{:else if doorPosition !== null}
+				<tr>
+					<td>
+						<span class="field-label">close</span>
+						<input
+							type="number"
+							min="0"
+							step="0.5"
+							bind:value={editDoorClose}
+							disabled={doorControlsDisabled}
+						/>
+						<button
+							type="button"
+							onclick={() => didClickMoveDoor('close')}
+							disabled={doorControlsDisabled}
+						>
+							move
 						</button>
-						<button type="button" onclick={didClickSaveDoor} disabled={doorControlsDisabled}>
-							save
+					</td>
+					<td>
+						<span class="field-label">open</span>
+						<input
+							type="number"
+							min="0"
+							step="0.5"
+							bind:value={editDoorOpen}
+							disabled={doorControlsDisabled}
+						/>
+						<button
+							type="button"
+							onclick={() => didClickMoveDoor('open')}
+							disabled={doorControlsDisabled}
+						>
+							move
 						</button>
-					</div>
-				</td>
-			</tr>
-		{/if}
-	</tbody>
-</table>
+					</td>
+				</tr>
+				<tr>
+					<td colspan="2">
+						<div class="door-action-buttons">
+							<button type="button" onclick={didClickResetDoor} disabled={doorControlsDisabled}>
+								reset
+							</button>
+							<button type="button" onclick={didClickSaveDoor} disabled={doorControlsDisabled}>
+								save
+							</button>
+						</div>
+					</td>
+				</tr>
+			{/if}
+		</tbody>
+	</table>
+</div>
 
 {#if message !== ''}
 	<StatusMessage {message} />
