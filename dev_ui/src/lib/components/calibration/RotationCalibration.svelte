@@ -114,59 +114,61 @@
 	}
 </script>
 
-<table>
-	<thead>
-		<tr>
-			<th colspan="2">rotation calibration</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if loading === true}
+<div class="scroll-x">
+	<table>
+		<thead>
 			<tr>
-				<td colspan="2">loading rotation angles...</td>
+				<th colspan="2">rotation calibration</th>
 			</tr>
-		{:else if angles !== null}
-			<tr>
-				<td class="label-cell">rotation angle a (front)</td>
-				<td>
-					<input
-						type="number"
-						step="0.1"
-						value={frontAngle}
-						on:change={didChangeFrontAngle}
-						disabled={isRotating === true || isSaving === true}
-					/>
-					<button
-						type="button"
-						on:click={didClickRotateFront}
-						disabled={isRotating === true || isSaving === true}
-					>
-						rotate
-					</button>
-				</td>
-			</tr>
-			<tr>
-				<td class="label-cell">rotation angle b (back)</td>
-				<td>
-					<input
-						type="number"
-						step="0.1"
-						value={backAngle}
-						on:change={didChangeBackAngle}
-						disabled={isRotating === true || isSaving === true}
-					/>
-					<button
-						type="button"
-						on:click={didClickRotateBack}
-						disabled={isRotating === true || isSaving === true}
-					>
-						rotate
-					</button>
-				</td>
-			</tr>
-		{/if}
-	</tbody>
-</table>
+		</thead>
+		<tbody>
+			{#if loading === true}
+				<tr>
+					<td colspan="2">loading rotation angles...</td>
+				</tr>
+			{:else if angles !== null}
+				<tr>
+					<td class="label-cell">rotation angle a (front)</td>
+					<td>
+						<input
+							type="number"
+							step="0.1"
+							value={frontAngle}
+							on:change={didChangeFrontAngle}
+							disabled={isRotating === true || isSaving === true}
+						/>
+						<button
+							type="button"
+							on:click={didClickRotateFront}
+							disabled={isRotating === true || isSaving === true}
+						>
+							rotate
+						</button>
+					</td>
+				</tr>
+				<tr>
+					<td class="label-cell">rotation angle b (back)</td>
+					<td>
+						<input
+							type="number"
+							step="0.1"
+							value={backAngle}
+							on:change={didChangeBackAngle}
+							disabled={isRotating === true || isSaving === true}
+						/>
+						<button
+							type="button"
+							on:click={didClickRotateBack}
+							disabled={isRotating === true || isSaving === true}
+						>
+							rotate
+						</button>
+					</td>
+				</tr>
+			{/if}
+		</tbody>
+	</table>
+</div>
 
 {#if angles !== null}
 	<div class="action-buttons">

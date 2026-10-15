@@ -1469,7 +1469,7 @@
 	}
 </script>
 
-<div class="layout-toolbar">
+<div class="layout-toolbar scroll-x">
 	<div class="toggle-group">
 		<a class:selected={selectedSide === 'front_module'} href={sideHref('front_module')}>
 			{sideLabel(0, vocabulary).toLowerCase()}
@@ -1775,6 +1775,11 @@
 		margin-bottom: 1.5em;
 	}
 
+	.layout-toolbar > * {
+		flex-shrink: 0;
+		white-space: nowrap;
+	}
+
 	.toggle-group {
 		display: inline-flex;
 		gap: 1em;
@@ -1837,6 +1842,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		flex-shrink: 0;
 		width: 40px;
 		height: 40px;
 		border: 2px solid black;
@@ -1875,6 +1881,37 @@
 		min-width: 36px;
 	}
 
+	/* phones: each shelf scrolls sideways next to its label, actions go below */
+	@media (max-width: 640px) {
+		.shelf-cells {
+			flex: 1 1 0;
+			min-width: 0;
+			/* same as the global .scroll-x, which would overlap the actions on wider screens */
+			overflow-x: auto;
+			margin-right: calc(-1 * var(--page-margin));
+			padding-right: var(--page-margin);
+			scrollbar-width: none;
+		}
+
+		.shelf-cells::-webkit-scrollbar {
+			display: none;
+		}
+
+		.shelf-actions {
+			flex-basis: 100%;
+			justify-content: flex-end;
+		}
+
+		/* actions wrap under their shelf, so keep them close to it and away from the next one */
+		.shelf-list {
+			gap: 2.5em;
+		}
+
+		.shelf-row {
+			row-gap: 0.5em;
+		}
+	}
+
 	.selection-backdrop {
 		position: fixed;
 		inset: 0;
@@ -1897,6 +1934,18 @@
 		z-index: 41;
 		display: flex;
 		flex-direction: column;
+	}
+
+	/* phones: half the screen is too narrow for the editor, so it becomes a bottom sheet */
+	@media (max-width: 640px) {
+		.selection-overlay {
+			top: auto;
+			left: 0;
+			width: auto;
+			max-height: 70vh;
+			margin: 1em;
+			padding: 1em;
+		}
 	}
 
 	.selection-count {

@@ -34,7 +34,7 @@
 	}
 </script>
 
-<div class="toggle-group">
+<div class="toggle-group scroll-x">
 	<a class:selected={selectedView === 'layout'} href={tabHref('/storage/layout')}>layout</a>
 	<a class:selected={selectedView === 'cell_auto'} href={tabHref('/storage/auto')}>auto</a>
 	<a class:selected={selectedView === 'cell_manual'} href={tabHref('/storage/cells')}>manual</a>
@@ -64,13 +64,15 @@
 
 <style>
 	.toggle-group {
-		display: inline-flex;
+		display: flex;
 		margin-bottom: 1.5em;
 		gap: 1em;
 		align-items: center;
 	}
 
 	.toggle-group a {
+		flex-shrink: 0;
+		white-space: nowrap;
 		border: 2px solid black;
 		background: #fff;
 		cursor: pointer;

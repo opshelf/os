@@ -12,6 +12,10 @@
 	box-sizing: border-box;
 }
 
+:root {
+	--page-margin: 1.5em;
+}
+
 body {
 	font-family:
 		Unica Mono,
@@ -20,7 +24,7 @@ body {
 	font-weight: normal;
 	color: black;
 	background-color: white;
-	margin: 1.5em;
+	margin: var(--page-margin);
 }
 
 * {
@@ -49,6 +53,13 @@ th {
 	border-top: 4px solid black;
 }
 
+/* short labels stay on one line; wide tables scroll inside .scroll-x instead */
+th,
+a,
+button {
+	white-space: nowrap;
+}
+
 ul {
 	margin: 0;
 	padding: 0;
@@ -65,6 +76,11 @@ nav ul {
 	gap: 1em;
 	text-transform: uppercase;
 	margin-bottom: 1.5em;
+}
+
+nav li {
+	flex-shrink: 0;
+	white-space: nowrap;
 }
 
 nav a {
@@ -125,8 +141,8 @@ a.close-btn {
 
 .version-label {
 	position: fixed;
-	bottom: 1.5em;
-	left: 1.5em;
+	bottom: var(--page-margin);
+	left: var(--page-margin);
 	background-color: white;
 	text-transform: uppercase;
 }
@@ -137,4 +153,43 @@ a.close-btn {
 
 img {
 	margin-bottom: 1em;
+}
+
+/* the page itself never scrolls sideways; anything wide goes in a .scroll-x strip */
+html {
+	overflow-x: hidden;
+	overflow-x: clip;
+}
+
+/* content wider than the screen (tables, button strips) scrolls on its own; the strip
+   bleeds into both page margins so content runs to the screen edges while scrolling,
+   and the padding lines it up with the margins at rest and at the end */
+nav ul,
+.scroll-x {
+	overflow-x: auto;
+	margin-left: calc(-1 * var(--page-margin));
+	margin-right: calc(-1 * var(--page-margin));
+	padding-left: var(--page-margin);
+	padding-right: var(--page-margin);
+	/* overflow clips vertically too, so leave room for the button shadow */
+	padding-bottom: 6px;
+	scrollbar-width: none;
+}
+
+nav ul::-webkit-scrollbar,
+.scroll-x::-webkit-scrollbar {
+	display: none;
+}
+
+/* phones: everything at roughly 80% zoom; sizes are em-based, so the root scales them */
+@media (max-width: 640px) {
+	html {
+		font-size: 80%;
+		-webkit-text-size-adjust: 100%;
+		text-size-adjust: 100%;
+	}
+
+	:root {
+		--page-margin: 1em;
+	}
 }

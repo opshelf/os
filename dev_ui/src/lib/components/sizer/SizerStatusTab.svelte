@@ -81,27 +81,29 @@
 {#if isLoading === true}
 	<p>loading sizer data...</p>
 {:else}
-	<table style="margin-bottom: 1.5em">
-		<thead>
-			<tr>
-				<th colspan="2">sizer status</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#if status !== null}
-				{#each Object.entries(status) as [key, value]}
-					<tr>
-						<td>{key.replaceAll('_', ' ')}</td>
-						<td>{formatStatusValue(key, value)}</td>
-					</tr>
-				{/each}
-			{:else if statusError === ''}
+	<div class="scroll-x" style="margin-bottom: 1.5em">
+		<table>
+			<thead>
 				<tr>
-					<td colspan="2">loading...</td>
+					<th colspan="2">sizer status</th>
 				</tr>
-			{/if}
-		</tbody>
-	</table>
+			</thead>
+			<tbody>
+				{#if status !== null}
+					{#each Object.entries(status) as [key, value]}
+						<tr>
+							<td>{key.replaceAll('_', ' ')}</td>
+							<td>{formatStatusValue(key, value)}</td>
+						</tr>
+					{/each}
+				{:else if statusError === ''}
+					<tr>
+						<td colspan="2">loading...</td>
+					</tr>
+				{/if}
+			</tbody>
+		</table>
+	</div>
 
 	{#if statusError !== ''}
 		<ErrorMessage message={statusError} />

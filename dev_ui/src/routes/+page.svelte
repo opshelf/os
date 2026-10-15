@@ -364,220 +364,228 @@
 
 <div class="status-grid">
 	<div class="status-column">
-		<table>
-			<thead>
-				<tr>
-					<th colspan="2">system information</th>
-				</tr>
-			</thead>
-			<tbody>
-				<tr>
-					<td class="label-cell">device id</td>
-					<td class="value-cell">{deviceId || 'loading...'}</td>
-				</tr>
-				<tr>
-					<td class="label-cell">device alias</td>
-					<td class="value-cell">{deviceAlias || '—'}</td>
-				</tr>
-				<tr>
-					<td class="label-cell">operating mode</td>
-					<td class="value-cell">{operatingMode || '—'}</td>
-				</tr>
-				<tr>
-					<td class="label-cell">lan ip</td>
-					<td class="value-cell">{lanIp || 'loading...'}</td>
-				</tr>
-			</tbody>
-		</table>
-
-		<table>
-			<thead>
-				<tr>
-					<th colspan="2">control loop override</th>
-				</tr>
-			</thead>
-			<tbody>
-				<tr>
-					<td class="label-cell">homing on startup</td>
-					<td class="value-cell">
-						<div class="status-action-cell">
-							<span
-								>{isLoadingHomeOnInit === true
-									? 'loading...'
-									: homeOnInit
-										? 'enabled'
-										: 'disabled'}</span
-							>
-							<button
-								disabled={isLoadingHomeOnInit === true || isUpdatingHomeOnInit === true}
-								onclick={didClickHomeOnInit}
-							>
-								{homeOnInit ? 'DISABLE' : 'ENABLE'}
-							</button>
-						</div>
-						{#if homeOnInitError !== ''}
-							<ErrorMessage message={homeOnInitError} />
-						{/if}
-					</td>
-				</tr>
-				{#if $robotStatus}
-					<tr>
-						<td class="label-cell">bypass safety guard</td>
-						<td class="value-cell">
-							<div class="status-action-cell">
-								<span class:enabled-danger={getBypassSafetyGuard() === true}>
-									{getBypassSafetyGuard() ? 'enabled' : 'disabled'}
-								</span>
-								<button
-									disabled={isUpdatingSafetyOverride === true}
-									onclick={didClickBypassSafetyGuard}
-								>
-									{getBypassSafetyGuard() ? 'DISABLE' : 'ENABLE'}
-								</button>
-							</div>
-							{#if safetyOverrideError !== ''}
-								<ErrorMessage message={safetyOverrideError} />
-							{/if}
-						</td>
-					</tr>
-					{#each safetyComponents as component (component.key)}
-						<tr>
-							<td class="label-cell">{component.label}</td>
-							<td class="value-cell">
-								<div class="status-action-cell">
-									<span class:enabled-danger={getComponentBypass(component.key) === true}>
-										{getComponentBypass(component.key) ? 'enabled' : 'disabled'}
-									</span>
-									<button
-										disabled={componentUpdating[component.key] === true}
-										onclick={() => didClickBypassComponent(component.key)}
-									>
-										{getComponentBypass(component.key) ? 'DISABLE' : 'ENABLE'}
-									</button>
-								</div>
-								{#if componentErrors[component.key] !== ''}
-									<ErrorMessage message={componentErrors[component.key]} />
-								{/if}
-							</td>
-						</tr>
-					{/each}
-				{/if}
-			</tbody>
-		</table>
-	</div>
-
-	<div class="status-column">
-		{#if $robotStatus}
+		<div class="scroll-x">
 			<table>
 				<thead>
 					<tr>
-						<th colspan="2">robot state</th>
+						<th colspan="2">system information</th>
 					</tr>
 				</thead>
 				<tbody>
 					<tr>
-						<td class="label-cell">worker running</td>
-						<td class="value-cell">
-							<div class="status-action-cell">
-								<span>{$robotStatus.running ? 'yes' : 'no'}</span>
-								<button
-									disabled={isRestartingApi === true}
-									onclick={didClickRestartApi}>RESTART</button
-								>
-							</div>
-							{#if restartApiError !== ''}
-								<ErrorMessage message={restartApiError} />
-							{/if}
-						</td>
+						<td class="label-cell">device id</td>
+						<td class="value-cell">{deviceId || 'loading...'}</td>
 					</tr>
 					<tr>
-						<td class="label-cell">io box</td>
-						<td class="value-cell">{getIoBoxOccupied() ? 'occupied' : 'empty'}</td>
+						<td class="label-cell">device alias</td>
+						<td class="value-cell">{deviceAlias || '—'}</td>
 					</tr>
 					<tr>
-						<td class="label-cell">light curtain</td>
-						<td class="value-cell">
-							{#if getLightCurtainBlocked() === null}
-								disabled
-							{:else if getLightCurtainBlocked() === true}
-								blocked
-							{:else if getLightCurtainBlocked() === false}
-								clear
-							{:else}
-								unknown
-							{/if}
-						</td>
+						<td class="label-cell">operating mode</td>
+						<td class="value-cell">{operatingMode || '—'}</td>
 					</tr>
 					<tr>
-						<td class="label-cell">cabinet</td>
-						<td class="value-cell">
-							<div class="status-action-cell">
-								<span>{getCabinetStatus()}</span>
-								<button
-									disabled={isUnlockingCabinet === true || getCabinetStatus() !== 'closed'}
-									onclick={didClickCabinetUnlock}>UNLOCK</button
-								>
-							</div>
-						</td>
-					</tr>
-					<tr>
-						<td class="label-cell">home required</td>
-						<td class="value-cell">
-							<div class="status-action-cell">
-								<span>
-									{#if $robotStatus.needs_home}
-										yes
-									{:else}
-										no
-									{/if}
-								</span>
-								<button
-									disabled={$robotStatus.needs_home !== true || isHomingRobot === true}
-									onclick={didClickHome}>HOME</button
-								>
-							</div>
-						</td>
-					</tr>
-					<tr>
-						<td class="label-cell">ack required</td>
-						<td class="value-cell">
-							<div class="status-action-cell">
-								<span>
-									{#if getSafetyAwaitingAck()}
-										yes{getSafetyCanAcknowledge() !== true ? ` (${getSafetyActiveSources().join(', ')})` : ''}
-									{:else}
-										no
-									{/if}
-								</span>
-								<button
-									disabled={getSafetyCanAcknowledge() !== true || isAcknowledgingSafety === true}
-									onclick={didClickAcknowledgeSafety}>ACK</button
-								>
-							</div>
-							{#if safetyAckError !== ''}
-								<ErrorMessage message={safetyAckError} />
-							{/if}
-						</td>
+						<td class="label-cell">lan ip</td>
+						<td class="value-cell">{lanIp || 'loading...'}</td>
 					</tr>
 				</tbody>
 			</table>
+		</div>
 
-			{#if $robotStatus.current_command}
+		<div class="scroll-x">
+			<table>
+				<thead>
+					<tr>
+						<th colspan="2">control loop override</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td class="label-cell">homing on startup</td>
+						<td class="value-cell">
+							<div class="status-action-cell">
+								<span
+									>{isLoadingHomeOnInit === true
+										? 'loading...'
+										: homeOnInit
+											? 'enabled'
+											: 'disabled'}</span
+								>
+								<button
+									disabled={isLoadingHomeOnInit === true || isUpdatingHomeOnInit === true}
+									onclick={didClickHomeOnInit}
+								>
+									{homeOnInit ? 'DISABLE' : 'ENABLE'}
+								</button>
+							</div>
+							{#if homeOnInitError !== ''}
+								<ErrorMessage message={homeOnInitError} />
+							{/if}
+						</td>
+					</tr>
+					{#if $robotStatus}
+						<tr>
+							<td class="label-cell">bypass safety guard</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span class:enabled-danger={getBypassSafetyGuard() === true}>
+										{getBypassSafetyGuard() ? 'enabled' : 'disabled'}
+									</span>
+									<button
+										disabled={isUpdatingSafetyOverride === true}
+										onclick={didClickBypassSafetyGuard}
+									>
+										{getBypassSafetyGuard() ? 'DISABLE' : 'ENABLE'}
+									</button>
+								</div>
+								{#if safetyOverrideError !== ''}
+									<ErrorMessage message={safetyOverrideError} />
+								{/if}
+							</td>
+						</tr>
+						{#each safetyComponents as component (component.key)}
+							<tr>
+								<td class="label-cell">{component.label}</td>
+								<td class="value-cell">
+									<div class="status-action-cell">
+										<span class:enabled-danger={getComponentBypass(component.key) === true}>
+											{getComponentBypass(component.key) ? 'enabled' : 'disabled'}
+										</span>
+										<button
+											disabled={componentUpdating[component.key] === true}
+											onclick={() => didClickBypassComponent(component.key)}
+										>
+											{getComponentBypass(component.key) ? 'DISABLE' : 'ENABLE'}
+										</button>
+									</div>
+									{#if componentErrors[component.key] !== ''}
+										<ErrorMessage message={componentErrors[component.key]} />
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					{/if}
+				</tbody>
+			</table>
+		</div>
+	</div>
+
+	<div class="status-column">
+		{#if $robotStatus}
+			<div class="scroll-x">
 				<table>
 					<thead>
 						<tr>
-							<th colspan="2">current command</th>
+							<th colspan="2">robot state</th>
 						</tr>
 					</thead>
 					<tbody>
-						{#each formatCommand($robotStatus.current_command) as entry}
-							<tr>
-								<td class="label-cell">{entry.field}</td>
-								<td class="value-cell">{entry.value}</td>
-							</tr>
-						{/each}
+						<tr>
+							<td class="label-cell">worker running</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span>{$robotStatus.running ? 'yes' : 'no'}</span>
+									<button
+										disabled={isRestartingApi === true}
+										onclick={didClickRestartApi}>RESTART</button
+									>
+								</div>
+								{#if restartApiError !== ''}
+									<ErrorMessage message={restartApiError} />
+								{/if}
+							</td>
+						</tr>
+						<tr>
+							<td class="label-cell">io box</td>
+							<td class="value-cell">{getIoBoxOccupied() ? 'occupied' : 'empty'}</td>
+						</tr>
+						<tr>
+							<td class="label-cell">light curtain</td>
+							<td class="value-cell">
+								{#if getLightCurtainBlocked() === null}
+									disabled
+								{:else if getLightCurtainBlocked() === true}
+									blocked
+								{:else if getLightCurtainBlocked() === false}
+									clear
+								{:else}
+									unknown
+								{/if}
+							</td>
+						</tr>
+						<tr>
+							<td class="label-cell">cabinet</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span>{getCabinetStatus()}</span>
+									<button
+										disabled={isUnlockingCabinet === true || getCabinetStatus() !== 'closed'}
+										onclick={didClickCabinetUnlock}>UNLOCK</button
+									>
+								</div>
+							</td>
+						</tr>
+						<tr>
+							<td class="label-cell">home required</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span>
+										{#if $robotStatus.needs_home}
+											yes
+										{:else}
+											no
+										{/if}
+									</span>
+									<button
+										disabled={$robotStatus.needs_home !== true || isHomingRobot === true}
+										onclick={didClickHome}>HOME</button
+									>
+								</div>
+							</td>
+						</tr>
+						<tr>
+							<td class="label-cell">ack required</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span>
+										{#if getSafetyAwaitingAck()}
+											yes{getSafetyCanAcknowledge() !== true ? ` (${getSafetyActiveSources().join(', ')})` : ''}
+										{:else}
+											no
+										{/if}
+									</span>
+									<button
+										disabled={getSafetyCanAcknowledge() !== true || isAcknowledgingSafety === true}
+										onclick={didClickAcknowledgeSafety}>ACK</button
+									>
+								</div>
+								{#if safetyAckError !== ''}
+									<ErrorMessage message={safetyAckError} />
+								{/if}
+							</td>
+						</tr>
 					</tbody>
 				</table>
+			</div>
+
+			{#if $robotStatus.current_command}
+				<div class="scroll-x">
+					<table>
+						<thead>
+							<tr>
+								<th colspan="2">current command</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each formatCommand($robotStatus.current_command) as entry}
+								<tr>
+									<td class="label-cell">{entry.field}</td>
+									<td class="value-cell">{entry.value}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			{/if}
 		{/if}
 	</div>
@@ -586,7 +594,7 @@
 <style>
 	.status-grid {
 		display: grid;
-		grid-template-columns: 1fr 1fr;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 		gap: 1.5em;
 		align-items: start;
 	}
@@ -611,7 +619,7 @@
 
 	@media (max-width: 900px) {
 		.status-grid {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 
