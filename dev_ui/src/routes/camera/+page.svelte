@@ -47,6 +47,7 @@
 	let lineStart: Point | null = null;
 	let previewEnd: Point | null = null;
 	let statusTimer: ReturnType<typeof setInterval> | null = null;
+	let cameraStatusUnavailable = false;
 
 	$: selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
 	$: isCameraOnline = selectedCamera !== null && selectedCamera.online === true;
@@ -118,10 +119,33 @@
 	async function refreshCameraStatus(): Promise<void> {
 		try {
 			const response = await apiFetch<CamerasResponse>('/camera');
+			const selectedWasOnline = selectedCamera?.online === true;
+			const selectedIsOnline =
+				response.cameras.find((camera) => camera.id === selectedCameraId)?.online === true;
+			const shouldRestartStream =
+				cameraStatusUnavailable || (selectedWasOnline === false && selectedIsOnline);
+
 			cameras = response.cameras;
+			cameraStatusUnavailable = false;
+
+			if (shouldRestartStream) {
+				restartSelectedStream();
+			}
 		} catch {
+			cameraStatusUnavailable = true;
 			return;
 		}
+	}
+
+	function restartSelectedStream(): void {
+		if (selectedCameraId === '') {
+			return;
+		}
+
+		h264FailedFor.delete(selectedCameraId);
+		streamError = false;
+		mjpegErrorDuringTry = false;
+		stopH264Player();
 	}
 
 	function didSelectCamera(event: Event): void {

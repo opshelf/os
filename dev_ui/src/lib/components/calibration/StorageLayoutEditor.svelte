@@ -350,58 +350,49 @@
 		overlayOpen = false;
 	}
 
-	// A scrim click only counts when the press both started and ended in the dimmed area.
+	// An outside click only counts when the press both started and ended outside the grid.
 	// The backdrop is pointer-events:none, so a drag that starts on the panel and ends in the
 	// dimmed area (or vice versa) still dispatches one click whose target is a shared
 	// ancestor; the mousedown and mouseup flags are what tell the two apart.
-	let scrimPressInBounds = false;
-	let scrimReleaseInBounds = false;
+	let outsideGridPress = false;
+	let outsideGridRelease = false;
 
-	function pressStartsInScrim(event: MouseEvent): boolean {
-		if (overlayOpen === false) {
-			return false;
-		}
+	function pressStartsOutsideGrid(event: MouseEvent): boolean {
 		const target = event.target instanceof Element ? event.target : null;
 		if (target === null) {
 			return false;
 		}
-		return target.closest('.selection-overlay') === null;
+		return target.closest('.shelf-list, .selection-overlay') === null;
 	}
 
-	function didScrimMouseDown(event: MouseEvent): void {
-		scrimPressInBounds = pressStartsInScrim(event);
+	function didOutsideMouseDown(event: MouseEvent): void {
+		outsideGridPress = pressStartsOutsideGrid(event);
 	}
 
-	function didScrimMouseUp(event: MouseEvent): void {
-		scrimReleaseInBounds = pressStartsInScrim(event);
+	function didOutsideMouseUp(event: MouseEvent): void {
+		outsideGridRelease = pressStartsOutsideGrid(event);
 	}
 
 	function didClickOutside(event: MouseEvent): void {
-		const pressedInScrim = scrimPressInBounds;
-		const releasedInScrim = scrimReleaseInBounds;
-		scrimPressInBounds = false;
-		scrimReleaseInBounds = false;
-		if (overlayOpen === false) {
-			return;
-		}
-		if (pressedInScrim === false || releasedInScrim === false) {
+		const pressedOutsideGrid = outsideGridPress;
+		const releasedOutsideGrid = outsideGridRelease;
+		outsideGridPress = false;
+		outsideGridRelease = false;
+		if (pressedOutsideGrid === false || releasedOutsideGrid === false) {
 			return;
 		}
 		const target = event.target instanceof Element ? event.target : null;
 		if (target === null) {
 			return;
 		}
-		if (target.closest('.storage-cell') !== null) {
-			return;
-		}
-		if (target.closest('.selection-overlay') !== null) {
+		if (target.closest('.shelf-list, .selection-overlay') !== null) {
 			return;
 		}
 		if (target.closest('button, a') !== null) {
 			return;
 		}
 
-		closeOverlay();
+		didDeselect();
 	}
 
 	function didPressEscape(event: KeyboardEvent): void {
@@ -1324,14 +1315,14 @@
 		}
 		void load();
 		connectScanStream();
-		document.addEventListener('mousedown', didScrimMouseDown);
-		document.addEventListener('mouseup', didScrimMouseUp);
+		document.addEventListener('mousedown', didOutsideMouseDown);
+		document.addEventListener('mouseup', didOutsideMouseUp);
 		document.addEventListener('click', didClickOutside);
 		document.addEventListener('keydown', didPressEscape);
 		return () => {
 			disconnectScanStream();
-			document.removeEventListener('mousedown', didScrimMouseDown);
-			document.removeEventListener('mouseup', didScrimMouseUp);
+			document.removeEventListener('mousedown', didOutsideMouseDown);
+			document.removeEventListener('mouseup', didOutsideMouseUp);
 			document.removeEventListener('click', didClickOutside);
 			document.removeEventListener('keydown', didPressEscape);
 		};
