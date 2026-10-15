@@ -154,6 +154,32 @@ async def test_identifier_login_accepts_email_and_unique_full_name(
 
 
 @pytest.mark.anyio
+async def test_system_user_logs_in_by_email_but_not_by_name(
+    unauthenticated_client: AsyncClient,
+    make_user: MakeUser,
+) -> None:
+    # The dev UI signs in as the developer system user by email.
+    await make_user(
+        email="system-login@example.com",
+        first_name="System",
+        last_name="Identity",
+        is_system=True,
+    )
+
+    by_email = await unauthenticated_client.post(
+        "/api/auth/login/json",
+        json={"email": "system-login@example.com", "pin": "4321"},
+    )
+    assert by_email.status_code == 200
+
+    by_name = await unauthenticated_client.post(
+        "/api/auth/login/json",
+        json={"identifier": "System Identity", "pin": "4321"},
+    )
+    assert by_name.status_code == 401
+
+
+@pytest.mark.anyio
 async def test_ambiguous_name_and_unknown_identity_fail_generically(
     unauthenticated_client: AsyncClient,
     make_user: MakeUser,
