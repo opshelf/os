@@ -19,6 +19,8 @@ export function isAuthenticated(): boolean {
 	return accessToken !== null;
 }
 
+export class LoginRejectedError extends Error {}
+
 export async function login(email: string, pin: string): Promise<void> {
 	const apiBase = getApiBase();
 	const url = `${apiBase}/auth/login/json`;
@@ -28,6 +30,10 @@ export async function login(email: string, pin: string): Promise<void> {
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ email, pin })
 	});
+
+	if (response.status === 401) {
+		throw new LoginRejectedError('login rejected');
+	}
 
 	if (response.ok === false) {
 		throw new Error('login failed');
@@ -85,6 +91,41 @@ export function logout(): void {
 	tokenExpiresAt = null;
 }
 
-export async function loginAsDeveloper(): Promise<void> {
-	await login('developer@opshelf.com', '1111');
+const DEVELOPER_EMAIL = 'developer@opshelf.com';
+const DEVELOPER_PIN_COOKIE = 'opshelf_developer_pin';
+
+// The relay serving dev.opshelf.com sets the developer PIN as a cookie, so the PIN
+// never lives in this public repository and the UI never asks for it. Without the
+// cookie (a development or mock device reached directly) the API serves the
+// developer user without a token, so there is nothing to sign in to.
+export function developerPin(): string | null {
+	for (const part of document.cookie.split(';')) {
+		const [name, ...value] = part.trim().split('=');
+		if (name === DEVELOPER_PIN_COOKIE) {
+			const pin = decodeURIComponent(value.join('='));
+			return pin === '' ? null : pin;
+		}
+	}
+	return null;
+}
+
+let developerSignIn: Promise<void> | null = null;
+
+async function signInAsDeveloper(): Promise<void> {
+	const pin = developerPin();
+	if (pin === null) {
+		throw new Error('no developer pin cookie');
+	}
+	await login(DEVELOPER_EMAIL, pin);
+}
+
+// The api client, the status stream, and the layout all sign in on demand, so
+// concurrent callers share one attempt.
+export function loginAsDeveloper(): Promise<void> {
+	if (developerSignIn === null) {
+		developerSignIn = signInAsDeveloper().finally(() => {
+			developerSignIn = null;
+		});
+	}
+	return developerSignIn;
 }

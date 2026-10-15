@@ -28,6 +28,7 @@
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideInitial, sideLabel } from '$lib/side';
 	import type { SideIndex, SideVocabulary } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import { postToast } from '$lib/toasts';
 	import {
 		createReconnectingEventSource,
 		type ReconnectingEventSource
@@ -53,13 +54,9 @@
 
 	// Multi-cell test walk (client-side equivalent of provision/scripts/cycle_test.py):
 	// walks the testable cells on the current side from the selected cell, one
-	// operation per cell, tracking the current cell and running pass count.
+	// operation per cell, and reports the outcome as a single toast.
 	let testRunning = $state<boolean>(false);
 	let testAborting = $state<boolean>(false);
-	let testCurrent = $state<string>('');
-	let testPassed = $state<number>(0);
-	let testNote = $state<string>('');
-	let testNoteIsError = $state<boolean>(false);
 	let isMovingToCell = $state<boolean>(false);
 
 	const selectedSide = $derived.by(
@@ -351,62 +348,51 @@
 
 	function closeOverlay(): void {
 		overlayOpen = false;
-		testNote = '';
-		testNoteIsError = false;
 	}
 
-	// A scrim click only counts when the press both started and ended in the dimmed area.
+	// An outside click only counts when the press both started and ended outside the grid.
 	// The backdrop is pointer-events:none, so a drag that starts on the panel and ends in the
 	// dimmed area (or vice versa) still dispatches one click whose target is a shared
 	// ancestor; the mousedown and mouseup flags are what tell the two apart.
-	let scrimPressInBounds = false;
-	let scrimReleaseInBounds = false;
+	let outsideGridPress = false;
+	let outsideGridRelease = false;
 
-	function pressStartsInScrim(event: MouseEvent): boolean {
-		if (overlayOpen === false) {
-			return false;
-		}
+	function pressStartsOutsideGrid(event: MouseEvent): boolean {
 		const target = event.target instanceof Element ? event.target : null;
 		if (target === null) {
 			return false;
 		}
-		return target.closest('.selection-overlay') === null;
+		return target.closest('.shelf-list, .selection-overlay') === null;
 	}
 
-	function didScrimMouseDown(event: MouseEvent): void {
-		scrimPressInBounds = pressStartsInScrim(event);
+	function didOutsideMouseDown(event: MouseEvent): void {
+		outsideGridPress = pressStartsOutsideGrid(event);
 	}
 
-	function didScrimMouseUp(event: MouseEvent): void {
-		scrimReleaseInBounds = pressStartsInScrim(event);
+	function didOutsideMouseUp(event: MouseEvent): void {
+		outsideGridRelease = pressStartsOutsideGrid(event);
 	}
 
 	function didClickOutside(event: MouseEvent): void {
-		const pressedInScrim = scrimPressInBounds;
-		const releasedInScrim = scrimReleaseInBounds;
-		scrimPressInBounds = false;
-		scrimReleaseInBounds = false;
-		if (overlayOpen === false) {
-			return;
-		}
-		if (pressedInScrim === false || releasedInScrim === false) {
+		const pressedOutsideGrid = outsideGridPress;
+		const releasedOutsideGrid = outsideGridRelease;
+		outsideGridPress = false;
+		outsideGridRelease = false;
+		if (pressedOutsideGrid === false || releasedOutsideGrid === false) {
 			return;
 		}
 		const target = event.target instanceof Element ? event.target : null;
 		if (target === null) {
 			return;
 		}
-		if (target.closest('.storage-cell') !== null) {
-			return;
-		}
-		if (target.closest('.selection-overlay') !== null) {
+		if (target.closest('.shelf-list, .selection-overlay') !== null) {
 			return;
 		}
 		if (target.closest('button, a') !== null) {
 			return;
 		}
 
-		closeOverlay();
+		didDeselect();
 	}
 
 	function didPressEscape(event: KeyboardEvent): void {
@@ -418,10 +404,11 @@
 
 	type EditorField = 'status' | 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
 	type NumericEditorField = 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
+	type DimensionField = 'width' | 'height' | 'length';
 
 	const EDITOR_FIELDS: EditorField[] = ['status', 'x', 'y', 'z', 'width', 'height', 'length'];
 	const XYZ_COLUMNS: NumericEditorField[] = ['x', 'y', 'z'];
-	const DIMENSION_COLUMNS: Array<{ field: NumericEditorField; label: string }> = [
+	const DIMENSION_COLUMNS: Array<{ field: DimensionField; label: string }> = [
 		{ field: 'width', label: 'width' },
 		{ field: 'height', label: 'height' },
 		{ field: 'length', label: 'length' }
@@ -645,6 +632,14 @@
 		if (editorValues[field].trim() === '' && selectionValues[field] === 'mixed') {
 			editorValues[field] = 'Mixed';
 		}
+		// An out-of-range dimension is reported once the technician leaves the field, so
+		// typing a value like ".5" does not fire a toast halfway through.
+		if (isDimensionField(field) === true) {
+			const issue = dimensionFieldIssue(field);
+			if (issue !== '') {
+				postToast('error', issue);
+			}
+		}
 	}
 
 	const selectionFingerprint = $derived(
@@ -732,7 +727,11 @@
 		return formatFieldValue(parsed) !== formatFieldValue(value);
 	}
 
-	function dimensionFieldIssue(field: NumericEditorField): string {
+	function isDimensionField(field: NumericEditorField): field is DimensionField {
+		return field === 'width' || field === 'height' || field === 'length';
+	}
+
+	function dimensionFieldIssue(field: DimensionField): string {
 		const raw = editorValues[field].trim();
 		if (raw === '' || raw.toLowerCase() === 'mixed') {
 			return '';
@@ -746,16 +745,6 @@
 		}
 		return '';
 	}
-
-	const dimensionIssue = $derived.by((): string => {
-		for (const column of DIMENSION_COLUMNS) {
-			const issue = dimensionFieldIssue(column.field);
-			if (issue !== '') {
-				return issue;
-			}
-		}
-		return '';
-	});
 
 	function isFieldValid(field: EditorField): boolean {
 		const raw = editorValues[field].trim();
@@ -1165,9 +1154,35 @@
 		});
 	}
 
+	// Laser calibration leaves cells 0x0x0 until a technician enters the real dimensions.
+	function isCellUnsized(cell: Cell): boolean {
+		return Math.min(cell.dimensions.width, cell.dimensions.height, cell.dimensions.length) <= 0;
+	}
+
 	function isCellTestable(cell: Cell): boolean {
 		return UNTESTABLE_CELL_STATUSES.has(cell.status.toLowerCase()) === false;
 	}
+
+	// The backend rejects every testing action on disabled and maintenance cells, so the
+	// testing buttons go inert when none of the selected cells can be tested. A mixed
+	// selection stays enabled: the queue skips its untestable cells.
+	const hasTestableSelection = $derived(selectedCells.some((entry) => isCellTestable(entry.cell)));
+
+	// The reason the testing buttons are inert is announced once per selection through the
+	// toast channel, which took over the overlay's inline message labels.
+	let didAnnounceUntestableSelection = false;
+
+	$effect(() => {
+		if (hasTestableSelection === true || overlayOpen === false) {
+			didAnnounceUntestableSelection = false;
+			return;
+		}
+
+		if (didAnnounceUntestableSelection === false) {
+			didAnnounceUntestableSelection = true;
+			postToast('status', 'no testable cells selected');
+		}
+	});
 
 	// The selected testable cells, one test each, in shelf/cell-ascending order
 	// (cycle_test.py walks cells one at a time).
@@ -1225,34 +1240,25 @@
 		}
 		const queue = buildTestQueue();
 		if (queue.length === 0) {
-			testNote = 'no testable cells selected';
-			testNoteIsError = true;
+			postToast('error', 'no testable cells selected');
 			return;
 		}
 		testRunning = true;
 		testAborting = false;
-		testCurrent = '';
-		testPassed = 0;
-		testNote = '';
-		testNoteIsError = false;
 		try {
 			for (const target of queue) {
 				if (testAborting) {
 					break;
 				}
-				testCurrent = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
+				const cellLabel = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
-				if (result.ok) {
-				testPassed += 1;
-				} else {
-					testNote = `failed at ${testCurrent}${result.error ? `: ${result.error}` : ''}`;
-				testNoteIsError = true;
-					break;
+				if (result.ok === false) {
+					postToast('error', `failed at ${cellLabel}${result.error ? `: ${result.error}` : ''}`);
+					return;
 				}
 			}
-			if (testNote === '') {
-				testNote = testAborting ? `aborted — ${testPassed} passed` : `done — ${testPassed} passed`;
-			}
+			// One summary toast per walk: a failure returned above with its own toast.
+			postToast('status', testAborting ? 'test aborted' : 'all tests passed');
 		} finally {
 			testRunning = false;
 		}
@@ -1309,14 +1315,14 @@
 		}
 		void load();
 		connectScanStream();
-		document.addEventListener('mousedown', didScrimMouseDown);
-		document.addEventListener('mouseup', didScrimMouseUp);
+		document.addEventListener('mousedown', didOutsideMouseDown);
+		document.addEventListener('mouseup', didOutsideMouseUp);
 		document.addEventListener('click', didClickOutside);
 		document.addEventListener('keydown', didPressEscape);
 		return () => {
 			disconnectScanStream();
-			document.removeEventListener('mousedown', didScrimMouseDown);
-			document.removeEventListener('mouseup', didScrimMouseUp);
+			document.removeEventListener('mousedown', didOutsideMouseDown);
+			document.removeEventListener('mouseup', didOutsideMouseUp);
 			document.removeEventListener('click', didClickOutside);
 			document.removeEventListener('keydown', didPressEscape);
 		};
@@ -1463,7 +1469,7 @@
 	}
 </script>
 
-<div class="layout-toolbar">
+<div class="layout-toolbar scroll-x">
 	<div class="toggle-group">
 		<a class:selected={selectedSide === 'front_module'} href={sideHref('front_module')}>
 			{sideLabel(0, vocabulary).toLowerCase()}
@@ -1517,6 +1523,7 @@
 								class="storage-cell"
 								class:selected={isSelected(selectedSide, shelf.shelf_idx, cell.cell_idx)}
 								class:occupied={cell.status.toLowerCase() === 'occupied'}
+								class:unsized={isCellUnsized(cell)}
 								class:dimmed={
 									cell.status.toLowerCase() === 'maintenance' ||
 									cell.status.toLowerCase() === 'disabled'
@@ -1617,17 +1624,45 @@
 			<section class="editor-tests">
 				<p class="editor-section-label">testing</p>
 				<div class="editor-group editor-group-tests">
-					<button type="button" onclick={() => void didStartTest('quick')} disabled={testRunning}>quick</button>
-					<button type="button" onclick={() => void didStartTest('cycle')} disabled={testRunning}>cycle</button>
-					<button type="button" onclick={() => void didStartTest('store')} disabled={testRunning}>store</button>
-					<button type="button" onclick={() => void didStartTest('retrieve')} disabled={testRunning}>retrieve</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('quick')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						quick
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('cycle')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						cycle
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('store')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						store
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('retrieve')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						retrieve
+					</button>
+					{#if testRunning}
+						<button
+							type="button"
+							class="editor-abort-button"
+							onclick={() => didAbortTest()}
+							disabled={testAborting}
+						>
+							abort test
+						</button>
+					{/if}
 				</div>
-				{#if testRunning}
-					<p class="editor-test-progress">{testCurrent} • PASS: {testPassed}</p>
-					<button type="button" onclick={() => didAbortTest()} disabled={testAborting}>abort</button>
-				{:else if testNote !== ''}
-					<p class="editor-test-note" class:is-error={testNoteIsError}>{testNote}</p>
-				{/if}
 			</section>
 			<label class="editor-row editor-row-lock">
 				<input
@@ -1657,9 +1692,6 @@
 					</label>
 				{/each}
 			</div>
-			{#if dimensionIssue !== ''}
-				<p class="editor-shelf-note is-error">{dimensionIssue}</p>
-			{/if}
 			{#if selectedSingle !== null}
 				<hr class="editor-hr" />
 				<label class="editor-row editor-row-tray">
@@ -1743,6 +1775,11 @@
 		margin-bottom: 1.5em;
 	}
 
+	.layout-toolbar > * {
+		flex-shrink: 0;
+		white-space: nowrap;
+	}
+
 	.toggle-group {
 		display: inline-flex;
 		gap: 1em;
@@ -1805,6 +1842,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		flex-shrink: 0;
 		width: 40px;
 		height: 40px;
 		border: 2px solid black;
@@ -1814,6 +1852,12 @@
 
 	.storage-cell.occupied {
 		background: rgba(0, 0, 0, 0.5);
+	}
+
+	.storage-cell.unsized {
+		background: #fdd;
+		border-color: #d00;
+		color: #d00;
 	}
 
 	.storage-cell.dimmed {
@@ -1835,6 +1879,37 @@
 	.shelf-actions button {
 		margin-top: 0;
 		min-width: 36px;
+	}
+
+	/* phones: each shelf scrolls sideways next to its label, actions go below */
+	@media (max-width: 640px) {
+		.shelf-cells {
+			flex: 1 1 0;
+			min-width: 0;
+			/* same as the global .scroll-x, which would overlap the actions on wider screens */
+			overflow-x: auto;
+			margin-right: calc(-1 * var(--page-margin));
+			padding-right: var(--page-margin);
+			scrollbar-width: none;
+		}
+
+		.shelf-cells::-webkit-scrollbar {
+			display: none;
+		}
+
+		.shelf-actions {
+			flex-basis: 100%;
+			justify-content: flex-end;
+		}
+
+		/* actions wrap under their shelf, so keep them close to it and away from the next one */
+		.shelf-list {
+			gap: 2.5em;
+		}
+
+		.shelf-row {
+			row-gap: 0.5em;
+		}
 	}
 
 	.selection-backdrop {
@@ -1859,6 +1934,18 @@
 		z-index: 41;
 		display: flex;
 		flex-direction: column;
+	}
+
+	/* phones: half the screen is too narrow for the editor, so it becomes a bottom sheet */
+	@media (max-width: 640px) {
+		.selection-overlay {
+			top: auto;
+			left: 0;
+			width: auto;
+			max-height: 70vh;
+			margin: 1em;
+			padding: 1em;
+		}
 	}
 
 	.selection-count {
@@ -2000,29 +2087,12 @@
 		margin-top: 0;
 	}
 
-	.editor-test-progress {
-		margin: 0 0 1em 0;
-		font-variant-numeric: tabular-nums;
+	.editor-group-tests button:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 
-	.editor-tests > button {
-		align-self: flex-start;
-		margin-top: 0;
-	}
-
-	.editor-test-note {
-		margin: 0 0 1.5em 0;
-	}
-
-	.editor-test-note.is-error {
-		color: #b00020;
-	}
-
-	.editor-shelf-note {
-		margin: 0 0 1.5em 0;
-	}
-
-	.editor-shelf-note.is-error {
-		color: #b00020;
+	.editor-abort-button {
+		grid-column: 1 / -1;
 	}
 </style>

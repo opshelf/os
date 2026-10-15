@@ -774,15 +774,18 @@ export function buildLaserAutoCalibrationStreamUrl(
 		return url.toString();
 	}
 
-	if (request.side !== undefined) {
+	// The echoed scope in a snapshot spells absent selectors as null, so guard
+	// against null as well as undefined or they would reach the api as the
+	// literal string "null" and be rejected with 422.
+	if (request.side != null) {
 		url.searchParams.set('side', toDeviceSide(request.side));
 	}
 
-	if (request.shelf_idx !== undefined) {
+	if (request.shelf_idx != null) {
 		url.searchParams.set('shelf_idx', String(request.shelf_idx));
 	}
 
-	if (request.cell_idx !== undefined) {
+	if (request.cell_idx != null) {
 		url.searchParams.set('cell_idx', String(request.cell_idx));
 	}
 
@@ -815,6 +818,20 @@ export async function getLaserAutoCalibrationStreamError(
 
 export async function getLaserAutoCalibrationStatus(): Promise<LaserAutoCalibrationSnapshot> {
 	return normalizeLaserAutoCalibrationSnapshot(await apiFetch<Record<string, unknown>>('/calibration/laser/status'));
+}
+
+export async function getLaserZStallEnabled(): Promise<boolean> {
+	return (await apiFetch<{ enabled: boolean }>('/calibration/laser/z-stall')).enabled;
+}
+
+export async function saveLaserZStallEnabled(enabled: boolean): Promise<boolean> {
+	const response = await apiFetch<{ enabled: boolean }>('/calibration/laser/z-stall', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ enabled })
+	});
+
+	return response.enabled;
 }
 
 export async function abortLaserAutoCalibration(): Promise<LaserAutoCalibrationSnapshot> {
@@ -1338,21 +1355,27 @@ export interface IOBoxPosition {
 	pickup_high_y: number;
 	z_extension: number;
 	stage_extension: number;
+	multi_item_x: number;
+	multi_item_y: number;
+	multi_item_z_extension: number;
+	multi_item_stage_extension: number;
 	warnings?: string[];
 }
+
+export type IOBoxPositionName = 'low' | 'high' | 'multi_item';
 
 export async function getIOBoxCalibration(): Promise<IOBoxPosition> {
 	return apiFetch<IOBoxPosition>('/calibration/iobox');
 }
 
-export async function moveToIOBoxPosition(position: 'low' | 'high'): Promise<IOBoxPosition> {
+export async function moveToIOBoxPosition(position: IOBoxPositionName): Promise<IOBoxPosition> {
 	return apiFetch<IOBoxPosition>(`/calibration/iobox/move?position=${position}`, {
 		method: 'POST'
 	});
 }
 
 export async function jogIOBoxAxis(
-	position: 'low' | 'high',
+	position: IOBoxPositionName,
 	axis: 'x' | 'y' | 'z' | 'stage',
 	delta: number
 ): Promise<IOBoxPosition> {
@@ -1376,6 +1399,12 @@ export async function testIOBoxSequence(
 	const url = `/calibration/iobox/test${query !== '' ? `?${query}` : ''}`;
 
 	return apiFetch<{ success: boolean }>(url, {
+		method: 'POST'
+	});
+}
+
+export async function testIOBoxMultiItemCycle(): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>('/calibration/iobox/test/multi-item', {
 		method: 'POST'
 	});
 }

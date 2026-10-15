@@ -24,6 +24,7 @@ from openshelf_os.storage import (
 from openshelf_os_server.core.laser_auto_calibration import (
     LaserAutoCalibrationManager,
     LaserAutoCalibrationScope,
+    _sync_patch_targets,
 )
 
 
@@ -150,14 +151,17 @@ def _build_parameters() -> Parameters:
 			"IDLE_POSITION": [0, 0],
 			"PICKUP_POSITION_L": [0, 0],
 			"PICKUP_POSITION_H": [0, 0],
+			"PICKUP_POSITION_MULTI_ITEM": [0, 0],
 			"SCAN_POSITION": [0, 0],
 			"STAGE_EXTENSION_IO_BOX": 0,
+			"STAGE_EXTENSION_IO_BOX_MULTI_ITEM": 0,
 			"STAGE_NUDGE": 0,
 			"STAGE_EXTENSION_SHELF_FRONT": 47.0,
 			"STAGE_EXTENSION_SHELF_BACK": 46.0,
 			"Z_EXTENSION_PICK": 0,
 			"Z_EXTENSION_PLACE": 160.5,
 			"Z_EXTENSION_IO": 0,
+			"Z_EXTENSION_IO_MULTI_ITEM": 0,
 			"Z_MOVE_RPM": 1,
 			"Z_MOVE_ACCEL": 1,
 			"ROTATION_FRONT": 0,
@@ -712,32 +716,170 @@ async def test_z_stall_refuses_a_probe_the_datum_does_not_corroborate() -> None:
 	assert manager._snapshot.z_stall_results[0].persisted is False
 
 
+def _build_tool_params_worker(*, stage_mm: float = 46.0, z_place_mm: float = 160.5) -> SimpleNamespace:
+	worker = _build_z_worker()
+	params = {"STAGE_EXTENSION_SHELF_FRONT": stage_mm, "STAGE_EXTENSION_SHELF_BACK": stage_mm, "Z_EXTENSION_PLACE": z_place_mm}
+	worker._robot._tool.get_param = AsyncMock(side_effect=lambda name: params.get(name))
+	return worker
+
+
+def _configured_model(*, stage_mm: float = 47.0, z_place_mm: float = 160.5) -> SimpleNamespace:
+	return SimpleNamespace(
+		intercept_mm=1.052,
+		x_slope_mm_per_mm=-4.5e-05,
+		reference_stage_mm=stage_mm,
+		reference_z_place_mm=z_place_mm,
+	)
+
+
 @pytest.mark.asyncio
-async def test_z_stall_refuses_a_datum_saved_at_another_stage_extension() -> None:
+async def test_probe_less_run_takes_the_intercept_from_a_stamped_datum() -> None:
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
-	scan_config.z_stall_anchor_enabled = True
-	config = _build_root_config(scan_config)
-	worker = _build_z_worker()
+	scan_config.front_wall_depth_to_gripper_z_model = _configured_model(stage_mm=47.0)
+	manual_reference = _build_manual_reference(captured_stage_mm=46.0)
+	manual_reference.z_stage_extension_mm = 46.0
 
-	with patch(
-		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
-		return_value=config,
-	):
-		with patch.object(
-			laser_module,
-			"run_z_stall_anchor",
-			AsyncMock(return_value=_build_z_stall_result()),
-		):
-			with pytest.raises(ValueError, match="saved with the stage at"):
-				await manager._resolve_z_delta_model(
-					worker,
-					StorageModuleSide.FRONT,
-					_build_analysis(),
-					scan_config,
-					source_grid=_build_source_grid(),
-					manual_reference=_build_manual_reference(captured_stage_mm=48.0),
-				)
+	result = await manager._resolve_z_delta_model(
+		_build_tool_params_worker(stage_mm=46.0),
+		StorageModuleSide.FRONT,
+		_build_analysis(),
+		scan_config,
+		source_grid=_build_source_grid(),
+		manual_reference=manual_reference,
+	)
+
+	assert result == (pytest.approx(MANUAL_INTERCEPT_MM), pytest.approx(-4.5e-05))
+	# Installed on the run's config, re-pinned to the live geometry so the stale 47 pin is gone.
+	installed = scan_config.front_wall_depth_to_gripper_z_model
+	assert installed.intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
+	assert installed.x_slope_mm_per_mm == pytest.approx(-4.5e-05)
+	assert installed.reference_stage_mm == pytest.approx(46.0)
+	assert installed.reference_z_place_mm == pytest.approx(160.5)
+
+
+@pytest.mark.asyncio
+async def test_configured_model_is_carried_to_the_live_stage_extension() -> None:
+	"""lb4a-3, 2026-10-15: a model pinned at 47 refused a whole scan with the stage at 46."""
+	manager = LaserAutoCalibrationManager()
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	model = _configured_model(stage_mm=47.0)
+	scan_config.front_wall_depth_to_gripper_z_model = model
+
+	result = await manager._resolve_z_delta_model(
+		_build_tool_params_worker(stage_mm=46.0),
+		StorageModuleSide.FRONT,
+		_build_analysis(),
+		scan_config,
+		source_grid=_build_source_grid(),
+		manual_reference=None,
+	)
+
+	assert result == (pytest.approx(2.052), pytest.approx(-4.5e-05))
+	assert scan_config.front_wall_depth_to_gripper_z_model is model
+
+
+@pytest.mark.asyncio
+async def test_configured_model_is_refused_when_the_place_height_moved() -> None:
+	manager = LaserAutoCalibrationManager()
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.front_wall_depth_to_gripper_z_model = _configured_model(z_place_mm=158.0)
+
+	with pytest.raises(ValueError, match="Z_EXTENSION_PLACE"):
+		await manager._resolve_z_delta_model(
+			_build_tool_params_worker(stage_mm=47.0),
+			StorageModuleSide.FRONT,
+			_build_analysis(),
+			scan_config,
+			source_grid=_build_source_grid(),
+			manual_reference=None,
+		)
+
+
+def _stamp_datum(grid: StorageGrid, stage_mm: float | None) -> StorageGrid:
+	grid.front_module[0].cells[0].calibration_point.z_captured_at_stage_mm = stage_mm
+	return grid
+
+
+@pytest.mark.parametrize(
+	("model", "stamp_stage_mm", "z_stall", "error"),
+	[
+		pytest.param(None, None, False, "no z source", id="no_source"),
+		pytest.param(_configured_model(z_place_mm=158.0), None, False, "Z_EXTENSION_PLACE", id="place_moved"),
+		pytest.param(_configured_model(stage_mm=48.0), None, False, None, id="stage_drift_is_carried"),
+		pytest.param(None, 46.0, False, None, id="stamped_datum"),
+		pytest.param(None, None, True, None, id="probe"),
+		# The apply refuses a stamp this far from the configured 47mm stage, so the start does too,
+		# even with a configured model, instead of failing after the full scan.
+		pytest.param(
+			_configured_model(), 30.0, False, r"saved at stage extension 30\.00mm.*live stage extension is 47\.00mm",
+			id="stamp_too_far_from_stage",
+		),
+		# The probe anchors to the same datum, so the apply refuses that stamp after the probe too.
+		pytest.param(None, 30.0, True, "saved at stage extension 30", id="stamp_too_far_with_probe"),
+	],
+)
+def test_start_refuses_a_side_whose_z_cannot_resolve(model, stamp_stage_mm, z_stall, error) -> None:
+	manager = LaserAutoCalibrationManager()
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.front_wall_depth_to_gripper_z_model = model
+	scan_config.z_stall_anchor_enabled = z_stall
+	config = _build_root_config(scan_config)
+	worker = SimpleNamespace(_robot=SimpleNamespace(_grid=_stamp_datum(_build_source_grid(), stamp_stage_mm)))
+	scope = LaserAutoCalibrationScope(mode="side", side=StorageModuleSide.FRONT)
+
+	with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+		_sync_patch_targets()
+
+		if error is None:
+			manager._validate_z_offset_sources(scope, worker)
+		else:
+			with pytest.raises(ValueError, match=error) as excinfo:
+				manager._validate_z_offset_sources(scope, worker)
+
+			# Enabling the probe cannot fix a stamp it would refuse as well.
+			assert ("z stall probe" in str(excinfo.value)) is (stamp_stage_mm is None)
+
+
+@pytest.mark.parametrize(
+	("scope", "z_stall", "refused"),
+	[
+		pytest.param(
+			LaserAutoCalibrationScope(mode="shelf", side=StorageModuleSide.FRONT, shelf_idx=0),
+			False,
+			True,
+			id="datum_shelf",
+		),
+		pytest.param(
+			LaserAutoCalibrationScope(mode="cell", side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0),
+			True,
+			True,
+			id="datum_cell_with_probe",
+		),
+		pytest.param(
+			LaserAutoCalibrationScope(mode="shelf", side=StorageModuleSide.FRONT, shelf_idx=3),
+			False,
+			False,
+			id="shelf_without_datum",
+		),
+	],
+)
+def test_start_refuses_a_datum_rescan_whose_stamp_cannot_be_carried(scope, z_stall, refused) -> None:
+	manager = LaserAutoCalibrationManager()
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.front_wall_depth_to_gripper_z_model = _configured_model()
+	scan_config.z_stall_anchor_enabled = z_stall
+	config = _build_root_config(scan_config)
+	worker = SimpleNamespace(_robot=SimpleNamespace(_grid=_stamp_datum(_build_source_grid(), 30.0)))
+
+	with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+		_sync_patch_targets()
+
+		if refused:
+			with pytest.raises(ValueError, match=r"saved at stage extension 30\.00mm"):
+				manager._validate_z_offset_sources(scope, worker)
+		else:
+			manager._validate_z_offset_sources(scope, worker)
 
 
 @pytest.mark.asyncio

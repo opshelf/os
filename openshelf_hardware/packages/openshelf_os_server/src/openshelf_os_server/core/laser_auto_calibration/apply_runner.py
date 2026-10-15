@@ -17,12 +17,6 @@ _MANUAL_SHELF_MATCH_TOLERANCE_MM = 60.0
 _MANUAL_CELL_MATCH_TOLERANCE_MM = 40.0
 
 
-def _z_stall_requested(scan_config: Any) -> bool:
-    """`z_stall_anchor_enabled` is the machine's setting: a probed model is only valid for the
-    machine it was probed on, so fitting one is an explicit per-machine choice, not a per-run one."""
-    return getattr(scan_config, "z_stall_anchor_enabled", False) is True
-
-
 def _reference_derivation_scope(
     requested_scope: Any,
 ) -> tuple[int | None, int | None] | None:
@@ -127,9 +121,12 @@ def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[An
 
     result = list(scanned_shelves)
     modified_shelf_ids: set[int] = set()
+    appended_shelf = False
 
     for source_shelf, manual_cells in manual_groups:
-        source_y = _shelf_center_y(source_shelf)
+        # Match on the manual cells alone: the stale auto cells of the old shelf can sit on a
+        # different row and drag its center away from the opening the datum actually belongs to.
+        source_y = sum(float(cell.calibration_point.y) for cell in manual_cells) / len(manual_cells)
         target = None
 
         if source_y is not None:
@@ -147,6 +144,7 @@ def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[An
             preserved.cells = [cell.model_copy(deep=True) for cell in manual_cells]
             result.append(preserved)
             modified_shelf_ids.add(id(preserved))
+            appended_shelf = True
             continue
 
         for manual_cell in manual_cells:
@@ -170,6 +168,12 @@ def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[An
         for idx, cell in enumerate(calibrated):
             cell.cell_idx = idx
         shelf.cells = calibrated + uncalibrated
+
+    # An appended shelf still carries its old index, which can collide with a scanned one.
+    if appended_shelf is True:
+        result.sort(key=lambda shelf: _shelf_center_y(shelf) or float("inf"))
+        for idx, shelf in enumerate(result):
+            shelf.shelf_idx = idx
 
     return result
 
@@ -261,6 +265,8 @@ class ApplyRunnerMixin:
                 "(cell calibration, 'keep manual') before probing"
             )
 
+        laser_module.check_datum_stage_carry(manual_reference)
+
         return float(manual_reference.intercept_mm)
 
     def _z_stall_datum_agreement_mm(
@@ -341,17 +347,6 @@ class ApplyRunnerMixin:
                 "Neither is a z model - check the reference cell and the shelf before retrying"
             )
 
-        captured_stage_mm = manual_reference.z_captured_stage_mm
-        pin_tolerance_mm = float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM)
-
-        if captured_stage_mm is not None and abs(float(captured_stage_mm) - float(result.stage_extension_mm)) > pin_tolerance_mm:
-            raise ValueError(
-                f"z stall anchor: the hand-calibrated reference cell was saved with the stage at "
-                f"{float(captured_stage_mm):.2f}mm but the probe ran at {float(result.stage_extension_mm):.2f}mm, "
-                "so its z offset is not comparable; re-save the reference cell with the stage at the "
-                "shelf extension (or fix the tool parameter) and probe again"
-            )
-
         if manual_reference.z_capture_conditions_missing > 0:
             logger.warning(
                 "z_stall_reference_capture_conditions_missing",
@@ -365,7 +360,7 @@ class ApplyRunnerMixin:
             laser_module.print_status(
                 f"z_stall_anchor=warning side={side_name} "
                 f"unstamped_reference_cells={manual_reference.z_capture_conditions_missing} "
-                "(saved before the capture stage was recorded; the stage extension could not be checked)"
+                "(saved before the capture stage was recorded; their z could not be carried to the live stage)"
             )
 
     async def _publish_z_stall_result(
@@ -592,13 +587,20 @@ class ApplyRunnerMixin:
             return None
 
         shelf_idx, cell_idx = derivation_scope
+        config = get_root_config()
+        stage_extension_value = getattr(
+            config.robot.tool.parameters, _side_to_stage_extension_param_name(side), None
+        )
+        # Stamped datums are carried to the stage the apply places at, so the intercept they imply
+        # is the one the probe is judged against and the one a probe-less run installs.
         result = laser_module.derive_reference_offsets(
             grid=source_grid,
             analysis=analysis,
             side=side,
-            scan_config=get_root_config().robot.grid.scan,
+            scan_config=config.robot.grid.scan,
             shelf_idx=shelf_idx,
             cell_idx=cell_idx,
+            stage_extension_mm=None if stage_extension_value is None else float(stage_extension_value),
         )
         laser_module.print_status(
             f"reference_offset_derivation side={side_name} "
@@ -651,9 +653,11 @@ class ApplyRunnerMixin:
 
         `z_stall_anchor_enabled` re-derives the model by probing the plate and replaces the
         configured one: a probed model is only valid for the machine it was probed on, which is
-        the point of asking for it. Otherwise the configured model is used as-is once its pin
-        still matches the live tool geometry. `allow_probe` is False for a scan whose scope does
-        not hold the datum the probed model is judged against, so a partial rescan keeps the
+        the point of asking for it. Without the probe, a stamped hand-calibrated datum in the scan
+        sets the intercept (keeping the configured slope) and is installed pinned to the live
+        geometry; otherwise the configured model is carried to the live stage extension, and
+        refused only when Z_EXTENSION_PLACE moved. `allow_probe` is False for a scan whose scope
+        does not hold the datum the probed model is judged against, so a partial rescan keeps the
         model the machine already has.
         """
         if allow_probe is True and _z_stall_requested(scan_config) is True:
@@ -667,44 +671,80 @@ class ApplyRunnerMixin:
             )
 
         configured_model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
-
-        if configured_model is not None:
-            tool = worker._robot._tool
-            stage_param = (
-                "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.FRONT else "STAGE_EXTENSION_SHELF_BACK"
-            )
-            stage_extension_value = await tool.get_param(stage_param)
-            z_place_value = await tool.get_param("Z_EXTENSION_PLACE")
-
-            if stage_extension_value is None or z_place_value is None:
-                raise ValueError(f"{stage_param} and Z_EXTENSION_PLACE are required to apply the z offset model")
-
-            laser_module.require_z_offset_model_matches_tool(
-                model=configured_model,
-                side=side,
-                stage_extension_mm=float(stage_extension_value),
-                z_place_mm=float(z_place_value),
-                tolerance_mm=float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM),
-            )
-
-            intercept_mm = float(configured_model.intercept_mm)
-            slope_per_mm = float(configured_model.x_slope_mm_per_mm)
-            laser_module.print_status(
-                f"z_offset_model=config side={'front' if side == StorageModuleSide.FRONT else 'back'} "
-                f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.6f} "
-                f"stage_extension_mm={float(stage_extension_value):.2f} z_place_mm={float(z_place_value):.2f}"
-            )
-            return intercept_mm, slope_per_mm
-
-        if allow_missing is True:
-            return None
+        datum_intercept_mm = laser_module.stamped_datum_intercept_mm(manual_reference)
 
         side_name = "front" if side == StorageModuleSide.FRONT else "back"
-        raise ValueError(
-            f"no z offset source for the {side_name} module: configure "
-            f"robot.grid.scan.{side_name}_z_offset_model, or enable robot.grid.scan.z_stall_anchor_enabled. "
-            "Persisting without one would write z_offset=0 to every cell."
+
+        if configured_model is None and datum_intercept_mm is None:
+            if allow_missing is True:
+                return None
+
+            raise ValueError(
+                f"no z offset source for the {side_name} module: configure "
+                f"robot.grid.scan.{side_name}_wall_depth_to_gripper_z_model, extend the stage to the "
+                "shelf extension in cell calibration and jog the bottom-left reference cell's z onto the "
+                "tray and save it (the stage extension is recorded only when the z changes), or enable "
+                "the z stall probe. "
+                "Persisting without one would write z_offset=0 to every cell."
+            )
+
+        tool = worker._robot._tool
+        stage_param = _side_to_stage_extension_param_name(side)
+        stage_extension_value = await tool.get_param(stage_param)
+        z_place_value = await tool.get_param("Z_EXTENSION_PLACE")
+
+        if stage_extension_value is None or z_place_value is None:
+            raise ValueError(f"{stage_param} and Z_EXTENSION_PLACE are required to apply the z offset model")
+
+        stage_extension_mm = float(stage_extension_value)
+        z_place_mm = float(z_place_value)
+
+        slope_per_mm = 0.0 if configured_model is None else float(configured_model.x_slope_mm_per_mm)
+        configured_intercept_mm = (
+            None
+            if configured_model is None
+            else laser_module.z_offset_model_intercept_at_stage(
+                model=configured_model,
+                stage_extension_mm=stage_extension_mm,
+            )
         )
+
+        if datum_intercept_mm is not None:
+            # The hand-calibrated datum is this machine's own z, so it sets the intercept; the
+            # configured slope is kept because one opening cannot measure a tilt. Installed on
+            # the run's config, pinned to the live geometry, so later rescans stay consistent.
+            setattr(
+                scan_config,
+                f"{side_name}_wall_depth_to_gripper_z_model",
+                LaserScanZOffsetModelConfig(
+                    intercept_mm=datum_intercept_mm,
+                    x_slope_mm_per_mm=slope_per_mm,
+                    reference_stage_mm=stage_extension_mm,
+                    reference_z_place_mm=z_place_mm,
+                ),
+            )
+
+            laser_module.print_status(
+                f"z_offset_model=datum side={side_name} intercept_mm={datum_intercept_mm:.3f} "
+                f"slope_per_mm={slope_per_mm:.6f} stage_extension_mm={stage_extension_mm:.2f} "
+                f"z_place_mm={z_place_mm:.2f} configured_intercept_mm="
+                f"{'none' if configured_intercept_mm is None else f'{configured_intercept_mm:.3f}'}"
+            )
+            return datum_intercept_mm, slope_per_mm
+
+        assert configured_model is not None and configured_intercept_mm is not None
+        laser_module.require_z_offset_model_matches_z_place(
+            model=configured_model,
+            side=side,
+            z_place_mm=z_place_mm,
+            tolerance_mm=float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM),
+        )
+        laser_module.print_status(
+            f"z_offset_model=config side={side_name} intercept_mm={configured_intercept_mm:.3f} "
+            f"slope_per_mm={slope_per_mm:.6f} stage_extension_mm={stage_extension_mm:.2f} "
+            f"pinned_stage_mm={float(configured_model.reference_stage_mm):.2f} z_place_mm={z_place_mm:.2f}"
+        )
+        return configured_intercept_mm, slope_per_mm
 
 
     async def _persist_completed_results(

@@ -3,8 +3,11 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import {
+		apiFetch,
 		buildAuthenticatedUrl,
 		createReconnectingEventSource,
+		developerPin,
+		getSizerStatus,
 		isApiConnected,
 		isAuthenticated,
 		loginAsDeveloper,
@@ -16,31 +19,55 @@
 		type WorkerStatusPayload
 	} from '$lib';
 	import { devicePath, stripDeviceId } from '$lib/nav';
-	import NeedsHomeAlert from '$lib/components/NeedsHomeAlert.svelte';
+	import NeedsHomeToast from '$lib/components/NeedsHomeToast.svelte';
 	import SafetyAckAlert from '$lib/components/SafetyAckAlert.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
 	import '../app.css';
 
 	const version = import.meta.env.PUBLIC_VERSION;
 
-	const links = [
+	type NavLink = {
+		href: string;
+		label: string;
+		requiresSizer?: boolean;
+	};
+
+	const links: NavLink[] = [
 		{ href: '/', label: 'status' },
 		{ href: '/storage', label: 'storage' },
 		{ href: '/camera', label: 'cameras' },
 		{ href: '/scale', label: 'scale' },
-		{ href: '/sizer', label: 'sizer' },
+		{ href: '/sizer', label: 'sizer', requiresSizer: true },
 		{ href: '/scanner', label: 'scanner' },
 		{ href: '/printer', label: 'printer' },
 		{ href: '/motors', label: 'motors' },
-		{ href: '/power', label: 'power' },
 		{ href: '/wifi', label: 'wifi' }
 	];
+
+	// the close button returns to the robot's own kiosk, which only exists on the robot
+	const isOnRobot = ['localhost', '127.0.0.1', '[::1]'].includes(document.location.hostname);
 
 	let { children } = $props();
 	let authReady = $state(false);
 	let apiState = $state<'unknown' | 'down' | 'up'>('unknown');
+	let deviceLabel = $state('');
+	let isSizerEnabled = $state(false);
 	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
 	let didReceiveRobotUnavailable = false;
+
+	async function loadNavigationState(): Promise<void> {
+		const [systemInfo, sizerStatus] = await Promise.allSettled([
+			apiFetch<{ device_id: string; device_alias: string | null }>('/system/info'),
+			getSizerStatus()
+		]);
+
+		if (systemInfo.status === 'fulfilled') {
+			const alias = systemInfo.value.device_alias?.trim();
+			deviceLabel = (alias || systemInfo.value.device_id).toUpperCase();
+		}
+
+		isSizerEnabled = sizerStatus.status === 'fulfilled' && sizerStatus.value.enabled === true;
+	}
 
 	function setApiState(state: 'unknown' | 'down' | 'up'): void {
 		apiState = state;
@@ -88,15 +115,16 @@
 		async function startStatusStream(): Promise<void> {
 			void probeApiState();
 
-			if (isAuthenticated() === false) {
+			if (isAuthenticated() === false && developerPin() !== null) {
 				try {
 					await loginAsDeveloper();
 				} catch (error) {
-					console.error('failed to authenticate as developer:', error);
+					console.error('failed to sign in as developer:', error);
 				}
 			}
 
 			authReady = true;
+			void loadNavigationState();
 
 			const stream = createReconnectingEventSource({
 				path: '/robot/status',
@@ -163,24 +191,35 @@
 
 <svelte:head>
 	<link rel="icon" href="/favicon.svg" />
-	<title>openshelf ┈ dev ui</title>
+	<title>Dev UI • Openshelf</title>
 </svelte:head>
 
 <nav>
 	<ul>
 		{#each links as link}
-			<li>
-				<a href={devicePath(link.href)} class:active={isActiveLink(link.href, $page.url.pathname)}>
-					{link.label}
-				</a>
-			</li>
+			{#if link.requiresSizer !== true || isSizerEnabled === true}
+				<li>
+					<a
+						href={devicePath(link.href)}
+						class:active={isActiveLink(link.href, $page.url.pathname)}
+					>
+						{link.label}
+					</a>
+				</li>
+			{/if}
 		{/each}
 
 		<li class="spacer-flexible"></li>
 
-		<li>
-			<a href={`http://${document.location.hostname}:8888/`}>Ray</a>
-		</li>
+		{#if deviceLabel !== ''}
+			<li class="device-label">{deviceLabel}</li>
+		{/if}
+
+		{#if isOnRobot === true}
+			<li>
+				<a href={`http://${document.location.hostname}:8888/`} class="close-btn">Close</a>
+			</li>
+		{/if}
 	</ul>
 </nav>
 
@@ -188,7 +227,7 @@
 	{@render children?.()}
 </main>
 
-<NeedsHomeAlert />
+<NeedsHomeToast />
 <SafetyAckAlert />
 
 {#if apiState === 'down'}

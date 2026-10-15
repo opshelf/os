@@ -47,6 +47,7 @@
 	let lineStart: Point | null = null;
 	let previewEnd: Point | null = null;
 	let statusTimer: ReturnType<typeof setInterval> | null = null;
+	let cameraStatusUnavailable = false;
 
 	$: selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
 	$: isCameraOnline = selectedCamera !== null && selectedCamera.online === true;
@@ -118,10 +119,33 @@
 	async function refreshCameraStatus(): Promise<void> {
 		try {
 			const response = await apiFetch<CamerasResponse>('/camera');
+			const selectedWasOnline = selectedCamera?.online === true;
+			const selectedIsOnline =
+				response.cameras.find((camera) => camera.id === selectedCameraId)?.online === true;
+			const shouldRestartStream =
+				cameraStatusUnavailable || (selectedWasOnline === false && selectedIsOnline);
+
 			cameras = response.cameras;
+			cameraStatusUnavailable = false;
+
+			if (shouldRestartStream) {
+				restartSelectedStream();
+			}
 		} catch {
+			cameraStatusUnavailable = true;
 			return;
 		}
+	}
+
+	function restartSelectedStream(): void {
+		if (selectedCameraId === '') {
+			return;
+		}
+
+		h264FailedFor.delete(selectedCameraId);
+		streamError = false;
+		mjpegErrorDuringTry = false;
+		stopH264Player();
 	}
 
 	function didSelectCamera(event: Event): void {
@@ -508,52 +532,58 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Cameras • Openshelf</title>
+</svelte:head>
+
 {#if loading}
 	<p>loading cameras...</p>
 {:else if statusError !== ''}
 	<ErrorMessage message={statusError} />
 {:else}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="2">camera selection</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#if cameras.length === 0}
+	<div class="scroll-x">
+		<table>
+			<thead>
 				<tr>
-					<td colspan="2">no cameras available</td>
+					<th colspan="2">camera selection</th>
 				</tr>
-			{:else}
-				<tr>
-					<td>camera</td>
-					<td>
-						<select value={selectedCameraId} on:change={didSelectCamera}>
-							{#each cameras as camera}
-								<option value={camera.id}
-									>{camera.id} ({camera.type}){camera.online === false ? ' - offline' : ''}</option
-								>
-							{/each}
-						</select>
-					</td>
-				</tr>
-				{#if selectedCamera !== null}
+			</thead>
+			<tbody>
+				{#if cameras.length === 0}
 					<tr>
-						<td>type</td>
-						<td>{selectedCamera.type}</td>
+						<td colspan="2">no cameras available</td>
 					</tr>
+				{:else}
 					<tr>
-						<td>status</td>
-						<td>{selectedCamera.online === true ? 'online' : 'offline'}</td>
+						<td>camera</td>
+						<td>
+							<select value={selectedCameraId} on:change={didSelectCamera}>
+								{#each cameras as camera}
+									<option value={camera.id}
+										>{camera.id} ({camera.type}){camera.online === false ? ' - offline' : ''}</option
+									>
+								{/each}
+							</select>
+						</td>
 					</tr>
-					<tr>
-						<td>consumers</td>
-						<td>{selectedCamera.consumers}</td>
-					</tr>
+					{#if selectedCamera !== null}
+						<tr>
+							<td>type</td>
+							<td>{selectedCamera.type}</td>
+						</tr>
+						<tr>
+							<td>status</td>
+							<td>{selectedCamera.online === true ? 'online' : 'offline'}</td>
+						</tr>
+						<tr>
+							<td>consumers</td>
+							<td>{selectedCamera.consumers}</td>
+						</tr>
+					{/if}
 				{/if}
-			{/if}
-		</tbody>
-	</table>
+			</tbody>
+		</table>
+	</div>
 
 	<div style="height: 1.5em"></div>
 

@@ -168,37 +168,39 @@
 {#if isLoading === true}
 	<p>loading sizer data...</p>
 {:else}
-	<table style="margin-bottom: 1.5em">
-		<thead>
-			<tr>
-				<th colspan="2">dimension calibration</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr
-				><td>mm per px x</td><td
-					><input
-						type="number"
-						bind:value={mmPerPxX}
-						min="0"
-						step="0.0001"
-						placeholder="none"
-					/></td
-				></tr
-			>
-			<tr
-				><td>mm per px y</td><td
-					><input
-						type="number"
-						bind:value={mmPerPxY}
-						min="0"
-						step="0.0001"
-						placeholder="none"
-					/></td
-				></tr
-			>
-		</tbody>
-	</table>
+	<div class="scroll-x" style="margin-bottom: 1.5em">
+		<table>
+			<thead>
+				<tr>
+					<th colspan="2">dimension calibration</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr
+					><td>mm per px x</td><td
+						><input
+							type="number"
+							bind:value={mmPerPxX}
+							min="0"
+							step="0.0001"
+							placeholder="none"
+						/></td
+					></tr
+				>
+				<tr
+					><td>mm per px y</td><td
+						><input
+							type="number"
+							bind:value={mmPerPxY}
+							min="0"
+							step="0.0001"
+							placeholder="none"
+						/></td
+					></tr
+				>
+			</tbody>
+		</table>
+	</div>
 
 	<div class="action-buttons">
 		<button type="button" onclick={didClickCaptureCameraBlank} disabled={isCapturingBlank === true}

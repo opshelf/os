@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { browser } from '$app/environment';
 	import {
 		ApiError,
@@ -43,10 +43,12 @@
 		vocabulary = v;
 	}));
 
-	const normalizedInitialSide =
+	// The initial side seeds the selection once; later prop changes must not reset it.
+	const normalizedInitialSide = untrack(() =>
 		initialSide !== undefined && sideIndex(initialSide) !== null
 			? (sideIndex(initialSide) === 1 ? 'back_module' : 'front_module')
-			: 'front_module';
+			: 'front_module'
+	);
 
 	let selectedSide = $state<'front_module' | 'back_module'>(normalizedInitialSide);
 	let selectedShelf = $state<number>(0);
@@ -60,7 +62,9 @@
 	let needsHome = $state<boolean>(false);
 	let lastStreamNeedsHome = $state<boolean>(false);
 
-	let jogStep = $state<number>(1);
+	let jogStepX = $state<number>(1);
+	let jogStepY = $state<number>(1);
+	let jogStepZ = $state<number>(1);
 
 	let editX = $state<number>(0);
 	let editY = $state<number>(0);
@@ -518,40 +522,42 @@
 {:else if storageGrid !== null}
 	<div class="panel-row">
 		<div class="panel-column">
-			<table class="status-table">
-				<thead>
-					<tr>
-						<th colspan="3">cell selection</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr>
-						<td>
-							<span>side</span>
-							<select value={selectedSide} onchange={didChangeSide}>
-								<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
-								<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
-							</select>
-						</td>
-						<td>
-							<span>shelf</span>
-							<select value={getShelfSelectionValue()} onchange={didChangeShelf}>
-								{#each getShelfOptionIndices() as shelfIdx}
-									<option value={String(shelfIdx)}>{shelfIdx}</option>
-								{/each}
-							</select>
-						</td>
-						<td>
-							<span>cell</span>
-							<select value={getCellSelectionValue()} onchange={didChangeCell}>
-								{#each getCellOptionIndices() as cellIdx}
-									<option value={String(cellIdx)}>{cellIdx}</option>
-								{/each}
-							</select>
-						</td>
-					</tr>
-				</tbody>
-			</table>
+			<div class="scroll-x">
+				<table class="status-table">
+					<thead>
+						<tr>
+							<th colspan="3">cell selection</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>
+								<span>side</span>
+								<select value={selectedSide} onchange={didChangeSide}>
+									<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
+									<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
+								</select>
+							</td>
+							<td>
+								<span>shelf</span>
+								<select value={getShelfSelectionValue()} onchange={didChangeShelf}>
+									{#each getShelfOptionIndices() as shelfIdx}
+										<option value={String(shelfIdx)}>{shelfIdx}</option>
+									{/each}
+								</select>
+							</td>
+							<td>
+								<span>cell</span>
+								<select value={getCellSelectionValue()} onchange={didChangeCell}>
+									{#each getCellOptionIndices() as cellIdx}
+										<option value={String(cellIdx)}>{cellIdx}</option>
+									{/each}
+								</select>
+							</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
 
 			<div class="action-buttons">
 				<!-- CALIBRATE stays disabled while the selected cell is the one already being calibrated. -->
@@ -571,192 +577,194 @@
 
 		{#if currentPosition !== null}
 			<div class="panel-column">
-				<table class="status-table">
-					<thead>
-						<tr>
-							<th>controls</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr>
-							<td>
-								<div class="control-cell">
-									<span>X</span>
-									<input
-										type="number"
-										step="0.5"
-										bind:value={editX}
-										disabled={isMoving === true || needsHome === true}
-									/>
-									<button
-										type="button"
-										onclick={didClickMoveX}
-										disabled={isMoving === true || needsHome === true}
-									>
-										move
-									</button>
-									<div class="spacer"></div>
-									<button
-										type="button"
-										onclick={() => didClickJog('x', -jogStep)}
-										disabled={isMoving === true || needsHome === true}
-									>
-										-
-									</button>
-									<button
-										type="button"
-										onclick={() => didClickJog('x', jogStep)}
-										disabled={isMoving === true || needsHome === true}
-									>
-										+
-									</button>
-									<div class="jog-step">
-										<select bind:value={jogStep} disabled={needsHome === true}>
-											{#each JOG_STEPS as step}
-												<option value={step.value}>{step.label}</option>
-											{/each}
-										</select>
+				<div class="scroll-x">
+					<table class="status-table">
+						<thead>
+							<tr>
+								<th>controls</th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr>
+								<td>
+									<div class="control-cell">
+										<span>X</span>
+										<input
+											type="number"
+											step="0.5"
+											bind:value={editX}
+											disabled={isMoving === true || needsHome === true}
+										/>
+										<button
+											type="button"
+											onclick={didClickMoveX}
+											disabled={isMoving === true || needsHome === true}
+										>
+											move
+										</button>
+										<div class="spacer"></div>
+										<button
+											type="button"
+											onclick={() => didClickJog('x', -jogStepX)}
+											disabled={isMoving === true || needsHome === true}
+										>
+											-
+										</button>
+										<button
+											type="button"
+											onclick={() => didClickJog('x', jogStepX)}
+											disabled={isMoving === true || needsHome === true}
+										>
+											+
+										</button>
+										<div class="jog-step">
+											<select bind:value={jogStepX} disabled={needsHome === true}>
+												{#each JOG_STEPS as step}
+													<option value={step.value}>{step.label}</option>
+												{/each}
+											</select>
+										</div>
 									</div>
-								</div>
-							</td>
-						</tr>
-						<tr>
-							<td>
-								<div class="control-cell">
-									<span>Y</span>
-									<input
-										type="number"
-										step="0.5"
-										bind:value={editY}
-										disabled={isMoving === true || needsHome === true}
-									/>
-									<button
-										type="button"
-										onclick={didClickMoveY}
-										disabled={isMoving === true || needsHome === true}
-									>
-										move
-									</button>
-									<div class="spacer"></div>
-									<button
-										type="button"
-										onclick={() => didClickJog('y', -jogStep)}
-										disabled={isMoving === true || needsHome === true}
-									>
-										-
-									</button>
-									<button
-										type="button"
-										onclick={() => didClickJog('y', jogStep)}
-										disabled={isMoving === true || needsHome === true}
-									>
-										+
-									</button>
-									<div class="jog-step">
-										<select bind:value={jogStep} disabled={needsHome === true}>
-											{#each JOG_STEPS as step}
-												<option value={step.value}>{step.label}</option>
-											{/each}
-										</select>
+								</td>
+							</tr>
+							<tr>
+								<td>
+									<div class="control-cell">
+										<span>Y</span>
+										<input
+											type="number"
+											step="0.5"
+											bind:value={editY}
+											disabled={isMoving === true || needsHome === true}
+										/>
+										<button
+											type="button"
+											onclick={didClickMoveY}
+											disabled={isMoving === true || needsHome === true}
+										>
+											move
+										</button>
+										<div class="spacer"></div>
+										<button
+											type="button"
+											onclick={() => didClickJog('y', -jogStepY)}
+											disabled={isMoving === true || needsHome === true}
+										>
+											-
+										</button>
+										<button
+											type="button"
+											onclick={() => didClickJog('y', jogStepY)}
+											disabled={isMoving === true || needsHome === true}
+										>
+											+
+										</button>
+										<div class="jog-step">
+											<select bind:value={jogStepY} disabled={needsHome === true}>
+												{#each JOG_STEPS as step}
+													<option value={step.value}>{step.label}</option>
+												{/each}
+											</select>
+										</div>
 									</div>
-								</div>
-							</td>
-						</tr>
-						<tr>
-							<td>
-								<div class="control-cell">
-									<span>Z</span>
-									<input
-										type="number"
-										step="0.5"
-										bind:value={editZ}
-										disabled={isMoving === true || needsHome === true}
-									/>
-									<button
-										type="button"
-										onclick={didClickMoveZ}
-										disabled={isMoving === true || needsHome === true}
-									>
-										move
-									</button>
-									<div class="spacer"></div>
-									<button
-										type="button"
-										onclick={() => didClickJog('z', -jogStep)}
-										disabled={isMoving === true || needsHome === true}
-									>
-										-
-									</button>
-									<button
-										type="button"
-										onclick={() => didClickJog('z', jogStep)}
-										disabled={isMoving === true || needsHome === true}
-									>
-										+
-									</button>
-									<div class="jog-step">
-										<select bind:value={jogStep} disabled={needsHome === true}>
-											{#each JOG_STEPS as step}
-												<option value={step.value}>{step.label}</option>
-											{/each}
-										</select>
+								</td>
+							</tr>
+							<tr>
+								<td>
+									<div class="control-cell">
+										<span>Z</span>
+										<input
+											type="number"
+											step="0.5"
+											bind:value={editZ}
+											disabled={isMoving === true || needsHome === true}
+										/>
+										<button
+											type="button"
+											onclick={didClickMoveZ}
+											disabled={isMoving === true || needsHome === true}
+										>
+											move
+										</button>
+										<div class="spacer"></div>
+										<button
+											type="button"
+											onclick={() => didClickJog('z', -jogStepZ)}
+											disabled={isMoving === true || needsHome === true}
+										>
+											-
+										</button>
+										<button
+											type="button"
+											onclick={() => didClickJog('z', jogStepZ)}
+											disabled={isMoving === true || needsHome === true}
+										>
+											+
+										</button>
+										<div class="jog-step">
+											<select bind:value={jogStepZ} disabled={needsHome === true}>
+												{#each JOG_STEPS as step}
+													<option value={step.value}>{step.label}</option>
+												{/each}
+											</select>
+										</div>
 									</div>
-								</div>
-							</td>
-						</tr>
-						<tr>
-							<td>
-								<div class="step-buttons">
-									<span>STAGE</span>
-									<div class="spacer"></div>
-									<button
-										type="button"
-										onclick={didClickExtend}
-										disabled={isMoving === true ||
-											isTesting === true ||
-											isExtending === true ||
-											needsHome === true ||
-											stageExtensionValue === 0}
-									>
-										extend
-									</button>
-									<button
-										type="button"
-										onclick={didClickRetract}
-										disabled={isMoving === true ||
-											isTesting === true ||
-											isExtending === true ||
-											needsHome === true}
-									>
-										retract
-									</button>
-								</div>
-							</td>
-						</tr>
-						<tr>
-							<td>
-								<div class="step-buttons">
-									<span>GRIPPER</span>
-									<div class="spacer"></div>
-									<button
-										type="button"
-										onclick={didClickGrip}
-										disabled={isMoving === true || isTesting === true || needsHome === true}
-									>
-										grip
-									</button>
-									<button
-										type="button"
-										onclick={didClickRelease}
-										disabled={isMoving === true || isTesting === true || needsHome === true}
-									>
-										release
-									</button>
-								</div>
-							</td>
-						</tr>
-					</tbody>
-				</table>
+								</td>
+							</tr>
+							<tr>
+								<td>
+									<div class="step-buttons">
+										<span>STAGE</span>
+										<div class="spacer"></div>
+										<button
+											type="button"
+											onclick={didClickExtend}
+											disabled={isMoving === true ||
+												isTesting === true ||
+												isExtending === true ||
+												needsHome === true ||
+												stageExtensionValue === 0}
+										>
+											extend
+										</button>
+										<button
+											type="button"
+											onclick={didClickRetract}
+											disabled={isMoving === true ||
+												isTesting === true ||
+												isExtending === true ||
+												needsHome === true}
+										>
+											retract
+										</button>
+									</div>
+								</td>
+							</tr>
+							<tr>
+								<td>
+									<div class="step-buttons">
+										<span>GRIPPER</span>
+										<div class="spacer"></div>
+										<button
+											type="button"
+											onclick={didClickGrip}
+											disabled={isMoving === true || isTesting === true || needsHome === true}
+										>
+											grip
+										</button>
+										<button
+											type="button"
+											onclick={didClickRelease}
+											disabled={isMoving === true || isTesting === true || needsHome === true}
+										>
+											release
+										</button>
+									</div>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
 
 				<div class="action-buttons">
 					<button
@@ -814,6 +822,18 @@
 
 	.panel-column {
 		flex: 1;
+	}
+
+	/* phones: half the screen is too narrow, so the panels stack */
+	@media (max-width: 640px) {
+		table {
+			max-width: 100%;
+		}
+
+		.panel-row {
+			flex-direction: column;
+			align-items: stretch;
+		}
 	}
 
 	.jog-step {

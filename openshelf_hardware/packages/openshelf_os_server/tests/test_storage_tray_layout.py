@@ -206,3 +206,23 @@ async def test_assign_tray_reuses_deactivated_row(client: AsyncClient, monkeypat
     assert row is not None
     assert row.barcode == "888012345671"
 
+
+
+@pytest.mark.anyio
+async def test_assign_tray_refuses_unsized_cell(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    _config_with_bins(monkeypatch, [])
+    grid = build_grid()
+    grid.front_module[0].cells[0].dimensions = Dimensions(width=0.0, height=0.0, length=0.0)
+    _patch_grid(monkeypatch, grid)
+    saved: list = []
+    monkeypatch.setattr(storage_router, "save_root_config", saved.append)
+
+    response = await client.post(
+        "/api/storage/bins/tray",
+        params={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
+        json={"barcode": "900000000077", "rows": 2, "columns": 2},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["message"] == "Set the cell dimensions before assigning a tray"
+    assert saved == []
