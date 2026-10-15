@@ -37,8 +37,8 @@ LASER_SAMPLES_PER_POINT = 3
 FLYING_CAPTURE_LATENCY_MS = 42.0
 
 # A wall depth reading is turned into a gripper z offset by a per-machine model. The
-# model records the stage extension it was derived at; this is how far the live tool
-# parameter may drift before the model is refused as stale.
+# model records the tool geometry it was derived at; this is how far the live
+# Z_EXTENSION_PLACE may drift before the model is refused as stale (stage drift is carried).
 Z_OFFSET_MODEL_PARAM_TOLERANCE_MM = 0.2
 
 # Z stall anchor probe: drive z down until the gripper pin stalls against the tray.

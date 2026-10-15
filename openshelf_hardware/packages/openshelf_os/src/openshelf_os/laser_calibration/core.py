@@ -72,6 +72,7 @@ SHELF_SWEEP_X_STEP_MM = 4.0
 SHELF_SWEEP_MIN_CANDIDATE_WIDTH_MM = 22.0
 SHELF_HOLE_SWEEP_OFFSET_MM = 32.25
 SHELF_HOLE_SWEEP_OFFSETS_MM = [16.25, SHELF_HOLE_SWEEP_OFFSET_MM]
+Y_AXIS_FLOOR_MM = 0.0
 FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.4
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 6.0
@@ -282,37 +283,44 @@ def get_wall_depth_to_gripper_z_model(
 	return configured_model
 
 
-def require_z_offset_model_matches_tool(
+def require_z_offset_model_matches_z_place(
 	*,
 	model: Any,
 	side: StorageModuleSide,
-	stage_extension_mm: float,
 	z_place_mm: float,
 	tolerance_mm: float,
 ) -> None:
-	"""A z offset is relative to Z_EXTENSION_PLACE and measured at a given stage extension.
+	"""A z offset is relative to Z_EXTENSION_PLACE, so a model pinned at another place height is stale.
 
-	Either drifting shifts every cell's z offset one-for-one, and the auto calibration itself
-	re-derives stage extension each run, so a stale model would silently mis-place every cell.
+	Stage extension drift is not refused here: `z_offset_model_intercept_at_stage` absorbs it.
 	"""
-	prefix = "front" if side == StorageModuleSide.FRONT else "back"
-	drifted: list[str] = []
-
-	if abs(float(model.reference_stage_mm) - float(stage_extension_mm)) > tolerance_mm:
-		drifted.append(
-			f"stage extension {float(model.reference_stage_mm):.2f}mm -> {float(stage_extension_mm):.2f}mm"
-		)
-
-	if abs(float(model.reference_z_place_mm) - float(z_place_mm)) > tolerance_mm:
-		drifted.append(f"Z_EXTENSION_PLACE {float(model.reference_z_place_mm):.2f}mm -> {float(z_place_mm):.2f}mm")
-
-	if len(drifted) == 0:
+	if abs(float(model.reference_z_place_mm) - float(z_place_mm)) <= tolerance_mm:
 		return
 
+	prefix = "front" if side == StorageModuleSide.FRONT else "back"
 	raise ValueError(
-		f"robot.grid.scan.{prefix}_wall_depth_to_gripper_z_model was derived at a different tool geometry "
-		f"({', '.join(drifted)}). Every cell's z offset would be wrong by that difference. "
-		"Re-derive the model or restore the tool parameters."
+		f"robot.grid.scan.{prefix}_wall_depth_to_gripper_z_model was derived at Z_EXTENSION_PLACE "
+		f"{float(model.reference_z_place_mm):.2f}mm but the tool now places at {float(z_place_mm):.2f}mm. "
+		"Every cell's z offset would be wrong by that difference. Re-derive the model (enable the z "
+		"stall probe) or restore Z_EXTENSION_PLACE."
+	)
+
+
+def z_offset_at_stage(*, z_offset_mm: float, captured_stage_mm: float, stage_extension_mm: float) -> float:
+	"""The z offset that reaches the same tip position at another stage extension.
+
+	The z axis is mounted on the stage and both extend toward the rack, so the tip sits at
+	stage + Z_EXTENSION_PLACE + z_offset: one millimetre less stage needs one millimetre more z.
+	"""
+	return float(z_offset_mm) + float(captured_stage_mm) - float(stage_extension_mm)
+
+
+def z_offset_model_intercept_at_stage(*, model: Any, stage_extension_mm: float) -> float:
+	"""The model's intercept carried from the stage it was pinned at to the live one."""
+	return z_offset_at_stage(
+		z_offset_mm=float(model.intercept_mm),
+		captured_stage_mm=float(model.reference_stage_mm),
+		stage_extension_mm=stage_extension_mm,
 	)
 
 

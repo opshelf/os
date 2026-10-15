@@ -57,6 +57,10 @@ TAGS = [
         ),
         ("storage", STORAGE_DESCRIPTION),
         (
+            "import-jobs",
+            "Relay-created inventory imports. The device owns each job; the kiosk walks it unit by unit (measure, print, scan, store) and fills trays with small units. One job runs at a time.",
+        ),
+        (
             "printer",
             "Barcode labels and printer diagnostics. Mock printing produces no physical label.",
         ),
@@ -182,6 +186,7 @@ PARAMETER_DESCRIPTIONS = {
     "offset": "Number of records to skip before returning results.",
     "skip": "Number of records to skip before returning results.",
     "limit": "Maximum number of records to return.",
+    "since": "Exclusive lower bound on the event log `seq`; only events with a higher `seq` are returned.",
 }
 
 

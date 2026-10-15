@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from openshelf_os.exceptions import ConfigError, MovementError
+from openshelf_os.exceptions import ConfigError, MotorError, MovementError
 from openshelf_os.tool import (
     Tool,
 )
@@ -71,6 +71,65 @@ async def test_ensure_safe_rotation_x_position_raises_when_x_axis_is_too_small()
 
     with pytest.raises(ConfigError, match="X axis limit is too small"):
         await tool.ensure_safe_rotation_x_position()
+
+
+@pytest.mark.asyncio
+async def test_ensure_safe_rotation_x_position_refuses_unhomed_x() -> None:
+    tool = Tool.__new__(Tool)
+    tool._mx = _mock_x_motor(position=0.0)
+    tool._mx._is_homed = False
+
+    with pytest.raises(MotorError, match="not homed"):
+        await tool.ensure_safe_rotation_x_position()
+    tool._mx.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_home_rotate_sequence_homes_unhomed_x_before_clearance_move() -> None:
+    events: list[str] = []
+    tool = Tool.__new__(Tool)
+    tool._mx = _mock_x_motor(position=0.0)
+    tool._mx._is_homed = False
+
+    async def home_x() -> None:
+        events.append("home_x")
+        tool._mx._is_homed = True
+
+    tool._mx.home = AsyncMock(side_effect=home_x)
+    tool._mx.move_to_position = AsyncMock(side_effect=lambda mm: events.append(f"x:{mm}"))
+    tool._mr = AsyncMock()
+    tool._mr.get_position = AsyncMock(return_value=0.0)
+    tool._mr.home = AsyncMock(side_effect=lambda: events.append("home_rotate"))
+    tool._ms = None
+    tool.get_param = AsyncMock(return_value=2.7)
+    tool.ensure_safe_rotation_stage_extension = AsyncMock(return_value=False)
+    tool.rotate_to_home_orientation = AsyncMock()
+
+    await tool._home_rotate_sequence()
+
+    assert events == ["home_x", "x:200.0", "home_rotate", "x:0.0"]
+
+
+@pytest.mark.parametrize("rotation", [0.0, 2.7036, 183.0])
+@pytest.mark.asyncio
+async def test_home_rotate_sequence_uses_edge_margin_and_returns_x(rotation: float) -> None:
+    events: list[str] = []
+    tool = Tool.__new__(Tool)
+    tool._mx = _mock_x_motor(position=0.0)
+    tool._mx._is_homed = True
+    tool._mx.move_to_position = AsyncMock(side_effect=lambda mm: events.append(f"x:{mm}"))
+    tool._mr = AsyncMock()
+    tool._mr.get_position = AsyncMock(return_value=rotation)
+    tool._mr.home = AsyncMock(side_effect=lambda: events.append("home_rotate"))
+    tool._ms = None
+    tool.get_param = AsyncMock(return_value=2.7)
+    tool.ensure_safe_rotation_stage_extension = AsyncMock(return_value=False)
+    tool.rotate_to_home_orientation = AsyncMock()
+
+    await tool._home_rotate_sequence()
+
+    # Whatever angle the tool rests at, X only clears the edge margin and comes back to 0.
+    assert events == ["x:200.0", "home_rotate", "x:0.0"]
 
 
 @pytest.mark.asyncio

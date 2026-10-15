@@ -2,7 +2,8 @@ import asyncio
 import logging
 import time
 
-from enum import Enum
+from dataclasses import dataclass
+from enum import IntEnum
 from typing import Callable, Optional
 from hardware.controller import SharedModbusController
 from hardware.exceptions import MotorError, MotorTimeoutError
@@ -10,13 +11,43 @@ from hardware.exceptions import MotorError, MotorTimeoutError
 logger = logging.getLogger(__name__)
 
 
-class ServoStatus(Enum):
-    IDLE = 0
-    MOVING = 1
-    STOPPED = 2
-    ERROR = 3
-    FAULT = 4
-    TIMEOUT = 5
+# Fault bit 2 is comm-loss (>1 s idle bus); the manual says it does not affect motion.
+FAULT_COMM_LOSS = 1 << 2
+# A new command can report the previous move's gOBJ until the drive picks it up.
+STALE_OBJ_WINDOW_S = 0.15
+
+
+class GripObject(IntEnum):
+    """gOBJ (status bits 6-7)."""
+    MOVING = 0
+    INNER = 1
+    OUTER = 2
+    NONE = 3
+
+
+@dataclass(frozen=True)
+class GripState:
+    """Decoded 0x07D0-0x07D2: status, fault, position (gPR), current (gCU)."""
+    status: int
+    fault: int
+    position: int
+    current: int
+
+    @property
+    def obj(self) -> GripObject:
+        return GripObject((self.status >> 6) & 0x3)
+
+    @property
+    def dropped(self) -> bool:
+        return bool(self.status & 0x2)
+
+    @property
+    def gripped(self) -> bool:
+        return self.obj in (GripObject.INNER, GripObject.OUTER) and not self.dropped
+
+    def __str__(self) -> str:
+        return (f"obj={self.obj.name} drop={int(self.dropped)} pos=0x{self.position:02X} "
+                f"cu=0x{self.current:02X} fault=0x{self.fault:02X}")
 
 
 class Servo:
@@ -103,47 +134,55 @@ class Servo:
 
             await asyncio.sleep(0.01)
 
-    async def wait_for_servo(self, timeout: float = 5.0) -> ServoStatus:
+    async def read_state(self) -> GripState:
+        """Read status, fault, position and current in one transaction."""
+        r = await self._controller.read_holding_register_block(self._motor_id, self._status_reg, 3)
+        return GripState(r[0] & 0xFF, r[1] & 0xFF, (r[1] >> 8) & 0xFF, (r[2] >> 8) & 0xFF)
+
+    async def wait_for_servo(self, timeout: float = 5.0) -> GripState:
+        """Poll until gOBJ reports a result; raise on drive faults."""
         start_time = time.monotonic()
+        seen_moving = False
 
         while True:
-            status = await self._controller.read_holding_registers(self._motor_id, self._status_reg)
+            state = await self.read_state()
 
-            if status is None:
-                raise MotorError("Failed to read motor status during servo motion")
-                
-            move_status = (status & (1<<6)) or (status & (1<<7))
+            if state.fault & ~FAULT_COMM_LOSS:
+                raise MotorError(f"Gripper fault: {state}")
 
-            if move_status:
-                return ServoStatus.STOPPED
-                
+            if state.obj is GripObject.MOVING:
+                seen_moving = True
+            elif seen_moving or time.monotonic() - start_time > STALE_OBJ_WINDOW_S:
+                return state
+
             if time.monotonic() - start_time > timeout:
                 raise MotorTimeoutError(f"Servo motion timed out after {timeout} seconds")
-                
-            await asyncio.sleep(0.01)
 
+            await asyncio.sleep(0.01)
 
     async def _ensure_configured(self) -> None:
         if self._configured is False:
             await self.configure()
 
-    async def open(self):
+    async def open(self) -> GripState:
+        """Preset 1: splay fingers (inner-support grip)."""
         await self._ensure_configured()
         try:
             await self._controller.write_single_register(self._motor_id, self._control_reg, 0x080B)
-            await self.wait_for_servo()
+            return await self.wait_for_servo()
         except Exception as e:
             raise MotorError(f"Failed to open servo: {str(e)}") from e
 
-    async def safe_open(self):
+    async def safe_open(self) -> GripState:
         await self._ensure_configured()
         try:
             await self._controller.write_single_register(self._motor_id, self._control_reg, 0x0A0B)
-            await self.wait_for_servo()
+            return await self.wait_for_servo()
         except Exception as e:
             raise MotorError(f"Failed to safe-open servo: {str(e)}") from e
 
-    async def close(self):
+    async def close(self) -> GripState:
+        """Preset 2: retract fingers (release)."""
         await self._ensure_configured()
-        await self._controller.write_single_register(self._motor_id, self._control_reg, 0x090B) 
-        await self.wait_for_servo()
+        await self._controller.write_single_register(self._motor_id, self._control_reg, 0x090B)
+        return await self.wait_for_servo()

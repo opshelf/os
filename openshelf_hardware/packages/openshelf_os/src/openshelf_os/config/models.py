@@ -41,9 +41,10 @@ class Motor(BaseModel):
     accel: int = Field(..., gt=0)
     ret_rpm: int = Field(..., gt=0)
     home_rpm: Optional[int] = Field(default=None, gt=0)
-    # Drive torque homing: stall current as % of Ip, and hold time before zeroing.
-    home_torque_pct: int = Field(default=30, ge=1, le=100)
-    home_torque_ms: int = Field(default=200, ge=1, le=65535)
+    # How far from zero a homed axis may read and still count as home. Compliant axes such
+    # as the IO door spring back off their stop (lb4a-3 read 0.496 mm); the door's closed
+    # check accepts that instead of re-homing.
+    home_zero_tolerance_mm: float = Field(default=0.25, gt=0)
     lim: Union[int, float] = Field(..., gt=0)
     lower_lim: Union[int, float] = Field(default=0, ge=0)
     phys_at_zero: Optional[Union[int, float]] = Field(default=None)
@@ -516,7 +517,7 @@ class CurtainConfig(BaseModel):
 
 class ScaleConfig(BaseModel):
     enabled: bool = True
-    # Weight change, in grams, that stops y travel while the axis is moving.
+    # Weight change, in grams, that stops y travel while the axis is moving down.
     motion_guard_enabled: bool = True
     motion_guard_delta_grams: float = Field(10.0, gt=0)
     # Consecutive over-threshold readings before the interruption fires; 1 reacts
@@ -569,14 +570,17 @@ class Parameters(BaseModel):
     IDLE_POSITION: TwoInt
     PICKUP_POSITION_L: TwoInt
     PICKUP_POSITION_H: TwoInt
+    PICKUP_POSITION_MULTI_ITEM: TwoInt
     SCAN_POSITION: TwoInt
     STAGE_EXTENSION_IO_BOX: Union[int, float]
+    STAGE_EXTENSION_IO_BOX_MULTI_ITEM: Union[int, float]
     STAGE_NUDGE: Union[int, float]
     STAGE_EXTENSION_SHELF_FRONT: Union[int, float]
     STAGE_EXTENSION_SHELF_BACK: Union[int, float]
     Z_EXTENSION_PICK: float
     Z_EXTENSION_PLACE: float
     Z_EXTENSION_IO: float
+    Z_EXTENSION_IO_MULTI_ITEM: float
     Z_MOVE_RPM: int = Field(..., gt=0)
     Z_MOVE_ACCEL: int = Field(..., gt=0)
     STAGE_RETRACT_POSITION_MM: float = Field(default=3.0, ge=0)
@@ -603,6 +607,7 @@ class Parameters(BaseModel):
         "IDLE_POSITION",
         "PICKUP_POSITION_L",
         "PICKUP_POSITION_H",
+        "PICKUP_POSITION_MULTI_ITEM",
         "SCAN_POSITION",
         mode="before",
     )
@@ -617,6 +622,9 @@ class Gripper(BaseModel):
     motor_id: int = Field(default=9, ge=0)
     control_reg: int = Field(default=0x03E8)
     status_reg: int = Field(default=0x07D0)
+    # Picks and tray returns fail unless the gripper reports object contact. Machines
+    # whose gripper never reports contact for a held cell turn the check off here.
+    object_detection_enabled: bool = Field(default=True)
 
 
 class Tool(BaseModel):

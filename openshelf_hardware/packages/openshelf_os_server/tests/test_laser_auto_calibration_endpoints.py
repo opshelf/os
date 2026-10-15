@@ -409,14 +409,17 @@ async def test_persist_completed_results_saves_stage_extensions() -> None:
             'IDLE_POSITION': [0, 0],
             'PICKUP_POSITION_L': [0, 0],
             'PICKUP_POSITION_H': [0, 0],
+            'PICKUP_POSITION_MULTI_ITEM': [0, 0],
             'SCAN_POSITION': [0, 0],
             'STAGE_EXTENSION_IO_BOX': 0,
+            'STAGE_EXTENSION_IO_BOX_MULTI_ITEM': 0,
             'STAGE_NUDGE': 0,
             'STAGE_EXTENSION_SHELF_FRONT': 0,
             'STAGE_EXTENSION_SHELF_BACK': 0,
             'Z_EXTENSION_PICK': 0,
             'Z_EXTENSION_PLACE': 0,
             'Z_EXTENSION_IO': 0,
+            'Z_EXTENSION_IO_MULTI_ITEM': 0,
             'Z_MOVE_RPM': 1,
             'Z_MOVE_ACCEL': 1,
             'ROTATION_FRONT': 0,
@@ -540,6 +543,46 @@ def test_preserve_manual_cells_reinserts_manual_and_renumbers() -> None:
         (1, 200.0, False),
         (2, 300.0, False),
         (3, 400.0, True),
+    ]
+
+
+def test_preserve_manual_cells_matches_on_manual_cells_not_stale_shelf_center() -> None:
+    # lb4a-4: the manual datum sat at y=41 while the old shelf's auto cells were at y~155,
+    # which pulled the shelf center out of tolerance and duplicated shelf 0.
+    scanned = [
+        _manual_shelf(0, [_manual_cell(0, 355.0, 41.0), _manual_cell(1, 849.5, 41.0)]),
+        _manual_shelf(1, [_manual_cell(0, 323.5, 1091.0)]),
+    ]
+    existing = [
+        _manual_shelf(
+            0,
+            [_manual_cell(0, 355.0, 41.0, is_manual=True)]
+            + [_manual_cell(idx, 800.0 - idx * 100.0, 155.7) for idx in range(1, 9)],
+        )
+    ]
+
+    result = _preserve_manual_cells(scanned, existing)
+
+    assert [shelf.shelf_idx for shelf in result] == [0, 1]
+    assert [(c.cell_idx, c.calibration_point.x, c.is_manual) for c in result[0].cells] == [
+        (0, 355.0, True),
+        (1, 849.5, False),
+    ]
+
+
+def test_preserve_manual_cells_unmatched_shelf_gets_unique_index() -> None:
+    scanned = [
+        _manual_shelf(0, [_manual_cell(0, 100.0, 41.0)]),
+        _manual_shelf(1, [_manual_cell(0, 100.0, 1091.0)]),
+    ]
+    existing = [_manual_shelf(0, [_manual_cell(0, 300.0, 500.0, is_manual=True)])]
+
+    result = _preserve_manual_cells(scanned, existing)
+
+    assert [(shelf.shelf_idx, shelf.cells[0].calibration_point.y) for shelf in result] == [
+        (0, 41.0),
+        (1, 500.0),
+        (2, 1091.0),
     ]
 
 
@@ -668,3 +711,43 @@ def test_restore_calibration_params_keeps_persisted_values() -> None:
         )
 
     reload_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_z_stall_setting_is_saved_to_the_machine_config() -> None:
+    from openshelf_os_server.routers import calibration as calibration_router
+
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=SimpleNamespace(z_stall_anchor_enabled=False))))
+    config.model_copy = lambda deep=True: copy.deepcopy(config)
+    saved: list[object] = []
+
+    with patch.object(calibration_router, "get_root_config", return_value=config):
+        with patch.object(calibration_router, "save_root_config", side_effect=saved.append):
+            with patch.object(calibration_router, "ensure_laser_auto_calibration_not_running", AsyncMock()):
+                assert (await calibration_router.get_laser_z_stall_setting()).enabled is False
+                response = await calibration_router.save_laser_z_stall_setting(
+                    calibration_router.LaserZStallSetting(enabled=True)
+                )
+
+    assert response.enabled is True
+    assert len(saved) == 1
+    assert saved[0].robot.grid.scan.z_stall_anchor_enabled is True
+    # The cached config is replaced by the save, never edited in place.
+    assert config.robot.grid.scan.z_stall_anchor_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_z_stall_setting_is_refused_while_calibration_runs() -> None:
+    from openshelf_os_server.routers import calibration as calibration_router
+
+    with patch.object(
+        calibration_router,
+        "ensure_laser_auto_calibration_not_running",
+        AsyncMock(side_effect=HTTPException(status_code=409, detail="laser auto calibration is running")),
+    ):
+        with patch.object(calibration_router, "save_root_config") as save:
+            with pytest.raises(HTTPException) as error:
+                await calibration_router.save_laser_z_stall_setting(calibration_router.LaserZStallSetting(enabled=True))
+
+    assert error.value.status_code == 409
+    save.assert_not_called()

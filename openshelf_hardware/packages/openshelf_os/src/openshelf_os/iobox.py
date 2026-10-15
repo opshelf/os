@@ -112,6 +112,8 @@ class IOBox:
         self._door_home_verify_tolerance_mm: float = DOOR_HOME_VERIFY_TOLERANCE_MM
         self._door_zero_position_tolerance_mm: float = DOOR_ZERO_POSITION_TOLERANCE_MM
         self._door_motion_lock = asyncio.Lock()
+        # Set when the end-of-cycle door home fails, so the next cycle homes before it moves an item.
+        self._door_home_pending = False
 
     def reload_parameters(self) -> None:
         config = load_config_file(c.CONFIG_PATH)
@@ -454,14 +456,37 @@ class IOBox:
                 # The forced refresh is diagnostic only: a completed home is
                 # authoritative even if the immediately following read is stale.
                 self._cache_door_closed_after_home()
+                self._door_home_pending = False
 
         except Exception as e:
             self._status = IOBoxStatus.ERROR
+            self._door_home_pending = True
 
             if isinstance(e, IOBoxError):
                 raise
 
             raise MotorError(f"Failed to home door: {str(e)}") from e
+
+    async def home_door_after_cycle(self) -> bool:
+        """Re-home the closed door at the end of an IO cycle without failing the cycle.
+
+        The item is already on its shelf by then, so failing the command would leave the
+        inventory saying it never arrived. A failed home is deferred to the next cycle.
+        """
+        try:
+            await self.home_door()
+            return True
+        except Exception as exc:
+            self._logger.warning(
+                "Door home after IO cycle failed; homing before the next cycle",
+                extra={"error": str(exc)},
+            )
+            return False
+
+    async def ensure_door_homed(self) -> None:
+        """Finish a deferred door home before an IO cycle moves any item."""
+        if self._door_home_pending is True:
+            await self.home_door()
 
     def _cache_door_closed_after_home(self) -> None:
         """Record the known physical door position after a successful home."""
@@ -507,13 +532,29 @@ class IOBox:
     def get_door_state(self) -> Optional[bool]:
         return self._door_open
 
+    def _door_zero_clamp_mm(self) -> float:
+        """How far below zero a closed door may read.
+
+        A torque-homed door springs back off its stop (lb2-3 reads -0.44 mm), and the door's
+        home_zero_tolerance_mm already accepts that as a good home; counting it as a bad
+        reading re-homed the door every few seconds, onto the same reading.
+        """
+        home_tolerance_mm = 0.0
+        try:
+            door_cfg = self._params.motors.by_name("door")
+            home_tolerance_mm = float(getattr(door_cfg, "home_zero_tolerance_mm", 0.0) or 0.0)
+        except Exception:
+            pass
+        return max(self._door_zero_position_tolerance_mm, home_tolerance_mm)
+
     def _normalize_door_position(self, position_mm: float) -> float:
-        if -self._door_zero_position_tolerance_mm <= position_mm < 0:
+        tolerance_mm = self._door_zero_clamp_mm()
+        if -tolerance_mm <= position_mm < 0:
             self._logger.debug(
                 "Clamping near-zero door position",
                 extra={
                     "position_mm": position_mm,
-                    "tolerance_mm": self._door_zero_position_tolerance_mm,
+                    "tolerance_mm": tolerance_mm,
                 },
             )
             return 0.0

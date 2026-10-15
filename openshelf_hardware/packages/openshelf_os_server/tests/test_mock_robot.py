@@ -284,3 +284,94 @@ async def test_mock_enrollment_survives_failure_and_editable_retry(
 		assert item.tare_weight == 100 and item.full_net_weight == 500
 		assert not item.enrollment_weight_pending and item.enrollment_storage_completed
 
+
+
+@pytest.mark.anyio
+async def test_mock_scan_injection_reaches_the_event_stream(
+	client: AsyncClient,
+	mock_runtime: MockRobotRuntime,
+) -> None:
+	queue = await mock_runtime.subscribe_events()
+	try:
+		response = await client.post("/api/robot/debug/scanner/scan", json={"barcode": "ACE-500"})
+		assert response.status_code == 200
+		event = json.loads(await asyncio.wait_for(queue.get(), 1))
+		assert event == {"kind": "label_scanned", "payload": "ACE-500"}
+	finally:
+		await mock_runtime.unsubscribe_events(queue)
+
+
+@pytest.mark.anyio
+async def test_mock_io_box_simulation_is_cleared_when_a_store_starts(
+	client: AsyncClient,
+	mock_runtime: MockRobotRuntime,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	placed = await client.post("/api/robot/debug/io-box", json={"occupied": True})
+	assert placed.status_code == 200
+	status = json.loads(await mock_runtime.status_payload())
+	assert status["robot_status"]["scale"]["occupied"] is True
+
+	stored = await client.post(
+		"/api/robot/commands",
+		json={
+			"command": "store_item",
+			"item": {
+				"barcode": "880000000777",
+				"name": "Picked from IO box",
+				"dimensions": {"width": 10, "height": 10, "length": 10},
+			},
+		},
+	)
+	assert stored.status_code == 200, stored.text
+	await _wait_for_status(client, stored.json()["command_id"], "succeeded")
+	assert mock_runtime.is_bin_io_box_occupied() is False
+
+	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
+	refused = await client.post("/api/robot/debug/io-box", json={"occupied": True})
+	assert refused.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_mock_store_with_an_import_request_id_loads_the_unit(
+	client: AsyncClient,
+	mock_runtime: MockRobotRuntime,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	from openshelf_os_server.core import import_jobs as import_jobs_core
+	from openshelf_os_server.core.import_jobs import ImportJobService, ImportRowInput
+	from openshelf_os_server.database.models import ImportJob, ImportJobUnit
+
+	monkeypatch.setattr(import_jobs_core, "get_operating_mode", lambda: OperatingMode.mock)
+	async with AsyncSessionLocal() as session:
+		await session.execute(delete(ImportJobUnit))
+		await session.execute(delete(ImportJob))
+		await session.commit()
+		service = ImportJobService(session)
+		job = await service.create([ImportRowInput(name="Acetone", barcode="MOCK-IMPORT-1")], "mock.csv")
+		unit = (await service.units(job))[0]
+		unit = await service.begin_unit(job, unit.id, {"width": 50, "height": 60, "length": 70})
+		job_id, request_id = job.id, unit.request_id
+	events = await mock_runtime.subscribe_events()
+	try:
+		stored = await client.post(
+			"/api/robot/commands",
+			json={"command": "store_item", "request_id": request_id, "item": {"barcode": "MOCK-IMPORT-1"}},
+		)
+		assert stored.status_code == 200, stored.text
+		await _wait_for_status(client, stored.json()["command_id"], "succeeded")
+		kinds = []
+		for _ in range(10):
+			kinds.append(json.loads(await asyncio.wait_for(events.get(), 1)).get("kind"))
+			if "import_job_updated" in kinds:
+				break
+		assert "import_job_updated" in kinds
+	finally:
+		await mock_runtime.unsubscribe_events(events)
+	async with AsyncSessionLocal() as session:
+		loaded = await session.scalar(select(ImportJobUnit).where(ImportJobUnit.job_id == job_id))
+		assert loaded.status == "loaded"
+		assert (await session.get(ImportJob, job_id)).state == "completed"
+		await session.execute(delete(ImportJobUnit))
+		await session.execute(delete(ImportJob))
+		await session.commit()

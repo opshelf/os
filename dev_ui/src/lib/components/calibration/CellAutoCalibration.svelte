@@ -6,7 +6,9 @@
 		buildLaserAutoCalibrationStreamUrl,
 		getLaserAutoCalibrationStatus,
 		getLaserAutoCalibrationStreamError,
+		getLaserZStallEnabled,
 		getStorageGrid,
+		saveLaserZStallEnabled,
 		type LaserAutoCalibrationAngleResult,
 		type LaserAutoCalibrationRequest,
 		type LaserAutoCalibrationSnapshot,
@@ -15,6 +17,7 @@
 	import { normalizeLaserAutoCalibrationSnapshot } from '$lib/api';
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideLabel } from '$lib/side';
 	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
+	import { postToast } from '$lib/toasts';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -36,6 +39,8 @@
 	let isExtensionCalibrationSelected = $state<boolean>(true);
 	let preferredAngleCalibration = $state<boolean>(true);
 	let preferredExtensionCalibration = $state<boolean>(true);
+	let isZStallEnabled = $state<boolean>(false);
+	let isSavingZStall = $state<boolean>(false);
 	let selectedSide = $state<'' | 'front_module' | 'back_module'>('');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
@@ -118,12 +123,14 @@
 		error = '';
 
 		try {
-			const [nextSnapshot, nextStorageGrid] = await Promise.all([
+			const [nextSnapshot, nextStorageGrid, nextZStallEnabled] = await Promise.all([
 				getLaserAutoCalibrationStatus(),
-				getStorageGrid()
+				getStorageGrid(),
+				getLaserZStallEnabled()
 			]);
 
 			snapshot = nextSnapshot;
+			isZStallEnabled = nextZStallEnabled;
 
 			if (nextSnapshot.requested_scope !== undefined) {
 				activeRequestedScope = nextSnapshot.requested_scope;
@@ -510,6 +517,22 @@
 		message = '';
 	}
 
+	async function didChangeZStall(event: Event): Promise<void> {
+		const target = event.target as HTMLInputElement;
+		const requested = target.checked;
+
+		isSavingZStall = true;
+
+		try {
+			isZStallEnabled = await saveLaserZStallEnabled(requested);
+		} catch (err) {
+			target.checked = isZStallEnabled;
+			postToast('error', err instanceof Error ? err.message : 'failed to save the z stall probe setting');
+		} finally {
+			isSavingZStall = false;
+		}
+	}
+
 	async function didClickStart(): Promise<void> {
 		if (browser === false) {
 			return;
@@ -635,194 +658,213 @@
 {#if isLoading === true}
 	<p>loading auto calibration status...</p>
 {:else}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="3">scan selection</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td colspan="3">
-					<label class="all-toggle">
-						<input
-							type="checkbox"
-							checked={isAllSelected}
-							onchange={didChangeAll}
-							disabled={isSelectionDisabled}
-						/>
-						<span>calibrate all</span>
-					</label>
-				</td>
-			</tr>
-			<tr>
-				<td>
-					<div class="selection-field">
-						<span class="field-label">side</span>
-						<select
-							value={selectedSide}
-							onchange={didChangeSide}
-							disabled={isAllSelected === true || isSelectionDisabled || storageGrid === null}
-						>
-							<option value="">-</option>
-							<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
-							<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
-						</select>
-					</div>
-				</td>
-				<td>
-					<div class="selection-field">
-						<span class="field-label">shelf</span>
-						<select
-							value={selectedShelf}
-							onchange={didChangeShelf}
-							disabled={isAllSelected === true ||
-								isSelectionDisabled ||
-								storageGrid === null ||
-								selectedSide === ''}
-						>
-							<option value="">-</option>
-							{#each getShelves() as shelf}
-								<option value={String(shelf.shelf_idx)}>{shelf.shelf_idx}</option>
-							{/each}
-						</select>
-					</div>
-				</td>
-				<td>
-					<div class="selection-field">
-						<span class="field-label">cell</span>
-						<select
-							value={selectedCell}
-							onchange={didChangeCell}
-							disabled={isAllSelected === true ||
-								isSelectionDisabled ||
-								storageGrid === null ||
-								selectedShelf === ''}
-						>
-							<option value="">-</option>
-							{#each getCells() as cell}
-								<option value={String(cell.cell_idx)}>{cell.cell_idx}</option>
-							{/each}
-						</select>
-					</div>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
-					<label class="all-toggle">
-						<input
-							type="checkbox"
-							checked={isAngleCalibrationSelected}
-							onchange={didChangeAngleCalibration}
-							disabled={isAngleCalibrationDisabled}
-						/>
-						<span>angle calibration</span>
-					</label>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
-					<label class="all-toggle">
-						<input
-							type="checkbox"
-							checked={isExtensionCalibrationSelected}
-							onchange={didChangeExtensionCalibration}
-							disabled={isExtensionCalibrationDisabled}
-						/>
-						<span>extension calibration</span>
-					</label>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
-					<div class="actions">
-						<button type="button" onclick={didClickStart} disabled={isStartDisabled}>
-							{startButtonLabel}
-						</button>
-						<button
-							type="button"
-							onclick={didClickAbort}
-							disabled={isAborting === true || isSessionActive === false}
-						>
-							abort
-						</button>
-					</div>
-				</td>
-			</tr>
-		</tbody>
-	</table>
-
-	{#if snapshot && snapshot.session_id !== null}
-		<table style="margin-top: 1.5em">
+	<div class="scroll-x">
+		<table>
 			<thead>
 				<tr>
-					<th>auto results</th>
-					<th>{sideLabel(0, vocabulary).toLowerCase()} / x</th>
-					<th>{sideLabel(1, vocabulary).toLowerCase()} / y</th>
+					<th colspan="3">scan selection</th>
 				</tr>
 			</thead>
 			<tbody>
 				<tr>
-					<td>state</td>
-					<td colspan="2">{snapshot?.state ?? 'idle'}</td>
+					<td colspan="3">
+						<label class="all-toggle">
+							<input
+								type="checkbox"
+								checked={isAllSelected}
+								onchange={didChangeAll}
+								disabled={isSelectionDisabled}
+							/>
+							<span>calibrate all</span>
+						</label>
+					</td>
 				</tr>
 				<tr>
-					<td>requested scope</td>
-					<td colspan="2">{getSnapshotRequestedScope(snapshot).mode}</td>
+					<td>
+						<div class="selection-field">
+							<span class="field-label">side</span>
+							<select
+								value={selectedSide}
+								onchange={didChangeSide}
+								disabled={isAllSelected === true || isSelectionDisabled || storageGrid === null}
+							>
+								<option value="">-</option>
+								<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
+								<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
+							</select>
+						</div>
+					</td>
+					<td>
+						<div class="selection-field">
+							<span class="field-label">shelf</span>
+							<select
+								value={selectedShelf}
+								onchange={didChangeShelf}
+								disabled={isAllSelected === true ||
+									isSelectionDisabled ||
+									storageGrid === null ||
+									selectedSide === ''}
+							>
+								<option value="">-</option>
+								{#each getShelves() as shelf}
+									<option value={String(shelf.shelf_idx)}>{shelf.shelf_idx}</option>
+								{/each}
+							</select>
+						</div>
+					</td>
+					<td>
+						<div class="selection-field">
+							<span class="field-label">cell</span>
+							<select
+								value={selectedCell}
+								onchange={didChangeCell}
+								disabled={isAllSelected === true ||
+									isSelectionDisabled ||
+									storageGrid === null ||
+									selectedShelf === ''}
+							>
+								<option value="">-</option>
+								{#each getCells() as cell}
+									<option value={String(cell.cell_idx)}>{cell.cell_idx}</option>
+								{/each}
+							</select>
+						</div>
+					</td>
 				</tr>
 				<tr>
-					<td>current stage</td>
-					<td colspan="2">{snapshot?.current_stage ?? '-'}</td>
+					<td colspan="3">
+						<label class="all-toggle">
+							<input
+								type="checkbox"
+								checked={isAngleCalibrationSelected}
+								onchange={didChangeAngleCalibration}
+								disabled={isAngleCalibrationDisabled}
+							/>
+							<span>angle calibration</span>
+						</label>
+					</td>
 				</tr>
 				<tr>
-					<td>scouted shelves</td>
-					<td>{snapshot?.front_scouted_shelf_count ?? 0}</td>
-					<td>{snapshot?.back_scouted_shelf_count ?? 0}</td>
+					<td colspan="3">
+						<label class="all-toggle">
+							<input
+								type="checkbox"
+								checked={isExtensionCalibrationSelected}
+								onchange={didChangeExtensionCalibration}
+								disabled={isExtensionCalibrationDisabled}
+							/>
+							<span>extension calibration</span>
+						</label>
+					</td>
 				</tr>
 				<tr>
-					<td>candidate cells</td>
-					<td>{snapshot?.front_candidate_count ?? 0}</td>
-					<td>{snapshot?.back_candidate_count ?? 0}</td>
+					<td colspan="3">
+						<label class="all-toggle" title="machine setting: press the tool against the shelf plate to fit the z model">
+							<input
+								type="checkbox"
+								checked={isZStallEnabled}
+								onchange={didChangeZStall}
+								disabled={isSavingZStall === true || isSelectionDisabled === true}
+							/>
+							<span>z stall probe</span>
+						</label>
+					</td>
 				</tr>
 				<tr>
-					<td>confirmed cells</td>
-					<td>{snapshot?.front_detected_cell_count ?? 0}</td>
-					<td>{snapshot?.back_detected_cell_count ?? 0}</td>
-				</tr>
-				<tr>
-					<td>rotation angle</td>
-					<td>{getRotationValue('front_module')}</td>
-					<td>{getRotationValue('back_module')}</td>
-				</tr>
-				<tr>
-					<td>stage extension</td>
-					<td>{getStageExtensionValue('front_module')}</td>
-					<td>{getStageExtensionValue('back_module')}</td>
+					<td colspan="3">
+						<div class="actions">
+							<button type="button" onclick={didClickStart} disabled={isStartDisabled}>
+								{startButtonLabel}
+							</button>
+							<button
+								type="button"
+								onclick={didClickAbort}
+								disabled={isAborting === true || isSessionActive === false}
+							>
+								abort
+							</button>
+						</div>
+					</td>
 				</tr>
 			</tbody>
 		</table>
+	</div>
+
+	{#if snapshot && snapshot.session_id !== null}
+		<div class="scroll-x result-table">
+			<table>
+				<thead>
+					<tr>
+						<th>auto results</th>
+						<th>{sideLabel(0, vocabulary).toLowerCase()} / x</th>
+						<th>{sideLabel(1, vocabulary).toLowerCase()} / y</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td>state</td>
+						<td colspan="2">{snapshot?.state ?? 'idle'}</td>
+					</tr>
+					<tr>
+						<td>requested scope</td>
+						<td colspan="2">{getSnapshotRequestedScope(snapshot).mode}</td>
+					</tr>
+					<tr>
+						<td>current stage</td>
+						<td colspan="2">{snapshot?.current_stage ?? '-'}</td>
+					</tr>
+					<tr>
+						<td>scouted shelves</td>
+						<td>{snapshot?.front_scouted_shelf_count ?? 0}</td>
+						<td>{snapshot?.back_scouted_shelf_count ?? 0}</td>
+					</tr>
+					<tr>
+						<td>candidate cells</td>
+						<td>{snapshot?.front_candidate_count ?? 0}</td>
+						<td>{snapshot?.back_candidate_count ?? 0}</td>
+					</tr>
+					<tr>
+						<td>confirmed cells</td>
+						<td>{snapshot?.front_detected_cell_count ?? 0}</td>
+						<td>{snapshot?.back_detected_cell_count ?? 0}</td>
+					</tr>
+					<tr>
+						<td>rotation angle</td>
+						<td>{getRotationValue('front_module')}</td>
+						<td>{getRotationValue('back_module')}</td>
+					</tr>
+					<tr>
+						<td>stage extension</td>
+						<td>{getStageExtensionValue('front_module')}</td>
+						<td>{getStageExtensionValue('back_module')}</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
 	{/if}
 
 	{#if snapshot && snapshot.session_id !== null}
-		<table style="margin-top: 1.5em">
-			<thead>
-				<tr>
-					<th colspan="2">stage detail</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each getStageDetailRows() as row}
+		<div class="scroll-x result-table">
+			<table>
+				<thead>
 					<tr>
-						<td>{row.key}</td>
-						<td>{row.value}</td>
+						<th colspan="2">stage detail</th>
 					</tr>
-				{:else}
-					<tr>
-						<td colspan="2">-</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
+				</thead>
+				<tbody>
+					{#each getStageDetailRows() as row}
+						<tr>
+							<td>{row.key}</td>
+							<td class="detail-value">{row.value}</td>
+						</tr>
+					{:else}
+						<tr>
+							<td colspan="2">-</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
 	{/if}
 
 	{#if message !== ''}
@@ -835,6 +877,15 @@
 {/if}
 
 <style>
+	.result-table {
+		margin-top: 1.5em;
+	}
+
+	/* long stage values wrap instead of widening the table */
+	.detail-value {
+		overflow-wrap: anywhere;
+	}
+
 	.actions {
 		display: flex;
 		gap: 1rem;

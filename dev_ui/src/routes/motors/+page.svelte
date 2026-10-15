@@ -502,6 +502,10 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Motors • Openshelf</title>
+</svelte:head>
+
 {#if isLoading === true}
 	<p>loading motors...</p>
 {:else if motors !== null}
@@ -528,347 +532,86 @@
 		</button>
 	</div>
 
-	<table class="motor-table">
-		<thead>
-			<tr>
-				<th colspan="6">
-					<div class="section-heading">
-						<span>gantry motors</span>
-						<span>
-							<button
-								type="button"
-								on:click={() => didClickHomeSection('gantry', gantryMotors())}
-								disabled={isActionDisabled()}>HOME</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickMoveSection('gantry', gantryMotors())}
-								disabled={isActionDisabled()}>MOVE</button
-							>
-						</span>
-					</div>
-				</th>
-			</tr>
-			<tr>
-				<th>id</th>
-				<th class="motor-name">motor</th>
-				<th>status</th>
-				<th class="position-column">POSITION</th>
-				<th>move to</th>
-				<th>actions</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each gantryMotors() as motor (motor.name)}
+	<div class="scroll-x motor-table-scroll">
+		<table class="motor-table">
+			<thead>
 				<tr>
-					<td class="motor-id">{motor.motor_id}</td>
-					<td class="motor-name">{motor.name}</td>
-					<td>
-						{#if testingMotor === motor.name}
-							<span class="status-testing">TEST</span>
-						{:else if testResults[motor.name] === 'ok'}
-							<span class="status-ok">OK</span>
-						{:else if testResults[motor.name] === 'err'}
-							<span class="status-error">ERR</span>
-						{:else}
-							<span class="status-unknown">-</span>
-						{/if}
-					</td>
-					<td class="position-column"
-						>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
-					>
-					<td>
-						<input
-							type="number"
-							step="0.1"
-							placeholder={unitForMotor(motor.name)}
-							value={moveTargets[motor.name] ?? ''}
-							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						/>
-						<button
-							type="button"
-							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						>
-							go
-						</button>
-					</td>
-					<td>
-						<button
-							type="button"
-							on:click={() => didClickTestMotor(motor.name)}
-							disabled={isActionDisabled()}
-						>
-							TEST
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickHome(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								doorAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							home
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickCrash(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								doorAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							crash
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickClear(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								doorAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							clear
-						</button>
-					</td>
+					<th colspan="6">
+						<div class="section-heading">
+							<span>gantry motors</span>
+							<span>
+								<button
+									type="button"
+									on:click={() => didClickHomeSection('gantry', gantryMotors())}
+									disabled={isActionDisabled()}>HOME</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickMoveSection('gantry', gantryMotors())}
+									disabled={isActionDisabled()}>MOVE</button
+								>
+							</span>
+						</div>
+					</th>
 				</tr>
-			{/each}
-		</tbody>
-	</table>
-
-	<table class="motor-table">
-		<thead>
-			<tr>
-				<th colspan="6">
-					<div class="section-heading">
-						<span>tool motors</span>
-						<span>
-							<button
-								type="button"
-								on:click={() => didClickHomeSection('tool', toolMotors())}
-								disabled={isActionDisabled()}>HOME</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickMoveSection('tool', toolMotors())}
-								disabled={isActionDisabled()}>MOVE</button
-							>
-						</span>
-					</div>
-				</th>
-			</tr>
-			<tr>
-				<th>id</th>
-				<th class="motor-name">motor</th>
-				<th>status</th>
-				<th class="position-column">POSITION</th>
-				<th>move to</th>
-				<th>actions</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each toolMotors() as motor (motor.name)}
 				<tr>
-					<td class="motor-id">{motor.motor_id}</td>
-					<td class="motor-name">{motor.name}</td>
-					<td>
-						{#if testingMotor === motor.name}
-							<span class="status-testing">TEST</span>
-						{:else if testResults[motor.name] === 'ok'}
-							<span class="status-ok">OK</span>
-						{:else if testResults[motor.name] === 'err'}
-							<span class="status-error">ERR</span>
-						{:else}
-							<span class="status-unknown">-</span>
-						{/if}
-					</td>
-					<td class="position-column"
-						>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
-					>
-					<td>
-						<input
-							type="number"
-							step="0.1"
-							placeholder={unitForMotor(motor.name)}
-							value={moveTargets[motor.name] ?? ''}
-							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						/>
-						<button
-							type="button"
-							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						>
-							go
-						</button>
-					</td>
-					<td>
-						<button
-							type="button"
-							on:click={() => didClickTestMotor(motor.name)}
-							disabled={isActionDisabled()}
-						>
-							TEST
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickHome(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							home
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickCrash(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							crash
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickClear(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							clear
-						</button>
-					</td>
+					<th>id</th>
+					<th class="motor-name">motor</th>
+					<th>status</th>
+					<th class="position-column">POSITION</th>
+					<th>move to</th>
+					<th>actions</th>
 				</tr>
-			{/each}
-			<tr>
-				<td class="motor-id">9</td>
-				<td class="motor-name">gripper</td>
-				<td>
-					{#if testingMotor === 'gripper'}
-						<span class="status-testing">TEST</span>
-					{:else if testResults['gripper'] === 'ok'}
-						<span class="status-ok">OK</span>
-					{:else if testResults['gripper'] === 'err'}
-						<span class="status-error">ERR</span>
-					{:else}
-						<span class="status-unknown">-</span>
-					{/if}
-				</td>
-				<td class="position-column">-</td>
-				<td>-</td>
-				<td>
-					<button type="button" on:click={didClickTestGripper} disabled={isActionDisabled()}>
-						TEST
-					</button>
-					<button
-						type="button"
-						on:click={() => didClickGripper('grip')}
-						disabled={gripperAction !== null ||
-							activeMotor !== null ||
-							movingMotor !== null ||
-							isTesting === true}
-					>
-						grip
-					</button>
-					<button
-						type="button"
-						on:click={() => didClickGripper('release')}
-						disabled={gripperAction !== null ||
-							activeMotor !== null ||
-							movingMotor !== null ||
-							isTesting === true}
-					>
-						release
-					</button>
-				</td>
-			</tr>
-		</tbody>
-	</table>
-
-	<table class="motor-table">
-		<thead>
-			<tr>
-				<th colspan="6">
-					<div class="section-heading">
-						<span>io motors</span>
-						<span>
-							<button
-								type="button"
-								on:click={() => didClickHomeSection('io', ioMotors())}
-								disabled={isActionDisabled()}>HOME</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickMoveSection('io', ioMotors())}
-								disabled={isActionDisabled()}>MOVE</button
-							>
-						</span>
-					</div>
-				</th>
-			</tr>
-			<tr>
-				<th>id</th>
-				<th class="motor-name">motor</th>
-				<th>status</th>
-				<th class="position-column">POSITION</th>
-				<th>move to</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each ioMotors() as motor (motor.name)}
-				<tr>
-					<td class="motor-id">{motor.motor_id}</td>
-					<td class="motor-name">{motor.name}</td>
-					<td>
-						{#if testingMotor === motor.name}
-							<span class="status-testing">TEST</span>
-						{:else if testResults[motor.name] === 'ok'}
-							<span class="status-ok">OK</span>
-						{:else if testResults[motor.name] === 'err'}
-							<span class="status-error">ERR</span>
-						{:else}
-							<span class="status-unknown">-</span>
-						{/if}
-					</td>
-					<td class="position-column"
-						>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
-					>
-					<td>
-						<input
-							type="number"
-							step="0.1"
-							placeholder="mm"
-							value={moveTargets[motor.name] ?? ''}
-							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						/>
-						<button
-							type="button"
-							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+			</thead>
+			<tbody>
+				{#each gantryMotors() as motor (motor.name)}
+					<tr>
+						<td class="motor-id">{motor.motor_id}</td>
+						<td class="motor-name">{motor.name}</td>
+						<td>
+							{#if testingMotor === motor.name}
+								<span class="status-testing">TEST</span>
+							{:else if testResults[motor.name] === 'ok'}
+								<span class="status-ok">OK</span>
+							{:else if testResults[motor.name] === 'err'}
+								<span class="status-error">ERR</span>
+							{:else}
+								<span class="status-unknown">-</span>
+							{/if}
+						</td>
+						<td class="position-column"
+							>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
 						>
-							go
-						</button>
-					</td>
-					{#if motor.name !== 'door'}
+						<td>
+							<input
+								type="number"
+								step="0.1"
+								placeholder={unitForMotor(motor.name)}
+								value={moveTargets[motor.name] ?? ''}
+								on:input={(e) => didInputTarget(motor.name, e)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							/>
+							<button
+								type="button"
+								on:click={() => didClickMove(motor.name)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							>
+								go
+							</button>
+						</td>
 						<td>
 							<button
 								type="button"
 								on:click={() => didClickTestMotor(motor.name)}
-								disabled={isActionDisabled()}>TEST</button
+								disabled={isActionDisabled()}
 							>
+								TEST
+							</button>
 							<button
 								type="button"
 								on:click={() => didClickHome(motor.name)}
 								disabled={activeMotor !== null ||
+									gripperAction !== null ||
 									doorAction !== null ||
 									movingMotor !== null ||
 									isTesting === true}
@@ -879,6 +622,7 @@
 								type="button"
 								on:click={() => didClickCrash(motor.name)}
 								disabled={activeMotor !== null ||
+									gripperAction !== null ||
 									doorAction !== null ||
 									movingMotor !== null ||
 									isTesting === true}
@@ -889,6 +633,7 @@
 								type="button"
 								on:click={() => didClickClear(motor.name)}
 								disabled={activeMotor !== null ||
+									gripperAction !== null ||
 									doorAction !== null ||
 									movingMotor !== null ||
 									isTesting === true}
@@ -896,64 +641,329 @@
 								clear
 							</button>
 						</td>
-					{/if}
-				</tr>
-				{#if motor.name === 'door'}
-					<tr>
-						<td colspan="5">
-							<div class="door-actions">
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
+
+	<div class="scroll-x motor-table-scroll">
+		<table class="motor-table">
+			<thead>
+				<tr>
+					<th colspan="6">
+						<div class="section-heading">
+							<span>tool motors</span>
+							<span>
 								<button
 									type="button"
-									on:click={() => didClickTestMotor('door')}
+									on:click={() => didClickHomeSection('tool', toolMotors())}
+									disabled={isActionDisabled()}>HOME</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickMoveSection('tool', toolMotors())}
+									disabled={isActionDisabled()}>MOVE</button
+								>
+							</span>
+						</div>
+					</th>
+				</tr>
+				<tr>
+					<th>id</th>
+					<th class="motor-name">motor</th>
+					<th>status</th>
+					<th class="position-column">POSITION</th>
+					<th>move to</th>
+					<th>actions</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each toolMotors() as motor (motor.name)}
+					<tr>
+						<td class="motor-id">{motor.motor_id}</td>
+						<td class="motor-name">{motor.name}</td>
+						<td>
+							{#if testingMotor === motor.name}
+								<span class="status-testing">TEST</span>
+							{:else if testResults[motor.name] === 'ok'}
+								<span class="status-ok">OK</span>
+							{:else if testResults[motor.name] === 'err'}
+								<span class="status-error">ERR</span>
+							{:else}
+								<span class="status-unknown">-</span>
+							{/if}
+						</td>
+						<td class="position-column"
+							>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
+						>
+						<td>
+							<input
+								type="number"
+								step="0.1"
+								placeholder={unitForMotor(motor.name)}
+								value={moveTargets[motor.name] ?? ''}
+								on:input={(e) => didInputTarget(motor.name, e)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							/>
+							<button
+								type="button"
+								on:click={() => didClickMove(motor.name)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							>
+								go
+							</button>
+						</td>
+						<td>
+							<button
+								type="button"
+								on:click={() => didClickTestMotor(motor.name)}
+								disabled={isActionDisabled()}
+							>
+								TEST
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickHome(motor.name)}
+								disabled={activeMotor !== null ||
+									gripperAction !== null ||
+									movingMotor !== null ||
+									isTesting === true}
+							>
+								home
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickCrash(motor.name)}
+								disabled={activeMotor !== null ||
+									gripperAction !== null ||
+									movingMotor !== null ||
+									isTesting === true}
+							>
+								crash
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickClear(motor.name)}
+								disabled={activeMotor !== null ||
+									gripperAction !== null ||
+									movingMotor !== null ||
+									isTesting === true}
+							>
+								clear
+							</button>
+						</td>
+					</tr>
+				{/each}
+				<tr>
+					<td class="motor-id">9</td>
+					<td class="motor-name">gripper</td>
+					<td>
+						{#if testingMotor === 'gripper'}
+							<span class="status-testing">TEST</span>
+						{:else if testResults['gripper'] === 'ok'}
+							<span class="status-ok">OK</span>
+						{:else if testResults['gripper'] === 'err'}
+							<span class="status-error">ERR</span>
+						{:else}
+							<span class="status-unknown">-</span>
+						{/if}
+					</td>
+					<td class="position-column">-</td>
+					<td>-</td>
+					<td>
+						<button type="button" on:click={didClickTestGripper} disabled={isActionDisabled()}>
+							TEST
+						</button>
+						<button
+							type="button"
+							on:click={() => didClickGripper('grip')}
+							disabled={gripperAction !== null ||
+								activeMotor !== null ||
+								movingMotor !== null ||
+								isTesting === true}
+						>
+							grip
+						</button>
+						<button
+							type="button"
+							on:click={() => didClickGripper('release')}
+							disabled={gripperAction !== null ||
+								activeMotor !== null ||
+								movingMotor !== null ||
+								isTesting === true}
+						>
+							release
+						</button>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
+
+	<div class="scroll-x motor-table-scroll">
+		<table class="motor-table">
+			<thead>
+				<tr>
+					<th colspan="6">
+						<div class="section-heading">
+							<span>io motors</span>
+							<span>
+								<button
+									type="button"
+									on:click={() => didClickHomeSection('io', ioMotors())}
+									disabled={isActionDisabled()}>HOME</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickMoveSection('io', ioMotors())}
+									disabled={isActionDisabled()}>MOVE</button
+								>
+							</span>
+						</div>
+					</th>
+				</tr>
+				<tr>
+					<th>id</th>
+					<th class="motor-name">motor</th>
+					<th>status</th>
+					<th class="position-column">POSITION</th>
+					<th>move to</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each ioMotors() as motor (motor.name)}
+					<tr>
+						<td class="motor-id">{motor.motor_id}</td>
+						<td class="motor-name">{motor.name}</td>
+						<td>
+							{#if testingMotor === motor.name}
+								<span class="status-testing">TEST</span>
+							{:else if testResults[motor.name] === 'ok'}
+								<span class="status-ok">OK</span>
+							{:else if testResults[motor.name] === 'err'}
+								<span class="status-error">ERR</span>
+							{:else}
+								<span class="status-unknown">-</span>
+							{/if}
+						</td>
+						<td class="position-column"
+							>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
+						>
+						<td>
+							<input
+								type="number"
+								step="0.1"
+								placeholder="mm"
+								value={moveTargets[motor.name] ?? ''}
+								on:input={(e) => didInputTarget(motor.name, e)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							/>
+							<button
+								type="button"
+								on:click={() => didClickMove(motor.name)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							>
+								go
+							</button>
+						</td>
+						{#if motor.name !== 'door'}
+							<td>
+								<button
+									type="button"
+									on:click={() => didClickTestMotor(motor.name)}
 									disabled={isActionDisabled()}>TEST</button
 								>
 								<button
 									type="button"
-									on:click={() => didClickHome('door')}
+									on:click={() => didClickHome(motor.name)}
 									disabled={activeMotor !== null ||
 										doorAction !== null ||
 										movingMotor !== null ||
-										isTesting === true}>home</button
+										isTesting === true}
 								>
+									home
+								</button>
 								<button
 									type="button"
-									on:click={() => didClickCrash('door')}
+									on:click={() => didClickCrash(motor.name)}
 									disabled={activeMotor !== null ||
 										doorAction !== null ||
 										movingMotor !== null ||
-										isTesting === true}>crash</button
+										isTesting === true}
 								>
+									crash
+								</button>
 								<button
 									type="button"
-									on:click={() => didClickClear('door')}
+									on:click={() => didClickClear(motor.name)}
 									disabled={activeMotor !== null ||
 										doorAction !== null ||
 										movingMotor !== null ||
-										isTesting === true}>clear</button
+										isTesting === true}
 								>
-								<button
-									type="button"
-									on:click={() => didClickDoor('open')}
-									disabled={doorAction !== null ||
-										activeMotor !== null ||
-										movingMotor !== null ||
-										isTesting === true}>open</button
-								>
-								<button
-									type="button"
-									on:click={() => didClickDoor('close')}
-									disabled={doorAction !== null ||
-										activeMotor !== null ||
-										movingMotor !== null ||
-										isTesting === true}>close</button
-								>
-							</div>
-						</td>
+									clear
+								</button>
+							</td>
+						{/if}
 					</tr>
-				{/if}
-			{/each}
-		</tbody>
-	</table>
+					{#if motor.name === 'door'}
+						<tr>
+							<td colspan="5">
+								<div class="door-actions">
+									<button
+										type="button"
+										on:click={() => didClickTestMotor('door')}
+										disabled={isActionDisabled()}>TEST</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickHome('door')}
+										disabled={activeMotor !== null ||
+											doorAction !== null ||
+											movingMotor !== null ||
+											isTesting === true}>home</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickCrash('door')}
+										disabled={activeMotor !== null ||
+											doorAction !== null ||
+											movingMotor !== null ||
+											isTesting === true}>crash</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickClear('door')}
+										disabled={activeMotor !== null ||
+											doorAction !== null ||
+											movingMotor !== null ||
+											isTesting === true}>clear</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickDoor('open')}
+										disabled={doorAction !== null ||
+											activeMotor !== null ||
+											movingMotor !== null ||
+											isTesting === true}>open</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickDoor('close')}
+										disabled={doorAction !== null ||
+											activeMotor !== null ||
+											movingMotor !== null ||
+											isTesting === true}>close</button
+									>
+								</div>
+							</td>
+						</tr>
+					{/if}
+				{/each}
+			</tbody>
+		</table>
+	</div>
 
 	{#if message !== ''}
 		<StatusMessage {message} />
@@ -985,7 +995,7 @@
 		width: 120px;
 	}
 
-	.motor-table + .motor-table {
+	.motor-table-scroll + .motor-table-scroll {
 		margin-top: 1.5em;
 	}
 

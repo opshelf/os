@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import {
 		ApiError,
 		getCalibrationStatus,
@@ -43,10 +43,12 @@
 		vocabulary = v;
 	}));
 
-	const normalizedInitialSide =
+	// The initial side seeds the selection once; later prop changes must not reset it.
+	const normalizedInitialSide = untrack(() =>
 		initialSide !== undefined && sideIndex(initialSide) !== null
 			? (sideIndex(initialSide) === 1 ? 'back_module' : 'front_module')
-			: 'front_module';
+			: 'front_module'
+	);
 
 	let selectedSide = $state<'front_module' | 'back_module'>(normalizedInitialSide);
 	let selectedShelf = $state<number>(0);
@@ -433,54 +435,56 @@
 {:else if loadError !== ''}
 	<ErrorMessage message={loadError} />
 {:else if storageGrid !== null}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="3">cell selection</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td>
-					<span class="field-label">side</span>
-					<select value={selectedSide} onchange={didChangeSide}>
-						<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
-						<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
-					</select>
-				</td>
-				<td>
-					<span class="field-label">shelf</span>
-					<select value={selectedShelf} onchange={didChangeShelf}>
-						{#each getShelves() as shelf}
-							<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
-						{/each}
-					</select>
-				</td>
-				<td>
-					<span class="field-label">cell</span>
-					<select value={selectedCell} onchange={didChangeCell}>
-						{#each getCells() as cell}
-							<option value={cell.cell_idx} disabled={isCellTestable(cell) === false}>
-								{cell.cell_idx}{isCellTestable(cell) === false ? ` (${cell.status})` : ''}
-							</option>
-						{/each}
-					</select>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
-					<div class="action-row">
-						<button type="button" onclick={didClickQuick} disabled={actionsDisabled}>quick</button>
-						<button type="button" onclick={didClickCycle} disabled={actionsDisabled}>cycle</button>
-						<button type="button" onclick={didClickStore} disabled={actionsDisabled}>STORE</button>
-						<button type="button" onclick={didClickRetrieve} disabled={actionsDisabled}>
-							RETRIEVE
-						</button>
-					</div>
-				</td>
-			</tr>
-		</tbody>
-	</table>
+	<div class="scroll-x">
+		<table>
+			<thead>
+				<tr>
+					<th colspan="3">cell selection</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr>
+					<td>
+						<span class="field-label">side</span>
+						<select value={selectedSide} onchange={didChangeSide}>
+							<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
+							<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
+						</select>
+					</td>
+					<td>
+						<span class="field-label">shelf</span>
+						<select value={selectedShelf} onchange={didChangeShelf}>
+							{#each getShelves() as shelf}
+								<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
+							{/each}
+						</select>
+					</td>
+					<td>
+						<span class="field-label">cell</span>
+						<select value={selectedCell} onchange={didChangeCell}>
+							{#each getCells() as cell}
+								<option value={cell.cell_idx} disabled={isCellTestable(cell) === false}>
+									{cell.cell_idx}{isCellTestable(cell) === false ? ` (${cell.status})` : ''}
+								</option>
+							{/each}
+						</select>
+					</td>
+				</tr>
+				<tr>
+					<td colspan="3">
+						<div class="action-row">
+							<button type="button" onclick={didClickQuick} disabled={actionsDisabled}>quick</button>
+							<button type="button" onclick={didClickCycle} disabled={actionsDisabled}>cycle</button>
+							<button type="button" onclick={didClickStore} disabled={actionsDisabled}>STORE</button>
+							<button type="button" onclick={didClickRetrieve} disabled={actionsDisabled}>
+								RETRIEVE
+							</button>
+						</div>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
 {/if}
 
 {#if blockedCellMessage !== ''}

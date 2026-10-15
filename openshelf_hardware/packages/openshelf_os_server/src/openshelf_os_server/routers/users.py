@@ -1,4 +1,5 @@
 """User management API endpoints."""
+import asyncio
 from openshelf_os_server.documentation import MessageResponse, response_docs
 from typing import Optional, List
 
@@ -6,13 +7,15 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from ..database.session import get_db
 from ..database.models import User, Role, AccessLevel
 from ..core.auth import AuthService
+from ..core.login import generate_login_barcode
 from ..settings import get_settings
 from .auth_deps import get_current_user, require_permissions
+from .printer import _print_payload as print_payload
 
 router = APIRouter(
 	prefix="/api/users",
@@ -69,8 +72,21 @@ class UserResponse(BaseModel):
 	access_level_id: Optional[int] = None
 	access_level_name: Optional[str] = None
 	is_active: bool
+	has_login_barcode: bool
 	created_at: str
 	updated_at: str
+
+
+class LoginBarcodeResolveRequest(BaseModel):
+	login_barcode: str = Field(min_length=1, max_length=64)
+
+
+class LoginBarcodePrintResponse(BaseModel):
+	user_id: int
+	printed: bool
+	assigned: bool
+	replaced: bool
+	has_login_barcode: bool
 
 class UserListResponse(BaseModel):
 	"""User list response."""
@@ -90,6 +106,7 @@ def _build_user_response(user: User) -> UserResponse:
 		access_level_id=user.access_level_id,
 		access_level_name=str(user.access_level.name) if user.access_level and user.access_level.name else None,
 		is_active=bool(user.is_active),
+		has_login_barcode=user.login_barcode is not None,
 		created_at=user.created_at.isoformat() if user.created_at else "",
 		updated_at=user.updated_at.isoformat() if user.updated_at else "",
 	)
@@ -235,6 +252,13 @@ async def get_user(
 	
 	return _build_user_response(user)
 
+@router.patch(
+	"/{user_id}",
+	response_model=UserResponse,
+	dependencies=[Depends(require_permissions("users:write"))],
+	summary="Update a managed user",
+	responses=response_docs(errors=(400, 401, 403, 404)),
+)
 @router.put(
     "/{user_id}",
     response_model=UserResponse,
@@ -322,6 +346,90 @@ async def update_user(
 	user = user_result.scalar_one()
 	
 	return _build_user_response(user)
+
+
+@router.post(
+	"/login-barcode/resolve",
+	response_model=UserResponse,
+	summary="Resolve a scanned login barcode to a managed user",
+	responses=response_docs(errors=(401, 403, 404)),
+)
+async def resolve_login_barcode(
+	request: LoginBarcodeResolveRequest,
+	db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+	"""Resolve an exact assigned barcode without exposing barcode values in responses."""
+	user = await db.scalar(
+		select(User)
+		.options(selectinload(User.role), selectinload(User.access_level))
+		.where(User.login_barcode == request.login_barcode, ~User.is_system)
+	)
+	if user is None:
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail="User not found",
+		)
+	return _build_user_response(user)
+
+
+@router.post(
+	"/{user_id}/login-barcode/print",
+	response_model=LoginBarcodePrintResponse,
+	dependencies=[
+		Depends(require_permissions("users:write")),
+		Depends(require_permissions("printer:print")),
+	],
+	summary="Rotate and print a user's login barcode",
+	responses=response_docs(errors=(401, 403, 404, 503)),
+)
+async def print_login_barcode(
+	user_id: int,
+	db: AsyncSession = Depends(get_db),
+	current_user: User = Depends(get_current_user),
+) -> LoginBarcodePrintResponse:
+	"""Replace any prior assignment, persist it, then print the new barcode."""
+	user = await db.scalar(select(User).where(User.id == user_id, ~User.is_system))
+	if user is None:
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail="User not found",
+		)
+
+	had_barcode = user.login_barcode is not None
+	assigned = not had_barcode
+	replaced = had_barcode
+	user.login_barcode = generate_login_barcode()
+	await db.commit()
+	await db.refresh(user)
+
+	assert user.login_barcode is not None
+	try:
+		printed = await asyncio.to_thread(print_payload, user.login_barcode)
+	except Exception as exc:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail={
+				"message": "Unable to print login barcode",
+				"login_barcode_assigned": True,
+			},
+		) from exc
+
+	if not printed:
+		raise HTTPException(
+			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+			detail={
+				"message": "Unable to print login barcode",
+				"login_barcode_assigned": True,
+			},
+		)
+
+	return LoginBarcodePrintResponse(
+		user_id=user.id,
+		printed=True,
+		assigned=assigned,
+		replaced=replaced,
+		has_login_barcode=True,
+	)
 
 @router.delete(
     "/{user_id}",

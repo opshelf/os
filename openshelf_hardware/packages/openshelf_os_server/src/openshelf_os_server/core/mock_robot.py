@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -12,6 +13,8 @@ from typing import Any
 from sqlalchemy import delete, func, select
 
 from openshelf_os_server.core.bin_storage import reserved_bin_locations
+from openshelf_os_server.core.command_lifecycle import ensure_target_not_in_flight
+from openshelf_os_server.core.event_log import append_robot_event
 from openshelf_os_server.database.models import (
 	Item,
 	ItemLocation,
@@ -25,6 +28,8 @@ logger = logging.getLogger(__name__)
 MOCK_COMMAND_LIMIT = 32
 MOCK_COMMAND_RETENTION_DAYS = 7
 MOCK_EXECUTION_SECONDS = 30.0
+# Local walkthroughs may shorten the simulated command time; devices keep the default.
+MOCK_EXECUTION_SECONDS_ENV = "OPENSHELF_MOCK_EXECUTION_SECONDS"
 MOCK_SIDES = ("front_module", "back_module")
 MOCK_SHELVES_PER_SIDE = 4
 MOCK_CELLS_PER_SHELF = 10
@@ -192,6 +197,8 @@ class MockRobotRuntime:
 							raise MockRequestConflictError
 						return existing, True
 
+				await ensure_target_not_in_flight(session, payload, runtime="mock")
+
 				active_count = await session.scalar(
 					select(func.count())
 					.select_from(MockRobotCommand)
@@ -288,6 +295,9 @@ class MockRobotRuntime:
 				await self._wake.wait()
 				continue
 
+			if row.payload.get("command") == "store_item" and self._bin_io_box_occupied_override is True:
+				# The robot takes the stored item out of the IO box when the command starts.
+				self._bin_io_box_occupied_override = False
 			await self.publish_status()
 			try:
 				await asyncio.sleep(self.execution_seconds)
@@ -308,6 +318,9 @@ class MockRobotRuntime:
 				await self._finish(row.command_id, "failed", result)
 			await self.publish_event({**result, "command_id": row.command_id})
 			await self.publish_status()
+			from openshelf_os_server.core.import_jobs import notify_command_result  # noqa: PLC0415
+
+			await notify_command_result(row.request_id, {**result, "command_id": row.command_id}, self)
 
 	async def _claim_next(self) -> MockRobotCommand | None:
 		async with self._lock:
@@ -591,6 +604,9 @@ class MockRobotRuntime:
 
 	async def publish_event(self, payload: dict[str, Any]) -> None:
 		message = json.dumps(payload)
+		# The log row commits before the fan-out, so SSE clients see mock events
+		# only once they are durable and replayable.
+		await append_robot_event(payload)
 		for queue in list(self._event_subscribers):
 			await queue.put(message)
 
@@ -616,10 +632,22 @@ class MockRobotRuntime:
 mock_robot_runtime: MockRobotRuntime | None = None
 
 
+def _configured_execution_seconds() -> float:
+	raw = os.getenv(MOCK_EXECUTION_SECONDS_ENV, "").strip()
+	if raw == "":
+		return MOCK_EXECUTION_SECONDS
+	try:
+		value = float(raw)
+	except ValueError:
+		logger.warning("Ignoring invalid %s=%r", MOCK_EXECUTION_SECONDS_ENV, raw)
+		return MOCK_EXECUTION_SECONDS
+	return value if 0 <= value < 3600 else MOCK_EXECUTION_SECONDS
+
+
 async def start_mock_robot_runtime() -> MockRobotRuntime:
 	global mock_robot_runtime
 	if mock_robot_runtime is None:
-		mock_robot_runtime = MockRobotRuntime()
+		mock_robot_runtime = MockRobotRuntime(execution_seconds=_configured_execution_seconds())
 		await mock_robot_runtime.start()
 	return mock_robot_runtime
 

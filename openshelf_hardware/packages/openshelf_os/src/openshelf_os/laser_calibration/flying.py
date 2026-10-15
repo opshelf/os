@@ -708,8 +708,8 @@ async def _read_bounded(label: str, read: Callable[[], Awaitable[Any]]) -> Any:
 async def _restore_axis_velocity(scan_motor: Any) -> None:
 	"""Write the configured feed back after a pass commanded its own rpm.
 
-	Motor writes a move's rpm into the drive's persistent Velocity register, and later moves with
-	rpm=None reuse whatever the register holds, so a pass left unrestored slows every move after it.
+	Motor moves and jogs now write their own Velocity, so this only keeps the persistent register
+	honest for anything that reads it between moves.
 	"""
 	set_param = getattr(scan_motor, "set_param", None)
 	configured_rpm = getattr(getattr(scan_motor, "_params", None), "rpm", None)

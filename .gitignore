@@ -38,3 +38,9 @@ docs/
 !.pi/settings.json
 CLAUDE.md
 .claude/
+
+# Editor settings stay local.
+.vscode/
+
+# Amp orb portal registrations.
+.amp/portals/*

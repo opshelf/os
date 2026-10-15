@@ -82,23 +82,25 @@
 </script>
 
 {#if init !== null}
-	<table class="init-progress">
-		<thead>
-			<tr>
-				<th colspan="3"> robot initialization </th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each visibleComponents as component (component.component)}
-				{@const state = stepState(component.phase)}
-				<tr class="step step-{state}">
-					<td class="step-marker">●</td>
-					<td class="step-name">{label(component.component)}</td>
-					<td class="step-status">{statusText(component)}</td>
+	<div class="scroll-x">
+		<table class="init-progress">
+			<thead>
+				<tr>
+					<th colspan="3"> robot initialization </th>
 				</tr>
-			{/each}
-		</tbody>
-	</table>
+			</thead>
+			<tbody>
+				{#each visibleComponents as component (component.component)}
+					{@const state = stepState(component.phase)}
+					<tr class="step step-{state}">
+						<td class="step-marker">●</td>
+						<td class="step-name">{label(component.component)}</td>
+						<td class="step-status">{statusText(component)}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 {/if}
 
 <style>

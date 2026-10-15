@@ -30,6 +30,10 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Sizer • Openshelf</title>
+</svelte:head>
+
 <div class="toggle-group">
 	<a class:selected={selectedView === 'status'} href={tabHref('/sizer/status')}>status</a>
 	<a class:selected={selectedView === 'measurement'} href={tabHref('/sizer/measurement')}>measurement</a>

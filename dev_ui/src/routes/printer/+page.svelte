@@ -135,90 +135,96 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Printer • Openshelf</title>
+</svelte:head>
+
 {#if isLoading === true}
 	<p>loading printer data...</p>
 {:else}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="2">printer status</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#if status !== null}
+	<div class="scroll-x">
+		<table>
+			<thead>
 				<tr>
-					<td>enabled</td>
-					<td class:status-ok={status.enabled} class:status-error={!status.enabled}>
-						{status.enabled ? 'yes' : 'no'}
-					</td>
+					<th colspan="2">printer status</th>
 				</tr>
-				<tr>
-					<td>connected</td>
-					<td
-						class:status-ok={status.connected || status.simulated}
-						class:status-error={!status.connected && !status.simulated}
-					>
-						{status.simulated ? 'simulated' : status.connected ? 'yes' : 'no'}
-					</td>
-				</tr>
-				<tr>
-					<td>healthy</td>
-					<td class:status-ok={status.healthy} class:status-error={!status.healthy}>
-						{status.healthy ? 'yes' : 'no'}
-					</td>
-				</tr>
-				<tr>
-					<td>paper</td>
-					<td
-						class:status-ok={!status.paper_out && !status.paper_near_end}
-						class:status-warning={status.paper_near_end && !status.paper_out}
-						class:status-error={status.paper_out}
-					>
-						{status.paper_out ? 'out' : status.paper_near_end ? 'near end' : 'ok'}
-					</td>
-				</tr>
-				<tr>
-					<td>cover</td>
-					<td class:status-ok={!status.cover_open} class:status-error={status.cover_open}>
-						{status.cover_open ? 'open' : 'closed'}
-					</td>
-				</tr>
-				<tr>
-					<td>error</td>
-					<td class:status-error={status.error !== null}>{status.error ?? '-'}</td>
-				</tr>
-			{/if}
-		</tbody>
+			</thead>
+			<tbody>
+				{#if status !== null}
+					<tr>
+						<td>enabled</td>
+						<td class:status-ok={status.enabled} class:status-error={!status.enabled}>
+							{status.enabled ? 'yes' : 'no'}
+						</td>
+					</tr>
+					<tr>
+						<td>connected</td>
+						<td
+							class:status-ok={status.connected || status.simulated}
+							class:status-error={!status.connected && !status.simulated}
+						>
+							{status.simulated ? 'simulated' : status.connected ? 'yes' : 'no'}
+						</td>
+					</tr>
+					<tr>
+						<td>healthy</td>
+						<td class:status-ok={status.healthy} class:status-error={!status.healthy}>
+							{status.healthy ? 'yes' : 'no'}
+						</td>
+					</tr>
+					<tr>
+						<td>paper</td>
+						<td
+							class:status-ok={!status.paper_out && !status.paper_near_end}
+							class:status-warning={status.paper_near_end && !status.paper_out}
+							class:status-error={status.paper_out}
+						>
+							{status.paper_out ? 'out' : status.paper_near_end ? 'near end' : 'ok'}
+						</td>
+					</tr>
+					<tr>
+						<td>cover</td>
+						<td class:status-ok={!status.cover_open} class:status-error={status.cover_open}>
+							{status.cover_open ? 'open' : 'closed'}
+						</td>
+					</tr>
+					<tr>
+						<td>error</td>
+						<td class:status-error={status.error !== null}>{status.error ?? '-'}</td>
+					</tr>
+				{/if}
+			</tbody>
 
-		<thead>
-			<tr>
-				<th colspan="2">feed calibration</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td><label for="feed-dots">feed dots</label></td>
-				<td>
-					<input id="feed-dots" type="number" min="0" max="128" step="1" bind:value={feedDots} />
-				</td>
-			</tr>
-		</tbody>
+			<thead>
+				<tr>
+					<th colspan="2">feed calibration</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr>
+					<td><label for="feed-dots">feed dots</label></td>
+					<td>
+						<input id="feed-dots" type="number" min="0" max="128" step="1" bind:value={feedDots} />
+					</td>
+				</tr>
+			</tbody>
 
-		<thead>
-			<tr>
-				<th colspan="2">test label</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td><label for="print-code">code</label></td>
-				<td>
-					<input id="print-code" type="text" bind:value={code} placeholder="012345678901" />
-					<button type="button" class="inline-button" on:click={didClickGenerate}>random</button>
-				</td>
-			</tr>
-		</tbody>
-	</table>
+			<thead>
+				<tr>
+					<th colspan="2">test label</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr>
+					<td><label for="print-code">code</label></td>
+					<td>
+						<input id="print-code" type="text" bind:value={code} placeholder="012345678901" />
+						<button type="button" class="inline-button" on:click={didClickGenerate}>random</button>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
 
 	<div class="action-buttons">
 		<button type="button" on:click={didClickRefresh} disabled={isRefreshing}>refresh</button>
