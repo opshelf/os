@@ -44,6 +44,9 @@
 		{ href: '/wifi', label: 'wifi' }
 	];
 
+	// the close button returns to the robot's own kiosk, which only exists on the robot
+	const isOnRobot = ['localhost', '127.0.0.1', '[::1]'].includes(document.location.hostname);
+
 	let { children } = $props();
 	let authReady = $state(false);
 	let apiState = $state<'unknown' | 'down' | 'up'>('unknown');
@@ -212,9 +215,11 @@
 			<li class="device-label">{deviceLabel}</li>
 		{/if}
 
-		<li>
-			<a href={`http://${document.location.hostname}:8888/`} class="close-btn">Close</a>
-		</li>
+		{#if isOnRobot === true}
+			<li>
+				<a href={`http://${document.location.hostname}:8888/`} class="close-btn">Close</a>
+			</li>
+		{/if}
 	</ul>
 </nav>
 
