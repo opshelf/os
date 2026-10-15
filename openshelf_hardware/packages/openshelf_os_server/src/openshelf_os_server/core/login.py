@@ -75,15 +75,19 @@ async def resolve_identifier(db: AsyncSession, identifier: str) -> User | None:
     if not normalized:
         return None
 
-    base = (
+    active = (
         select(User)
         .options(selectinload(User.role), selectinload(User.access_level))
-        .where(User.is_active, ~User.is_system)
+        .where(User.is_active)
     )
-    result = await db.execute(base.where(func.lower(User.email) == normalized.casefold()))
+    # An exact email may name a system user: the dev UI signs in as the developer system user
+    # by email. Barcode and name matching stay limited to people.
+    result = await db.execute(active.where(func.lower(User.email) == normalized.casefold()))
     user = result.scalar_one_or_none()
     if user is not None:
         return user
+
+    base = active.where(~User.is_system)
 
     result = await db.execute(base.where(User.login_barcode == normalized))
     user = result.scalar_one_or_none()
