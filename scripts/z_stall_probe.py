@@ -40,7 +40,6 @@ for import_path in reversed(PYTHON_PATHS):
 
 import openshelf_os.laser_calibration as laser_module
 from openshelf_os.common import CONFIG_PATH, load_config_file
-from openshelf_os.laser_calibration.defaults import Z_OFFSET_MODEL_PARAM_TOLERANCE_MM
 from openshelf_os.runtime_state import RuntimeStatePaths, paths_for_config_file
 from openshelf_os.storage import StorageModuleSide
 
@@ -282,7 +281,7 @@ def report_plan(
 		print(
 			"  warning: "
 			f"{manual_reference.z_capture_conditions_missing} reference cell(s) were saved before "
-			"the capture stage was recorded, so their stage extension could not be checked"
+			"the capture stage was recorded, so their z could not be carried to the live stage"
 		)
 
 
@@ -353,24 +352,20 @@ def report_result(*, result: Any, manual_reference: Any, scan_config: Any, side:
 		f"{'within tolerance' if agreement_ok else 'OUT OF TOLERANCE'}"
 	)
 
-	stage_ok = True
+	try:
+		laser_module.check_datum_stage_carry(manual_reference)
+	except ValueError as exc:
+		print(f"           datum refused: {exc}")
+		return 1
 
-	if manual_reference.z_captured_stage_mm is not None:
-		stage_delta_mm = abs(float(manual_reference.z_captured_stage_mm) - float(result.stage_extension_mm))
-		pin_tolerance_mm = float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM)
-		stage_ok = stage_delta_mm <= pin_tolerance_mm
+	if manual_reference.z_captured_stage_mm is not None and manual_reference.z_stage_extension_mm is not None:
 		print(
-			f"           datum captured at stage {float(manual_reference.z_captured_stage_mm):.2f}mm vs probe "
-			f"{float(result.stage_extension_mm):.2f}mm (delta {stage_delta_mm:.2f}mm, pin tolerance "
-			f"{pin_tolerance_mm:.2f}mm) - "
-			+ (
-				"comparable"
-				if stage_ok
-				else "NOT comparable: the datum was saved at a different stage extension"
-			)
+			f"           datum captured at stage {float(manual_reference.z_captured_stage_mm):.2f}mm, carried to "
+			f"the live stage {float(manual_reference.z_stage_extension_mm):.2f}mm (probe ran at "
+			f"{float(result.stage_extension_mm):.2f}mm)"
 		)
 
-	return 0 if agreement_ok and stage_ok else 1
+	return 0 if agreement_ok else 1
 
 
 async def main() -> int:
@@ -441,6 +436,8 @@ async def main() -> int:
 	manually_excluded = parse_cells(args.exclude) or set()
 	excluded_cells |= manually_excluded
 	report_exclusions(excluded_cells)
+	stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.FRONT else "STAGE_EXTENSION_SHELF_BACK"
+	stage_extension_value = getattr(config.robot.tool.parameters, stage_param, None)
 	manual_reference = None
 	try:
 		manual_reference = laser_module.derive_reference_offsets(
@@ -452,6 +449,8 @@ async def main() -> int:
 			# filter would pull manual cells from other shelves into the datum.
 			shelf_idx=args.shelf if cells is None or len(cells) != 1 else sorted(cells)[0][0],
 			cell_idx=None if cells is None or len(cells) != 1 else sorted(cells)[0][1],
+			# As the apply does: stamped datums are carried to the stage the cells are placed at.
+			stage_extension_mm=None if stage_extension_value is None else float(stage_extension_value),
 		)
 	except ValueError as exc:
 		# A probe without a datum is still worth running: it measures the geometry, it just

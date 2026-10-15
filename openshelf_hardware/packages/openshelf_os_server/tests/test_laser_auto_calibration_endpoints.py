@@ -711,3 +711,43 @@ def test_restore_calibration_params_keeps_persisted_values() -> None:
         )
 
     reload_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_z_stall_setting_is_saved_to_the_machine_config() -> None:
+    from openshelf_os_server.routers import calibration as calibration_router
+
+    config = SimpleNamespace(robot=SimpleNamespace(grid=SimpleNamespace(scan=SimpleNamespace(z_stall_anchor_enabled=False))))
+    config.model_copy = lambda deep=True: copy.deepcopy(config)
+    saved: list[object] = []
+
+    with patch.object(calibration_router, "get_root_config", return_value=config):
+        with patch.object(calibration_router, "save_root_config", side_effect=saved.append):
+            with patch.object(calibration_router, "ensure_laser_auto_calibration_not_running", AsyncMock()):
+                assert (await calibration_router.get_laser_z_stall_setting()).enabled is False
+                response = await calibration_router.save_laser_z_stall_setting(
+                    calibration_router.LaserZStallSetting(enabled=True)
+                )
+
+    assert response.enabled is True
+    assert len(saved) == 1
+    assert saved[0].robot.grid.scan.z_stall_anchor_enabled is True
+    # The cached config is replaced by the save, never edited in place.
+    assert config.robot.grid.scan.z_stall_anchor_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_z_stall_setting_is_refused_while_calibration_runs() -> None:
+    from openshelf_os_server.routers import calibration as calibration_router
+
+    with patch.object(
+        calibration_router,
+        "ensure_laser_auto_calibration_not_running",
+        AsyncMock(side_effect=HTTPException(status_code=409, detail="laser auto calibration is running")),
+    ):
+        with patch.object(calibration_router, "save_root_config") as save:
+            with pytest.raises(HTTPException) as error:
+                await calibration_router.save_laser_z_stall_setting(calibration_router.LaserZStallSetting(enabled=True))
+
+    assert error.value.status_code == 409
+    save.assert_not_called()

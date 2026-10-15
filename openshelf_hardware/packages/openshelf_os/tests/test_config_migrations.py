@@ -35,7 +35,8 @@ from openshelf_os.laser_calibration.core import (
     get_gripper_xy_correction,
     get_laser_scan_pose_stage_mm,
     get_wall_depth_to_gripper_z_model,
-    require_z_offset_model_matches_tool,
+    require_z_offset_model_matches_z_place,
+    z_offset_model_intercept_at_stage,
 )
 from openshelf_os.laser_calibration.motion import get_laser_scan_z_extension_mm
 from openshelf_os.storage import StorageModuleSide
@@ -143,21 +144,11 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
         )
         model = get_wall_depth_to_gripper_z_model(scan_config=scan, side=side)
         assert 10 + model.intercept_mm + model.x_slope_mm_per_mm * 400 == pytest.approx(expected_z)
-        require_z_offset_model_matches_tool(
-            model=model,
-            side=side,
-            stage_extension_mm=model.reference_stage_mm,
-            z_place_mm=160.5,
-            tolerance_mm=0.2,
-        )
-        with pytest.raises(ValueError, match="different tool geometry"):
-            require_z_offset_model_matches_tool(
-                model=model,
-                side=side,
-                stage_extension_mm=model.reference_stage_mm + 1,
-                z_place_mm=160.5,
-                tolerance_mm=0.2,
-            )
+        # The pin survives the migration: the model is carried from the stage it was derived at.
+        require_z_offset_model_matches_z_place(model=model, side=side, z_place_mm=160.5, tolerance_mm=0.2)
+        assert z_offset_model_intercept_at_stage(
+            model=model, stage_extension_mm=model.reference_stage_mm + 1
+        ) == pytest.approx(model.intercept_mm - 1)
 
 
 def test_divergent_promoted_values_are_refused_without_printing_them():

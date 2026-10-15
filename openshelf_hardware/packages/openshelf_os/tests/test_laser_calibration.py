@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from openshelf_os.laser_calibration import (
-	require_z_offset_model_matches_tool,
+	require_z_offset_model_matches_z_place,
+	z_offset_model_intercept_at_stage,
 	apply_wall_depth_z_offsets,
 	apply_xy_reference_offsets,
 	build_shelves_from_scan,
@@ -410,15 +411,24 @@ def test_probe_z_until_stall_does_not_report_fast_approach_fault_as_wall_contact
 	assert z_contact_mm == pytest.approx(56.2)
 
 
-def test_require_z_offset_model_matches_tool_rejects_drifted_stage_extension() -> None:
+def test_z_offset_model_is_carried_to_the_live_stage_extension() -> None:
+	# The z axis rides on the stage: one millimetre less stage needs one millimetre more z.
+	model = SimpleNamespace(intercept_mm=1.052, x_slope_mm_per_mm=-4.5e-05, reference_stage_mm=47.0, reference_z_place_mm=160.5)
+
+	assert z_offset_model_intercept_at_stage(model=model, stage_extension_mm=46.0) == pytest.approx(2.052)
+	assert z_offset_model_intercept_at_stage(model=model, stage_extension_mm=48.0) == pytest.approx(0.052)
+
+
+def test_require_z_offset_model_matches_z_place_rejects_a_moved_place_height() -> None:
 	model = SimpleNamespace(intercept_mm=4.85, x_slope_mm_per_mm=-0.00285, reference_stage_mm=46.0, reference_z_place_mm=160.5)
 
-	with pytest.raises(ValueError, match='derived at a different tool geometry'):
-		require_z_offset_model_matches_tool(
+	require_z_offset_model_matches_z_place(model=model, side=StorageModuleSide.FRONT, z_place_mm=160.6, tolerance_mm=0.2)
+
+	with pytest.raises(ValueError, match='Z_EXTENSION_PLACE 160.50mm'):
+		require_z_offset_model_matches_z_place(
 			model=model,
 			side=StorageModuleSide.FRONT,
-			stage_extension_mm=48.0,
-			z_place_mm=160.5,
+			z_place_mm=162.0,
 			tolerance_mm=0.2,
 		)
 

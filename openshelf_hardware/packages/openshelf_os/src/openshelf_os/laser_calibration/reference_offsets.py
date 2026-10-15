@@ -33,10 +33,10 @@ from statistics import median
 from typing import Any
 
 from openshelf_os.storage import Cell, StorageGrid, StorageModuleSide
-from .core import get_gripper_xy_correction, get_wall_depth_to_gripper_z_model
+from .core import get_gripper_xy_correction, get_wall_depth_to_gripper_z_model, z_offset_at_stage
 from .recording import load_candidates_from_metadata, load_json_file
 from .scan import ScanDetectedCell
-from .staged_scan import collect_detected_cells, wall_depths_by_cell
+from .staged_scan import Z_DELTA_MAX_ABS_MM, collect_detected_cells, wall_depths_by_cell
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,11 @@ REFERENCE_MATCH_WINDOW_MM = 25.0
 # Two hand-set cells that disagree by more than this cannot share one fixed tool geometry, so
 # the derivation refuses rather than averaging a bad datum into every cell.
 REFERENCE_MAX_SPREAD_MM = 1.5
+
+# How far a stamped z may be carried to the live stage extension. Covers extension-recalibration
+# drift of a few mm, far below the retract position (~3mm) a z jogged with the stage pulled back
+# was captured at, which would put the derived intercept tens of millimetres off.
+REFERENCE_Z_MAX_STAGE_CARRY_MM = 5.0
 
 # The bottom-left opening of each side is where the reference frame is anchored: an operator
 # jogs the gripper onto that one cell by hand and every derived value is measured from it, so a
@@ -86,6 +91,9 @@ class ReferenceOffsetResult:
 	configured_offset_y_mm: float | None = None
 	z_captured_stage_mm: float | None = None
 	z_captured_stage_samples: int = 0
+	# The stage extension every stamped sample's intercept was carried to; None when no live stage
+	# was given, in which case the intercepts are as captured.
+	z_stage_extension_mm: float | None = None
 	skipped: list[str] = field(default_factory=list)
 
 	@property
@@ -94,7 +102,7 @@ class ReferenceOffsetResult:
 
 	@property
 	def z_capture_conditions_missing(self) -> int:
-		"""Samples saved before the capture stage was recorded: they cannot be checked."""
+		"""Samples saved before the capture stage was recorded: their z cannot be carried to the live stage."""
 		return self.sample_count - self.z_captured_stage_samples
 
 	@property
@@ -116,6 +124,136 @@ class ReferenceOffsetResult:
 			self.offset_x_mm - float(configured_x_mm),
 			self.offset_y_mm - float(configured_y_mm),
 		)
+
+
+def check_datum_stage_carry(result: ReferenceOffsetResult | None) -> None:
+	"""Refuse a stamped datum captured too far from the live stage extension to be carried.
+
+	The carry is exact for the small drift an extension recalibration causes; a z saved with the
+	stage retracted is not a shelf-extension datum at all and would shift every derived cell.
+	"""
+	if result is None or result.z_stage_extension_mm is None:
+		return
+
+	live_stage_mm = float(result.z_stage_extension_mm)
+
+	for sample in result.samples:
+		if sample.derived_intercept_mm is None or sample.z_captured_stage_mm is None:
+			continue
+
+		_require_stage_carry(
+			side=result.side,
+			shelf_idx=sample.shelf_idx,
+			cell_idx=sample.cell_idx,
+			captured_stage_mm=float(sample.z_captured_stage_mm),
+			live_stage_mm=live_stage_mm,
+		)
+
+
+def check_stamped_reference_carry(
+	*,
+	grid: StorageGrid,
+	side: StorageModuleSide,
+	stage_extension_mm: float | None,
+	shelf_idx: int | None = None,
+	cell_idx: int | None = None,
+) -> bool:
+	"""Whether the side has a hand-calibrated cell whose z the apply can carry to the live stage.
+
+	The start-time counterpart of `check_datum_stage_carry`: a stamp too far from the live stage
+	is refused here, before the scan, rather than by the apply after it. Without a live stage the
+	carry cannot be judged, so any stamp counts. `shelf_idx`/`cell_idx` limit the check to the
+	cells a narrow rescan derives from, as `select_datum_derivation_scope` returns them.
+	"""
+	has_stamp = False
+
+	for cell_shelf_idx, cell in select_manual_reference_cells(
+		grid=grid, side=side, shelf_idx=shelf_idx, cell_idx=cell_idx
+	):
+		captured_stage_mm = cell.calibration_point.z_captured_at_stage_mm
+
+		if captured_stage_mm is None:
+			continue
+
+		has_stamp = True
+
+		if stage_extension_mm is not None:
+			_require_stage_carry(
+				side=side,
+				shelf_idx=cell_shelf_idx,
+				cell_idx=int(cell.cell_idx),
+				captured_stage_mm=float(captured_stage_mm),
+				live_stage_mm=float(stage_extension_mm),
+			)
+
+	return has_stamp
+
+
+def _require_stage_carry(
+	*,
+	side: StorageModuleSide,
+	shelf_idx: int,
+	cell_idx: int,
+	captured_stage_mm: float,
+	live_stage_mm: float,
+) -> None:
+	if abs(captured_stage_mm - live_stage_mm) > REFERENCE_Z_MAX_STAGE_CARRY_MM:
+		raise ValueError(
+			f"reference z: the {side.value} reference cell {shelf_idx}:{cell_idx} "
+			f"had its z saved at stage extension {captured_stage_mm:.2f}mm, but the live stage "
+			f"extension is {live_stage_mm:.2f}mm (more than {REFERENCE_Z_MAX_STAGE_CARRY_MM:.0f}mm "
+			"apart, so it cannot be carried); in cell calibration extend the stage to the shelf "
+			"extension, jog that cell's z onto the tray (the stage is recorded only when the z "
+			"changes) and save it"
+		)
+
+
+def stamped_datum_intercept_mm(result: ReferenceOffsetResult | None) -> float | None:
+	"""The z intercept the hand-calibrated cells imply at the live stage, or None without one.
+
+	Only samples whose capture stage is known count: an unstamped z offset may have been jogged
+	at any stage extension, and every millimetre of that is a millimetre on every derived cell.
+	Stamped samples captured too far from the live stage, that still disagree beyond one tool
+	geometry, or that imply an implausible intercept are refused.
+	"""
+	if result is None or result.z_stage_extension_mm is None:
+		return None
+
+	check_datum_stage_carry(result)
+
+	intercepts = [
+		float(sample.derived_intercept_mm)
+		for sample in result.samples
+		if sample.derived_intercept_mm is not None and sample.z_captured_stage_mm is not None
+	]
+
+	if len(intercepts) == 0:
+		return None
+
+	spread_mm = max(intercepts) - min(intercepts)
+
+	if spread_mm > REFERENCE_MAX_SPREAD_MM:
+		raise ValueError(
+			f"reference z: the manual reference cells on the {result.side.value} imply z intercepts "
+			f"{spread_mm:.2f}mm apart at stage extension {float(result.z_stage_extension_mm):.2f}mm, above the "
+			f"{REFERENCE_MAX_SPREAD_MM:.2f}mm one fixed tool geometry can explain; in cell calibration "
+			"extend the stage to the shelf extension, jog each stale reference cell's z onto the tray "
+			"(the stage is recorded only when the z changes) and save it, or clear 'keep manual' on "
+			"the stale ones"
+		)
+
+	intercept_mm = float(median(intercepts))
+
+	if abs(intercept_mm) > Z_DELTA_MAX_ABS_MM:
+		raise ValueError(
+			f"reference z: the manual reference cells on the {result.side.value} imply an implausible z "
+			f"intercept {intercept_mm:.1f}mm (limit +/-{Z_DELTA_MAX_ABS_MM:.0f}mm); refusing to apply it "
+			"to every cell; in cell calibration extend the stage to the shelf extension, jog the "
+			"reference cells' z onto the tray (the stage is recorded only when the z changes) and "
+			"save them"
+		)
+
+	return intercept_mm
 
 
 def z_model_datum_agreement_mm(
@@ -313,6 +451,7 @@ def derive_reference_offsets(
 	shelf_idx: int | None = None,
 	cell_idx: int | None = None,
 	candidates: list[Any] | None = None,
+	stage_extension_mm: float | None = None,
 ) -> ReferenceOffsetResult:
 	"""Laser-to-gripper offset implied by the hand-calibrated cells in scope.
 
@@ -323,6 +462,10 @@ def derive_reference_offsets(
 	a detected opening, or the reference cells disagree by more than a fixed tool geometry can
 	explain. Falling back to the configured offset would calibrate the module against the very
 	value the operator asked to replace, so the caller is told why.
+
+	With `stage_extension_mm`, each stamped sample's z offset is carried from the stage it was
+	captured at to that one before its intercept is taken, so datums jogged at different stage
+	extensions describe the same tool.
 	"""
 	if candidates is None:
 		candidates = _load_candidates(analysis)
@@ -399,12 +542,21 @@ def derive_reference_offsets(
 
 		used_keys.add((int(matched_cell.shelf_idx), int(matched_cell.cell_idx)))
 		wall_depth_mm = wall_depths.get((int(matched_cell.shelf_idx), int(matched_cell.cell_idx)))
+		captured_stage_mm = getattr(point, "z_captured_at_stage_mm", None)
+		z_offset_mm = float(point.z_offset)
+
+		if captured_stage_mm is not None and stage_extension_mm is not None:
+			z_offset_mm = z_offset_at_stage(
+				z_offset_mm=z_offset_mm,
+				captured_stage_mm=float(captured_stage_mm),
+				stage_extension_mm=float(stage_extension_mm),
+			)
+
 		derived_intercept_mm = (
 			None
 			if wall_depth_mm is None
-			else float(point.z_offset) - float(wall_depth_mm) - slope_per_mm * manual_x_mm
+			else z_offset_mm - float(wall_depth_mm) - slope_per_mm * manual_x_mm
 		)
-		captured_stage_mm = getattr(point, "z_captured_at_stage_mm", None)
 
 		samples.append(
 			ReferenceOffsetSample(
@@ -481,5 +633,6 @@ def derive_reference_offsets(
 		configured_offset_y_mm=configured_offset_y_mm,
 		z_captured_stage_mm=None if len(captured_stages) == 0 else float(median(captured_stages)),
 		z_captured_stage_samples=len(captured_stages),
+		z_stage_extension_mm=None if stage_extension_mm is None else float(stage_extension_mm),
 		skipped=skipped,
 	)

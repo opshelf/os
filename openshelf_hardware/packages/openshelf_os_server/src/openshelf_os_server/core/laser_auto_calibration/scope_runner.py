@@ -6,7 +6,7 @@ import copy
 from pathlib import Path
 from statistics import median
 
-from openshelf_os.laser_calibration.defaults import EXPECTED_HOLE_HEIGHT_MM
+from openshelf_os.laser_calibration.defaults import EXPECTED_HOLE_HEIGHT_MM, Z_OFFSET_MODEL_PARAM_TOLERANCE_MM
 
 from .models import *
 
@@ -216,6 +216,102 @@ class ScopeRunnerMixin:
         )
 
         self._validate_reference_datum_cells(requested_scope, worker)
+        self._validate_z_offset_sources(requested_scope, worker)
+
+    def _validate_z_offset_sources(
+        self,
+        requested_scope: LaserAutoCalibrationScope,
+        worker: RobotWorker | None,
+    ) -> None:
+        """Fail before any motion when a side's z offsets could not be resolved at the apply.
+
+        A full-side apply needs a z source: the probe, a hand-calibrated cell whose z was saved
+        with its stage extension recorded, or a configured model still pinned to the live
+        Z_EXTENSION_PLACE. Stage extension drift is only refused for a stamp too far to carry,
+        as the apply does; it carries every other source to the live stage. That carry check
+        covers every scope that derives from the datum (with or without the probe, which reads
+        the same datum), limited to the cells the scope derives from. Shelf and cell rescans keep
+        the existing z when nothing resolves, so the z source itself is only required for side
+        and module scopes without the probe.
+        """
+        derivation_scope = laser_module.select_datum_derivation_scope(
+            mode=requested_scope.mode,
+            shelf_idx=requested_scope.shelf_idx,
+            cell_idx=requested_scope.cell_idx,
+        )
+
+        if derivation_scope is None:
+            return
+
+        config = get_root_config()
+        scan_config = config.robot.grid.scan
+        needs_z_source = (
+            requested_scope.mode in ("all", "both", "side")
+            and _z_stall_requested(scan_config) is not True
+        )
+        grid = _get_worker_grid(worker)
+        z_place_value = getattr(config.robot.tool.parameters, "Z_EXTENSION_PLACE", None)
+        sides: list[StorageModuleSide] = (
+            [StorageModuleSide.FRONT, StorageModuleSide.BACK]
+            if requested_scope.mode in ("all", "both")
+            else ([requested_scope.side] if requested_scope.side is not None else [])
+        )
+        problems: list[str] = []
+        missing_source = False
+
+        for side in sides:
+            side_name = "front" if side == StorageModuleSide.FRONT else "back"
+            stage_extension_value = getattr(
+                config.robot.tool.parameters, _side_to_stage_extension_param_name(side), None
+            )
+
+            try:
+                has_stamped_datum = grid is not None and laser_module.check_stamped_reference_carry(
+                    grid=grid,
+                    side=side,
+                    stage_extension_mm=None if stage_extension_value is None else float(stage_extension_value),
+                    shelf_idx=derivation_scope[0],
+                    cell_idx=derivation_scope[1],
+                )
+            except ValueError as exc:
+                problems.append(str(exc).rstrip("."))
+                continue
+
+            if has_stamped_datum is True or needs_z_source is False:
+                continue
+
+            model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
+
+            if model is None:
+                missing_source = True
+                problems.append(
+                    f"the {side_name} module has no z source: no hand-calibrated cell with its stage "
+                    f"extension recorded and no robot.grid.scan.{side_name}_wall_depth_to_gripper_z_model"
+                )
+                continue
+
+            if z_place_value is not None:
+                try:
+                    laser_module.require_z_offset_model_matches_z_place(
+                        model=model,
+                        side=side,
+                        z_place_mm=float(z_place_value),
+                        tolerance_mm=float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM),
+                    )
+                except ValueError as exc:
+                    missing_source = True
+                    problems.append(str(exc).rstrip("."))
+
+        if len(problems) > 0:
+            # The probe reads the same datum, so it is only a way out when a side lacks a source,
+            # never for a stamp too far to carry.
+            probe_hint = ", or enable the z stall probe" if missing_source is True else ""
+            raise ValueError(
+                f"auto calibration cannot resolve cell z offsets: {'; '.join(problems)}. In cell calibration "
+                "extend the stage to the shelf extension, jog the bottom-left reference cell's z onto the "
+                f"tray and save it (the stage extension is recorded only when the z changes){probe_hint}, "
+                "then re-run"
+            )
 
     def _validate_reference_datum_cells(
         self,
