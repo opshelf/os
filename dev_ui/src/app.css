@@ -96,6 +96,10 @@ nav a.active {
 	color: white;
 }
 
+.device-label {
+	padding: 7px 0;
+}
+
 a.close-btn {
 	background-color: black;
 	color: white;

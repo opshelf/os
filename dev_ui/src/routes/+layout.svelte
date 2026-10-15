@@ -3,9 +3,11 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import {
+		apiFetch,
 		buildAuthenticatedUrl,
 		createReconnectingEventSource,
 		developerPin,
+		getSizerStatus,
 		isApiConnected,
 		isAuthenticated,
 		loginAsDeveloper,
@@ -24,24 +26,45 @@
 
 	const version = import.meta.env.PUBLIC_VERSION;
 
-	const links = [
+	type NavLink = {
+		href: string;
+		label: string;
+		requiresSizer?: boolean;
+	};
+
+	const links: NavLink[] = [
 		{ href: '/', label: 'status' },
 		{ href: '/storage', label: 'storage' },
 		{ href: '/camera', label: 'cameras' },
 		{ href: '/scale', label: 'scale' },
-		{ href: '/sizer', label: 'sizer' },
+		{ href: '/sizer', label: 'sizer', requiresSizer: true },
 		{ href: '/scanner', label: 'scanner' },
 		{ href: '/printer', label: 'printer' },
 		{ href: '/motors', label: 'motors' },
-		{ href: '/power', label: 'power' },
 		{ href: '/wifi', label: 'wifi' }
 	];
 
 	let { children } = $props();
 	let authReady = $state(false);
 	let apiState = $state<'unknown' | 'down' | 'up'>('unknown');
+	let deviceLabel = $state('');
+	let isSizerEnabled = $state(false);
 	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
 	let didReceiveRobotUnavailable = false;
+
+	async function loadNavigationState(): Promise<void> {
+		const [systemInfo, sizerStatus] = await Promise.allSettled([
+			apiFetch<{ device_id: string; device_alias: string | null }>('/system/info'),
+			getSizerStatus()
+		]);
+
+		if (systemInfo.status === 'fulfilled') {
+			const alias = systemInfo.value.device_alias?.trim();
+			deviceLabel = (alias || systemInfo.value.device_id).toUpperCase();
+		}
+
+		isSizerEnabled = sizerStatus.status === 'fulfilled' && sizerStatus.value.enabled === true;
+	}
 
 	function setApiState(state: 'unknown' | 'down' | 'up'): void {
 		apiState = state;
@@ -98,6 +121,7 @@
 			}
 
 			authReady = true;
+			void loadNavigationState();
 
 			const stream = createReconnectingEventSource({
 				path: '/robot/status',
@@ -170,14 +194,23 @@
 <nav>
 	<ul>
 		{#each links as link}
-			<li>
-				<a href={devicePath(link.href)} class:active={isActiveLink(link.href, $page.url.pathname)}>
-					{link.label}
-				</a>
-			</li>
+			{#if link.requiresSizer !== true || isSizerEnabled === true}
+				<li>
+					<a
+						href={devicePath(link.href)}
+						class:active={isActiveLink(link.href, $page.url.pathname)}
+					>
+						{link.label}
+					</a>
+				</li>
+			{/if}
 		{/each}
 
 		<li class="spacer-flexible"></li>
+
+		{#if deviceLabel !== ''}
+			<li class="device-label">{deviceLabel}</li>
+		{/if}
 
 		<li>
 			<a href={`http://${document.location.hostname}:8888/`} class="close-btn">Close</a>

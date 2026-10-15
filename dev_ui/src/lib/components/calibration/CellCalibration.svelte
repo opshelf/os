@@ -62,7 +62,9 @@
 	let needsHome = $state<boolean>(false);
 	let lastStreamNeedsHome = $state<boolean>(false);
 
-	let jogStep = $state<number>(1);
+	let jogStepX = $state<number>(1);
+	let jogStepY = $state<number>(1);
+	let jogStepZ = $state<number>(1);
 
 	let editX = $state<number>(0);
 	let editY = $state<number>(0);
@@ -600,20 +602,20 @@
 									<div class="spacer"></div>
 									<button
 										type="button"
-										onclick={() => didClickJog('x', -jogStep)}
+										onclick={() => didClickJog('x', -jogStepX)}
 										disabled={isMoving === true || needsHome === true}
 									>
 										-
 									</button>
 									<button
 										type="button"
-										onclick={() => didClickJog('x', jogStep)}
+										onclick={() => didClickJog('x', jogStepX)}
 										disabled={isMoving === true || needsHome === true}
 									>
 										+
 									</button>
 									<div class="jog-step">
-										<select bind:value={jogStep} disabled={needsHome === true}>
+										<select bind:value={jogStepX} disabled={needsHome === true}>
 											{#each JOG_STEPS as step}
 												<option value={step.value}>{step.label}</option>
 											{/each}
@@ -642,20 +644,20 @@
 									<div class="spacer"></div>
 									<button
 										type="button"
-										onclick={() => didClickJog('y', -jogStep)}
+										onclick={() => didClickJog('y', -jogStepY)}
 										disabled={isMoving === true || needsHome === true}
 									>
 										-
 									</button>
 									<button
 										type="button"
-										onclick={() => didClickJog('y', jogStep)}
+										onclick={() => didClickJog('y', jogStepY)}
 										disabled={isMoving === true || needsHome === true}
 									>
 										+
 									</button>
 									<div class="jog-step">
-										<select bind:value={jogStep} disabled={needsHome === true}>
+										<select bind:value={jogStepY} disabled={needsHome === true}>
 											{#each JOG_STEPS as step}
 												<option value={step.value}>{step.label}</option>
 											{/each}
@@ -684,20 +686,20 @@
 									<div class="spacer"></div>
 									<button
 										type="button"
-										onclick={() => didClickJog('z', -jogStep)}
+										onclick={() => didClickJog('z', -jogStepZ)}
 										disabled={isMoving === true || needsHome === true}
 									>
 										-
 									</button>
 									<button
 										type="button"
-										onclick={() => didClickJog('z', jogStep)}
+										onclick={() => didClickJog('z', jogStepZ)}
 										disabled={isMoving === true || needsHome === true}
 									>
 										+
 									</button>
 									<div class="jog-step">
-										<select bind:value={jogStep} disabled={needsHome === true}>
+										<select bind:value={jogStepZ} disabled={needsHome === true}>
 											{#each JOG_STEPS as step}
 												<option value={step.value}>{step.label}</option>
 											{/each}
