@@ -847,6 +847,49 @@ async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
 		) from exc
 
 
+class LaserZStallSetting(BaseModel):
+	enabled: bool
+
+
+@router.get(
+    "/laser/z-stall",
+    response_model=LaserZStallSetting,
+    summary="Read the z stall probe setting",
+    responses=response_docs(errors=(401,)),
+)
+async def get_laser_z_stall_setting() -> LaserZStallSetting:
+	"""Read the z stall probe setting.
+
+	Returns whether automatic calibration probes the shelf plate to derive each side's z
+	model. The setting belongs to the machine (`robot.grid.scan.z_stall_anchor_enabled`),
+	not to a run.
+	"""
+	return LaserZStallSetting(enabled=get_root_config().robot.grid.scan.z_stall_anchor_enabled is True)
+
+
+@router.post(
+    "/laser/z-stall",
+    dependencies=[ROBOT_CONTROL],
+    response_model=LaserZStallSetting,
+    summary="Save the z stall probe setting",
+    responses=response_docs(errors=(401, 403, 409)),
+)
+async def save_laser_z_stall_setting(request: LaserZStallSetting) -> LaserZStallSetting:
+	"""Save the z stall probe setting.
+
+	Persists `robot.grid.scan.z_stall_anchor_enabled`. When enabled, every later automatic
+	calibration that holds the bottom-left reference cell presses the tool against the shelf
+	plate to fit the z model. Returns `409` while automatic calibration runs. Does not move.
+	"""
+	await ensure_laser_auto_calibration_not_running()
+
+	config = get_root_config().model_copy(deep=True)
+	config.robot.grid.scan.z_stall_anchor_enabled = request.enabled
+	save_root_config(config)
+
+	return LaserZStallSetting(enabled=request.enabled)
+
+
 TERMINAL_LASER_AUTO_CALIBRATION_STATES = {"completed", "failed", "cancelled"}
 
 
@@ -888,7 +931,9 @@ async def stream_laser_auto_calibration(
 	both sides, or the angle/extension calibration phases. `hold_y_enabled=false` parks
 	Y on its brake between moves instead of holding it energised for the session. Every run
 	frames its offsets from the hand-calibrated bottom-left cell of the sides it covers and
-	returns `400` before moving when one of those cells is missing or not marked manual.
+	returns `400` before moving when one of those cells is missing or not marked manual, or
+	when a side or module run has no z source (z stall probe, a reference cell whose z was
+	saved with its stage extension, or a z model pinned to the live Z_EXTENSION_PLACE).
 	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,

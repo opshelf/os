@@ -502,6 +502,12 @@ def _build_candidate_rows(
     return candidates
 
 
+def _z_stall_requested(scan_config: Any) -> bool:
+    """`z_stall_anchor_enabled` is the machine's setting: a probed model is only valid for the
+    machine it was probed on, so fitting one is an explicit per-machine choice, not a per-run one."""
+    return getattr(scan_config, "z_stall_anchor_enabled", False) is True
+
+
 def _build_cell_rows(
     side_name: StorageModuleSideName,
     fine_scan_rows: list[dict[str, Any]],
@@ -610,4 +616,5 @@ __all__ = [
     "_resolve_stage_stall_probe_x_mm",
     "_build_candidate_rows",
     "_build_cell_rows",
+    "_z_stall_requested",
 ]

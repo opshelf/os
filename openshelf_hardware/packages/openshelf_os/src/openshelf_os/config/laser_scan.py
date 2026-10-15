@@ -39,8 +39,8 @@ class LaserScanZOffsetModelConfig(BaseModel):
     tool's pitch across the x travel (slope). Both are per side and per install.
 
     z_offset is expressed relative to Z_EXTENSION_PLACE and is measured with the stage extended,
-    so the model only holds for the stage extension and z place it was derived at. Both are
-    pinned here and re-checked before the model is applied.
+    so the model holds for the stage extension and z place it was derived at. Both are pinned
+    here: stage drift is carried into the intercept, a moved z place refuses the model.
     """
 
     intercept_mm: float
