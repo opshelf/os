@@ -820,6 +820,20 @@ export async function getLaserAutoCalibrationStatus(): Promise<LaserAutoCalibrat
 	return normalizeLaserAutoCalibrationSnapshot(await apiFetch<Record<string, unknown>>('/calibration/laser/status'));
 }
 
+export async function getLaserZStallEnabled(): Promise<boolean> {
+	return (await apiFetch<{ enabled: boolean }>('/calibration/laser/z-stall')).enabled;
+}
+
+export async function saveLaserZStallEnabled(enabled: boolean): Promise<boolean> {
+	const response = await apiFetch<{ enabled: boolean }>('/calibration/laser/z-stall', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ enabled })
+	});
+
+	return response.enabled;
+}
+
 export async function abortLaserAutoCalibration(): Promise<LaserAutoCalibrationSnapshot> {
 	return normalizeLaserAutoCalibrationSnapshot(
 		await apiFetch<Record<string, unknown>>('/calibration/laser/abort', { method: 'POST' })
