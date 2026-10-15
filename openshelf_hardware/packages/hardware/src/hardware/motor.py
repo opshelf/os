@@ -172,6 +172,8 @@ class MotionRecordEntry:
     safety_blocked: bool
     run_id: str | None
     correlation_id: str | None
+    # Pr4.29 on axes with a drive-controlled brake: whether SO2 held the brake released.
+    digital_output_state: int | None = None
 
 
 MOTION_FLIGHT_RECORDER_SIZE = 256
@@ -493,6 +495,7 @@ class Motor():
         alarm_state: MotionAlarmState | None,
         state: MotionWaitState,
         position_delta: float | None,
+        digital_output_state: int | None = None,
     ) -> None:
         now = time.monotonic()
 
@@ -519,8 +522,19 @@ class Motor():
                 safety_blocked=bool(self._safety and self._safety.blocked),
                 run_id=self._diagnostic_run_id,
                 correlation_id=self._diagnostic_correlation_id,
+                digital_output_state=digital_output_state,
             )
         )
+
+    async def _read_brake_output_for_recorder(self) -> int | None:
+        """Diagnostic only: a failed read must never fail the move it records."""
+        if self._configured_brake_output_function is None:
+            return None
+
+        try:
+            return await self.get_param("Digital output state")
+        except Exception:
+            return None
 
     def _dump_flight_recorder(
         self,
@@ -1237,11 +1251,13 @@ class Motor():
         ppr = getattr(self._params, "ppr", 10000)
         pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_pos, self._params.mpr), ppr)
 
-        if rpm is not None:
-            await self.set_param("Velocity", int(rpm))
-        if accel is not None:
-            await self.set_param("Acceleration", int(accel))
-            await self.set_param("Deceleration", int(accel))
+        # Every move writes its own profile: the registers otherwise keep whatever the
+        # last move, home or move_config() left, and the logged rpm/accel would lie.
+        move_rpm = int(rpm or self._params.rpm)
+        move_accel = int(accel or self._params.accel)
+        await self.set_param("Velocity", move_rpm)
+        await self.set_param("Acceleration", move_accel)
+        await self.set_param("Deceleration", move_accel)
 
         await self.set_param("Position High", pulse[0])
         await self.set_param("Position Low", pulse[1])
@@ -1274,8 +1290,8 @@ class Motor():
         self._move_started_at = time.monotonic()
         self._move_start_position = self._cur_pos
         self._move_target_position = value
-        self._move_rpm = int(rpm or self._params.rpm)
-        self._move_accel = int(accel or self._params.accel)
+        self._move_rpm = move_rpm
+        self._move_accel = move_accel
         self._flight_recorder.clear()
 
         self._logger.info(
@@ -1489,7 +1505,13 @@ class Motor():
                     return await self._finish_completed_move(homing, state)
 
                 alarm_state = await self._read_alarm_state(homing, state)
-                self._record_flight_snapshot(snapshot, alarm_state, state, position_delta)
+                self._record_flight_snapshot(
+                    snapshot,
+                    alarm_state,
+                    state,
+                    position_delta,
+                    await self._read_brake_output_for_recorder(),
+                )
 
                 if self._is_homing_limit_stop(homing, alarm_state, state):
                     return await self._finish_homing_limit_stop(snapshot, alarm_state, state)

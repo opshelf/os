@@ -1418,3 +1418,50 @@ async def test_non_y_axis_home_leaves_following_error_trip_alone(mock_controller
     addresses = {c.args[1] for c in mock_controller.write_single_register.await_args_list}
     assert 0x016D not in addresses
     assert 0x000B not in addresses
+
+
+def profile_writes(mock_controller) -> dict[int, int]:
+    profile = {
+        motor_helpers.get_register_by_name(name)
+        for name in ("Velocity", "Acceleration", "Deceleration")
+    }
+    return {
+        c.args[1]: c.args[2]
+        for c in mock_controller.write_single_register.await_args_list
+        if c.args[1] in profile
+    }
+
+
+@pytest.mark.asyncio
+async def test_absolute_move_without_profile_writes_the_configured_profile(mock_controller):
+    """A move must not inherit the speed a previous home or slow move left in the drive."""
+    motor = Motor(
+        mock_controller,
+        make_motor_params(motor_name="x_axis", logical_to_physical=lambda v: v),
+    )
+
+    await motor.move_to_position_no_wait(42.0)
+
+    velocity, accel, decel = (
+        motor_helpers.get_register_by_name(name)
+        for name in ("Velocity", "Acceleration", "Deceleration")
+    )
+    assert profile_writes(mock_controller) == {velocity: 300, accel: 100, decel: 100}
+    assert (motor._move_rpm, motor._move_accel) == (300, 100)
+
+
+@pytest.mark.asyncio
+async def test_absolute_move_with_profile_writes_the_requested_profile(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(motor_name="x_axis", logical_to_physical=lambda v: v),
+    )
+
+    await motor.move_to_position_no_wait(42.0, rpm=50, accel=20)
+
+    velocity, accel, decel = (
+        motor_helpers.get_register_by_name(name)
+        for name in ("Velocity", "Acceleration", "Deceleration")
+    )
+    assert profile_writes(mock_controller) == {velocity: 50, accel: 20, decel: 20}
+    assert (motor._move_rpm, motor._move_accel) == (50, 20)
