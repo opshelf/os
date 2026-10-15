@@ -127,9 +127,12 @@ def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[An
 
     result = list(scanned_shelves)
     modified_shelf_ids: set[int] = set()
+    appended_shelf = False
 
     for source_shelf, manual_cells in manual_groups:
-        source_y = _shelf_center_y(source_shelf)
+        # Match on the manual cells alone: the stale auto cells of the old shelf can sit on a
+        # different row and drag its center away from the opening the datum actually belongs to.
+        source_y = sum(float(cell.calibration_point.y) for cell in manual_cells) / len(manual_cells)
         target = None
 
         if source_y is not None:
@@ -147,6 +150,7 @@ def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[An
             preserved.cells = [cell.model_copy(deep=True) for cell in manual_cells]
             result.append(preserved)
             modified_shelf_ids.add(id(preserved))
+            appended_shelf = True
             continue
 
         for manual_cell in manual_cells:
@@ -170,6 +174,12 @@ def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[An
         for idx, cell in enumerate(calibrated):
             cell.cell_idx = idx
         shelf.cells = calibrated + uncalibrated
+
+    # An appended shelf still carries its old index, which can collide with a scanned one.
+    if appended_shelf is True:
+        result.sort(key=lambda shelf: _shelf_center_y(shelf) or float("inf"))
+        for idx, shelf in enumerate(result):
+            shelf.shelf_idx = idx
 
     return result
 

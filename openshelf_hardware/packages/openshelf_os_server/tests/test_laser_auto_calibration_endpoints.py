@@ -546,6 +546,46 @@ def test_preserve_manual_cells_reinserts_manual_and_renumbers() -> None:
     ]
 
 
+def test_preserve_manual_cells_matches_on_manual_cells_not_stale_shelf_center() -> None:
+    # lb4a-4: the manual datum sat at y=41 while the old shelf's auto cells were at y~155,
+    # which pulled the shelf center out of tolerance and duplicated shelf 0.
+    scanned = [
+        _manual_shelf(0, [_manual_cell(0, 355.0, 41.0), _manual_cell(1, 849.5, 41.0)]),
+        _manual_shelf(1, [_manual_cell(0, 323.5, 1091.0)]),
+    ]
+    existing = [
+        _manual_shelf(
+            0,
+            [_manual_cell(0, 355.0, 41.0, is_manual=True)]
+            + [_manual_cell(idx, 800.0 - idx * 100.0, 155.7) for idx in range(1, 9)],
+        )
+    ]
+
+    result = _preserve_manual_cells(scanned, existing)
+
+    assert [shelf.shelf_idx for shelf in result] == [0, 1]
+    assert [(c.cell_idx, c.calibration_point.x, c.is_manual) for c in result[0].cells] == [
+        (0, 355.0, True),
+        (1, 849.5, False),
+    ]
+
+
+def test_preserve_manual_cells_unmatched_shelf_gets_unique_index() -> None:
+    scanned = [
+        _manual_shelf(0, [_manual_cell(0, 100.0, 41.0)]),
+        _manual_shelf(1, [_manual_cell(0, 100.0, 1091.0)]),
+    ]
+    existing = [_manual_shelf(0, [_manual_cell(0, 300.0, 500.0, is_manual=True)])]
+
+    result = _preserve_manual_cells(scanned, existing)
+
+    assert [(shelf.shelf_idx, shelf.cells[0].calibration_point.y) for shelf in result] == [
+        (0, 41.0),
+        (1, 500.0),
+        (2, 1091.0),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_run_stage_extension_calibration_raises_when_abort_requested_during_probe() -> None:
     manager = LaserAutoCalibrationManager()
