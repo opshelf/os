@@ -1,5 +1,5 @@
 import { buildAuthenticatedUrl } from './api';
-import { ensureValidToken, isAuthenticated, loginAsDeveloper, logout } from './auth';
+import { developerPin, ensureValidToken, isAuthenticated, loginAsDeveloper, logout } from './auth';
 
 type EventHandler = (event: MessageEvent<string>) => void;
 
@@ -138,6 +138,13 @@ export function createReconnectingEventSource(
 	}
 
 	async function authenticateForConnection(): Promise<void> {
+		// Without the relay's cookie (the device kiosk, direct LAN access) the API serves
+		// the stream without a token, and signing in would throw before it connects.
+		if (developerPin() === null) {
+			shouldRefreshAuthentication = false;
+			return;
+		}
+
 		try {
 			if (shouldRefreshAuthentication === true) {
 				logout();
