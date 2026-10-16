@@ -27,9 +27,8 @@ class Motor(BaseModel):
     motor_id: int = Field(..., ge=0)
     enabled: bool = Field(default=True)
     # Machines are built with and without the axis limit switches. When false the
-    # GPIO limit inputs for this motor are never read: homing does not require the
-    # home switch to engage, and for x_axis rotation does not require the
-    # clearance switches. Left true, a missing switch reads not engaged and blocks
+    # motor's home limit input is never read and homing does not require it to
+    # engage. Left true, a missing switch reads not engaged and blocks
     # initialization.
     limit_switches_enabled: bool = Field(default=True)
     rotation_safe_stage_extension_enabled: bool = Field(default=False)

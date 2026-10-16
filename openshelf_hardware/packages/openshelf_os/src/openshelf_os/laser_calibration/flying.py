@@ -47,7 +47,9 @@ FLYING_SCAN_MAX_LINE_SECONDS = 100.0
 FLYING_SCAN_STALL_S = 0.5
 # Drives settle a few hundredths short of the commanded end, so an exact arrival check never fires
 # and every pass waited out FLYING_SCAN_STALL_S instead. Well inside FLYING_SCAN_LEAD_OUT_MARGIN_MM,
-# so the reads it drops lie past the grid anyway.
+# so with a full lead-out the reads it drops lie past the grid; when the lead-out is clamped to the
+# axis limit or there is no capture latency they can fall on the last bin, which the settled end
+# sample covers.
 FLYING_SCAN_ARRIVAL_TOLERANCE_MM = 0.2
 FLYING_SCAN_PROGRESS_EPS_MM = 0.02
 # Velocity for the depth-to-position correction is a median over the trailing deltas so a single
@@ -85,18 +87,20 @@ FLYING_SCAN_START_STALL_S = 2.0
 # the drive to settle before the next move is issued.
 FLYING_SCAN_EARLY_STOP_SETTLE_S = 2.0
 FLYING_SCAN_EARLY_STOP_POLL_S = 0.05
-# A pass interrupted by a safety guard is restarted once the guard clears; the sampler polls the
-# interlock at this interval so session cancellation still lands while it waits.
+# A pass interrupted by a safety guard resumes from the samples it placed once the guard clears
+# (see FLYING_SCAN_RESUME_OVERLAP_MM); the sampler polls the interlock at this interval so session
+# cancellation still lands while it waits.
 FLYING_SCAN_SAFETY_POLL_S = 0.1
 # The interlock is only checked between reads, and a read stuck in the controller's retry loop holds
 # the port lock for the whole retry, so no stop write can reach the bus until it ends. Moving reads
 # therefore run as one transaction with no retries under this Modbus timeout, and a read that fails
-# or takes longer than this in total (lock wait included) stops the axis and discards the pass. That
-# bounds how long the gantry can fly unobserved to about two of these per sample plus the stop write,
-# instead of the client's full retry budget. A normal read takes a few tens of milliseconds, and the
-# margin above that leaves room for the weight guard's 0.1s fast weigh to hold the lock first.
+# or takes longer than this in total (lock wait included) stops the axis, and the line resumes from
+# what the pass placed. That bounds how long the gantry can fly unobserved to about two of these per
+# sample plus the stop write, instead of the client's full retry budget. A normal read takes a few
+# tens of milliseconds, and the margin above that leaves room for the weight guard's 0.1s fast weigh
+# to hold the lock first.
 FLYING_SCAN_READ_TIMEOUT_S = 0.15
-# A pass stopped by a read overrun is flown again; a bus that keeps overrunning fails the line.
+# A pass stopped by a read overrun is resumed; a bus that keeps overrunning fails the line.
 FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS = 2
 # An interrupted pass resumes this far before the furthest depth it placed, so the bins around the
 # stop are flown again at feed rather than taken from the deceleration.
@@ -1227,7 +1231,7 @@ async def _scan_axis_flying_pass(
 		except Exception:
 			pass
 
-		# A guard or read-overrun interrupt is normally flown again, but not when the axes could
+		# A guard or read-overrun interrupt is normally resumed, but not when the axes could
 		# not be confirmed stopped: fail the line instead of commanding a new pass into them.
 		if len(stop_failures) > 0 and isinstance(
 			exc, (FlyingScanSafetyInterrupted, FlyingScanReadOverrun)

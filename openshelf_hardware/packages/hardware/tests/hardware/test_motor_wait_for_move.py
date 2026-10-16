@@ -343,3 +343,66 @@ async def test_wait_for_move_trusts_completion_only_on_target_without_observed_m
 
     waited_s = clock["now"] - 100.0
     assert (waited_s < 0.1) is is_immediate
+
+
+@pytest.mark.asyncio
+async def test_homing_wait_does_not_trust_completion_on_a_stale_target(mock_controller, monkeypatch):
+    """Homing has no absolute target, so a leftover target must not end the wait on a stale complete bit."""
+    clock = {"now": 100.0}
+    monkeypatch.setattr("hardware.motor.time.monotonic", lambda: clock["now"])
+
+    async def tick(_seconds: float) -> None:
+        clock["now"] += 0.05
+
+    monkeypatch.setattr("hardware.motor.asyncio.sleep", tick)
+    motor = Motor(mock_controller, make_motor_params())
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.get_param = AsyncMock(return_value=0)
+    motor._target_pos = 50.0
+
+    async def did_get_position():
+        motor._cur_pos = 50.0
+        return 50.0
+
+    motor.get_position = AsyncMock(side_effect=did_get_position)
+    mock_controller.read_holding_registers.return_value = 1 << 5
+
+    await motor.wait_for_move(timeout=5.0, homing=True)
+
+    assert clock["now"] - 100.0 > 0.5
+
+
+@pytest.mark.asyncio
+async def test_jog_clears_a_stale_target(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(motor_name="z_axis", logical_to_physical_delta=lambda value: value),
+    )
+    seen = []
+
+    async def fake_wait_for_move(*args, **kwargs):
+        seen.append(motor._target_pos)
+        motor._status = MotorStatus.STOPPED
+
+        return MotorStatus.STOPPED
+
+    motor.wait_for_move = fake_wait_for_move
+    motor.move_config = AsyncMock()
+    motor._target_pos = 50.0
+
+    await motor.jog(1.0)
+
+    assert seen == [None]
+
+
+@pytest.mark.asyncio
+async def test_start_path_zero_clears_a_stale_target(mock_controller):
+    motor = Motor(mock_controller, make_motor_params(motor_name="z_axis"))
+    motor._verify_brake_output_before_motion_trigger = AsyncMock()
+    motor._enable_for_motion = AsyncMock()
+    motor._target_pos = 50.0
+
+    await motor._start_path_zero()
+
+    assert motor._target_pos is None
+    assert motor._pending_motion is None

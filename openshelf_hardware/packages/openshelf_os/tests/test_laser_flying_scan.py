@@ -303,8 +303,8 @@ async def test_scan_axis_flying_stops_and_restarts_the_pass_when_a_guard_engages
 	assert interlock.moving_when_tripped is True
 	assert tool._my.stop_count >= 1
 	assert any("safety_guard=stopped" in message for message in printed)
-	# The interrupted pass is discarded: the kept line starts again from start_mm and has no
-	# samples from before the stop.
+	# The guard trips within the resume overlap of start_mm, so the pass restarts from start_mm
+	# instead of resuming, and the kept line has no samples from before the stop.
 	assert [value for value, _ in tool._my.moves].count(0.0) == 2
 	assert line.samples[0].position_mm == pytest.approx(0.0)
 	assert line.samples[-1].position_mm == pytest.approx(20.0)
@@ -585,6 +585,82 @@ async def test_probe_line_from_center_rebuilds_the_inferred_far_edge_from_the_re
 	assert segment.center_mm == pytest.approx(refined_near_edge_mm + 13.0)
 
 
+@pytest.mark.asyncio
+async def test_probe_line_from_center_rebuilds_the_inferred_near_edge_from_the_refined_far_edge(
+	monkeypatch,
+) -> None:
+	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
+	import openshelf_os.laser_calibration.flying as flying_module
+
+	step_mm = 2.0
+	positions = [float(value) for value in range(0, 50, 2)]
+	# A bottom-row opening runs below the axis floor, so its near edge has to be inferred.
+	profile = [0.0 if position <= 28.0 else 9.5 for position in positions]
+	center_idx = positions.index(10.0)
+	refined_far_edge_mm = 28.75
+	samples = [
+		FlyingScanSample(
+			position_mm=0.5 * index,
+			depth_mm=0.0 if 0.5 * index < refined_far_edge_mm else 9.5,
+			elapsed_s=index * 0.01,
+		)
+		for index in range(0, 97)
+	]
+
+	async def didScanLineFlying(
+		tool,
+		*,
+		axis,
+		positions,
+		fixed_mm,
+		rpm,
+		progress_label,
+		should_abort=None,
+		**kwargs,
+	):
+		return list(profile), FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=samples,
+			duration_s=1.0,
+		)
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+
+	flying_scan = GridScanResult(
+		x_positions=[10.0],
+		y_positions=positions,
+		depth_rows=[[None] for _ in positions],
+	)
+	segment = await fine_scan_module.probe_line_from_center(
+		SimpleNamespace(_my=SimpleNamespace(_params=SimpleNamespace(mpr=80.0))),
+		base_scan=flying_scan,
+		axis="y",
+		positions=positions,
+		fixed_mm=10.0,
+		center_idx=center_idx,
+		step_mm=step_mm,
+		progress_prefix="inferred_near_edge",
+		settle_ms=0,
+		samples_per_point=1,
+		wall_depth_mm=9.5,
+		expected_span_mm=30.0,
+		should_infer_near_edge=True,
+		scan_config=SimpleNamespace(fine_scan_style="flying", fine_scan_feed_mm_s=40.0),
+	)
+
+	# The near edge was inferred from the expected span, so refining the far edge has to move
+	# it too. Keeping the pre-refinement segment would give end 29.0mm and centre 14.0mm.
+	assert segment is not None
+	assert segment.end_mm == pytest.approx(refined_far_edge_mm)
+	assert segment.start_mm == pytest.approx(refined_far_edge_mm - 30.0)
+	assert segment.width_mm == pytest.approx(30.0)
+	assert segment.center_mm == pytest.approx(13.75)
+
+
 async def _scan_scout_line_with_flying_bins(
 	monkeypatch,
 	*,
@@ -845,6 +921,86 @@ async def test_fine_scan_rebins_a_line_it_already_flew_instead_of_flying_it_agai
 
 
 @pytest.mark.asyncio
+async def test_nested_fine_line_block_shares_the_outer_cache(monkeypatch) -> None:
+	flown: list[tuple[str, float]] = []
+
+	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
+		flown.append((axis, float(fixed_mm)))
+		samples = [
+			FlyingScanSample(position_mm=float(mm) / 2.0, depth_mm=float(mm) / 2.0, elapsed_s=0.0)
+			for mm in range(0, 101)
+		]
+		line = FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=samples,
+		)
+		return flying_module.bin_samples_to_positions(samples=samples, positions=positions), line
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+	tool = SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0)))
+	scan_config = SimpleNamespace(fine_scan_style="flying", fine_scan_feed_mm_s=40.0)
+	positions = [float(mm) for mm in range(0, 51, 2)]
+
+	async def prefetch():
+		return await flying_module.prefetch_line_depth_values(
+			tool,
+			scan_config=scan_config,
+			axis="x",
+			positions=positions,
+			fixed_mm=10.0,
+			progress_label="probe",
+		)
+
+	# A retry wraps capture_cross_scan, which opens its own block inside the retry's.
+	with flying_module.reuse_flown_fine_lines():
+		with flying_module.reuse_flown_fine_lines():
+			await prefetch()
+
+		_, line = await prefetch()
+
+	assert flown == [("x", 10.0)]
+	assert line.is_reused is True
+
+
+def _read_flying_sample_rows(run_dir: Path) -> list[dict]:
+	import json
+
+	return [
+		json.loads(row)
+		for row in (run_dir / flying_module.FLYING_SAMPLES_FILENAME).read_text(encoding="utf-8").splitlines()
+	]
+
+
+def test_flying_sample_log_skips_the_samples_of_a_reused_line(tmp_path: Path) -> None:
+	samples = [
+		FlyingScanSample(position_mm=float(mm), depth_mm=5.0, elapsed_s=0.01 * mm) for mm in range(0, 4)
+	]
+	reused = FlyingScanLine(
+		axis="x", fixed_mm=10.0, start_mm=0.0, end_mm=3.0, rpm=30, samples=samples, is_reused=True
+	)
+	reused.record_resample(1.5, 7.0)
+
+	flying_module.write_flying_line_samples(run_dir=tmp_path, label="reused", line=reused)
+
+	rows = _read_flying_sample_rows(tmp_path)
+	assert [(row["source"], row["position_mm"], row["depth_mm"]) for row in rows] == [
+		("resampled", 1.5, 7.0)
+	]
+
+	flown = FlyingScanLine(axis="x", fixed_mm=12.0, start_mm=0.0, end_mm=3.0, rpm=30, samples=samples)
+	flying_module.write_flying_line_samples(run_dir=tmp_path, label="flown", line=flown)
+
+	flown_rows = [row for row in _read_flying_sample_rows(tmp_path) if row["label"] == "flown"]
+	assert [(row["source"], row["position_mm"]) for row in flown_rows] == [
+		("flown", sample.position_mm) for sample in samples
+	]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("h_final_found", [True, False])
 async def test_flying_fine_scan_seeds_the_vertical_probe_from_the_coarse_centre(
 	monkeypatch, h_final_found: bool
@@ -987,7 +1143,6 @@ async def test_flying_pass_ends_on_arrival_when_the_drive_settles_short(monkeypa
 	assert len(line.samples) > 0
 
 
-@pytest.mark.asyncio
 class FakeFlakyAtPositionTool(FakeFlyingTool):
 	"""Fails one bounded laser read once the y axis passes a position."""
 
@@ -1030,13 +1185,78 @@ async def test_scan_axis_flying_resumes_a_pass_stopped_mid_line_instead_of_refly
 	starts = [value for value, _ in tool._my.moves if value < 60.0]
 	assert starts.count(0.0) == 1
 	assert any(20.0 <= value <= 30.0 for value in starts)
-	positions = [sample_position for sample_position in (s.depth_position_mm or s.position_mm for s in line.samples)]
+	positions = [flying_module.sample_depth_position_mm(sample) for sample in line.samples]
 	assert positions[0] == pytest.approx(0.0)
 	assert positions[-1] == pytest.approx(60.0)
-	# Kept and resumed samples join without overlapping or going back.
-	assert all(later >= earlier for earlier, later in zip(positions, positions[1:]))
-	values = flying_module.bin_samples_to_positions(samples=line.samples, positions=[float(mm) for mm in range(0, 61, 2)])
-	assert all(value is not None for value in values)
+	# Kept and resumed samples join without overlapping or going back; order is only checked
+	# across the splice (see the guard-resume test below).
+	resume_mm = float(resume[0].split("resume=from ")[1].split()[0])
+	kept_count = int(resume[0].split("kept_samples=")[1].split()[0])
+	assert 0 < kept_count < len(positions)
+	assert max(positions[:kept_count]) < resume_mm + 0.01
+	assert min(positions[kept_count:]) >= resume_mm - 0.01
+
+
+class FakePositionGuardInterlock:
+	"""Engages once the y axis passes a position, then clears after a few checks."""
+
+	def __init__(self, motor: FakeAxisMotor, trip_after_mm: float, blocked_checks: int) -> None:
+		self.motor = motor
+		self.trip_after_mm = float(trip_after_mm)
+		self.blocked_checks = blocked_checks
+		self.has_tripped = False
+
+	@property
+	def blocked(self) -> bool:
+		if self.has_tripped is False and self.motor.position_mm > self.trip_after_mm:
+			self.has_tripped = True
+
+		if self.has_tripped is False or self.blocked_checks <= 0:
+			return False
+
+		self.blocked_checks -= 1
+		return True
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_resumes_a_pass_stopped_mid_line_by_a_guard(monkeypatch) -> None:
+	monkeypatch.setattr(flying_module, "FLYING_SCAN_SAFETY_POLL_S", 0.0)
+	tool = FakeFlyingTool(depth_mm=5.0)
+	tool._my = FakeTimedAxisMotor(feed_mm_s=200.0)
+	interlock = FakePositionGuardInterlock(tool._my, trip_after_mm=28.0, blocked_checks=5)
+	tool._mx._safety = interlock
+	tool._my._safety = interlock
+	printed: list[str] = []
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=60.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_guard_resume",
+		progress_printer=printed.append,
+		capture_latency_s=0.0,
+	)
+
+	assert interlock.has_tripped is True
+	guard = [message for message in printed if "safety_guard=stopped" in message]
+	assert len(guard) == 1 and "resume=from" in guard[0]
+	starts = [value for value, _ in tool._my.moves if value < 60.0]
+	assert starts.count(0.0) == 1
+	assert any(20.0 <= value <= 30.0 for value in starts)
+	positions = [flying_module.sample_depth_position_mm(sample) for sample in line.samples]
+	assert positions[0] == pytest.approx(0.0)
+	assert positions[-1] == pytest.approx(60.0)
+	# Kept samples stop short of the resume point and the resumed pass picks up from it, so the
+	# splice never goes back. Within a pass the fake's sub-0.01mm spacing is below the jitter of
+	# the latency correction, so order is only checked across the splice (logged to 0.01mm).
+	resume_mm = float(guard[0].split("resume=from ")[1].split()[0])
+	kept_count = int(guard[0].split("kept_samples=")[1].split()[0])
+	assert 0 < kept_count < len(positions)
+	assert max(positions[:kept_count]) < resume_mm + 0.01
+	assert min(positions[kept_count:]) >= resume_mm - 0.01
 
 
 @pytest.mark.asyncio
