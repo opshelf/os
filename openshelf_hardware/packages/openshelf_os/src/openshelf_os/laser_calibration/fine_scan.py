@@ -905,6 +905,7 @@ async def _capture_cross_scan(
 	if vertical_segment is None:
 		return fine_scan, []
 
+	vertical_segment = rebuild_floor_cell_from_top_edge(vertical_segment, y_positions=y_positions)
 	refined_center_y_mm = vertical_segment.center_mm
 	refined_horizontal_y_mm = y_positions[find_nearest_position_index(y_positions, refined_center_y_mm)]
 	refined_horizontal_segment = await probe_line_from_center(
@@ -961,6 +962,46 @@ async def _capture_cross_scan(
 		return fine_scan, []
 
 	return fine_scan, [detected_cell]
+
+
+# On the floor shelf the opening's bottom edge sits a few millimetres above the axis floor and the
+# shelf surface, and reads early or late by a bin or more (lb4a-3 F 0:0: bottom spread 2.1 mm over
+# 7 runs, top 0.33 mm). A measured span this far off nominal there is taken as a misread bottom edge.
+FLOOR_CELL_SPAN_TOLERANCE_MM = 1.0
+
+
+def rebuild_floor_cell_from_top_edge(
+	segment: LineGapSegment,
+	*,
+	y_positions: list[float],
+) -> LineGapSegment:
+	"""Keep a floor-shelf opening's top edge and place its bottom a nominal height below it.
+
+	Only for a vertical window that starts at the axis floor and a span that is off nominal: every
+	other cell keeps both measured edges. This is the same rebuild the near-edge inference does when
+	the bottom edge runs off the floor entirely.
+	"""
+	if float(y_positions[0]) > Y_AXIS_FLOOR_MM:
+		return segment
+
+	if abs(float(segment.width_mm) - EXPECTED_HOLE_HEIGHT_MM) <= FLOOR_CELL_SPAN_TOLERANCE_MM:
+		return segment
+
+	end_mm = float(segment.end_mm)
+	start_mm = end_mm - EXPECTED_HOLE_HEIGHT_MM
+	print_status(
+		f"floor_cell=rebuilt_from_top_edge span_mm={float(segment.width_mm):.2f} "
+		f"center_mm={float(segment.center_mm):.2f}->{(start_mm + end_mm) / 2.0:.2f}"
+	)
+
+	return LineGapSegment(
+		start_idx=segment.start_idx,
+		end_idx=segment.end_idx,
+		start_mm=start_mm,
+		end_mm=end_mm,
+		width_mm=EXPECTED_HOLE_HEIGHT_MM,
+		center_mm=(start_mm + end_mm) / 2.0,
+	)
 
 
 def dedupe_detected_cells(
