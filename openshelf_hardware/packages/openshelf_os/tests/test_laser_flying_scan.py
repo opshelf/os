@@ -585,6 +585,82 @@ async def test_probe_line_from_center_rebuilds_the_inferred_far_edge_from_the_re
 	assert segment.center_mm == pytest.approx(refined_near_edge_mm + 13.0)
 
 
+@pytest.mark.asyncio
+async def test_probe_line_from_center_rebuilds_the_inferred_near_edge_from_the_refined_far_edge(
+	monkeypatch,
+) -> None:
+	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
+	import openshelf_os.laser_calibration.flying as flying_module
+
+	step_mm = 2.0
+	positions = [float(value) for value in range(0, 50, 2)]
+	# A bottom-row opening runs below the axis floor, so its near edge has to be inferred.
+	profile = [0.0 if position <= 28.0 else 9.5 for position in positions]
+	center_idx = positions.index(10.0)
+	refined_far_edge_mm = 28.75
+	samples = [
+		FlyingScanSample(
+			position_mm=0.5 * index,
+			depth_mm=0.0 if 0.5 * index < refined_far_edge_mm else 9.5,
+			elapsed_s=index * 0.01,
+		)
+		for index in range(0, 97)
+	]
+
+	async def didScanLineFlying(
+		tool,
+		*,
+		axis,
+		positions,
+		fixed_mm,
+		rpm,
+		progress_label,
+		should_abort=None,
+		**kwargs,
+	):
+		return list(profile), FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=samples,
+			duration_s=1.0,
+		)
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+
+	flying_scan = GridScanResult(
+		x_positions=[10.0],
+		y_positions=positions,
+		depth_rows=[[None] for _ in positions],
+	)
+	segment = await fine_scan_module.probe_line_from_center(
+		SimpleNamespace(_my=SimpleNamespace(_params=SimpleNamespace(mpr=80.0))),
+		base_scan=flying_scan,
+		axis="y",
+		positions=positions,
+		fixed_mm=10.0,
+		center_idx=center_idx,
+		step_mm=step_mm,
+		progress_prefix="inferred_near_edge",
+		settle_ms=0,
+		samples_per_point=1,
+		wall_depth_mm=9.5,
+		expected_span_mm=30.0,
+		should_infer_near_edge=True,
+		scan_config=SimpleNamespace(fine_scan_style="flying", fine_scan_feed_mm_s=40.0),
+	)
+
+	# The near edge was inferred from the expected span, so refining the far edge has to move
+	# it too. Keeping the pre-refinement segment would give end 29.0mm and centre 14.0mm.
+	assert segment is not None
+	assert segment.end_mm == pytest.approx(refined_far_edge_mm)
+	assert segment.start_mm == pytest.approx(refined_far_edge_mm - 30.0)
+	assert segment.width_mm == pytest.approx(30.0)
+	assert segment.center_mm == pytest.approx(13.75)
+
+
 async def _scan_scout_line_with_flying_bins(
 	monkeypatch,
 	*,
