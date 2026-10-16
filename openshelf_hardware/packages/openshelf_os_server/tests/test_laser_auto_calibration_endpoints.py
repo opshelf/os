@@ -751,3 +751,19 @@ async def test_z_stall_setting_is_refused_while_calibration_runs() -> None:
 
     assert error.value.status_code == 409
     save.assert_not_called()
+
+
+def test_scan_bounds_are_clamped_to_the_axis_travel() -> None:
+    from openshelf_os_server.core.laser_auto_calibration.scan_runner import _clamp_bounds_to_axis_travel
+
+    tool = SimpleNamespace(
+        _mx=SimpleNamespace(_params=SimpleNamespace(lim=950.0, lower_lim=0.0)),
+        _my=SimpleNamespace(_params=SimpleNamespace(lim=1165.0, lower_lim=0.0)),
+    )
+
+    clamped = _clamp_bounds_to_axis_travel(ScanBounds(x_min=5.0, x_max=990.0, y_min=0.0, y_max=1250.0), tool)
+
+    assert clamped == ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1165.0)
+    # Without motor limits the configured bounds stand.
+    untouched = ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0)
+    assert _clamp_bounds_to_axis_travel(untouched, SimpleNamespace()) == untouched

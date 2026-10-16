@@ -789,3 +789,54 @@ def test_median3_binning_filters_a_spike_and_keeps_the_nearest_below_three_sampl
 	)
 
 	assert values == [10.0, 0.0]
+
+
+@pytest.mark.asyncio
+async def test_fine_scan_rebins_a_line_it_already_flew_instead_of_flying_it_again(monkeypatch) -> None:
+	flown: list[tuple[str, float, float, float]] = []
+
+	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
+		flown.append((axis, float(fixed_mm), float(positions[0]), float(positions[-1])))
+		samples = [
+			FlyingScanSample(position_mm=float(mm) / 2.0, depth_mm=float(mm) / 2.0, elapsed_s=0.0)
+			for mm in range(0, 101)
+		]
+		line = FlyingScanLine(
+			axis=axis,
+			fixed_mm=fixed_mm,
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=rpm,
+			samples=samples,
+		)
+		return flying_module.bin_samples_to_positions(samples=samples, positions=positions), line
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+	tool = SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0)))
+	scan_config = SimpleNamespace(fine_scan_style="flying", fine_scan_feed_mm_s=40.0)
+	wide = [float(mm) for mm in range(0, 51, 2)]
+	narrow = [float(mm) for mm in range(10, 41)]
+
+	async def prefetch(positions, fixed_mm):
+		return await flying_module.prefetch_line_depth_values(
+			tool,
+			scan_config=scan_config,
+			axis="x",
+			positions=positions,
+			fixed_mm=fixed_mm,
+			progress_label="probe",
+		)
+
+	with flying_module.reuse_flown_fine_lines():
+		await prefetch(wide, 10.0)
+		values, line = await prefetch(narrow, 10.0)
+		await prefetch(narrow, 12.0)
+
+	# The narrower line on the same row reuses the wide pass at its own 1mm grid; another row flies.
+	assert flown == [("x", 10.0, 0.0, 50.0), ("x", 12.0, 10.0, 40.0)]
+	assert line.is_reused is True
+	assert values == pytest.approx(narrow)
+
+	# Outside a fine scan nothing is cached.
+	await prefetch(narrow, 10.0)
+	assert len(flown) == 3
