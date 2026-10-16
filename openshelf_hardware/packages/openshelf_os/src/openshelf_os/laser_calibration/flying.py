@@ -5,10 +5,12 @@ import bisect
 import json
 import time
 from collections import deque
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Iterator, Optional
 
 from hardware.exceptions import CommunicationError, MotorError
 
@@ -336,6 +338,9 @@ class FlyingScanLine:
 	# Bins filled by a stepped probe after the pass. They update the grid values but are not
 	# samples of the pass, so they stay out of `samples` and are logged with their own source.
 	resamples: list[FlyingScanResample] = field(default_factory=list)
+	# Rebinned from an earlier pass over the same line instead of flown; its samples are that
+	# pass's, so the sample log keeps them only once.
+	is_reused: bool = False
 
 	def record_resample(self, position_mm: float, depth_mm: Optional[float]) -> None:
 		self.resamples.append(
@@ -573,7 +578,7 @@ def write_flying_line_samples(
 	}
 
 	with output_path.open("a", encoding="utf-8") as output_file:
-		for sample in line.samples:
+		for sample in [] if line.is_reused is True else line.samples:
 			output_file.write(
 				json.dumps(
 					{
@@ -1226,6 +1231,46 @@ async def scan_line_positions_flying(
 	return depth_values, line
 
 
+# Lines flown for the cell being fine-scanned, keyed by axis and fixed position. A fine scan flies
+# some lines twice (the vertical seek and walk, the final horizontal and the first precision row);
+# the samples of the first pass already cover the second, so it is rebinned instead of flown.
+_FINE_LINE_CACHE: ContextVar[Optional[dict[tuple[str, float], FlyingScanLine]]] = ContextVar(
+	"fine_line_cache",
+	default=None,
+)
+FINE_LINE_CACHE_FIXED_EPS_MM = 0.01
+
+
+@contextmanager
+def reuse_flown_fine_lines() -> Iterator[None]:
+	token = _FINE_LINE_CACHE.set({})
+
+	try:
+		yield
+	finally:
+		_FINE_LINE_CACHE.reset(token)
+
+
+def _find_reusable_line(axis: str, positions: list[float], fixed_mm: float) -> Optional[FlyingScanLine]:
+	cache = _FINE_LINE_CACHE.get()
+
+	if cache is None or len(positions) == 0:
+		return None
+
+	half_step_mm = abs(positions[1] - positions[0]) / 2.0 if len(positions) > 1 else 0.0
+	wanted_lo_mm = min(positions[0], positions[-1]) + half_step_mm
+	wanted_hi_mm = max(positions[0], positions[-1]) - half_step_mm
+
+	for (cached_axis, cached_fixed_mm), line in cache.items():
+		if cached_axis != axis or abs(cached_fixed_mm - float(fixed_mm)) > FINE_LINE_CACHE_FIXED_EPS_MM:
+			continue
+
+		if min(line.start_mm, line.end_mm) <= wanted_lo_mm and max(line.start_mm, line.end_mm) >= wanted_hi_mm:
+			return line
+
+	return None
+
+
 async def prefetch_line_depth_values(
 	tool: Any,
 	*,
@@ -1254,6 +1299,31 @@ async def prefetch_line_depth_values(
 	if rpm is None:
 		return None
 
+	max_distance_mm = abs(positions[1] - positions[0]) if len(positions) > 1 else None
+	reusable_line = _find_reusable_line(axis, positions, fixed_mm)
+
+	if reusable_line is not None:
+		reused_line = FlyingScanLine(
+			axis=axis,
+			fixed_mm=float(fixed_mm),
+			start_mm=float(positions[0]),
+			end_mm=float(positions[-1]),
+			rpm=reusable_line.rpm,
+			samples=reusable_line.samples,
+			capture_latency_s=reusable_line.capture_latency_s,
+			is_reused=True,
+		)
+		print_status(f"flying_line={progress_label} reused samples={len(reused_line.samples)}")
+
+		return (
+			bin_samples_to_positions(
+				samples=reused_line.samples,
+				positions=positions,
+				max_distance_mm=max_distance_mm,
+			),
+			reused_line,
+		)
+
 	depth_values, line = await scan_line_positions_flying(
 		tool,
 		axis=axis,
@@ -1264,6 +1334,10 @@ async def prefetch_line_depth_values(
 		should_abort=should_abort,
 		capture_latency_s=get_flying_capture_latency_s(scan_config),
 	)
+	cache = _FINE_LINE_CACHE.get()
+
+	if cache is not None:
+		cache[(axis, float(fixed_mm))] = line
 
 	return depth_values, line
 

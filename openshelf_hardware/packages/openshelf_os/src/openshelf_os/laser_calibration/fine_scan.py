@@ -16,6 +16,7 @@ from .flying import (
 	prefetch_line_depth_values,
 	refine_segment_edges_from_samples,
 	resolve_axis_rpm_for_feed,
+	reuse_flown_fine_lines,
 )
 
 
@@ -753,7 +754,12 @@ def build_detected_shelves(
 	return shelves
 
 
-async def capture_cross_scan(
+async def capture_cross_scan(*args: Any, **kwargs: Any) -> tuple[GridScanResult, list[ScanDetectedCell]]:
+	with reuse_flown_fine_lines():
+		return await _capture_cross_scan(*args, **kwargs)
+
+
+async def _capture_cross_scan(
 	tool: Any,
 	*,
 	candidate: GapCandidateRegion,
