@@ -1454,6 +1454,7 @@ class Motor():
             await self.set_param("Position Low", pulse[1])
 
             self._safety_interrupted_move = False
+            self._clear_pending_motion()
             await self._verify_brake_output_before_motion_trigger()
             await self._enable_for_motion()
             await self._controller.write_single_register(
@@ -1551,7 +1552,7 @@ class Motor():
                 if await self._pause_for_safety_if_needed(state):
                     continue
 
-                if snapshot.is_complete and self._is_completion_stable(state):
+                if snapshot.is_complete and self._is_completion_stable(state, homing):
                     return await self._finish_completed_move(homing, state)
 
                 alarm_state = await self._read_alarm_state(homing, state)
@@ -1631,16 +1632,18 @@ class Motor():
             setattr(exc, "fault_context", fault_context)
             raise
 
-    def _is_completion_stable(self, state: MotionWaitState) -> bool:
+    def _is_completion_stable(self, state: MotionWaitState, homing: bool) -> bool:
         # A complete bit read before the drive starts a new move is stale, so completion only
         # counts once the axis moved during this wait or 0.5s passed. An axis already standing on
         # its target finished the move before this wait began (a flying pass watches the whole
-        # move itself), so making it wait out the 0.5s gains nothing.
+        # move itself), so making it wait out the 0.5s gains nothing. Homing has no absolute
+        # target, so a leftover _target_pos must never end a homing wait early.
         if state.has_moved is True:
             return True
 
         if (
-            self._target_pos is not None
+            homing is False
+            and self._target_pos is not None
             and self._cur_pos is not None
             and abs(self._cur_pos - self._target_pos) <= SETTLED_ON_TARGET_TOLERANCE_MM
         ):
@@ -2127,6 +2130,7 @@ class Motor():
         await self.set_param("Velocity", rpm)
 
     async def _start_path_zero(self) -> None:
+        self._clear_pending_motion()
         await self._verify_brake_output_before_motion_trigger()
         await self._enable_for_motion()
         await self._controller.write_single_register(
