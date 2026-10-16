@@ -1073,7 +1073,7 @@ async def test_fine_line_flies_from_the_nearer_end_only_when_enabled(monkeypatch
 		)
 
 	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
-	tool = SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0), _cur_pos=48.0))
+	tool = SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0), get_position=AsyncMock(return_value=48.0)))
 	positions = [float(mm) for mm in range(0, 51, 1)]
 
 	values, _ = await flying_module.prefetch_line_depth_values(
@@ -1090,3 +1090,18 @@ async def test_fine_line_flies_from_the_nearer_end_only_when_enabled(monkeypatch
 	assert flights == ([(50.0, 0.0)] if flies_down else [(0.0, 50.0)])
 	# The caller's walk always gets values in its own grid order.
 	assert values == positions
+
+
+
+def test_reversed_grid_with_a_short_end_step_still_bins_every_position() -> None:
+	# Grids stop on their bound, so the last step is short; flown in reverse it comes first.
+	positions = list(reversed([471.0207 + mm for mm in range(0, 35)] + [505.1791]))
+	samples = [
+		FlyingScanSample(position_mm=505.4 - 0.45 * index, depth_mm=1.0, elapsed_s=0.0)
+		for index in range(0, 78)
+	]
+
+	values = flying_module.bin_samples_to_positions(samples=samples, positions=positions)
+
+	assert flying_module.grid_step_mm(positions) == pytest.approx(1.0)
+	assert all(value is not None for value in values)
