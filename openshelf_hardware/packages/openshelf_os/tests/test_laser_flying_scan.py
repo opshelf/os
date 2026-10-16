@@ -1310,65 +1310,24 @@ def test_fine_window_covers_a_hole_reaching_a_full_height_above_the_sweep_row() 
 	assert bounds.y_min <= 425.25 - 30.0 - 2.0
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
-	("v1_span", "column_spans", "expected_columns", "expected_center"),
+	("y_start", "span", "expected"),
 	[
-		# lb4a-3 floor cell: the bottom edge read one bin early, 31.5mm tall; both columns read 29.6.
-		pytest.param((22.0, 53.5), [(23.9, 53.5), (24.0, 53.6)], ["v_recheck1", "v_recheck2"], (23.9 + 53.5) / 2.0, id="off_span_rechecked"),
-		pytest.param((24.0, 53.8), [], [], (24.0 + 53.8) / 2.0, id="nominal_span_left_alone"),
-		pytest.param((22.0, 53.5), [None, None], ["v_recheck1", "v_recheck2"], (22.0 + 53.5) / 2.0, id="columns_miss_keeps_original"),
+		# lb4a-3 F 0:0: the bottom edge read a bin early (21.59-53.04); the top edge is the reliable one.
+		pytest.param(0.0, (21.59, 53.04), (23.04, 53.04), id="floor_off_span_rebuilt"),
+		pytest.param(0.0, (23.5, 53.3), (23.5, 53.3), id="floor_nominal_kept"),
+		# Above the floor both edges are measured cleanly, even when the opening is a little tall.
+		pytest.param(405.0, (422.2, 454.6), (422.2, 454.6), id="off_floor_kept"),
 	],
 )
-async def test_off_nominal_vertical_span_is_rechecked_in_two_more_columns(
-	monkeypatch, v1_span, column_spans, expected_columns, expected_center
-) -> None:
-	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
-	from openshelf_os.laser_calibration.core import GapCandidateRegion, LineGapSegment
+def test_floor_cell_off_span_is_rebuilt_from_its_top_edge(y_start, span, expected) -> None:
+	from openshelf_os.laser_calibration.core import LineGapSegment
+	from openshelf_os.laser_calibration.fine_scan import rebuild_floor_cell_from_top_edge
 
-	def segment(start_mm: float, end_mm: float) -> LineGapSegment:
-		return LineGapSegment(start_idx=0, end_idx=1, start_mm=start_mm, end_mm=end_mm, width_mm=end_mm - start_mm, center_mm=(start_mm + end_mm) / 2.0)
+	segment = LineGapSegment(start_idx=0, end_idx=1, start_mm=span[0], end_mm=span[1], width_mm=span[1] - span[0], center_mm=(span[0] + span[1]) / 2.0)
 
-	probed: list[str] = []
-	columns = iter(column_spans)
-	vertical_centers: list[float] = []
+	rebuilt = rebuild_floor_cell_from_top_edge(segment, y_positions=[y_start + 2.0 * index for index in range(30)])
 
-	async def didProbeLine(tool, *, axis, fixed_mm, progress_prefix, **kwargs):
-		suffix = progress_prefix.split("fine_1_", 1)[1]
-		probed.append(suffix)
-
-		if suffix == "v1":
-			return segment(*v1_span)
-
-		if suffix.startswith("v_recheck"):
-			span = next(columns)
-			return None if span is None else segment(*span)
-
-		if suffix == "h_final":
-			vertical_centers.append(float(fixed_mm))
-			return segment(287.5, 314.5)
-
-		raise AssertionError(suffix)
-
-	async def didSeekInterior(tool, *, progress_prefix, **kwargs):
-		return 5
-
-	monkeypatch.setattr(fine_scan_module, "probe_line_from_center", didProbeLine)
-	monkeypatch.setattr(fine_scan_module, "find_hole_interior_idx_from_seed", didSeekInterior)
-	monkeypatch.setattr(fine_scan_module, "refine_horizontal_segment_across_rows", AsyncMock(return_value=None))
-
-	_, cells = await fine_scan_module.capture_cross_scan(
-		SimpleNamespace(),
-		candidate=GapCandidateRegion(x_min=289.0, x_max=313.0, y_min=25.25, y_max=25.25, wall_depth_mm=9.6),
-		bounds=ScanBounds(x_min=279.0, x_max=323.0, y_min=0.0, y_max=59.25),
-		step_mm=2.0,
-		settle_ms=0,
-		samples_per_point=1,
-		wall_depth_mm=9.6,
-		scan_config=SimpleNamespace(fine_scan_style="flying", fine_scan_feed_mm_s=40.0, laser_offset_x_mm=51.0, laser_offset_y_mm=0.0),
-		progress_prefix="fine_1",
-	)
-
-	assert [name for name in probed if name.startswith("v_recheck")] == expected_columns
-	assert len(cells) == 1
-	assert cells[0].center_y_mm == pytest.approx(expected_center)
+	assert rebuilt.start_mm == pytest.approx(expected[0])
+	assert rebuilt.end_mm == pytest.approx(expected[1])
+	assert rebuilt.center_mm == pytest.approx((expected[0] + expected[1]) / 2.0)
