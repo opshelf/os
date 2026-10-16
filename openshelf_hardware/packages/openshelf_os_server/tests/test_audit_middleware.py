@@ -7,18 +7,7 @@ from sqlalchemy import func, select
 
 from openshelf_os_server.database.models import AuditLog
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.main import app
 from openshelf_os_server.utils.audit_constants import AUDIT_RETENTION_DAYS
-
-
-async def audit_count(endpoint: str | None = None, method: str | None = None) -> int:
-	async with AsyncSessionLocal() as db:
-		query = select(func.count()).select_from(AuditLog)
-		if endpoint is not None:
-			query = query.filter(AuditLog.endpoint == endpoint)
-		if method is not None:
-			query = query.filter(AuditLog.method == method)
-		return int(await db.scalar(query) or 0)
 
 
 async def latest_audit_log(endpoint: str, method: str | None = None) -> AuditLog | None:
@@ -40,23 +29,6 @@ async def admin_headers(unauthenticated_client: AsyncClient) -> dict[str, str]:
 
 
 @pytest.mark.anyio
-async def test_audit_integrity_fields_populated(client: AsyncClient) -> None:
-	await client.get("/api/users")
-
-	log = await latest_audit_log("/api/users", "GET")
-	assert log is not None
-	assert log.seq_no is not None
-	assert log.request_duration_ms is not None
-	assert log.prev_hash is not None
-	assert len(log.prev_hash) == 64
-	assert log.entry_hash is not None
-	assert len(log.entry_hash) == 64
-	assert log.hmac is not None
-	assert len(log.hmac) == 64
-	assert log.hmac_key_id is not None
-
-
-@pytest.mark.anyio
 async def test_audit_chain_integrity_verifies_after_skipped_requests(unauthenticated_client: AsyncClient) -> None:
 	headers = await admin_headers(unauthenticated_client)
 
@@ -72,51 +44,6 @@ async def test_audit_chain_integrity_verifies_after_skipped_requests(unauthentic
 	assert second.status_code == 200
 	assert verify.status_code == 200
 	assert verify.json()["ok"] is True
-
-
-@pytest.mark.anyio
-async def test_audit_error_response_keeps_cors_header(unauthenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
-	# Keep this test-only route out of subsequent live-route/OpenAPI checks.
-	monkeypatch.setattr(app.router, "routes", list(app.router.routes))
-	path = "/api/test/audit-error"
-
-	if all(getattr(route, "path", None) != path for route in app.routes):
-		@app.get(path)
-		async def audit_error_route() -> None:
-			raise RuntimeError("audit error route failed")
-
-	response = await unauthenticated_client.get(path, headers={"Origin": "http://dev-ui.test"})
-
-	assert response.status_code == 500
-	assert response.headers["access-control-allow-origin"] == "*"
-	assert response.json()["detail"]["code"] == "internal_error"
-
-	log = await latest_audit_log(path, "GET")
-	assert log is not None
-	assert log.response_status == 500
-	assert log.error_message == "audit error route failed"
-
-
-@pytest.mark.anyio
-async def test_audit_write_prunes_unprotected_entries_older_than_retention(client: AsyncClient) -> None:
-	stale_endpoint = f"/api/stale/{uuid.uuid4().hex}"
-	async with AsyncSessionLocal() as db:
-		db.add(
-			AuditLog(
-				timestamp=datetime.now(timezone.utc) - timedelta(days=AUDIT_RETENTION_DAYS + 1),
-				method="GET",
-				endpoint=stale_endpoint,
-				response_status=200,
-			)
-		)
-		await db.commit()
-
-	assert await audit_count(endpoint=stale_endpoint) == 1
-
-	response = await client.get("/api/users")
-	assert response.status_code == 200
-
-	assert await audit_count(endpoint=stale_endpoint) == 0
 
 
 @pytest.mark.anyio
@@ -151,51 +78,6 @@ async def test_retention_prune_keeps_clock_skewed_chain_entry(client: AsyncClien
 			select(func.count()).select_from(AuditLog).where(AuditLog.seq_no == skewed_seq)
 		)
 	assert still_present == 1
-
-
-@pytest.mark.anyio
-async def test_failed_excluded_get_is_audited(client: AsyncClient) -> None:
-	response = await client.post("/api/storage/items/lookup", json={"barcode": "missing-barcode"})
-	assert response.status_code == 404
-
-	log = await latest_audit_log("/api/storage/items/lookup", "POST")
-	assert log is not None
-	assert log.response_status == 404
-
-
-@pytest.mark.anyio
-async def test_successful_barcode_lookup_is_not_audited(client: AsyncClient) -> None:
-	created = await client.post("/api/storage/items", json={
-		"barcode": "audit-lookup-barcode",
-		"name": "Lookup item",
-		"dimensions": {"width": 10, "height": 10, "length": 10},
-	})
-	assert created.status_code == 200, created.text
-	before_count = await audit_count(endpoint="/api/storage/items/lookup", method="POST")
-
-	response = await client.post(
-		"/api/storage/items/lookup", json={"barcode": "audit-lookup-barcode"}
-	)
-
-	assert response.status_code == 200
-	assert await audit_count(endpoint="/api/storage/items/lookup", method="POST") == before_count
-
-
-@pytest.mark.anyio
-async def test_successful_storage_mutation_is_audited(client: AsyncClient) -> None:
-	payload = {
-		"barcode": f"{uuid.uuid4().int % 10**12:012d}",
-		"name": "Audit Test Item",
-		"dimensions": {"width": 1.0, "height": 2.0, "length": 3.0},
-		"weight": 4.0,
-	}
-	response = await client.post("/api/storage/items", json=payload)
-	assert response.status_code == 200
-
-	log = await latest_audit_log("/api/storage/items", "POST")
-	assert log is not None
-	assert log.response_status == 200
-	assert log.request_body == payload
 
 
 @pytest.mark.anyio

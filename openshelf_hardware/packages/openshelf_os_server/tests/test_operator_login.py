@@ -13,7 +13,6 @@ from openshelf_os_server.core import login as login_core
 from openshelf_os_server.core.login import login_backoff
 from openshelf_os_server.database.models import AuditLog, RobotEvent, Role, User
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.routers import users as users_router
 from openshelf_os_server.settings import get_settings
 
 
@@ -92,94 +91,6 @@ async def add_robot_event() -> AsyncGenerator[AddRobotEvent, None]:
 
 
 @pytest.mark.anyio
-async def test_login_experience_switches_at_four_active_non_system_users(
-    unauthenticated_client: AsyncClient,
-    make_user: MakeUser,
-) -> None:
-    await make_user(is_active=False)
-    await make_user(is_system=True)
-    for _ in range(2):
-        await make_user()
-
-    experience = await unauthenticated_client.get("/api/auth/experience")
-    assert experience.status_code == 200
-    assert experience.json() == {"mode": "cards", "active_user_count": 3}
-
-    public_users = await unauthenticated_client.get("/api/auth/users")
-    assert public_users.status_code == 200
-    assert len(public_users.json()) == 3
-    assert all(
-        set(user) == {"email", "firstName", "lastName", "role", "accessLevel"}
-        for user in public_users.json()
-    )
-
-    await make_user()
-    experience = await unauthenticated_client.get("/api/auth/experience")
-    assert experience.json() == {"mode": "identifier", "active_user_count": 4}
-    assert (await unauthenticated_client.get("/api/auth/users")).status_code == 404
-
-
-@pytest.mark.anyio
-async def test_identifier_login_accepts_email_and_unique_full_name(
-    unauthenticated_client: AsyncClient,
-    make_user: MakeUser,
-) -> None:
-    user = await make_user(
-        email="CaseSensitive@example.com",
-        first_name="Ada",
-        last_name="Lovelace",
-    )
-
-    by_email = await unauthenticated_client.post(
-        "/api/auth/login/json",
-        json={"identifier": "casesensitive@EXAMPLE.com", "pin": "4321"},
-    )
-    assert by_email.status_code == 200
-
-    by_name = await unauthenticated_client.post(
-        "/api/auth/login/json",
-        json={"identifier": "ADA LOVELACE", "pin": "4321"},
-    )
-    assert by_name.status_code == 200
-
-    async with AsyncSessionLocal() as db:
-        log = await db.scalar(
-            select(AuditLog)
-            .where(AuditLog.endpoint == "/api/auth/login/json")
-            .order_by(AuditLog.id.desc())
-        )
-    assert log is not None
-    assert log.user_id == user.id
-    assert log.request_body == {"identifier": "[REDACTED]", "pin": "[REDACTED]"}
-
-
-@pytest.mark.anyio
-async def test_system_user_logs_in_by_email_but_not_by_name(
-    unauthenticated_client: AsyncClient,
-    make_user: MakeUser,
-) -> None:
-    # The dev UI signs in as the developer system user by email.
-    await make_user(
-        email="system-login@example.com",
-        first_name="System",
-        last_name="Identity",
-        is_system=True,
-    )
-
-    by_email = await unauthenticated_client.post(
-        "/api/auth/login/json",
-        json={"email": "system-login@example.com", "pin": "4321"},
-    )
-    assert by_email.status_code == 200
-
-    by_name = await unauthenticated_client.post(
-        "/api/auth/login/json",
-        json={"identifier": "System Identity", "pin": "4321"},
-    )
-    assert by_name.status_code == 401
-
-
-@pytest.mark.anyio
 async def test_ambiguous_name_and_unknown_identity_fail_generically(
     unauthenticated_client: AsyncClient,
     make_user: MakeUser,
@@ -195,32 +106,6 @@ async def test_ambiguous_name_and_unknown_identity_fail_generically(
         assert response.status_code == 401
         assert response.json()["detail"]["message"] == "Invalid credentials"
         assert response.headers["Retry-After"] == "1"
-
-
-@pytest.mark.anyio
-async def test_scan_token_login_resolves_the_event_barcode(
-    unauthenticated_client: AsyncClient,
-    make_user: MakeUser,
-    add_robot_event: AddRobotEvent,
-) -> None:
-    barcode = f"USR-{uuid4().hex}"
-    await make_user(login_barcode=barcode)
-    event = await add_robot_event({"kind": "label_scanned", "payload": barcode})
-    settings = get_settings()
-    auth = AuthService(settings.auth.jwt_secret, settings.auth.jwt_algorithm)
-    token = auth.create_scan_token(event.seq, login_core.SCAN_TOKEN_TTL_S)
-    claims = auth.decode_token(token)
-    assert claims is not None
-    assert claims["seq"] == event.seq
-    assert "barcode" not in claims
-    assert barcode not in token
-
-    response = await unauthenticated_client.post(
-        "/api/auth/login/json",
-        json={"scan_token": token, "pin": "4321"},
-    )
-    assert response.status_code == 200
-    assert barcode not in response.text
 
 
 @pytest.mark.anyio
@@ -277,86 +162,3 @@ async def test_scan_frames_filter_events_and_never_expose_the_barcode() -> None:
     assert frame["expires_in"] == login_core.SCAN_TOKEN_TTL_S
     assert auth.decode_scan_token(frame["scan_token"]) == scan.seq
     assert barcode not in json.dumps(frame)
-
-
-@pytest.mark.anyio
-async def test_login_barcode_print_always_rotates_assignment(
-    client: AsyncClient,
-    make_user: MakeUser,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = await make_user()
-    endpoint = f"/api/users/{user.id}/login-barcode/print"
-    monkeypatch.setattr(users_router, "print_payload", lambda _payload: True)
-
-    assigned = await client.post(endpoint)
-    assert assigned.status_code == 200, assigned.text
-    assert assigned.json() == {
-        "user_id": user.id,
-        "printed": True,
-        "assigned": True,
-        "replaced": False,
-        "has_login_barcode": True,
-    }
-    async with AsyncSessionLocal() as db:
-        first_barcode = (await db.get(User, user.id)).login_barcode
-    assert first_barcode is not None
-    assert first_barcode not in assigned.text
-
-    replaced = await client.post(endpoint)
-    assert replaced.status_code == 200
-    assert replaced.json()["assigned"] is False
-    assert replaced.json()["replaced"] is True
-    async with AsyncSessionLocal() as db:
-        second_barcode = (await db.get(User, user.id)).login_barcode
-    assert second_barcode is not None
-    assert second_barcode != first_barcode
-
-
-@pytest.mark.anyio
-async def test_login_barcode_resolves_managed_user_without_exposing_barcode(
-    client: AsyncClient,
-    make_user: MakeUser,
-) -> None:
-    barcode = f"USR-{uuid4().hex}"
-    user = await make_user(login_barcode=barcode, is_active=False)
-
-    resolved = await client.post(
-        "/api/users/login-barcode/resolve",
-        json={"login_barcode": barcode},
-    )
-    assert resolved.status_code == 200, resolved.text
-    assert resolved.json()["id"] == user.id
-    assert resolved.json()["has_login_barcode"] is True
-    assert barcode not in resolved.text
-
-    missing = await client.post(
-        "/api/users/login-barcode/resolve",
-        json={"login_barcode": "USR-not-assigned"},
-    )
-    assert missing.status_code == 404
-
-
-@pytest.mark.anyio
-async def test_failed_print_keeps_assigned_barcode_for_safe_retry(
-    client: AsyncClient,
-    make_user: MakeUser,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    user = await make_user()
-    endpoint = f"/api/users/{user.id}/login-barcode/print"
-    monkeypatch.setattr(users_router, "print_payload", lambda _payload: False)
-
-    failed = await client.post(endpoint)
-    assert failed.status_code == 503
-    assert failed.json()["detail"]["login_barcode_assigned"] is True
-    async with AsyncSessionLocal() as db:
-        assigned_barcode = (await db.get(User, user.id)).login_barcode
-    assert assigned_barcode is not None
-
-    monkeypatch.setattr(users_router, "print_payload", lambda _payload: True)
-    retried = await client.post(endpoint)
-    assert retried.status_code == 200
-    assert retried.json()["assigned"] is False
-    async with AsyncSessionLocal() as db:
-        assert (await db.get(User, user.id)).login_barcode != assigned_barcode

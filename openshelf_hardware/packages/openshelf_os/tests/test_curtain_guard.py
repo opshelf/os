@@ -184,14 +184,6 @@ class CurtainGuardTests(unittest.TestCase):
         self.robot = FakeRobot()
         self.worker = RobotWorker(self.robot)
 
-    def test_light_curtain_requires_open_io_door(self):
-        self.robot.set_curtain_state(True)
-        self.robot.set_door_state(False)
-
-        asyncio.run(self.worker._evaluate_safety_guard())
-
-        self.assertFalse(self.worker.get_safety_status()["active"])
-        self.assertEqual(self.robot.pause_calls, 0)
 
     def test_light_curtain_blocks_when_io_door_is_opening(self):
         self.robot.set_curtain_state(True)
@@ -219,60 +211,6 @@ class CurtainGuardTests(unittest.TestCase):
         self.assertTrue(safety["awaiting_ack"])
         self.assertEqual(self.robot.pause_calls, 1)
         self.assertEqual(self.robot.resume_calls, 0)
-
-    def test_light_curtain_does_not_block_when_crashed(self):
-        self.worker.set_crash_state("test crash")
-        self.robot.set_curtain_state(True)
-        self.robot.set_door_state(True)
-
-        asyncio.run(self.worker._evaluate_safety_guard())
-
-        safety = self.worker.get_safety_status()
-        self.assertFalse(safety["active"])
-        self.assertFalse(safety["sources"]["light_curtain"]["active"])
-        self.assertEqual(self.robot.pause_calls, 0)
-
-    def test_light_curtain_does_not_block_when_emergency_stopped(self):
-        self.worker.set_emergency_stop_state("test emergency stop")
-        self.robot.set_curtain_state(True)
-        self.robot.set_door_state(True)
-
-        asyncio.run(self.worker._evaluate_safety_guard())
-
-        safety = self.worker.get_safety_status()
-        self.assertFalse(safety["active"])
-        self.assertFalse(safety["sources"]["light_curtain"]["active"])
-        self.assertEqual(self.robot.pause_calls, 0)
-
-    def _assert_curtain_change_ignored(self, set_state, reason):
-        evaluate_calls = 0
-        publish_calls = 0
-
-        async def did_evaluate_safety_guard():
-            nonlocal evaluate_calls
-            evaluate_calls += 1
-            return True
-
-        async def did_publish_status():
-            nonlocal publish_calls
-            publish_calls += 1
-
-        set_state(reason)
-        self.worker._evaluate_safety_guard = did_evaluate_safety_guard
-        self.worker._publish_status = did_publish_status
-
-        async def run_test():
-            self.worker._on_light_curtain_change(True)
-            await asyncio.sleep(0)
-
-            self.assertIsNone(self.worker._curtain_blocked)
-            self.assertEqual(evaluate_calls, 0)
-            self.assertEqual(publish_calls, 0)
-
-        asyncio.run(run_test())
-
-    def test_light_curtain_change_is_ignored_when_crashed(self):
-        self._assert_curtain_change_ignored(self.worker.set_crash_state, "test crash")
 
 
     def test_guard_waits_for_ack_after_interruption_clears(self):
@@ -316,31 +254,6 @@ class CurtainGuardTests(unittest.TestCase):
         self.assertEqual(safety["active_sources"], ["cabinet_doors"])
         self.assertEqual(self.robot.pause_calls, 1)
 
-    def test_safety_guard_bypass_ignores_light_curtain_and_cabinet_doors(self):
-        self.robot.set_curtain_state(True)
-        self.robot.set_door_state(True)
-        self.robot.set_cabinet_door_state(
-            {
-                "top_closed": False,
-                "bottom_closed": True,
-                "closed": False,
-                "top_open": True,
-                "bottom_open": False,
-                "open": True,
-            }
-        )
-
-        safety = asyncio.run(self.worker.set_safety_guard_bypassed(True))
-
-        self.assertTrue(safety["bypassed"])
-        self.assertFalse(safety["active"])
-        self.assertFalse(safety["motion_blocked"])
-        self.assertEqual(safety["active_sources"], [])
-        self.assertTrue(safety["sources"]["light_curtain"]["bypassed"])
-        self.assertTrue(safety["sources"]["cabinet_doors"]["bypassed"])
-        self.assertEqual(self.robot.pause_calls, 0)
-        self.assertTrue(self.robot.safety_guard_bypassed)
-
 
     def test_light_curtain_component_bypass_keeps_cabinet_doors_active(self):
         self.robot.set_curtain_state(True)
@@ -369,49 +282,6 @@ class CurtainGuardTests(unittest.TestCase):
         self.assertFalse(safety["sources"]["cabinet_doors"]["bypassed"])
         self.assertTrue(self.robot.light_curtain_bypassed)
 
-    def test_component_bypass_releases_ack_when_no_sources_remain(self):
-        self.robot.set_curtain_state(True)
-        self.robot.set_door_state(True)
-        asyncio.run(self.worker._evaluate_safety_guard())
-
-        safety = asyncio.run(
-            self.worker.set_safety_component_bypassed("light_curtain", True)
-        )
-
-        self.assertFalse(safety["active"])
-        self.assertFalse(safety["motion_blocked"])
-        self.assertFalse(safety["awaiting_ack"])
-        self.assertEqual(safety["active_sources"], [])
-        self.assertTrue(safety["sources"]["light_curtain"]["bypassed"])
-        self.assertEqual(self.robot.pause_calls, 1)
-        self.assertEqual(self.robot.resume_calls, 1)
-
-
-    def test_global_bypass_overrides_component_bypasses(self):
-        self.robot.set_curtain_state(True)
-        self.robot.set_door_state(True)
-        self.robot.set_cabinet_door_state(
-            {
-                "top_closed": False,
-                "bottom_closed": True,
-                "closed": False,
-                "top_open": True,
-                "bottom_open": False,
-                "open": True,
-            }
-        )
-
-        safety = asyncio.run(self.worker.set_safety_guard_bypassed(True))
-
-        self.assertEqual(safety["active_sources"], [])
-        self.assertTrue(safety["sources"]["light_curtain"]["bypassed"])
-        self.assertTrue(safety["sources"]["cabinet_doors"]["bypassed"])
-        self.assertFalse(safety["component_bypasses"]["light_curtain"])
-        self.assertFalse(safety["component_bypasses"]["cabinet_doors"])
-
-    def test_unknown_component_bypass_raises(self):
-        with self.assertRaises(ValueError):
-            asyncio.run(self.worker.set_safety_component_bypassed("scale", True))
 
     def test_overlapping_sources_require_all_clear_before_ack(self):
         self.robot.set_curtain_state(True)

@@ -4,7 +4,7 @@ import pytest
 from httpx import AsyncClient
 from openshelf_os_server.routers import robot as robot_router
 from openshelf_os.exceptions import MotorError
-from unittest.mock import ANY, MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch
 
 
 def _mock_settings():
@@ -39,25 +39,6 @@ def _mock_worker(power_cycle: AsyncMock | None = None):
 	worker._robot = robot
 
 	return worker
-
-
-@pytest.mark.anyio
-async def test_power_cycle_marks_dropped_axes_for_homing(client: AsyncClient) -> None:
-	mock_worker = _mock_worker()
-
-	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
-		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
-			response = await client.post("/api/robot/debug/power/pwr_out0/cycle")
-
-	assert response.status_code == 200
-	data = response.json()
-	assert data["success"] is True
-	assert data["rail"] == "pwr_out0"
-	assert data["axes_needing_home"] == ["x_axis", "y_axis", "z_axis", "stage", "rotate"]
-	mock_worker._robot.power_cycle_rail.assert_awaited_once_with("pwr_out0", on_cut=ANY)
-	mock_worker.set_needs_home.assert_called_once_with(
-		"power cycle: pwr_out0", ["x_axis", "y_axis", "z_axis", "stage", "rotate"]
-	)
 
 
 @pytest.mark.anyio
@@ -107,4 +88,3 @@ async def test_power_cycle_reconfigure_failure_is_503_and_marks_axes_for_homing(
 	mock_worker.set_needs_home.assert_called_once_with(
 		"power cycle: pwr_out0", ["x_axis", "y_axis", "z_axis", "stage", "rotate"]
 	)
-

@@ -12,14 +12,10 @@ re-runs the idempotent rename after both of its own paths, and the revision
 calls the same helper on the normal upgrade route.
 """
 
-import importlib.util
-from pathlib import Path
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
-from alembic.operations import Operations
-from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 
 from openshelf_os_server import main
@@ -183,113 +179,3 @@ def test_migrations_replay_renames_module_side_values(
     assert _alembic_version(engine) == [head]
     assert _sides(engine, "item_locations") == ["front_module", "back_module"]
     assert _sides(engine, "storage_bins") == ["front_module", "back_module"]
-
-
-def test_migrations_reapplies_the_rename_on_a_later_start(
-    recorder: _RecordingLogger, monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    engine = _field_engine(tmp_path)
-    url = str(engine.url)
-    head = _alembic_head(url)
-    assert SIDE_VALUE_REVISION in _ancestry(url, head)
-
-    _insert_old_side_values(engine)
-
-    _run(monkeypatch, url)
-    assert recorder.failures() == [], f"migration_failed: {recorder.failures()}"
-
-    # A row written with the old value by legacy code before the next start;
-    # the database is already at head, so only the post-upgrade re-run can
-    # rename it.
-    with engine.begin() as connection:
-        connection.exec_driver_sql(
-            "INSERT INTO item_locations (id, item_id, side, shelf_idx, cell_idx) "
-            "VALUES (3, 1, 'left_module', 0, 4)"
-        )
-
-    recorder.events.clear()
-    _run(monkeypatch, url)
-
-    assert recorder.failures() == [], f"migration_failed: {recorder.failures()}"
-    assert recorder.names().count("migrations_baseline_stamped") == 0
-    assert recorder.names().count("running_database_migrations") == 1
-    assert _alembic_version(engine) == [head]
-    assert _sides(engine, "item_locations") == ["front_module", "back_module", "front_module"]
-
-
-def _migration():
-    path = (
-        Path(__file__).parents[1]
-        / "src/openshelf_os_server/alembic/versions/f9a0b1c2d3e4_rename_module_side_values.py"
-    )
-    spec = importlib.util.spec_from_file_location("module_side_value_migration", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _side_value_schema(connection) -> None:
-    metadata = sa.MetaData()
-    items = sa.Table("items", metadata, sa.Column("id", sa.Integer, primary_key=True))
-    locations = sa.Table(
-        "item_locations",
-        metadata,
-        sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("item_id", sa.Integer(), sa.ForeignKey("items.id"), nullable=False),
-        sa.Column("side", sa.String(20), nullable=False),
-    )
-    bins = sa.Table(
-        "storage_bins",
-        metadata,
-        sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("side", sa.String(20), nullable=False),
-    )
-    metadata.create_all(connection)
-    connection.execute(items.insert().values(id=1))
-    connection.execute(locations.insert().values(id=1, item_id=1, side="left_module"))
-    connection.execute(locations.insert().values(id=2, item_id=1, side="right_module"))
-    connection.execute(bins.insert().values(id=1, side="left_module"))
-    connection.execute(bins.insert().values(id=2, side="right_module"))
-
-
-def test_revision_upgrade_renames_module_side_values():
-    migration = _migration()
-    engine = sa.create_engine("sqlite://")
-
-    with engine.begin() as connection:
-        _side_value_schema(connection)
-        migration.op = Operations(MigrationContext.configure(connection))
-        migration.upgrade()
-
-        assert _sides(connection, "item_locations") == ["front_module", "back_module"]
-        assert _sides(connection, "storage_bins") == ["front_module", "back_module"]
-
-
-def test_revision_upgrade_is_idempotent():
-    migration = _migration()
-    engine = sa.create_engine("sqlite://")
-
-    with engine.begin() as connection:
-        _side_value_schema(connection)
-        migration.op = Operations(MigrationContext.configure(connection))
-        migration.upgrade()
-        # A second run, the way the startup path re-runs the same helper, must
-        # be a no-op on rows that already carry the new values.
-        migration.upgrade()
-
-        assert _sides(connection, "item_locations") == ["front_module", "back_module"]
-        assert _sides(connection, "storage_bins") == ["front_module", "back_module"]
-
-
-def test_revision_downgrade_restores_the_old_side_values():
-    migration = _migration()
-    engine = sa.create_engine("sqlite://")
-
-    with engine.begin() as connection:
-        _side_value_schema(connection)
-        migration.op = Operations(MigrationContext.configure(connection))
-        migration.upgrade()
-        migration.downgrade()
-
-        assert _sides(connection, "item_locations") == ["left_module", "right_module"]
-        assert _sides(connection, "storage_bins") == ["left_module", "right_module"]

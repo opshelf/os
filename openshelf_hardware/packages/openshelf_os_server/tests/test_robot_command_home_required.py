@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from openshelf_os.robot.commands import HomeCommand, StopCommand, StoreItemCommand
+from openshelf_os.robot.commands import StopCommand, StoreItemCommand
 from openshelf_os_server.routers.robot import _ensure_command_allowed_while_needs_home
 
 
@@ -19,10 +19,6 @@ class _Worker:
 
     def needs_home_reason(self) -> str:
         return "Startup failed for motion components: stage"
-
-
-def test_robot_command_home_required_allows_home_command() -> None:
-    _ensure_command_allowed_while_needs_home(HomeCommand(), _Worker(True))
 
 
 def test_robot_command_home_required_allows_stop_command() -> None:

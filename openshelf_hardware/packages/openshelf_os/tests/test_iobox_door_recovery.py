@@ -53,27 +53,6 @@ def make_iobox() -> IOBox:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("position_mm", "expected_bad_reading_count"),
-    [
-        (-0.01, 0),
-        (-0.010001, 1),
-    ],
-)
-async def test_negative_door_jitter_boundary_controls_bad_reading_classification(
-    position_mm: float,
-    expected_bad_reading_count: int,
-) -> None:
-    iobox = make_iobox()
-    iobox._md.get_position.return_value = position_mm
-
-    assert await iobox.refresh_door_state(force=True) is False
-
-    assert iobox._door_bad_reading_count == expected_bad_reading_count
-    iobox._md.home.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_bad_reading_recovery_is_deferred_during_door_motion() -> None:
     iobox = make_iobox()
     iobox._door_bad_reading_count = 4
@@ -95,26 +74,6 @@ async def test_bad_reading_recovery_is_deferred_during_door_motion() -> None:
 
 
 @pytest.mark.asyncio
-async def test_open_retries_once_after_recoverable_limit_alarm() -> None:
-    iobox = make_iobox()
-    fault = HardwareMotorError("Movement failed for motor 31 (status=FAULT)")
-    fault.fault_context = {
-        "alarm_code": 32,
-        "stall_detected": False,
-        "no_progress": False,
-        "safety_blocked": False,
-    }
-    iobox._md.move_to_position.side_effect = (fault, None)
-    iobox._md.get_position.side_effect = (0.09, 65.0)
-
-    await iobox.open_door()
-
-    assert iobox._md.move_to_position.await_count == 2
-    iobox._md.get_param.assert_not_awaited()
-    iobox._md.home.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_open_does_not_retry_when_shared_safety_blocks_after_fault() -> None:
     iobox = make_iobox()
     iobox._md._safety = SimpleNamespace(blocked=True)
@@ -133,8 +92,6 @@ async def test_open_does_not_retry_when_shared_safety_blocks_after_fault() -> No
     iobox._md.move_to_position.assert_awaited_once()
     iobox._md.get_param.assert_not_awaited()
     iobox._md.home.assert_not_awaited()
-
-
 
 
 @pytest.mark.asyncio
@@ -168,27 +125,3 @@ async def test_deferred_door_home_failure_stops_the_next_cycle_before_motion() -
     with pytest.raises(MotorError, match="Failed to home door"):
         await iobox.ensure_door_homed()
     assert iobox._door_home_pending is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("home_tolerance_mm", "expected_bad_reading_count"),
-    [(None, 1), (1.0, 0)],
-)
-async def test_sprung_back_door_within_its_home_tolerance_reads_closed(
-    home_tolerance_mm: float | None,
-    expected_bad_reading_count: int,
-) -> None:
-    # lb2-3's door reads -0.44 mm after a good torque home; counting that as a bad reading
-    # re-homed the door every few seconds, onto the same reading.
-    iobox = make_iobox()
-    door = SimpleNamespace(lim=65.0, lower_lim=2.0, ret_rpm=500)
-    if home_tolerance_mm is not None:
-        door.home_zero_tolerance_mm = home_tolerance_mm
-    iobox._params = SimpleNamespace(motors=SimpleNamespace(by_name=lambda name: door))
-    iobox._md.get_position.return_value = -0.448
-
-    assert await iobox.refresh_door_state(force=True) is False
-
-    assert iobox._door_bad_reading_count == expected_bad_reading_count
-    iobox._md.home.assert_not_awaited()

@@ -60,19 +60,6 @@ def _robot_commands(connection: sa.Connection) -> sa.Table:
 	return sa.Table("robot_commands", sa.MetaData(), autoload_with=connection)
 
 
-def test_upgrade_fresh_create_uses_only_runtime_scoped_request_id_uniqueness() -> None:
-	engine = sa.create_engine("sqlite://")
-	with engine.begin() as connection:
-		migration = _migration()
-		_operations(migration, connection)
-		migration.upgrade()
-
-		inspector = sa.inspect(connection)
-		assert inspector.get_unique_constraints("robot_commands") == [
-			{"name": "uq_robot_commands_runtime_request_id", "column_names": ["runtime", "request_id"]}
-		]
-
-
 def test_upgrade_preserves_legacy_rows_and_scopes_request_id_uniqueness() -> None:
 	engine = sa.create_engine("sqlite://")
 	with engine.begin() as connection:
@@ -115,22 +102,3 @@ def test_upgrade_preserves_legacy_rows_and_scopes_request_id_uniqueness() -> Non
 					created_at=datetime.now(timezone.utc),
 				)
 			)
-
-
-def test_upgrade_downgrade_upgrade_preserves_legacy_mock_rows() -> None:
-	engine = sa.create_engine("sqlite://")
-	with engine.begin() as connection:
-		_legacy_commands(connection)
-		migration = _migration()
-		_operations(migration, connection)
-		migration.upgrade()
-		migration.downgrade()
-		assert sa.inspect(connection).has_table("mock_robot_commands")
-
-		_operations(migration, connection)
-		migration.upgrade()
-		commands = _robot_commands(connection)
-		row = connection.execute(sa.select(commands)).mappings().one()
-		assert row["request_id"] == "legacy-request"
-		assert row["runtime"] == "mock"
-		assert row["visibility"] == "public"

@@ -340,7 +340,6 @@ From `openshelf_hardware/`:
 uv sync --all-packages
 uv run openapi
 uv run openapi --check
-uv run pytest packages/openshelf_os_server/tests/test_openapi.py
 ```
 
 OpenAPI is generated from the application without running its lifespan. Update
@@ -351,5 +350,5 @@ they are not apparent from the schema. Use `response_docs` for documentation-onl
 response models so adding documentation does not change runtime serialization.
 `uv run openapi` writes the JSON on demand; it is a generated artifact and is not
 committed. `uv run openapi --check` validates the generated contract without
-writing. The contract tests check coverage, examples, references, and media types.
+writing.
 

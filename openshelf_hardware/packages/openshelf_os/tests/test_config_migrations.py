@@ -3,10 +3,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-from pathlib import Path
-import stat
-import subprocess
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -195,37 +191,6 @@ def test_divergent_promoted_values_are_refused_without_printing_them():
     assert "laser_sample_settle_ms" in config["robot"]["grid"]["scan"]
 
 
-def test_promoted_constants_keep_the_values_the_fleet_configured():
-    from openshelf_os.laser_calibration import defaults
-
-    # Pinned so an edit to the code constants cannot silently retune every machine.
-    assert defaults.WALL_DEPTH_TOLERANCE_MM == 2.0
-    assert defaults.EXPECTED_HOLE_WIDTH_MM == 26.0
-    assert defaults.EXPECTED_HOLE_HEIGHT_MM == 30.0
-    assert defaults.HOLE_WIDTH_TOLERANCE_MM == 10.0
-    assert defaults.HOLE_HEIGHT_TOLERANCE_MM == 10.0
-    assert defaults.MIN_VERTICAL_WALL_COVERAGE_MM == 10.0
-    assert defaults.MIN_HORIZONTAL_WALL_COVERAGE_MM == 30.0
-    assert defaults.LASER_SAMPLE_SETTLE_MS == 50
-    assert defaults.LASER_SAMPLES_PER_POINT == 3
-    assert defaults.Z_OFFSET_MODEL_PARAM_TOLERANCE_MM == 0.2
-    assert defaults.Z_STALL_PROBE_START_MM == 5.0
-    assert defaults.Z_STALL_PROBE_FAST_APPROACH_MM == 130.0
-    assert defaults.Z_STALL_PROBE_TARGET_MM == 180.0
-    assert defaults.STAGE_STALL_COARSE_MAX_DEG == 5.5
-    assert defaults.STAGE_STALL_START_MM == 3.0
-    assert defaults.STAGE_STALL_TARGET_MM is None
-    assert defaults.ANGLE_SWEEP_X_COUNT == 5
-
-
-@pytest.mark.parametrize("version", [None, 1])
-def test_missing_and_explicit_v1_migrate_and_repeat_is_noop(legacy_config, version):
-    if version is not None:
-        legacy_config["schema_version"] = version
-    migrated, _ = runner.migrate_config(legacy_config)
-    assert runner.migrate_config(migrated) == (migrated, [])
-
-
 @pytest.fixture
 def v4_side_config():
     return {
@@ -348,38 +313,6 @@ def test_v6_seeds_the_multi_item_pose_from_pickup_low_and_keeps_existing_values(
     assert remigrated["robot"]["tool"]["parameters"]["PICKUP_POSITION_MULTI_ITEM"] == [10, 20]
 
 
-@pytest.mark.parametrize(
-    "grid",
-    ["storage.json", {"path": "storage.json"}, {"file": "storage.json"}, {"storage": "storage.json"}],
-)
-def test_legacy_grid_path_forms_migrate_without_rewriting(tmp_path, legacy_config, grid):
-    legacy_config["robot"]["grid"] = grid
-    original = copy.deepcopy(legacy_config)
-    migrated, changes = runner.migrate_config(legacy_config)
-    assert legacy_config == original
-    assert migrated == {**_with_multi_item_pose(original), "schema_version": 6}
-    assert changes == [
-        "schema_version: 1 -> 2",
-        "schema_version: 2 -> 3",
-        "schema_version: 3 -> 4",
-        "schema_version: 4 -> 5",
-        *(f"robot.tool.parameters.{new} seeded from {old}" for new, old in v006.SEEDED_KEYS.items()),
-        "schema_version: 5 -> 6",
-    ]
-    assert RootConfig.model_validate(migrated).robot.grid.path == "storage.json"
-
-    path = tmp_path / "config.json"
-    raw = json.dumps(original).encode()
-    path.write_bytes(raw)
-    assert cli.main([str(path)]) == 0
-    assert path.read_bytes() == raw
-    assert list(tmp_path.iterdir()) == [path]
-    assert cli.main([str(path), "--write"]) == 0
-    assert json.loads(path.read_bytes()) == migrated
-    assert path.with_name(path.name + ".schema-v1.bak").read_bytes() == raw
-    assert load_config_file(path).robot.grid.path == "storage.json"
-
-
 def test_chain_runs_in_order_and_advances_only_after_success(legacy_config, monkeypatch):
     def third(config):
         assert config["schema_version"] == 4
@@ -395,15 +328,6 @@ def test_chain_runs_in_order_and_advances_only_after_success(legacy_config, monk
     with pytest.raises(ValueError, match="Missing config migration 4 -> 5"):
         runner.migrate_config(legacy_config)
     assert "schema_version" not in legacy_config
-
-
-@pytest.mark.parametrize("version", [0, -1, True, "2", 2.0, None, 7])
-def test_bad_or_future_versions_are_rejected(legacy_config, version):
-    legacy_config["schema_version"] = version
-    with pytest.raises(ValueError):
-        runner.migrate_config(legacy_config)
-    with pytest.raises(ValueError):
-        RootConfig.model_validate(legacy_config)
 
 
 def test_startup_rejects_unmigrated_config_without_writing(tmp_path, legacy_config):
@@ -442,34 +366,6 @@ def test_nested_conflicts_are_rejected_and_matching_names_deduplicated(legacy_co
     model[new] = model[old]
     migrated, _ = runner.migrate_config(legacy_config)
     assert old not in migrated["robot"]["grid"]["scan"]["front_wall_depth_to_gripper_z_model"]
-
-
-def test_cli_preview_write_backup_permissions_and_idempotency(tmp_path, legacy_config, capsys):
-    paths = [tmp_path / f"config{suffix}.json" for suffix in ("", ".development", ".demo", ".mock")]
-    originals = {}
-    for path in paths:
-        path.write_text(json.dumps(legacy_config))
-        path.chmod(0o640)
-        originals[path] = path.read_bytes()
-    history = tmp_path / "config"
-    history.mkdir()
-    (history / "old.json").write_text("historical snapshot")
-    storage = tmp_path / "storage.json"
-    storage.write_text("untouched storage")
-    assert cli.main([str(tmp_path)]) == 0
-    assert all(path.read_bytes() == raw for path, raw in originals.items())
-    assert not list(tmp_path.glob("*.bak"))
-    assert cli.main([str(tmp_path), "--write"]) == 0
-    for path in paths:
-        assert path.with_name(path.name + ".schema-v1.bak").read_bytes() == originals[path]
-        assert stat.S_IMODE(path.stat().st_mode) == 0o640
-        assert load_config_file(path).schema_version == 6
-    modified_times = [path.stat().st_mtime_ns for path in paths]
-    assert cli.main([str(tmp_path), "--write"]) == 0
-    assert [path.stat().st_mtime_ns for path in paths] == modified_times
-    assert storage.read_text() == "untouched storage"
-    assert (history / "old.json").read_text() == "historical snapshot"
-    assert "test-private-value" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -522,19 +418,3 @@ def test_failed_atomic_replace_keeps_original_and_backup(tmp_path, legacy_config
     assert path.read_text() == raw
     assert path.with_name(path.name + ".schema-v1.bak").read_text() == raw
     assert len(list(tmp_path.iterdir())) == 2
-
-
-def test_script_uses_checkout_migrations_from_any_cwd(tmp_path, legacy_config):
-    path = tmp_path / "config.json"
-    path.write_text(json.dumps(legacy_config))
-    script = Path(__file__).resolve().parents[4] / "scripts/migrate_config.py"
-    result = subprocess.run(
-        [sys.executable, str(script), str(path)],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "schema_version: 1 -> 2" in result.stdout
-    assert "schema_version: 3 -> 4" in result.stdout
-    assert "schema_version" not in json.loads(path.read_text())

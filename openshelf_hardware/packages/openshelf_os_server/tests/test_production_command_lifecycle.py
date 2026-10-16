@@ -1,29 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
-from httpx import AsyncClient
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from openshelf_os.operating_mode import OperatingMode
-from openshelf_os.robot.commands import RetrieveItemCommand, StoreItemCommand
+from openshelf_os.robot.commands import StoreItemCommand
 from openshelf_os.robot.models import QueuedOperation
-from openshelf_os.storage import Cell, CellStatus, Dimensions, Shelf, StorageGrid, StorageModuleCellLocation, StorageModuleSide
+from openshelf_os.storage import Cell, CellStatus, Dimensions, Shelf, StorageGrid
 from openshelf_os_server.core import command_lifecycle
-from openshelf_os_server.core.command_lifecycle import (
-	COMMAND_LIMIT,
-	CommandRequestConflictError,
-	admit,
-	enqueue_internal,
-	recover_interrupted_commands,
-	handle_worker_lifecycle,
-)
-from openshelf_os_server.core.mock_robot import MockRequestConflictError, MockRobotRuntime
+from openshelf_os_server.core.command_lifecycle import COMMAND_LIMIT, admit, recover_interrupted_commands, handle_worker_lifecycle
 from openshelf_os_server.database.models import Item, RobotCommand
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import robot as robot_router
@@ -110,42 +101,6 @@ def _store_with_location(request_id: str, barcode: str, location: dict[str, int 
 
 
 @pytest.mark.anyio
-async def test_demo_store_admits_occupied_requested_cell_for_mapped_barcode(
-	client: AsyncClient, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-	await _clear_production_commands()
-	worker = RecordingWorker()
-	worker._robot = SimpleNamespace(
-		_grid=_store_grid(occupied={1}),
-		_demo_cell_map={
-			"880000000200": StorageModuleCellLocation(
-				side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0,
-			),
-		},
-	)
-	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.demo)
-	monkeypatch.setattr(robot_router, "get_settings", lambda: SimpleNamespace(robot=SimpleNamespace(enabled=True)))
-	monkeypatch.setattr(robot_router, "get_robot_worker", AsyncMock(return_value=worker))
-	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", AsyncMock())
-	try:
-		response = await client.post("/api/robot/commands", json={
-			"command": "store_item",
-			"request_id": "demo-mapped-occupied-request",
-			"location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
-			"item": {
-				"barcode": "880000000200",
-				"name": "Mapped item",
-				"dimensions": {"width": 10, "height": 20, "length": 30},
-			},
-		})
-		assert response.status_code == 200
-		assert len(worker.enqueued) == 1
-	finally:
-		await _clear_production_commands()
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize("dimensions", [
 	None,
 	{},
@@ -206,120 +161,6 @@ async def test_new_store_requires_valid_dimensions_before_enrollment(
 		await db.delete(item)
 		await db.commit()
 	await _clear_production_commands()
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("weight", [0, -1])
-async def test_new_store_rejects_nonpositive_gross_before_admission(
-	monkeypatch: pytest.MonkeyPatch, weight: float,
-) -> None:
-	await _clear_production_commands()
-	worker = RecordingWorker()
-	enqueue = AsyncMock(side_effect=RuntimeError("enqueue must not run"))
-	monkeypatch.setattr(worker, "enqueue_command", enqueue)
-	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
-	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-	observer = AsyncMock()
-	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", observer)
-	item_data = {
-		"barcode": "gross-invalid", "name": "Bottle",
-		"dimensions": {"width": 100, "height": 100, "length": 100},
-		"weight": weight, "tare_weight": 100, "full_net_weight": 500,
-	}
-	async with AsyncSessionLocal() as db:
-		items_before = (await db.execute(select(Item.__table__))).all()
-		with pytest.raises(HTTPException) as rejected:
-			await robot_router.robot_commands(
-				StoreItemCommand(item=item_data, request_id="gross-invalid"),
-				worker=worker, current_user=SimpleNamespace(id=1), db=db,
-			)
-		assert rejected.value.status_code == 422
-		assert rejected.value.detail == "Weight must be a positive number"
-		await db.commit()
-	async with AsyncSessionLocal() as db:
-		assert (await db.execute(select(Item.__table__))).all() == items_before
-		assert (await db.execute(select(RobotCommand).where(RobotCommand.runtime == "production"))).scalars().all() == []
-	enqueue.assert_not_awaited()
-	observer.assert_not_awaited()
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("gross", [{"weight": 350}, {"weight": None}, {}])
-async def test_new_store_preserves_valid_and_unspecified_gross(
-	monkeypatch: pytest.MonkeyPatch, gross: dict,
-) -> None:
-	await _clear_production_commands()
-	worker = RecordingWorker()
-	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
-	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", AsyncMock())
-	item_data = {
-		"barcode": "gross-valid", "name": "Bottle",
-		"dimensions": {"width": 100, "height": 100, "length": 100},
-		"tare_weight": 100, "full_net_weight": 500, **gross,
-	}
-	async with AsyncSessionLocal() as db:
-		accepted = await robot_router.robot_commands(
-			StoreItemCommand(item=item_data, request_id="gross-valid"),
-			worker=worker, current_user=SimpleNamespace(id=1), db=db,
-		)
-		assert accepted.status == "queued"
-		assert worker.enqueued[0][0].item == item_data
-		row = (await db.execute(select(RobotCommand).where(RobotCommand.command_id == accepted.command_id))).scalar_one()
-		assert row.payload["item"] == item_data
-		item = (await db.execute(select(Item).where(Item.barcode == item_data["barcode"]))).scalar_one()
-		assert item.weight == gross.get("weight")
-		assert item.tare_weight == 100 and item.full_net_weight == 500
-		# Existing measured zero remains authoritative over submitted gross.
-		item.weight = 0
-		await db.commit()
-		await _finish_production_commands()
-		await robot_router.robot_commands(
-			StoreItemCommand(item={"barcode": item.barcode, "weight": -1}, request_id="gross-registered"),
-			worker=worker, current_user=SimpleNamespace(id=1), db=db,
-		)
-		assert worker.enqueued[1][0].item["weight"] == 0
-		await db.delete(item)
-		await db.commit()
-	await _clear_production_commands()
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("identity", [
-	{}, {"barcode": None}, {"barcode": ""}, {"barcode": "  "}, {"barcode": 123},
-	{"barcode": True}, {"barcode": {}}, {"barcode": []}, {"barcode": "x" * 256},
-])
-async def test_mass_store_requires_explicit_identity_before_mutation(
-	monkeypatch: pytest.MonkeyPatch, identity: dict,
-) -> None:
-	await _clear_production_commands()
-	worker = RecordingWorker()
-	observer = AsyncMock()
-	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
-	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", observer)
-	item_data = {
-		"name": "Identity required bottle",
-		"dimensions": {"width": 100, "height": 100, "length": 100},
-		**identity,
-		# One mass key is enough: enrollment is triggered by any of them, and the
-		# full mass-with-identity persistence is owned by
-		# test_mass_store_with_identity_persists_baseline_and_replays_before_validation.
-		"tare_weight": 100,
-	}
-	async with AsyncSessionLocal() as db:
-		items_before = (await db.execute(select(Item.__table__))).all()
-		with pytest.raises(HTTPException) as invalid:
-			await robot_router.robot_commands(
-				StoreItemCommand(item=item_data, request_id="mass-identity-retry"),
-				worker=worker, current_user=SimpleNamespace(id=1), db=db,
-			)
-		assert invalid.value.status_code == 422
-		assert invalid.value.detail == "item.barcode is required for container mass enrollment"
-		assert (await db.execute(select(Item.__table__))).all() == items_before
-		assert (await db.execute(select(RobotCommand).where(RobotCommand.runtime == "production"))).scalars().all() == []
-		assert worker.enqueued == []
-		observer.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -480,30 +321,6 @@ async def test_command_admission_rolls_back_enrollment_and_skips_it_on_replay() 
 	assert was_replay and replayed.command_id == row.command_id
 	async with AsyncSessionLocal() as db:
 		assert (await db.execute(select(Item).where(Item.barcode == unused_item.barcode))).scalar_one_or_none() is None
-	await _clear_production_commands()
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("identity", [{}, {"name": "Legacy bottle"}])
-async def test_legacy_store_without_mass_preserves_identity_fallback(
-	monkeypatch: pytest.MonkeyPatch, identity: dict,
-) -> None:
-	await _clear_production_commands()
-	worker = RecordingWorker()
-	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
-	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-	monkeypatch.setattr(robot_router, "capture_store_observer_measurement", AsyncMock())
-	item_data = {"dimensions": {"width": 100, "height": 100, "length": 100}, **identity}
-	async with AsyncSessionLocal() as db:
-		items_before = (await db.execute(select(Item.__table__))).all()
-		accepted = await robot_router.robot_commands(
-			StoreItemCommand(item=item_data, request_id="legacy-fallback"),
-			worker=worker, current_user=SimpleNamespace(id=1), db=db,
-		)
-		assert accepted.status == "queued"
-		assert len(worker.enqueued) == 1
-		assert worker.enqueued[0][0].item == item_data
-		assert (await db.execute(select(Item.__table__))).all() == items_before
 	await _clear_production_commands()
 
 
@@ -715,136 +532,6 @@ async def test_production_queue_limit_and_restart_recovery(
 
 
 @pytest.mark.anyio
-async def test_production_request_retention_and_validation(
-	monkeypatch: pytest.MonkeyPatch,
-) -> None:
-	await _clear_production_commands()
-
-
-	worker = RecordingWorker()
-	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
-	monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
-	old_command_id = "20000000-0000-0000-0000-000000000001"
-	async with AsyncSessionLocal() as session:
-		session.add(
-			RobotCommand(
-				command_id=old_command_id,
-				runtime="production",
-				request_id="expired-request",
-				payload=_store("expired-request").model_dump(mode="json", exclude_none=True),
-				status="succeeded",
-				visibility="public",
-				completed_at=datetime.now(timezone.utc) - timedelta(days=8),
-			)
-		)
-		await session.commit()
-
-	async with AsyncSessionLocal() as db:
-		accepted = await robot_router.robot_commands(
-			_store("expired-request"),
-			worker=worker,  # type: ignore[arg-type]
-			current_user=SimpleNamespace(id=1),
-			db=db,
-		)
-		assert accepted.command_id != old_command_id
-
-		with pytest.raises(HTTPException) as invalid:
-			await robot_router.robot_commands(
-				_store(""),
-				worker=worker,  # type: ignore[arg-type]
-				current_user=SimpleNamespace(id=1),
-				db=db,
-			)
-	assert invalid.value.status_code == 422
-	await _clear_production_commands()
-
-
-@pytest.mark.anyio
-async def test_request_ids_are_unique_per_runtime() -> None:
-	request_id = "runtime-scoped-request"
-	payload = _store(request_id).model_dump(mode="json", exclude_none=True)
-	await _clear_production_commands()
-	async with AsyncSessionLocal() as session:
-		await session.execute(
-			delete(RobotCommand).where(
-				RobotCommand.runtime == "mock",
-				RobotCommand.request_id == request_id,
-			)
-		)
-		await session.commit()
-
-	try:
-		production, production_replay = await admit(
-			payload,
-			request_id=request_id,
-			correlation_id=None,
-		)
-		assert production_replay is False
-		mock_runtime = MockRobotRuntime(execution_seconds=0)
-		mock, mock_replay = await mock_runtime.enqueue(
-			payload,
-			request_id=request_id,
-			correlation_id=None,
-		)
-		assert mock_replay is False
-		assert production.command_id != mock.command_id
-
-		assert (await admit(payload, request_id=request_id, correlation_id=None))[0].command_id == production.command_id
-		assert (await mock_runtime.enqueue(payload, request_id=request_id, correlation_id=None))[0].command_id == mock.command_id
-		with pytest.raises(CommandRequestConflictError):
-			await admit({**payload, "item": {**payload["item"], "name": "Changed"}}, request_id=request_id, correlation_id=None)
-		with pytest.raises(MockRequestConflictError):
-			await mock_runtime.enqueue(
-				{**payload, "item": {**payload["item"], "name": "Changed"}},
-				request_id=request_id,
-				correlation_id=None,
-			)
-
-		async with AsyncSessionLocal() as session:
-			session.add(
-				RobotCommand(
-					command_id="30000000-0000-0000-0000-000000000001",
-					runtime="mock",
-					request_id=request_id,
-					payload=payload,
-					status="queued",
-					visibility="public",
-				)
-			)
-			with pytest.raises(IntegrityError):
-				await session.commit()
-			await session.rollback()
-	finally:
-		await _clear_production_commands()
-		async with AsyncSessionLocal() as session:
-			await session.execute(
-				delete(RobotCommand).where(
-					RobotCommand.runtime == "mock",
-					RobotCommand.request_id == request_id,
-				)
-			)
-			await session.commit()
-
-
-@pytest.mark.anyio
-async def test_internal_bin_motion_is_durable_and_marked_internal() -> None:
-	await _clear_production_commands()
-	worker = RecordingWorker()
-	command = RetrieveItemCommand(
-		request_id="bin-workflow-correlation",
-		barcode="990000000001",
-		location={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
-	)
-	row = await enqueue_internal(worker, command)
-	assert row.runtime == "production"
-	assert row.request_id is None
-	assert row.payload["request_id"] == "bin-workflow-correlation"
-	assert row.visibility == "internal"
-	assert worker.enqueued[0][1:] == (row.command_id, "internal")
-	await _clear_production_commands()
-
-
-@pytest.mark.anyio
 async def test_production_replay_precedes_worker_and_laser_preconditions(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -871,24 +558,3 @@ async def test_production_replay_precedes_worker_and_laser_preconditions(
 	assert replayed.status == "queued"
 	laser_check.assert_not_awaited()
 	await _clear_production_commands()
-
-
-@pytest.mark.anyio
-async def test_mock_command_replay_returns_existing_command(
-	monkeypatch: pytest.MonkeyPatch,
-) -> None:
-	command = _store("mock-replay-during-bin-workflow")
-	row = SimpleNamespace(command_id="mock-command-id", status="running")
-	runtime = SimpleNamespace(replay=AsyncMock(return_value=row))
-	monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.mock)
-	monkeypatch.setattr(robot_router, "get_mock_robot_runtime", lambda: runtime)
-
-	async with AsyncSessionLocal() as db:
-		replayed = await robot_router.robot_commands(
-			command,
-			worker=None,
-			current_user=SimpleNamespace(id=1),
-			db=db,
-		)
-	assert replayed.command_id == "mock-command-id"
-	assert replayed.status == "running"

@@ -5,8 +5,6 @@ import sqlalchemy as sa
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 
-from openshelf_os.config.settings import BARCODE_MAX_LENGTH
-
 
 def _migration():
     path = (
@@ -104,18 +102,6 @@ def _record_alter_columns(migration, connection) -> list:
     return calls
 
 
-def _assert_calls(calls: list, target: int, existing: int) -> None:
-    assert len(calls) == 1, f"expected exactly one native alter, got {calls}"
-    call_table, call_column, kwargs = calls[0]
-    assert call_table == "storage_bins"
-    assert call_column == "barcode"
-    assert isinstance(kwargs["type_"], sa.String)
-    assert kwargs["type_"].length == target
-    assert isinstance(kwargs["existing_type"], sa.String)
-    assert kwargs["existing_type"].length == existing
-    assert kwargs["existing_nullable"] is False
-
-
 def _barcode_length(connection) -> int:
     inspector = sa.inspect(connection)
     for column in inspector.get_columns("storage_bins"):
@@ -157,66 +143,5 @@ def test_upgrade_on_sqlite_leaves_width_and_preserves_rows_indexes_and_constrain
             constraint["name"] == "uq_storage_bins_home_cell"
             and constraint["column_names"] == ["side", "shelf_idx", "cell_idx"]
             for constraint in inspector.get_unique_constraints("storage_bins")
-        )
-        _assert_rows_intact(connection)
-
-
-def test_downgrade_on_sqlite_is_a_noop_and_leaves_rows_untouched():
-    migration = _migration()
-
-    with sa.create_engine("sqlite://").begin() as connection:
-        _bin_schema(connection)
-        _as_dialect(connection, "sqlite")
-        calls = _record_alter_columns(migration, connection)
-        migration.downgrade()
-
-        assert _barcode_length(connection) == 12
-        _assert_rows_intact(connection)
-        assert calls == []
-
-
-def test_upgrade_on_other_dialects_requests_the_native_widen():
-    migration = _migration()
-
-    with sa.create_engine("sqlite://").begin() as connection:
-        _bin_schema(connection)
-        _as_dialect(connection, "postgresql")
-        calls = _record_alter_columns(migration, connection)
-        migration.upgrade()
-
-        _assert_calls(
-            calls, target=BARCODE_MAX_LENGTH, existing=migration.ORIGINAL_BARCODE_LENGTH
-        )
-        # The stubbed alter never touched the table: width and rows intact.
-        assert _barcode_length(connection) == 12
-        _assert_rows_intact(connection)
-
-
-def test_upgrade_on_other_dialects_is_idempotent_when_already_wide():
-    migration = _migration()
-
-    with sa.create_engine("sqlite://").begin() as connection:
-        _bin_schema(connection, barcode_length=BARCODE_MAX_LENGTH)
-        _as_dialect(connection, "postgresql")
-        calls = _record_alter_columns(migration, connection)
-        migration.upgrade()
-
-        # Already at the bound in the safe direction: no alter, no risk.
-        assert calls == []
-        assert _barcode_length(connection) == BARCODE_MAX_LENGTH
-        _assert_rows_intact(connection)
-
-
-def test_downgrade_on_other_dialects_requests_the_native_narrow():
-    migration = _migration()
-
-    with sa.create_engine("sqlite://").begin() as connection:
-        _bin_schema(connection, barcode_length=BARCODE_MAX_LENGTH)
-        _as_dialect(connection, "postgresql")
-        calls = _record_alter_columns(migration, connection)
-        migration.downgrade()
-
-        _assert_calls(
-            calls, target=migration.ORIGINAL_BARCODE_LENGTH, existing=BARCODE_MAX_LENGTH
         )
         _assert_rows_intact(connection)

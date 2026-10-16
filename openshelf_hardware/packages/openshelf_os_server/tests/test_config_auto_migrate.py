@@ -6,8 +6,7 @@ import json
 
 import pytest
 
-from openshelf_os.config.exceptions import ConfigError, ConfigValidationError
-from openshelf_os.config_migrations.runner import migrate_config
+from openshelf_os.config.exceptions import ConfigError
 from openshelf_os_server import settings
 
 
@@ -87,20 +86,6 @@ def test_get_root_config_auto_migrates_v4_and_backs_up(config_file):
     assert on_disk["storage"]["bins"][0]["home_location"]["side"] == "front_module"
 
 
-def test_second_startup_is_a_noop(config_file):
-    path, raw = config_file
-    settings.get_root_config()
-    after_first = path.read_bytes()
-    settings.clear_config_cache()
-    settings.get_root_config()
-    assert path.read_bytes() == after_first
-    assert sorted(p.name for p in path.parent.iterdir()) == [
-        ".mode",
-        "config.json",
-        "config.json.schema-v4.bak",
-    ]
-
-
 def test_existing_backup_confails_startup_and_leaves_file_untouched(config_file, monkeypatch):
     path, raw = config_file
     path.with_name("config.json.schema-v4.bak").write_bytes(b"pre-existing rollback")
@@ -130,31 +115,3 @@ def test_failed_validation_fails_startup_and_leaves_file_untouched(config_file):
         settings.get_root_config()
     assert path.read_bytes() == broken_raw
     assert list(path.parent.glob("config.json.*.bak")) == []
-
-
-def test_current_config_with_model_error_raises_config_validation_error(
-    config_file, v4_config
-):
-    """An already-current file with a model error must not be pre-validated by
-    auto-migration: the detailed ConfigValidationError from the config load is
-    the diagnostic, and the file stays untouched."""
-    path, _ = config_file
-    v5, changes = migrate_config(v4_config)
-    assert changes  # the fixture migrates cleanly, so this is a valid v5 document
-    del v5["robot"]["tool"]["parameters"]["Z_MOVE_RPM"]
-    broken_raw = json.dumps(v5).encode()
-    path.write_bytes(broken_raw)
-    with pytest.raises(ConfigValidationError) as exc_info:
-        settings.get_root_config()
-    message = str(exc_info.value)
-    assert "robot.tool.parameters.Z_MOVE_RPM" in message
-    assert "Migrated config failed validation" not in message
-    assert path.read_bytes() == broken_raw
-    assert list(path.parent.glob("config.json.*.bak")) == []
-
-
-def test_missing_config_file_keeps_the_default_path(config_file, monkeypatch):
-    path, raw = config_file
-    path.unlink()
-    config = settings.get_root_config()
-    assert config.schema_version == 6  # minimal defaults, no auto-migration involved

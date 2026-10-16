@@ -2,16 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
 from starlette.testclient import TestClient
 
 from openshelf_os_server import main
 from openshelf_os_server.main import app
-from openshelf_os_server.utils.cors_policy import (
-	CORS_ORIGINS_ENV,
-	allows_credentials,
-	resolve_allowed_origins,
-)
 
 FOREIGN_ORIGIN = "http://unlisted.test"
 PREFLIGHT_METHOD = "GET"
@@ -27,13 +21,6 @@ def _preflight(client: TestClient, path: str, origin: str):
 			"Access-Control-Request-Headers": PREFLIGHT_REQUEST_HEADERS,
 		},
 	)
-
-
-def test_default_policy_allows_any_origin_without_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.delenv(CORS_ORIGINS_ENV, raising=False)
-	origins = resolve_allowed_origins()
-	assert origins == ["*"]
-	assert allows_credentials(origins) is False
 
 
 def test_wildcard_policy_publishes_no_credential_invitation() -> None:

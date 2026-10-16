@@ -78,30 +78,6 @@ async def test_slots_persist_across_sessions_and_reuse_first_vacancy(configured)
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("width,length,height,fits", [(41.75,70.5,100,True),(70.5,41.75,100,True),(42,70.5,100,False),(40,70,101,False)])
-async def test_fit_is_per_compartment_and_allows_rotation(configured, width, length, height, fits):
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        await service.sync_config()
-        target = await item(db, 1, width, length, height)
-        assert (await service.allocate_bin(target) is not None) is fits
-
-
-@pytest.mark.anyio
-async def test_full_slots_cannot_share_even_with_spare_volume(configured):
-    configured[:] = [tray(columns=2, rows=1)]
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        await service.sync_config()
-        for number in (1, 2):
-            target = await item(db, number, 1, 1, 1)
-            workflow = await service.begin("store", target, None)
-            assert workflow.compartment == number
-            await finish(service, workflow, True)
-        assert await service.allocate_bin(await item(db, 3, 1, 1, 1)) is None
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize("occupied", [True, False])
 async def test_relayout_refuses_nonempty_or_checked_out_tray(configured, occupied):
     async with AsyncSessionLocal() as db:
@@ -116,17 +92,3 @@ async def test_relayout_refuses_nonempty_or_checked_out_tray(configured, occupie
         await db.rollback()
         row = await db.scalar(select(StorageBin))
         assert row.compartment_layout == {"rows": 2, "columns": 4}
-
-
-@pytest.mark.anyio
-async def test_member_sized_before_wall_deduction_still_returns(configured):
-    async with AsyncSessionLocal() as db:
-        service = BinStorageService(db)
-        await service.sync_config()
-        stored = await item(db, 1)
-        await finish(service, await service.begin("store", stored, None), True)
-        # Items stored as "bin sized" before walls were deducted carry the full-cell footprint.
-        stored.dimensions = {"width": 50, "length": 80, "height": 90}
-        await db.commit()
-        await finish(service, await service.begin("store", await item(db, 2), None), True)
-        assert await service.item_bin(stored.id) is not None

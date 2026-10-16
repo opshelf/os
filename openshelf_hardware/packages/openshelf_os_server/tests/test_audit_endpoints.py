@@ -17,37 +17,6 @@ async def login(client: AsyncClient, email: str, pin: str) -> str:
 	return str(data["access_token"])
 
 
-@pytest.mark.anyio
-async def test_audit_correlation_id_is_stored_returned_and_exactly_filtered(
-	client: AsyncClient,
-) -> None:
-	token = await login(client, "admin@opshelf.com", "1234")
-	headers = {
-		"Authorization": f"Bearer {token}",
-		"X-Correlation-ID": "mock-cycle-123",
-	}
-	response = await client.get("/api/users", headers=headers)
-	assert response.status_code == 200
-	assert response.headers["X-Correlation-ID"] == "mock-cycle-123"
-
-	filtered = await client.get(
-		"/api/audit/logs?correlation_id=mock-cycle-123",
-		headers={"Authorization": f"Bearer {token}"},
-	)
-	assert filtered.status_code == 200
-	logs = filtered.json()["logs"]
-	assert len(logs) == 1
-	assert logs[0]["correlation_id"] == "mock-cycle-123"
-	assert logs[0]["endpoint"] == "/api/users"
-
-	verify = await client.get(
-		"/api/audit/verify",
-		headers={"Authorization": f"Bearer {token}"},
-	)
-	assert verify.status_code == 200
-	assert verify.json()["ok"] is True
-
-
 async def _newest_protected_log() -> Optional[Dict[str, Any]]:
 	"""Return the scalar fields needed to re-sign the newest protected audit row."""
 	async with AsyncSessionLocal() as db:

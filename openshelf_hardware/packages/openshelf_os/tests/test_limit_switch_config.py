@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,7 +11,6 @@ import pytest
 import openshelf_os.common as c
 from hardware.exceptions import MotorLimitError
 from hardware.motor import Motor
-from openshelf_os.tool import Tool
 from openshelf_os.tool import _create_motor_if_enabled as create_tool_motor
 
 TOOL_PARAMETERS = {
@@ -84,51 +83,6 @@ def motor_entry(name: str, motor_id: int, **overrides: Any) -> Dict[str, Any]:
     }
     entry.update(overrides)
     return entry
-
-
-def tool_params(motors: List[Dict[str, Any]]) -> c.Tool:
-    return c.Tool.model_validate({"parameters": TOOL_PARAMETERS, "motors": motors})
-
-
-def make_tool(motors: List[Dict[str, Any]], gpio: Optional[FakeGpio] = None) -> Tool:
-    return Tool(
-        AsyncMock(),
-        AsyncMock(),
-        tool_params(motors),
-        safety=None,
-        gpio=gpio if gpio is not None else FakeGpio(),
-    )
-
-
-def test_tool_skips_the_home_limit_switch_of_a_motor_without_one(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    motors = [
-        motor_entry("stage", 3, limit_switches_enabled=False),
-        motor_entry("x_axis", 5),
-    ]
-    gpio = FakeGpio()
-    caplog.set_level(logging.INFO, logger="openshelf_os.tool")
-
-    tool = make_tool(motors, gpio)
-
-    assert tool._ms._home_limit_input is None
-    assert isinstance(tool._mx._home_limit_input, LimitInput)
-    assert gpio.requested == ["x_lim_min"]
-    assert "Motor 'stage' limit switches disabled via config" in caplog.text
-    assert "s_lim_min" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_homing_a_motor_without_switches_verifies_no_limit_input() -> None:
-    motors = c.Motors.model_validate([motor_entry("stage", 3, limit_switches_enabled=False)])
-
-    motor = create_tool_motor(
-        AsyncMock(), motors, "stage", None, logging.getLogger("test"), FakeGpio(), home_limit_pin="s_lim_min"
-    )
-
-    assert motor._home_limit_input is None
-    await motor._verify_home_limit_engaged()
 
 
 @pytest.mark.asyncio

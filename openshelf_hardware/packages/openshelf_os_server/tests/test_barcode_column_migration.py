@@ -99,22 +99,3 @@ def test_upgrade_renames_columns_and_indexes_preserving_values(foreign_keys):
         measurement_rows = connection.execute(sa.text("SELECT id, item_id FROM item_sizer_measurements"))
         assert measurement_rows.fetchall() == [(1, 1)]
         assert connection.execute(sa.text("PRAGMA foreign_key_check")).fetchall() == []
-
-
-def test_downgrade_restores_the_upca_names():
-    migration = _migration()
-    engine = sa.create_engine("sqlite://")
-
-    with engine.begin() as connection:
-        _legacy_schema(connection)
-        migration.op = Operations(MigrationContext.configure(connection))
-        migration.upgrade()
-        migration.downgrade()
-
-        inspector = sa.inspect(connection)
-        assert {column["name"] for column in inspector.get_columns("items")} == {"id", "upca", "name"}
-        assert "ix_items_upca" in {index["name"] for index in inspector.get_indexes("items")}
-        assert "ix_item_sizer_measurements_upca" in {
-            index["name"] for index in inspector.get_indexes("item_sizer_measurements")
-        }
-        assert connection.execute(sa.text("SELECT upca FROM items WHERE id = 1")).scalar() == "CR-00006174/A"

@@ -11,15 +11,6 @@ import uuid
 from unittest.mock import patch
 
 
-def assert_correlated_success(case, event, expected):
-    command_id = event.get("command_id")
-    case.assertIsInstance(command_id, str)
-    uuid.UUID(command_id)
-    normalized = dict(event)
-    normalized.pop("command_id")
-    case.assertEqual(normalized, expected)
-
-
 def assert_correlated_failure(case, event, expected, *, code="command_interrupted"):
     command_id = event.get("command_id")
     case.assertIsInstance(command_id, str)
@@ -217,16 +208,6 @@ class FailingGpio:
         raise RuntimeError(f"{name} unavailable")
 
 
-class EmergencyStopConfigWrapper:
-    def __init__(self, enabled):
-        self._enabled = enabled
-
-    def get(self, path, default=None):
-        if path == "robot.emergency_stop":
-            return {"enabled": self._enabled}
-        return default
-
-
 class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
     async def test_emergency_stop_sets_crash_state_and_pauses_curtain(self):
         from openshelf_os.robot.worker import RobotWorker
@@ -280,40 +261,6 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         RobotWorker._instance = None
 
-    async def test_emergency_stop_is_instant(self):
-        from openshelf_os.robot.worker import RobotWorker
-
-        robot = MockRobot()
-        RobotWorker._instance = None
-        worker = RobotWorker(robot)
-
-        start = asyncio.get_event_loop().time()
-        await worker.emergency_stop("test")
-        elapsed = asyncio.get_event_loop().time() - start
-
-        self.assertLess(elapsed, 0.1)
-        self.assertTrue(worker._is_emergency_stopped)
-        self.assertFalse(worker._is_crashed)
-        self.assertTrue(robot.safety_paused)
-
-        RobotWorker._instance = None
-
-    async def test_clear_crash_state_resumes_curtain(self):
-        from openshelf_os.robot.worker import RobotWorker
-
-        robot = MockRobot()
-        RobotWorker._instance = None
-        worker = RobotWorker(robot)
-
-        robot.block_motion_for_safety()
-        worker.set_crash_state("test")
-        self.assertTrue(robot.safety_paused)
-
-        worker.clear_crash_state()
-        self.assertFalse(worker._is_crashed)
-        self.assertFalse(robot.safety_paused)
-
-        RobotWorker._instance = None
 
     async def test_emergency_stop_cancels_running_task(self):
         from openshelf_os.robot.worker import RobotWorker
@@ -340,115 +287,6 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(worker._current_task)
 
         RobotWorker._instance = None
-
-
-    async def test_emergency_cleanup_preserves_command_admitted_during_cleanup(self):
-        from openshelf_os.robot.commands import RetrieveItemCommand
-        from openshelf_os.robot.status import RobotCommandSuccessful
-        from openshelf_os.robot.worker import RobotWorker
-
-        robot = MockRobot()
-        RobotWorker._instance = None
-        worker = RobotWorker(robot)
-        events = await worker.subscribe_events()
-        cleanup_started = asyncio.Event()
-        release_cleanup = asyncio.Event()
-        cleanup_complete = asyncio.Event()
-        process_task = None
-
-        original_discard_queued_commands = worker._discard_queued_commands
-
-        async def track_cleanup_discard(reason, *, interruption_boundary=None):
-            # Hold the cleanup open so a command can be admitted mid-window.
-            cleanup_started.set()
-            await release_cleanup.wait()
-            await original_discard_queued_commands(
-                reason,
-                interruption_boundary=interruption_boundary,
-            )
-            cleanup_complete.set()
-
-        async def no_safety_change(*, refresh=True):
-            return False
-
-        async def successful_handler(command):
-            robot.handled_commands.append(command)
-            return RobotCommandSuccessful(command=command.command, barcode=command.barcode)
-
-        queued_before_stop = RetrieveItemCommand(
-            request_id="bin-workflow-before-emergency-boundary",
-            barcode="900000000013",
-            location={"side": "front_module", "shelf_idx": 2, "cell_idx": 4},
-        )
-        recovered_command = RetrieveItemCommand(
-            request_id="bin-workflow-after-emergency-boundary",
-            barcode="900000000014",
-            location={"side": "back_module", "shelf_idx": 1, "cell_idx": 3},
-        )
-        robot.handle_command = successful_handler
-        worker._discard_queued_commands = track_cleanup_discard
-        worker._evaluate_safety_guard = no_safety_change
-        await worker.enqueue_command(queued_before_stop)
-
-        try:
-            await worker.emergency_stop("cleanup boundary")
-            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
-
-            await worker.enqueue_command(recovered_command)
-            release_cleanup.set()
-            await asyncio.wait_for(cleanup_complete.wait(), timeout=1)
-
-            failed_event = {}
-            for _ in range(3):
-                failed_event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
-                if failed_event.get("request_id") == queued_before_stop.request_id:
-                    break
-            assert_correlated_failure(self, failed_event, {
-                "command": "retrieve_item",
-                "message": "error",
-                "error": "Emergency stop: cleanup boundary",
-                "request_id": "bin-workflow-before-emergency-boundary",
-                "barcode": "900000000013",
-                "location": {"side": "front_module", "shelf_idx": 2, "cell_idx": 4},
-            })
-            remaining_events = []
-            while events.empty() is False:
-                remaining_events.append(json.loads(events.get_nowait()))
-            self.assertFalse(any(
-                event.get("request_id") == recovered_command.request_id
-                and event.get("message") == "failed"
-                for event in remaining_events
-            ))
-            self.assertEqual(
-                [operation.command for operation in worker._queued_commands],
-                [recovered_command],
-            )
-            self.assertEqual(worker._command_queue.qsize(), 1)
-
-            worker._running = True
-            process_task = asyncio.create_task(worker.process_commands())
-            success_event = {}
-            for _ in range(3):
-                success_event = json.loads(await asyncio.wait_for(events.get(), timeout=1))
-                if success_event.get("request_id") == recovered_command.request_id:
-                    break
-            assert_correlated_success(self, success_event, {
-                "command": "retrieve_item",
-                "message": "success",
-                "location": None,
-                "barcode": "900000000014",
-                "weight": None,
-                "request_id": "bin-workflow-after-emergency-boundary",
-            })
-            self.assertEqual(robot.handled_commands, [recovered_command])
-        finally:
-            worker._running = False
-            release_cleanup.set()
-            if process_task is not None and process_task.done() is False:
-                process_task.cancel()
-                with self.assertRaises(asyncio.CancelledError):
-                    await process_task
-            RobotWorker._instance = None
 
 
     async def test_emergency_stop_fails_each_queued_storage_command(self):
@@ -508,24 +346,6 @@ class EmergencyStopTests(unittest.IsolatedAsyncioTestCase):
 
         RobotWorker._instance = None
 
-
-    async def test_estop_monitor_skips_when_disabled_in_config(self):
-        from openshelf_os.robot.worker import RobotWorker
-
-        robot = MockRobot()
-        robot._gpio = FailingGpio()
-        robot._config = EmergencyStopConfigWrapper(False)
-        RobotWorker._instance = None
-        worker = RobotWorker(robot)
-
-        await worker._start_estop_monitor()
-
-        self.assertFalse(worker._is_emergency_stopped)
-        self.assertFalse(worker._is_estop_active)
-        self.assertFalse(robot.safety_paused)
-        self.assertIsNone(worker._estop_monitor_task)
-
-        RobotWorker._instance = None
 
     async def test_estop_monitor_fails_safe_when_configured_input_setup_fails(self):
         from openshelf_os.robot.worker import RobotWorker

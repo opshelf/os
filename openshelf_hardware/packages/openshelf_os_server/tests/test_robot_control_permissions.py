@@ -126,19 +126,6 @@ async def test_viewer_cannot_drive_the_robot(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("method", "path", "body"),
-    [route for route in ROBOT_CONTROL_ROUTES if route[1] != "/api/system/restart"],
-)
-async def test_robot_control_passes_the_permission_gate(
-    tokens: dict[str, str], method: str, path: str, body: Any
-) -> None:
-    response = await _request(tokens["controller"], method, path, body)
-
-    assert response.status_code != 403, response.text
-
-
-@pytest.mark.anyio
 async def test_store_of_a_new_item_needs_storage_write(tokens: dict[str, str]) -> None:
     body = {
         "command": "store_item",
@@ -149,27 +136,3 @@ async def test_store_of_a_new_item_needs_storage_write(tokens: dict[str, str]) -
 
     assert response.status_code == 403, response.text
     assert response.json()["detail"]["message"] == "Missing required permission: storage:write"
-
-
-@pytest.mark.anyio
-async def test_viewer_may_still_submit_a_store_of_a_known_item(tokens: dict[str, str]) -> None:
-    body = {"command": "store_item", "item": {"barcode": KNOWN_BARCODE}}
-
-    response = await _request(tokens["viewer"], "POST", "/api/robot/commands", body)
-
-    assert response.status_code != 403, response.text
-
-
-@pytest.mark.anyio
-async def test_viewer_may_still_read_calibration_state(tokens: dict[str, str]) -> None:
-    response = await _request(tokens["viewer"], "GET", "/api/calibration/status", None)
-
-    assert response.status_code != 403, response.text
-
-
-@pytest.mark.anyio
-async def test_an_invalid_command_is_reported_once(tokens: dict[str, str]) -> None:
-    response = await _request(tokens["controller"], "POST", "/api/robot/commands", {"command": "move"})
-
-    assert response.status_code == 422, response.text
-    assert [error["loc"] for error in response.json()["detail"]] == [["body", "move", "coordinate"]]

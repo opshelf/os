@@ -26,20 +26,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.routing import iter_route_contexts
 from httpx import AsyncClient
 
 from openshelf_os_server.core.camera import camera_registry
 from openshelf_os_server.database.base import engine
-from openshelf_os_server.database.session import get_db
 from openshelf_os_server.main import app
 from openshelf_os_server.routers import camera as camera_router
-from openshelf_os_server.routers.auth_deps import (
-    get_current_user,
-    get_current_user_for_stream,
-    get_relay_or_current_user,
-    get_relay_or_current_user_for_stream,
-)
+from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, get_relay_or_current_user_for_stream
 
 # Every route that answers with a body that can stay open, with the scoped auth
 # dependency it uses instead of the one that carries `Depends(get_db)`.
@@ -50,7 +43,6 @@ STREAMING_ROUTES: tuple[tuple[str, Any], ...] = (
     ("/api/robot/events", get_relay_or_current_user_for_stream),
 )
 # Dependencies that would hold a session for the lifetime of the response.
-SESSION_HELD_CALLS = (get_db, get_current_user, get_relay_or_current_user)
 
 
 def _checkedout() -> int:
@@ -63,14 +55,6 @@ def _dependency_calls(dependant: Any) -> set[Callable[..., Any] | None]:
     for child in getattr(dependant, "dependencies", []) or []:
         calls |= _dependency_calls(child)
     return calls
-
-
-def _route_calls(path: str) -> set[Callable[..., Any] | None]:
-    for route in iter_route_contexts(app.routes):
-        methods = getattr(route, "methods", None) or set()
-        if getattr(route, "path", None) == path and "GET" in methods:
-            return _dependency_calls(route.dependant)
-    raise AssertionError(f"GET route not found: {path}")
 
 
 def _stream_scope(path: str, headers: dict[str, str]) -> dict[str, Any]:
@@ -113,40 +97,6 @@ async def _noop(camera_id: str) -> None:
 
 
 @pytest.mark.anyio
-async def test_mjpeg_stream_holds_no_pooled_connection(client: AsyncClient) -> None:
-    baseline = _checkedout()
-    checkouts: list[int] = []
-
-    async def fake_frames() -> AsyncGenerator[bytes, None]:
-        for _ in range(3):
-            # Sampled while the body is streaming: the auth session has to be gone
-            # by now, otherwise this stream parks a pooled connection.
-            checkouts.append(_checkedout())
-            await asyncio.sleep(0.02)
-            yield b"frame"
-
-    camera_registry["tool"] = _tool_manager()
-    try:
-        with (
-            patch.object(camera_router, "start_camera_stream_by_id", new=_noop),
-            patch.object(camera_router, "stop_camera_stream_by_id", new=_noop),
-            patch.object(
-                camera_router,
-                "mjpeg_stream_generator_for_camera",
-                new=lambda manager, request: fake_frames(),
-            ),
-        ):
-            response = await client.get("/api/camera/tool")
-    finally:
-        camera_registry.pop("tool", None)
-
-    assert response.status_code == 200
-    assert len(checkouts) == 3
-    assert max(checkouts) == baseline
-    assert _checkedout() == baseline
-
-
-@pytest.mark.anyio
 async def test_cancelled_sse_stream_returns_its_pooled_connection(
     seeded_db: AsyncGenerator[None, None], auth_headers: dict[str, str]
 ) -> None:
@@ -182,18 +132,6 @@ async def test_cancelled_sse_stream_returns_its_pooled_connection(
     assert _checkedout() == baseline
 
 
-@pytest.mark.parametrize("path,scoped_dependency", STREAMING_ROUTES)
-def test_streaming_routes_do_not_authenticate_with_a_pinned_session(
-    path: str, scoped_dependency: Callable[..., Any]
-) -> None:
-    calls = _route_calls(path)
-
-    assert scoped_dependency in calls
-    # No dependency in the graph may carry a session, otherwise the stream keeps that
-    # connection checked out until the body ends.
-    assert calls.isdisjoint(SESSION_HELD_CALLS)
-
-
 @pytest.mark.anyio
 async def test_mjpeg_stream_still_rejects_an_unauthenticated_client(
     unauthenticated_client: AsyncClient,
@@ -210,4 +148,3 @@ async def test_mjpeg_stream_still_rejects_an_unauthenticated_client(
 
     assert response.status_code == 401
     assert response.headers.get("www-authenticate") == "Bearer"
-

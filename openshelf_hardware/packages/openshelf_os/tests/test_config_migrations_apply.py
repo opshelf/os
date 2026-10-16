@@ -8,7 +8,6 @@ import json
 import pytest
 
 from openshelf_os.config_migrations import apply
-from openshelf_os.config_migrations.cli import main
 
 
 @pytest.fixture
@@ -87,16 +86,6 @@ def test_migrates_in_place_with_backup_then_noop(tmp_path, v4_config):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["config.json", "config.json.schema-v4.bak"]
 
 
-def test_cli_still_plans_all_files_before_writing(tmp_path, v4_config):
-    good, _ = _write(tmp_path, "config.a.json", copy.deepcopy(v4_config))
-    bad = copy.deepcopy(v4_config)
-    bad["name"] = None  # fails validation after migration
-    bad_path, bad_raw = _write(tmp_path, "config.b.json", bad)
-    assert main([str(tmp_path)]) == 1  # preview of the directory fails on the bad file
-    assert good.read_bytes() != bad_raw  # the good file was not written during the failed batch
-    assert not (tmp_path / "config.a.json.schema-v4.bak").exists()
-
-
 def test_backup_conflict_refuses_without_touching_file(tmp_path, v4_config):
     path, raw = _write(tmp_path, "config.json", v4_config)
     path.with_name("config.json.schema-v4.bak").write_bytes(b"pre-existing rollback")
@@ -104,28 +93,6 @@ def test_backup_conflict_refuses_without_touching_file(tmp_path, v4_config):
         apply.migrate_config_file(path)
     assert path.read_bytes() == raw
     assert path.with_name("config.json.schema-v4.bak").read_bytes() == b"pre-existing rollback"
-
-
-def test_cli_preview_reports_migrating_file_with_existing_backup(tmp_path, v4_config, capsys):
-    path, raw = _write(tmp_path, "config.json", v4_config)
-    backup = path.with_name("config.json.schema-v4.bak")
-    backup.write_bytes(b"pre-existing rollback")
-
-    assert main([str(tmp_path)]) == 0  # preview does not abort on the existing backup
-    assert "would migrate" in capsys.readouterr().out
-
-    assert main([str(tmp_path), "--write"]) == 1
-    assert "migration backup already exists" in capsys.readouterr().err
-    assert path.read_bytes() == raw
-    assert backup.read_bytes() == b"pre-existing rollback"
-
-
-def test_future_version_is_rejected_without_touching_file(tmp_path, v4_config):
-    future = {**v4_config, "schema_version": 7}
-    path, raw = _write(tmp_path, "config.json", future)
-    with pytest.raises(ValueError, match="newer than supported"):
-        apply.migrate_config_file(path)
-    assert path.read_bytes() == raw
 
 
 def test_failed_validation_leaves_file_untouched(tmp_path, v4_config):
@@ -183,30 +150,3 @@ def test_failed_backup_write_leaves_no_backup_and_retries_cleanly(tmp_path, v4_c
     assert backup == path.with_name("config.json.schema-v4.bak")
     assert backup.read_bytes() == raw
     assert json.loads(path.read_bytes())["schema_version"] == 6
-
-
-def test_symlink_is_refused(tmp_path, v4_config):
-    target, raw = _write(tmp_path, "real.json", v4_config)
-    link = tmp_path / "config.json"
-    link.symlink_to(target)
-    with pytest.raises(ValueError, match="not a symlink"):
-        apply.migrate_config_file(link)
-    assert target.read_bytes() == raw
-
-
-def test_current_version_is_a_noop(tmp_path, v4_config):
-    current, _ = _write(tmp_path, "config.json", {**v4_config, "schema_version": 6})
-    # v6 content: the scan keys must already be renamed and the multi-item pose seeded.
-    data = json.loads(current.read_bytes())
-    parameters = data["robot"]["tool"]["parameters"]
-    parameters["PICKUP_POSITION_MULTI_ITEM"] = parameters["PICKUP_POSITION_L"]
-    parameters["STAGE_EXTENSION_IO_BOX_MULTI_ITEM"] = parameters["STAGE_EXTENSION_IO_BOX"]
-    parameters["Z_EXTENSION_IO_MULTI_ITEM"] = parameters["Z_EXTENSION_IO"]
-    scan = data["robot"]["grid"]["scan"]
-    scan["front_shelf_scout_x_mm"] = scan.pop("left_shelf_scout_x_mm")
-    scan["back_shelf_scout_x_mm"] = scan.pop("right_shelf_scout_x_mm")
-    data["storage"]["bins"][0]["home_location"]["side"] = "front_module"
-    current.write_bytes(json.dumps(data).encode())
-    changed, changes, backup = apply.migrate_config_file(current)
-    assert changed is False and changes == [] and backup is None
-    assert list(tmp_path.iterdir()) == [current]

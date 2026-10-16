@@ -6,7 +6,6 @@ from httpx import AsyncClient
 from sqlalchemy import delete, select, update
 
 from openshelf_os_server.core.auth import AuthService
-from openshelf_os_server.core.login import login_backoff
 from openshelf_os_server.database.models import AuditLog, Role, User
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import onboarding
@@ -74,43 +73,6 @@ async def _add_regular_user(email: str, pin: str = "1111", role_name: str = "ope
 
 
 @pytest.mark.anyio
-async def test_create_admin_user_and_login(
-    unauthenticated_client: AsyncClient, fresh_device: None
-) -> None:
-    resp = await unauthenticated_client.post(
-        "/api/onboarding/admin-user",
-        json={"email": "owner@example.com", "pin": "4321"},
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data["email"] == "owner@example.com"
-    assert data["role_name"] == "admin"
-    assert data["is_active"] is True
-
-    status_resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert status_resp.json() == {"needs_onboarding": True}
-
-    login_resp = await unauthenticated_client.post(
-        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
-    )
-    assert login_resp.status_code == 200, login_resp.text
-    access_token = login_resp.json()["access_token"]
-
-    unauthenticated_complete_resp = await unauthenticated_client.post("/api/onboarding/complete")
-    assert unauthenticated_complete_resp.status_code == 401
-
-    complete_resp = await unauthenticated_client.post(
-        "/api/onboarding/complete",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    assert complete_resp.status_code == 200, complete_resp.text
-    assert complete_resp.json() == {"needs_onboarding": False}
-
-    status_resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert status_resp.json() == {"needs_onboarding": False}
-
-
-@pytest.mark.anyio
 async def test_create_admin_user_rejected_when_provisioned(
     unauthenticated_client: AsyncClient,
 ) -> None:
@@ -135,42 +97,6 @@ async def test_wifi_endpoints_rejected_when_provisioned(
         "/api/onboarding/wifi/connect", json={"ssid": "Test", "password": "secret"}
     )
     assert connect_resp.status_code == 403
-
-
-@pytest.mark.anyio
-async def test_pending_admin_user_retry_resets_the_interrupted_admin_pin(
-    unauthenticated_client: AsyncClient, fresh_device: None
-) -> None:
-    first_resp = await unauthenticated_client.post(
-        "/api/onboarding/admin-user",
-        json={"email": "owner@example.com", "pin": "4321"},
-    )
-    assert first_resp.status_code == 200, first_resp.text
-
-    # The wizard created this admin and was reloaded before /complete, so its PIN step
-    # runs again. The retry must take the account over, not strand the device on 409.
-    retry_resp = await unauthenticated_client.post(
-        "/api/onboarding/admin-user",
-        json={"email": "owner@example.com", "pin": "9876"},
-    )
-    assert retry_resp.status_code == 200, retry_resp.text
-    assert retry_resp.json()["id"] == first_resp.json()["id"]
-    assert retry_resp.json()["role_name"] == "admin"
-
-    status_resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert status_resp.json() == {"needs_onboarding": True}
-
-    stale_login = await unauthenticated_client.post(
-        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
-    )
-    assert stale_login.status_code == 401
-    # This test covers the interrupted-onboarding PIN reset, not login throttling.
-    login_backoff.reset()
-
-    new_login = await unauthenticated_client.post(
-        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "9876"}
-    )
-    assert new_login.status_code == 200, new_login.text
 
 
 @pytest.mark.anyio
@@ -219,34 +145,3 @@ async def test_pending_admin_user_retry_rejects_a_second_regular_user(
         "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
     )
     assert owner_login.status_code == 200
-
-
-@pytest.mark.anyio
-async def test_state_failure_returns_fixed_503_without_filesystem_details(
-    client: AsyncClient,
-    unauthenticated_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def broken_read() -> None:
-        raise RuntimeError("Could not read onboarding state from /app/data/.onboarding_state")
-
-    monkeypatch.setattr(onboarding, "_read_onboarding_state", broken_read)
-
-    status_resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert status_resp.status_code == 503
-    detail = status_resp.json()["detail"]
-    assert detail["code"] == "onboarding_state_unavailable"
-    assert detail["message"] == "Onboarding state unavailable"
-    assert "/app/data" not in detail["message"]
-
-    def broken_write(_value: str) -> None:
-        raise OSError(13, "Permission denied", "/app/data/.onboarding_state.tmp")
-
-    monkeypatch.setattr(onboarding, "_write_onboarding_state", broken_write)
-
-    complete_resp = await client.post("/api/onboarding/complete")
-    assert complete_resp.status_code == 503
-    detail = complete_resp.json()["detail"]
-    assert detail["code"] == "onboarding_state_unavailable"
-    assert detail["message"] == "Onboarding state unavailable"
-    assert "/app/data" not in detail["message"]

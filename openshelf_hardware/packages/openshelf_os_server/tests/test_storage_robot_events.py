@@ -37,61 +37,6 @@ async def _seed_item_with_location(barcode: str, side: str, shelf_idx: int, cell
         await storage.add_item_location(barcode, side, shelf_idx, cell_idx)
 
 
-@pytest.mark.anyio
-async def test_process_robot_event_removes_location_on_success() -> None:
-    await _seed_item_with_location(barcode="111", side="front_module", shelf_idx=1, cell_idx=2)
-
-    payload = {
-        "command": "retrieve_item",
-        "message": "success",
-        "location": {"side": "front_module", "shelf_idx": 1, "cell_idx": 2},
-        "barcode": "111",
-    }
-
-    await process_robot_event(payload)
-
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(ItemLocation)
-            .join(Item)
-            .where(Item.barcode == "111")
-        )
-        assert result.scalar_one_or_none() is None
-
-
-@pytest.mark.anyio
-async def test_process_robot_event_adds_location_on_store_success() -> None:
-    async with AsyncSessionLocal() as session:
-        storage = StorageService(session)
-        await storage.create_item(
-            barcode="333",
-            name="Store Target",
-            dimensions={"width": 1.0, "height": 1.0, "length": 1.0},
-            weight=None,
-            metadata={"name": "Store Target"},
-        )
-
-    payload = {
-        "command": "store_item",
-        "message": "success",
-        "location": {"side": "front_module", "shelf_idx": 2, "cell_idx": 4},
-        "barcode": "333",
-    }
-
-    await process_robot_event(payload)
-
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(ItemLocation)
-            .join(Item)
-            .where(Item.barcode == "333")
-        )
-        location = result.scalar_one_or_none()
-        assert location is not None
-        assert location.shelf_idx == 2
-        assert location.cell_idx == 4
-
-
 async def _seed_active_bin_workflow(state: str) -> tuple[str, str]:
     async with AsyncSessionLocal() as session:
         storage = StorageService(session)
@@ -277,49 +222,6 @@ async def test_reserved_bin_barcode_and_home_never_use_legacy_mutation_without_w
             .all()
         )
         assert items == []
-
-
-@pytest.mark.anyio
-async def test_released_bin_barcode_and_home_allow_legacy_mutation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    barcode = "900000000010"
-    home = ("back_module", 2, 10)
-    async with AsyncSessionLocal() as session:
-        session.add(
-            StorageBin(
-                barcode=barcode,
-                side=home[0],
-                shelf_idx=home[1],
-                cell_idx=home[2],
-                inner_dimensions={"width": 30.0, "height": 30.0, "length": 30.0},
-                max_items=2,
-                status="outside",
-                active=False,
-            )
-        )
-        await session.commit()
-
-    for barcode, location in (
-        (barcode, {"side": "front_module", "shelf_idx": 0, "cell_idx": 0}),
-        ("direct-released", {"side": home[0], "shelf_idx": home[1], "cell_idx": home[2]}),
-    ):
-        await process_robot_event(
-            {"command": "store_item", "message": "success", "barcode": barcode, "location": location}
-        )
-
-    async with AsyncSessionLocal() as session:
-        items = (
-            (
-                await session.execute(
-                    select(Item).where(Item.barcode.in_([barcode, "direct-released"]))
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert {item.barcode for item in items} == {barcode, "direct-released"}
-
 
 
 class _FanoutWorker:

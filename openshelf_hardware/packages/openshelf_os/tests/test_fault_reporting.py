@@ -105,5 +105,3 @@ async def test_move_cancellation_during_error_cleanup_waits_for_both_gantry_axes
     assert y_cleanup_finished.is_set()
     assert isinstance(exc_info.value.__cause__, RuntimeError)
     assert not isinstance(exc_info.value, MovementError)
-
-

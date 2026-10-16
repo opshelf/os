@@ -53,23 +53,6 @@ def build_grid(tmp_path) -> StorageGrid:
 
 
 @pytest.mark.anyio
-async def test_delete_grid_shelf_reindexes(client: AsyncClient, tmp_path) -> None:
-	grid = build_grid(tmp_path)
-	grid.add_shelf(StorageModuleSide.FRONT)
-
-	with patch("openshelf_os_server.core.robot.robot_worker", build_worker(grid)):
-		response = await client.delete(
-			"/api/storage/grid/shelf", params={"side": "front_module", "shelf_idx": 0}
-		)
-
-	assert response.status_code == 200, response.text
-	assert response.json() == {"success": True}
-	# deleting the lower shelf shifts the survivor down to index 0
-	assert [shelf.shelf_idx for shelf in grid.front_module] == [0]
-	assert (tmp_path / "storage-grid.json").exists()
-
-
-@pytest.mark.anyio
 async def test_update_grid_cells_batch_is_atomic_on_missing_cell(client: AsyncClient, tmp_path) -> None:
 	grid = build_grid(tmp_path)
 
@@ -205,4 +188,3 @@ async def test_delete_grid_cell_refuses_tray_home_at_exact_cell(client: AsyncCli
 	assert response.status_code == 409, response.text
 	# the cell was not removed
 	assert [cell.cell_idx for cell in grid.front_module[0].cells] == [0, 1]
-

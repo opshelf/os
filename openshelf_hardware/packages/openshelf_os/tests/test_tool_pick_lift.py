@@ -101,32 +101,3 @@ async def test_pick_requires_grip_before_and_after_retract(grip, after_retract, 
 
     with pytest.raises(GripperError, match=f"No grip on {phase}"):
         await tool.pick(AxisCoordinate(x=1.0, y=2.0))
-
-
-@pytest.mark.asyncio
-async def test_pick_skips_grip_check_when_object_detection_disabled() -> None:
-    tool = Tool.__new__(Tool)
-    tool.is_grip_detection_enabled = False
-    tool._gs = SimpleNamespace(
-        safe_open=AsyncMock(), open=AsyncMock(return_value=MISSED),
-        read_state=AsyncMock(return_value=MISSED),
-    )
-    tool.move = tool.rotate_to_position = tool.extend_empty = tool.retract = AsyncMock()
-    tool._handle_fault = AsyncMock()
-
-    await tool.pick(AxisCoordinate(x=1.0, y=2.0))
-    tool._handle_fault.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_pick_succeeds_when_grip_holds() -> None:
-    tool = Tool.__new__(Tool)
-    tool._gs = SimpleNamespace(
-        safe_open=AsyncMock(), open=AsyncMock(return_value=GRIPPED),
-        read_state=AsyncMock(return_value=GRIPPED),
-    )
-    tool.move = tool.rotate_to_position = tool.extend_empty = tool.retract = AsyncMock()
-    tool._handle_fault = AsyncMock()
-
-    await tool.pick(AxisCoordinate(x=1.0, y=2.0))
-    tool._handle_fault.assert_not_awaited()

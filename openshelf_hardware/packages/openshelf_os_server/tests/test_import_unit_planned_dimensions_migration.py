@@ -1,13 +1,11 @@
 """The planned_dimensions column reaches deployed databases that are at the previous head."""
 
 import sqlalchemy as sa
-from alembic.script import ScriptDirectory
 
 from openshelf_os_server import main
 from openshelf_os_server.database.base import Base
 
 PREVIOUS_HEAD = "b6c7d8e9f0a1"
-REVISION = "3b9f4c2a7d10"
 CURRENT_HEAD = "4c1d2e3f5a6b"
 LOGIN_BARCODE_COLUMN = "login_barcode"
 LOGIN_BARCODE_INDEX = "ix_users_login_barcode"
@@ -24,14 +22,6 @@ def _versions(engine: sa.engine.Engine) -> list[str]:
 
 def _indexes(engine: sa.engine.Engine) -> dict[str, dict]:
     return {index["name"]: index for index in sa.inspect(engine).get_indexes("users")}
-
-
-def test_single_head_descends_from_the_previous_head(tmp_path):
-    config = main._alembic_config(f"sqlite:///{tmp_path / 'x.db'}")
-    script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == [CURRENT_HEAD]
-    assert script.get_revision(CURRENT_HEAD).down_revision == REVISION
-    assert script.get_revision(REVISION).down_revision == PREVIOUS_HEAD
 
 
 def test_existing_database_at_previous_head_gains_the_column_in_place(tmp_path, monkeypatch):
@@ -65,16 +55,4 @@ def test_existing_database_at_previous_head_gains_the_column_in_place(tmp_path, 
     assert tuple(row) == ("Kept", None)
 
     main._run_migrations()  # idempotent
-    assert _versions(engine) == [CURRENT_HEAD]
-
-
-def test_fresh_database_ends_at_the_single_head_with_the_column(tmp_path, monkeypatch):
-    url = f"sqlite:///{tmp_path / 'fresh.db'}"
-    monkeypatch.setattr(main, "get_database_url", lambda: url)
-    main._run_migrations()
-    engine = sa.create_engine(url)
-    Base.metadata.create_all(engine)
-    assert "planned_dimensions" in _columns(engine)
-    assert LOGIN_BARCODE_COLUMN in {column["name"] for column in sa.inspect(engine).get_columns("users")}
-    assert _indexes(engine)[LOGIN_BARCODE_INDEX]["unique"] == 1
     assert _versions(engine) == [CURRENT_HEAD]

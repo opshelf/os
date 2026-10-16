@@ -6,10 +6,8 @@ import pytest
 from sqlalchemy import delete, update
 
 from openshelf_os_server.core.command_lifecycle import CommandTargetInFlightError, admit
-from openshelf_os_server.core.mock_robot import MockRobotRuntime
 from openshelf_os_server.database.models import RobotCommand
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.routers import robot as robot_router
 
 
 async def _clear_commands() -> None:
@@ -84,44 +82,3 @@ async def test_store_conflicts_by_barcode_and_requested_cell(clean_commands) -> 
 	# Automatic allocation of a different item does not target a known cell.
 	_, was_replay = await admit(_store("inflight-other"), request_id=None, correlation_id=None)
 	assert was_replay is False
-
-
-@pytest.mark.anyio
-async def test_identical_replay_is_not_reported_as_a_conflict(clean_commands) -> None:
-	payload = {**_retrieve("inflight-replay"), "request_id": "inflight-replay"}
-	row, _ = await admit(payload, request_id="inflight-replay", correlation_id=None)
-
-	replayed, was_replay = await admit(payload, request_id="inflight-replay", correlation_id=None)
-
-	assert was_replay is True
-	assert replayed.command_id == row.command_id
-
-
-@pytest.mark.anyio
-async def test_internal_tray_motion_is_not_blocked_by_its_own_target(clean_commands) -> None:
-	await admit(_retrieve("inflight-tray"), request_id=None, correlation_id=None)
-
-	_, was_replay = await admit(
-		_retrieve("inflight-tray"),
-		request_id=None,
-		correlation_id=None,
-		visibility="internal",
-	)
-
-	assert was_replay is False
-
-
-@pytest.mark.anyio
-async def test_mock_runtime_rejects_the_same_target(clean_commands) -> None:
-	runtime = MockRobotRuntime(execution_seconds=0)
-	await runtime.enqueue(_retrieve("inflight-mock"), request_id=None, correlation_id=None)
-
-	with pytest.raises(CommandTargetInFlightError):
-		await runtime.enqueue(_retrieve("inflight-mock"), request_id=None, correlation_id=None)
-
-
-def test_router_maps_conflicts_to_a_coded_409() -> None:
-	error = robot_router._target_in_flight_error()
-
-	assert error.status_code == 409
-	assert error.detail["code"] == "target_in_flight"

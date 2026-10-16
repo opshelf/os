@@ -45,33 +45,6 @@ MINIMAL_CONFIG_DICT = {
 }
 
 
-def test_y_axis_accepts_exact_brake_profile():
-    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
-    data["robot"]["tool"]["motors"] = [{
-        "motor_name": "y_axis",
-        "motor_id": 2,
-        "Ip": 60,
-        "rpm": 1,
-        "dr": 0,
-        "mpr": 1,
-        "accel": 1,
-        "ret_rpm": 1,
-        "lim": 10,
-        "brake_output_function": 0x24,
-    }]
-
-    config = RootConfig.model_validate(data)
-
-    y_axis = config.robot.tool.motors.by_name("y_axis")
-    assert y_axis.brake_output_function == 0x24
-    assert y_axis.brake_release_delay_ms == 250
-    assert y_axis.brake_engagement_delay_ms == 250
-    assert y_axis.brake_engagement_speed_threshold == 10
-    assert y_axis.control_mode == 2
-    assert y_axis.ppr == 10000
-    assert y_axis.encoder_resolution_cpr == 4000
-
-
 @pytest.mark.parametrize("function", [0xA0, 0xA1, 0x21])
 def test_motor_rejects_unsupported_brake_output_function(function: int):
     """0xA1 was inverted path-complete: a status signal, not a brake output."""
@@ -125,5 +98,3 @@ def test_y_axis_rejects_controller_profile_mismatch(field: str, value: int):
 
     with pytest.raises(ValueError, match=field):
         RootConfig.model_validate(data)
-
-

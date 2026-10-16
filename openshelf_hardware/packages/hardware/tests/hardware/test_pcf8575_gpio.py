@@ -71,5 +71,3 @@ def test_pcf8575_output_writes_preserve_released_input_pins() -> None:
     backend.write(output, True)
 
     assert device.writes == [0xFFF7, 0xFFF7, 0xFFFF]
-
-

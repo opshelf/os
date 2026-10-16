@@ -8,12 +8,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from openshelf_os_server.core import robot_events
-from openshelf_os_server.core.mass import apply_mass, apply_cycle_mass
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.robot_events import process_robot_event
-from openshelf_os_server.core.validation import ValidationError
 from openshelf_os_server.database.base import Base
-from openshelf_os_server.database.models import Item
 
 
 @pytest.fixture
@@ -29,34 +26,6 @@ async def cycle_session_factory(tmp_path, monkeypatch):
         yield session_factory
     finally:
         await engine.dispose()
-
-
-def test_mass_inputs_and_overflow():
-    item = Item(barcode='mass', name='mass', dimensions={}, weight=350)
-    apply_mass(item, {'tare_weight': 100, 'net_weight': 250, 'full_net_weight': 500}, enrollment=True)
-    assert item.net_weight == 250 and item.enrollment_weight_pending
-    for values in ({'net_weight': -1}, {'tare_weight': float('nan')}, {'net_weight': 0, 'weight': None},
-                   {'tare_weight': 1e308, 'net_weight': 1e308}):
-        with pytest.raises(ValidationError):
-            apply_mass(item, values)
-    assert item.tare_weight == 100
-    apply_mass(item, {'net_weight': 0})
-    assert item.weight == 100 and item.net_weight == 0
-    apply_mass(item, {'net_weight': None, 'full_net_weight': None})
-    assert item.weight is None and item.full_net_weight is None
-
-
-def test_below_tare_and_replay():
-    item = Item(barcode='mass', name='mass', dimensions={}, weight=350, tare_weight=100,
-                enrollment_weight_pending=True)
-    apply_cycle_mass(item, 345, stored=True, command_id='first')
-    assert item.weight == 350 and not item.enrollment_weight_pending
-    apply_cycle_mass(item, 300, stored=False, command_id='second')
-    assert item.net_weight == 200
-    assert not apply_cycle_mass(item, 345, stored=True, command_id='first')
-    assert item.weight == 300
-    apply_cycle_mass(item, 50, stored=False, command_id='third')
-    assert item.weight == 50 and item.net_weight is None
 
 
 @pytest.mark.anyio

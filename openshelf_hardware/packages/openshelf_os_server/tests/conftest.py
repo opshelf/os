@@ -1,5 +1,4 @@
 import os
-import asyncio
 import tempfile
 from pathlib import Path
 import pytest
@@ -29,7 +28,6 @@ if os.environ.get("OPENSHELF_TEST_ENV_INITIALIZED") != "1":
 from sqlalchemy import delete
 
 from openshelf_os_server.database.models import (
-    AccessLevel,
     AuditLog,
     ImportJob,
     ImportJobUnit,

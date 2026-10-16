@@ -14,4 +14,3 @@ def test_permission_checks() -> None:
 
     assert has_all_permissions(perms, ["users:read"])  # all matched
     assert not has_all_permissions(perms, ["users:read", "users:delete"])  # not all
-

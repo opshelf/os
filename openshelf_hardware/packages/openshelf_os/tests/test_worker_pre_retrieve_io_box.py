@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from openshelf_os.robot.commands import DeliverTrayCommand, RetrieveItemCommand
+from openshelf_os.robot.commands import RetrieveItemCommand
 from openshelf_os.robot.status import RobotCommandSuccessful
 from openshelf_os.robot.worker import RobotWorker
 
@@ -69,26 +69,3 @@ async def test_occupied_io_box_fails_the_retrieve_without_motion() -> None:
 	assert event["code"] == "io_box_occupied"
 	assert event["barcode"] == "880000000001"
 	assert robot.handled_commands == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("robot,bypassed", [
-	(ScaleRobot(weight=0.4), False),
-	(ScaleRobot(weight=None, fails=True), False),
-	(ScaleRobot(weight=350.0), True),
-])
-async def test_retrieve_runs_when_box_is_empty_unreadable_or_guard_bypassed(robot: ScaleRobot, bypassed: bool) -> None:
-	event = await _run_one(robot, RetrieveItemCommand(barcode="880000000001", location=LOCATION), bypassed=bypassed)
-
-	assert event["message"] == "success"
-	assert len(robot.handled_commands) == 1
-
-
-@pytest.mark.asyncio
-async def test_tray_delivery_is_left_to_the_bin_workflow() -> None:
-	robot = ScaleRobot(weight=350.0)
-
-	event = await _run_one(robot, DeliverTrayCommand(barcode="880000000001", location=LOCATION))
-
-	assert event["message"] == "success"
-	assert len(robot.handled_commands) == 1

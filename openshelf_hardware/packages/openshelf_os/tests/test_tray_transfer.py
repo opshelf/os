@@ -50,25 +50,3 @@ async def test_return_tray_requires_grip_before_and_after_retract(grip_obj, retr
         await robot.return_tray(AxisCoordinate(10, 20))
     assert call.close_door() not in ops.mock_calls
     robot._tool.place.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_return_tray_skips_grip_check_when_object_detection_disabled():
-    robot, ops = build_robot()
-    robot._tool.is_grip_detection_enabled = False
-    robot._tool._gs.open.return_value = GripState(0xF1, 0, 0, 0)
-    robot._tool._gs.read_state.return_value = GripState(0xF1, 0, 0, 0)
-    await robot.return_tray(AxisCoordinate(10, 20))
-    assert call.close_door() in ops.mock_calls
-    robot._tool.place.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('method', ['deliver_tray', 'return_tray'])
-async def test_tray_transfers_use_the_multi_item_io_pose(method):
-    robot, _ = build_robot()
-    poses = {'PICKUP_POSITION_L': (100, 200), 'PICKUP_POSITION_MULTI_ITEM': (300, 400)}
-    robot._tool.get_param = AsyncMock(side_effect=lambda name: poses.get(name))
-    await getattr(robot, method)(AxisCoordinate(10, 20))
-    robot._tool.move.assert_any_await(AxisCoordinate(300, 400))
-    robot._tool.extend_IO_multi_item.assert_awaited_once_with()

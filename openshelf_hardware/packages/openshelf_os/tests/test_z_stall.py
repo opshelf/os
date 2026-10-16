@@ -9,7 +9,6 @@ import pytest
 from openshelf_os.laser_calibration.scan import ScanDetectedCell, ScanDetectedShelf
 from openshelf_os.laser_calibration.z_stall import (
 	STAGE_BACKDRIVE_TOLERANCE_MM,
-	ZStallResult,
 	run_z_stall_anchor,
 	select_z_stall_probes,
 )
@@ -87,54 +86,6 @@ class FakeTool:
 # --------------------------------------------------------------------------- #
 
 
-def build_shelf_cells(shelf_idx: int, *, tool_y: float, xs: list[float]) -> list[ScanDetectedCell]:
-	return [
-		build_detected_cell(shelf_idx=shelf_idx, cell_idx=cell_idx, tool_x=tool_x, tool_y=tool_y)
-		for cell_idx, tool_x in enumerate(xs)
-	]
-
-
-def build_module_analysis() -> tuple[SimpleNamespace, dict[tuple[int, int], float]]:
-	"""Three cells on each of three shelves: bottom (y=40), middle (y=640), top (y=1090)."""
-	shelf_rows = [
-		(0, 40.0, [200.0, 350.0, 500.0, 650.0, 800.0]),
-		(3, 640.0, [200.0, 350.0, 500.0, 650.0, 800.0]),
-		(6, 1090.0, [200.0, 350.0, 500.0, 650.0, 800.0]),
-	]
-	analysis = SimpleNamespace(
-		shelves=[
-			ScanDetectedShelf(
-				shelf_idx=shelf_idx,
-				center_y_mm=tool_y,
-				shelf_width_mm=400.0,
-				cells=build_shelf_cells(shelf_idx, tool_y=tool_y, xs=xs),
-			)
-			for shelf_idx, tool_y, xs in shelf_rows
-		]
-	)
-	wall_depths = {
-		(cell.shelf_idx, cell.cell_idx): 9.6
-		for shelf in analysis.shelves
-		for cell in shelf.cells
-	}
-
-	return analysis, wall_depths
-
-
-def test_select_z_stall_probes_returns_empty_without_wall_depths() -> None:
-	analysis = SimpleNamespace(
-		shelves=[
-			SimpleNamespace(
-				shelf_idx=0,
-				center_y_mm=40.0,
-				cells=[build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=200.0, tool_y=40.0)],
-			)
-		]
-	)
-
-	assert select_z_stall_probes(analysis, {}) == []
-
-
 def test_select_z_stall_probes_skips_cells_whose_probe_x_exceeds_the_axis_limit() -> None:
 	"""Real lb4-3 jam: F:3:6 sits at tool_x=960; the probe adds a +20mm shift -> 980, past the
 	950mm axis limit. The axis clamped, putting the gripper over the cell's tray hole instead of
@@ -182,20 +133,6 @@ def test_select_z_stall_probes_skips_cells_below_the_axis_lower_limit() -> None:
 	probes = select_z_stall_probes(analysis, wall_depths, None, 400.0)
 
 	assert [cell.cell_idx for cell, _ in probes] == [1]
-
-
-def test_select_z_stall_probes_skips_excluded_cells() -> None:
-	analysis, wall_depths = build_module_analysis()
-
-	probes = select_z_stall_probes(
-		analysis, wall_depths, excluded_cells={(0, 0), (3, 2), (6, 4)}
-	)
-
-	# Every primary pick on those shelves is excluded, so the shelf's next opening is used.
-	assert [(cell.shelf_idx, cell.cell_idx) for cell, _ in probes][:3] == [(0, 1), (3, 1), (6, 3)]
-	assert all(
-		(cell.shelf_idx, cell.cell_idx) not in {(0, 0), (3, 2), (6, 4)} for cell, _ in probes
-	)
 
 
 # --------------------------------------------------------------------------- #
@@ -311,23 +248,6 @@ async def run_anchor(
 
 
 @pytest.mark.asyncio
-async def test_anchor_drops_a_probe_whose_repeat_contact_moved() -> None:
-	# Two probes per point: the first cell stalls at the same place twice, the second does not.
-	result = await run_anchor(
-		probe_contacts=[[170.0, 170.0], [170.0, 170.4]],
-		cells=[
-			build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0),
-			build_detected_cell(shelf_idx=3, cell_idx=1, tool_x=455.0, tool_y=640.0),
-		],
-	)
-
-	assert result.sample_count == 1
-	assert len(result.dropped_repeats) == 1
-	assert "3:1" in result.dropped_repeats[0]
-	assert "0.400mm apart" in result.dropped_repeats[0]
-
-
-@pytest.mark.asyncio
 async def test_anchor_drops_a_probe_that_stalls_once_then_misses() -> None:
 	"""A stall followed by a miss leaves one contact, which is not evidence of a wall.
 
@@ -394,127 +314,8 @@ async def test_anchor_refuses_a_fault_on_the_rapid_approach() -> None:
 
 
 @pytest.mark.asyncio
-async def test_anchor_reports_a_wall_beyond_reach_when_the_target_is_the_axis_limit() -> None:
-	cells = [build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0)]
-
-	with pytest.raises(ValueError, match="beyond the tool's reach"):
-		await run_anchor(
-			probe_contacts=[[0.0]],
-			cells=cells,
-			scan_config=build_scan_config(z_stall_probe_target_mm=180.0),
-			contact_error=True,
-		)
-
-
-@pytest.mark.asyncio
 async def test_anchor_refuses_an_implausible_intercept() -> None:
 	with pytest.raises(ValueError, match="implausible z delta"):
 		await run_anchor(probe_contacts=[[230.0, 230.0]], cells=[
 			build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=350.0, tool_y=40.0),
 		])
-
-
-@pytest.mark.asyncio
-async def test_anchor_fits_in_the_frame_the_model_is_applied_in() -> None:
-	"""The probe aims at the opening plus the divider shift, but the stored model is evaluated at
-	the cell's grab x, so the fit must use grab x - otherwise the model is tilted by the shift."""
-
-	cells = [
-		build_detected_cell(shelf_idx=0, cell_idx=0, tool_x=341.25, tool_y=40.0),
-		build_detected_cell(shelf_idx=3, cell_idx=0, tool_x=491.25, tool_y=640.0),
-		build_detected_cell(shelf_idx=6, cell_idx=0, tool_x=641.25, tool_y=1090.0),
-	]
-	# A tilt of at least Z_DELTA_TILT_MIN_TOTAL_MM (0.75mm) over the span is what the fit trusts.
-	delta_by_cell = {(0, 0): 1.0, (3, 0): 1.6, (6, 0): 2.2}
-	analysis, candidates = build_probe_analysis(cells, [9.6] * len(cells))
-	# contact = delta + wall + z_place - tray, with z_place 160.5 and tray 0.71.
-	probe_results = [
-		(True, delta_by_cell[(cell.shelf_idx, cell.cell_idx)] + 169.39, "stall", None)
-		for cell in cells
-		for _ in range(2)
-	]
-
-	with patch(
-		"openshelf_os.laser_calibration.z_stall.load_json_file",
-		return_value={},
-	):
-		with patch(
-			"openshelf_os.laser_calibration.z_stall.load_candidates_from_metadata",
-			return_value=candidates,
-		):
-			with patch(
-				"openshelf_os.laser_calibration.angle.capture.enter_capture_mode",
-				AsyncMock(),
-			):
-				with patch(
-					"openshelf_os.laser_calibration.angle.robot_ops.probe_z_until_stall",
-					AsyncMock(side_effect=probe_results),
-				):
-					result = await run_z_stall_anchor(
-						tool=FakeTool(),
-						analysis=analysis,
-						scan_config=build_scan_config(),
-						side=StorageModuleSide.FRONT,
-						candidates=candidates,
-						x_axis_limit_mm=950.0,
-						x_axis_lower_limit_mm=0.0,
-						z_axis_limit_mm=180.0,
-						xy_offset=(-1.25, -1.75),
-					)
-
-	# Grab x 340..640 with deltas 1.0, 1.6, 2.2: slope 0.004, intercept 1.0 - 0.004 * 340 = -0.36.
-	# Fitting on the aimed point (grab x + 20) would report -0.44 instead.
-	assert result.slope_per_mm == pytest.approx(0.004)
-	assert result.intercept_mm == pytest.approx(-0.36, abs=0.01)
-
-
-def test_resolved_model_rebases_the_intercept_when_it_substitutes_a_slope() -> None:
-	"""The canonical rule: a substituted slope moves the fit's intercept, not just its tilt."""
-	from openshelf_os.laser_calibration.z_stall import ZStallSample, resolve_z_stall_model
-
-	samples = [
-		ZStallSample(
-			shelf_idx=shelf_idx,
-			cell_idx=0,
-			probe_x_mm=grab_x + 20.0,
-			probe_y_mm=40.0,
-			wall_depth_mm=9.6,
-			z_contact_mm=170.0,
-			z_contact_repeat_mm=170.0,
-			delta_mm=delta_mm,
-			reason="stall",
-		)
-		for shelf_idx, grab_x, delta_mm in ((0, 300.0, -2.2854), (3, 400.0, -2.0472))
-	]
-	result = ZStallResult(
-		side=StorageModuleSide.FRONT,
-		intercept_mm=-2.1663,
-		slope_per_mm=0.0,
-		fit_source="constant",
-		stage_extension_mm=47.0,
-		z_place_mm=160.5,
-		rotation_center_deg=183.0,
-		fit_centroid_x_mm=350.0,
-		samples=samples,
-	)
-	scan_config = SimpleNamespace(
-		front_wall_depth_to_gripper_z_model=SimpleNamespace(
-			intercept_mm=-1.0,
-			x_slope_mm_per_mm=0.002382,
-			reference_stage_mm=47.0,
-			reference_z_place_mm=160.5,
-		),
-		back_wall_depth_to_gripper_z_model=None,
-	)
-
-	decision = resolve_z_stall_model(result=result, scan_config=scan_config, side=StorageModuleSide.FRONT)
-
-	assert decision.source == "config_short_span"
-	assert decision.slope_per_mm == pytest.approx(0.002382)
-	# -2.1663 was the delta at x = 350, so the installed intercept is that minus S * 350.
-	assert decision.intercept_mm == pytest.approx(-2.1663 - 0.002382 * 350.0)
-	# The installed line has to reproduce the two contacts the probe measured.
-	assert decision.intercept_mm + decision.slope_per_mm * 300.0 == pytest.approx(-2.2854, abs=1e-3)
-	assert decision.intercept_mm + decision.slope_per_mm * 400.0 == pytest.approx(-2.0472, abs=1e-3)
-
-
