@@ -18,6 +18,7 @@ from .core import (
 	COARSE_SCAN_STYLE_FLYING,
 	LineGapSegment,
 	depth_to_label,
+	get_fine_scan_alternate_direction,
 	get_fine_scan_feed_mm_s,
 	get_fine_scan_style,
 	get_flying_capture_latency_s,
@@ -1396,16 +1397,31 @@ async def prefetch_line_depth_values(
 			reused_line,
 		)
 
+	flight_positions = positions
+	current_mm = getattr(scan_motor, "_cur_pos", None)
+
+	if (
+		get_fine_scan_alternate_direction(scan_config) is True
+		and isinstance(current_mm, (int, float))
+		and len(positions) > 1
+		and abs(float(current_mm) - positions[-1]) < abs(float(current_mm) - positions[0])
+	):
+		flight_positions = list(reversed(positions))
+
 	depth_values, line = await scan_line_positions_flying(
 		tool,
 		axis=axis,
-		positions=positions,
+		positions=flight_positions,
 		fixed_mm=fixed_mm,
 		rpm=rpm,
 		progress_label=progress_label,
 		should_abort=should_abort,
 		capture_latency_s=get_flying_capture_latency_s(scan_config),
 	)
+
+	if flight_positions is not positions:
+		depth_values = list(reversed(depth_values))
+
 	cache = _FINE_LINE_CACHE.get()
 
 	if cache is not None:
