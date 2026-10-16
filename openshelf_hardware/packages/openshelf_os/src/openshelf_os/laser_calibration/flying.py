@@ -395,6 +395,15 @@ class FlyingScanLine:
 		)
 
 
+def grid_step_mm(positions: list[float]) -> float:
+	"""The grid's regular step. An axis grid ends on its bound, so its last step can be short, and
+	a grid flown in reverse starts with that step; reading the step off the first pair would
+	shrink every bin to it."""
+	steps = sorted(abs(later - earlier) for earlier, later in zip(positions, positions[1:]))
+
+	return float(steps[len(steps) // 2])
+
+
 def build_nearest_position_index(positions: list[float]) -> Callable[[float], int]:
 	"""Map a measured position onto its nearest grid index, for either grid direction."""
 	ascending = positions[-1] >= positions[0]
@@ -442,7 +451,7 @@ def bin_samples_to_positions(
 		raise ValueError(f"Unsupported flying scan bin mode: {mode}")
 
 	if max_distance_mm is None:
-		max_distance_mm = abs(positions[1] - positions[0]) if len(positions) > 1 else float("inf")
+		max_distance_mm = grid_step_mm(positions) if len(positions) > 1 else float("inf")
 
 	find_index = build_nearest_position_index(positions)
 
@@ -1288,7 +1297,7 @@ async def scan_line_positions_flying(
 		capture_latency_s=capture_latency_s,
 		stop_when=stop_when,
 	)
-	max_distance_mm = abs(positions[1] - positions[0]) if len(positions) > 1 else None
+	max_distance_mm = grid_step_mm(positions) if len(positions) > 1 else None
 	depth_values = bin_samples_to_positions(
 		samples=line.samples,
 		positions=positions,
@@ -1330,7 +1339,7 @@ def _find_reusable_line(axis: str, positions: list[float], fixed_mm: float) -> O
 	if cache is None or len(positions) == 0:
 		return None
 
-	half_step_mm = abs(positions[1] - positions[0]) / 2.0 if len(positions) > 1 else 0.0
+	half_step_mm = grid_step_mm(positions) / 2.0 if len(positions) > 1 else 0.0
 	wanted_lo_mm = min(positions[0], positions[-1]) + half_step_mm
 	wanted_hi_mm = max(positions[0], positions[-1]) - half_step_mm
 
@@ -1372,7 +1381,7 @@ async def prefetch_line_depth_values(
 	if rpm is None:
 		return None
 
-	max_distance_mm = abs(positions[1] - positions[0]) if len(positions) > 1 else None
+	max_distance_mm = grid_step_mm(positions) if len(positions) > 1 else None
 	reusable_line = _find_reusable_line(axis, positions, fixed_mm)
 
 	if reusable_line is not None:
@@ -1398,15 +1407,12 @@ async def prefetch_line_depth_values(
 		)
 
 	flight_positions = positions
-	current_mm = getattr(scan_motor, "_cur_pos", None)
 
-	if (
-		get_fine_scan_alternate_direction(scan_config) is True
-		and isinstance(current_mm, (int, float))
-		and len(positions) > 1
-		and abs(float(current_mm) - positions[-1]) < abs(float(current_mm) - positions[0])
-	):
-		flight_positions = list(reversed(positions))
+	if get_fine_scan_alternate_direction(scan_config) is True and len(positions) > 1:
+		current_mm = float(await scan_motor.get_position())
+
+		if abs(current_mm - positions[-1]) < abs(current_mm - positions[0]):
+			flight_positions = list(reversed(positions))
 
 	depth_values, line = await scan_line_positions_flying(
 		tool,
