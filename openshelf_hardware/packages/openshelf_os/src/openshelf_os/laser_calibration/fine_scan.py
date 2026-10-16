@@ -905,6 +905,26 @@ async def _capture_cross_scan(
 	if vertical_segment is None:
 		return fine_scan, []
 
+	if abs(float(vertical_segment.width_mm) - EXPECTED_HOLE_HEIGHT_MM) > VERTICAL_RECHECK_SPAN_TOLERANCE_MM:
+		vertical_segment = await _recheck_vertical_segment(
+			tool,
+			segment=vertical_segment,
+			base_scan=fine_scan,
+			x_positions=x_positions,
+			y_positions=y_positions,
+			probe_x_mm=vertical_probe_x_mm,
+			start_idx=vertical_center_idx,
+			step_mm=step_mm,
+			progress_prefix=progress_prefix,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			wall_depth_mm=wall_depth_mm,
+			on_update=on_update,
+			should_abort=should_abort,
+			scan_config=scan_config,
+			on_flying_line=on_flying_line,
+		)
+
 	refined_center_y_mm = vertical_segment.center_mm
 	refined_horizontal_y_mm = y_positions[find_nearest_position_index(y_positions, refined_center_y_mm)]
 	refined_horizontal_segment = await probe_line_from_center(
@@ -961,6 +981,110 @@ async def _capture_cross_scan(
 		return fine_scan, []
 
 	return fine_scan, [detected_cell]
+
+
+# A measured hole span this far off the nominal height means one edge read a bin early or late
+# (seen on the floor cell, whose bottom edge sits just above the axis floor). An inferred edge
+# always yields the nominal span, so it never triggers this.
+VERTICAL_RECHECK_SPAN_TOLERANCE_MM = 1.0
+# Extra columns either side of the vertical probe, well inside the ~27mm opening.
+VERTICAL_RECHECK_COLUMN_OFFSETS_MM = (-6.0, 6.0)
+
+
+async def _recheck_vertical_segment(
+	tool: Any,
+	*,
+	segment: LineGapSegment,
+	base_scan: GridScanResult,
+	x_positions: list[float],
+	y_positions: list[float],
+	probe_x_mm: float,
+	start_idx: int,
+	step_mm: float,
+	progress_prefix: str,
+	settle_ms: int,
+	samples_per_point: int,
+	wall_depth_mm: float,
+	on_update: Optional[Callable[[GridScanResult, str, float], None]],
+	should_abort: Callable[[], bool] | None,
+	scan_config: Any,
+	on_flying_line: Optional[Callable[[str, Any], None]],
+) -> LineGapSegment:
+	"""Probe two more columns and take each edge's median, so one misread edge cannot move the cell.
+
+	Every cell's y comes from its vertical span, and the datum cell's y frames the whole module, so
+	an off-nominal span is worth a few seconds to confirm.
+	"""
+	segments = [segment]
+
+	for column_idx, offset_mm in enumerate(VERTICAL_RECHECK_COLUMN_OFFSETS_MM, start=1):
+		raise_if_cancelled(should_abort)
+		column_x_mm = x_positions[find_nearest_position_index(x_positions, float(probe_x_mm) + offset_mm)]
+		label = f"{progress_prefix}_v_recheck{column_idx}"
+		seed_idx = await find_hole_interior_idx_from_seed(
+			tool,
+			base_scan=base_scan,
+			axis="y",
+			positions=y_positions,
+			fixed_mm=column_x_mm,
+			start_idx=start_idx,
+			progress_prefix=f"{label}_seek",
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			wall_depth_mm=wall_depth_mm,
+			on_update=on_update,
+			should_abort=should_abort,
+			scan_config=scan_config,
+			on_flying_line=on_flying_line,
+		)
+
+		if seed_idx is None:
+			continue
+
+		column_segment = await probe_line_from_center(
+			tool,
+			base_scan=base_scan,
+			axis="y",
+			positions=y_positions,
+			fixed_mm=column_x_mm,
+			center_idx=seed_idx,
+			step_mm=step_mm,
+			progress_prefix=label,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+			wall_depth_mm=wall_depth_mm,
+			expected_span_mm=EXPECTED_HOLE_HEIGHT_MM,
+			on_update=on_update,
+			should_abort=should_abort,
+			should_infer_far_edge=True,
+			should_infer_near_edge=float(y_positions[0]) <= Y_AXIS_FLOOR_MM,
+			scan_config=scan_config,
+			on_flying_line=on_flying_line,
+		)
+
+		if column_segment is not None:
+			segments.append(column_segment)
+
+	if len(segments) == 1:
+		print_status(f"{progress_prefix}_v_recheck=no_columns span_mm={float(segment.width_mm):.2f}")
+		return segment
+
+	start_mm = float(np.median([float(current.start_mm) for current in segments]))
+	end_mm = float(np.median([float(current.end_mm) for current in segments]))
+	print_status(
+		f"{progress_prefix}_v_recheck=median columns={len(segments)} "
+		f"span_mm={float(segment.width_mm):.2f}->{end_mm - start_mm:.2f} "
+		f"center_mm={float(segment.center_mm):.2f}->{(start_mm + end_mm) / 2.0:.2f}"
+	)
+
+	return LineGapSegment(
+		start_idx=segment.start_idx,
+		end_idx=segment.end_idx,
+		start_mm=start_mm,
+		end_mm=end_mm,
+		width_mm=end_mm - start_mm,
+		center_mm=(start_mm + end_mm) / 2.0,
+	)
 
 
 def dedupe_detected_cells(
