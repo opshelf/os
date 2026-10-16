@@ -595,8 +595,10 @@ async def _scan_scout_line_with_flying_bins(
 ) -> tuple[list[float | None], list[ShelfSurfaceEdge], list[float]]:
 	resample_requests: list[float] = []
 
+	depth_by_position = dict(zip(y_positions, binned_depths))
+
 	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
-		return list(binned_depths), FlyingScanLine(
+		return [depth_by_position[position] for position in positions], FlyingScanLine(
 			axis=axis,
 			fixed_mm=fixed_mm,
 			start_mm=float(positions[0]),
@@ -903,3 +905,46 @@ async def test_flying_fine_scan_seeds_the_vertical_probe_from_the_coarse_centre(
 	assert probes[0][1] == pytest.approx(301.0)
 	# Only a confirming final horizontal pass makes a cell; the coarse width never does.
 	assert (len(cells) == 1) is h_final_found
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("gantry_y_mm", "flies_up"), [(0.0, True), (1250.0, False)])
+async def test_flying_shelf_scout_flies_from_the_nearer_end_and_walks_the_grid_unchanged(
+	monkeypatch, gantry_y_mm: float, flies_up: bool
+) -> None:
+	y_positions = [float(y_mm) for y_mm in range(1200, -2, -2)]
+	flights: list[tuple[float, float]] = []
+
+	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
+		flights.append((float(positions[0]), float(positions[-1])))
+		# Two brims over open space, binned by position like a real pass.
+		depths = [9.5 if 390.0 <= position <= 400.0 or 790.0 <= position <= 800.0 else 0.0 for position in positions]
+		return depths, FlyingScanLine(
+			axis=axis, fixed_mm=fixed_mm, start_mm=positions[0], end_mm=positions[-1], rpm=rpm, samples=[]
+		)
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+	tool = FakeFlyingTool()
+	tool._my.position_mm = gantry_y_mm
+
+	depth_values, edges, _ = await flying_module.scan_shelf_scout_line_flying(
+		tool,
+		x_mm=950.0,
+		y_positions=y_positions,
+		rpm=30,
+		progress_label="shelf_scout_1",
+		post_edge_skip_mm=40.0,
+		progress_printer=lambda message: None,
+	)
+
+	grid_values = [9.5 if 390.0 <= y <= 400.0 or 790.0 <= y <= 800.0 else 0.0 for y in y_positions]
+	assert flights == ([(0.0, 1200.0)] if flies_up is True else [(1200.0, 0.0)])
+	assert depth_values == grid_values
+	# The top-down walk sees the same values whichever way the gantry flew.
+	from openshelf_os.laser_calibration.shelf_scout import detect_shelf_edges_from_line
+	expected_edges = detect_shelf_edges_from_line(
+		x_mm=950.0, y_positions=y_positions, depth_values=grid_values, post_edge_skip_mm=40.0
+	)
+	assert len(expected_edges) == 2
+	assert edges == expected_edges
