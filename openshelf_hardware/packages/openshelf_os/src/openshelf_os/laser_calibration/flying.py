@@ -1368,10 +1368,23 @@ async def scan_shelf_scout_line_flying(
 	settle_ms: int = 0,
 	samples_per_point: int = 1,
 ) -> tuple[list[Optional[float]], list[ShelfSurfaceEdge], FlyingScanLine]:
+	# A pass that never stops early covers the whole line whichever way it flies, and the edge walk
+	# below runs over the grid in its own order, so fly from the end nearer the gantry and save
+	# the trip to the far end and back.
+	flight_positions = y_positions
+	can_fly_either_way = stop_when is None and stop_after_first_edge is False and len(y_positions) > 1
+	y_motor = getattr(tool, "_my", None)
+
+	if can_fly_either_way is True and y_motor is not None:
+		current_y_mm = float(await y_motor.get_position())
+
+		if abs(current_y_mm - y_positions[-1]) < abs(current_y_mm - y_positions[0]):
+			flight_positions = list(reversed(y_positions))
+
 	depth_values, line = await scan_line_positions_flying(
 		tool,
 		axis="y",
-		positions=y_positions,
+		positions=flight_positions,
 		fixed_mm=x_mm,
 		rpm=rpm,
 		progress_label=progress_label,
@@ -1382,6 +1395,10 @@ async def scan_shelf_scout_line_flying(
 		capture_latency_s=capture_latency_s,
 		stop_when=stop_when,
 	)
+
+	if flight_positions is not y_positions:
+		depth_values = list(reversed(depth_values))
+
 	brim_height_kwargs: dict[str, float] = {}
 
 	if brim_height_mm is not None:
