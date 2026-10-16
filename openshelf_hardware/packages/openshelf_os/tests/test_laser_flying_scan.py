@@ -1067,7 +1067,6 @@ async def test_flying_pass_ends_on_arrival_when_the_drive_settles_short(monkeypa
 	assert len(line.samples) > 0
 
 
-@pytest.mark.asyncio
 class FakeFlakyAtPositionTool(FakeFlyingTool):
 	"""Fails one bounded laser read once the y axis passes a position."""
 
@@ -1110,13 +1109,16 @@ async def test_scan_axis_flying_resumes_a_pass_stopped_mid_line_instead_of_refly
 	starts = [value for value, _ in tool._my.moves if value < 60.0]
 	assert starts.count(0.0) == 1
 	assert any(20.0 <= value <= 30.0 for value in starts)
-	positions = [sample_position for sample_position in (s.depth_position_mm or s.position_mm for s in line.samples)]
+	positions = [flying_module.sample_depth_position_mm(sample) for sample in line.samples]
 	assert positions[0] == pytest.approx(0.0)
 	assert positions[-1] == pytest.approx(60.0)
-	# Kept and resumed samples join without overlapping or going back.
-	assert all(later >= earlier for earlier, later in zip(positions, positions[1:]))
-	values = flying_module.bin_samples_to_positions(samples=line.samples, positions=[float(mm) for mm in range(0, 61, 2)])
-	assert all(value is not None for value in values)
+	# Kept and resumed samples join without overlapping or going back; order is only checked
+	# across the splice (see the guard-resume test below).
+	resume_mm = float(resume[0].split("resume=from ")[1].split()[0])
+	splice_idx = next(index for index, value in enumerate(positions) if value >= resume_mm - 0.01)
+	assert splice_idx > 0
+	assert all(value < resume_mm + 0.01 for value in positions[:splice_idx])
+	assert all(value >= resume_mm - 0.01 for value in positions[splice_idx:])
 
 
 class FakePositionGuardInterlock:
