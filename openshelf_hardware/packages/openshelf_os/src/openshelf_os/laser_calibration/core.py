@@ -76,6 +76,8 @@ Y_AXIS_FLOOR_MM = 0.0
 FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.4
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 6.0
+# Wall the vertical fine window reads past a full hole height, so both edges are measured.
+FINE_SCAN_Y_WALL_MARGIN_MM = 4.0
 FINE_SCAN_RETRY_MIN_Y_MARGIN_MM = 36.0
 FINE_OPPOSITE_EDGE_MARGIN_MM = 5.0
 FINE_OPPOSITE_EDGE_BACKTRACK_MM = 8.0
@@ -438,10 +440,6 @@ def get_flying_capture_latency_ms(scan_config: Any) -> float:
 
 def get_flying_capture_latency_s(scan_config: Any) -> float:
 	return get_flying_capture_latency_ms(scan_config) / 1000.0
-
-
-def get_fine_scan_alternate_direction(scan_config: Any) -> bool:
-	return getattr(scan_config, "fine_scan_alternate_direction", False) is True
 
 
 def get_coarse_scan_rpm(scan_config: Any) -> int:

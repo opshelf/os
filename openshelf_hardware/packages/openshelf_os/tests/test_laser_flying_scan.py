@@ -1061,38 +1061,6 @@ async def test_scan_axis_flying_with_a_stop_predicate_restarts_from_start() -> N
 	assert [value for value, _ in tool._my.moves].count(0.0) == 2
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("is_enabled", "flies_down"), [(True, True), (False, False)])
-async def test_fine_line_flies_from_the_nearer_end_only_when_enabled(monkeypatch, is_enabled, flies_down) -> None:
-	flights: list[tuple[float, float]] = []
-
-	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
-		flights.append((float(positions[0]), float(positions[-1])))
-		return [float(position) for position in positions], FlyingScanLine(
-			axis=axis, fixed_mm=fixed_mm, start_mm=positions[0], end_mm=positions[-1], rpm=rpm, samples=[]
-		)
-
-	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
-	tool = SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0), get_position=AsyncMock(return_value=48.0)))
-	positions = [float(mm) for mm in range(0, 51, 1)]
-
-	values, _ = await flying_module.prefetch_line_depth_values(
-		tool,
-		scan_config=SimpleNamespace(
-			fine_scan_style="flying", fine_scan_feed_mm_s=40.0, fine_scan_alternate_direction=is_enabled
-		),
-		axis="x",
-		positions=positions,
-		fixed_mm=10.0,
-		progress_label="probe",
-	)
-
-	assert flights == ([(50.0, 0.0)] if flies_down else [(0.0, 50.0)])
-	# The caller's walk always gets values in its own grid order.
-	assert values == positions
-
-
-
 def test_reversed_grid_with_a_short_end_step_still_bins_every_position() -> None:
 	# Grids stop on their bound, so the last step is short; flown in reverse it comes first.
 	positions = list(reversed([471.0207 + mm for mm in range(0, 35)] + [505.1791]))
@@ -1105,3 +1073,18 @@ def test_reversed_grid_with_a_short_end_step_still_bins_every_position() -> None
 
 	assert flying_module.grid_step_mm(positions) == pytest.approx(1.0)
 	assert all(value is not None for value in values)
+
+
+def test_fine_window_covers_a_hole_reaching_a_full_height_above_the_sweep_row() -> None:
+	from openshelf_os.laser_calibration.core import GapCandidateRegion
+	from openshelf_os.laser_calibration.shelf_scan import build_fine_scan_bounds
+
+	# lb4a-3 y~439 row: the sweep crosses at 425.25 and the opening reaches ~455.
+	bounds = build_fine_scan_bounds(
+		GapCandidateRegion(x_min=289.0, x_max=313.0, y_min=425.25, y_max=425.25, wall_depth_mm=9.6),
+		overall_bounds=ScanBounds(x_min=220.0, x_max=950.0, y_min=0.0, y_max=1165.0),
+		scan_config=SimpleNamespace(fine_cell_scan_y_margin_mm=None),
+	)
+
+	assert bounds.y_max >= 425.25 + 30.0 + 2.0
+	assert bounds.y_min <= 425.25 - 30.0 - 2.0
