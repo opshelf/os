@@ -312,3 +312,34 @@ async def test_flight_recorder_skips_brake_output_read_on_unbraked_axis(mock_con
 
     assert all(call.args[0] != "Digital output state" for call in motor.get_param.await_args_list)
     assert [entry.digital_output_state for entry in motor._flight_recorder] == [None]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("position_mm", "is_immediate"), [(49.94, True), (45.0, False)])
+async def test_wait_for_move_trusts_completion_only_on_target_without_observed_motion(
+    mock_controller, monkeypatch, position_mm: float, is_immediate: bool
+):
+    """An axis that already stopped on its target needs no 0.5s guard; one that stands elsewhere does."""
+    clock = {"now": 100.0}
+    monkeypatch.setattr("hardware.motor.time.monotonic", lambda: clock["now"])
+
+    async def tick(_seconds: float) -> None:
+        clock["now"] += 0.05
+
+    monkeypatch.setattr("hardware.motor.asyncio.sleep", tick)
+    motor = Motor(mock_controller, make_motor_params())
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.get_param = AsyncMock(return_value=0)
+    motor._target_pos = 50.0
+
+    async def did_get_position():
+        motor._cur_pos = position_mm
+        return position_mm
+
+    motor.get_position = AsyncMock(side_effect=did_get_position)
+    mock_controller.read_holding_registers.return_value = 1 << 5
+
+    await motor.wait_for_move(timeout=5.0)
+
+    waited_s = clock["now"] - 100.0
+    assert (waited_s < 0.1) is is_immediate
