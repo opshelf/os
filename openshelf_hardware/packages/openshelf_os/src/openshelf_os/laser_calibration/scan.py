@@ -103,7 +103,11 @@ def build_axis_positions(start_mm: float, end_mm: float, step_mm: float) -> list
 	direction = 1.0 if end_mm >= start_mm else -1.0
 	current = start_mm
 
-	while (direction > 0 and current <= end_mm + (step_mm / 2.0)) or (direction < 0 and current >= end_mm - (step_mm / 2.0)):
+	# Stop at the bound: a step past it is a position the axis is clamped back from, so it would
+	# duplicate the end bin and leave the grid non-monotonic once the end is appended below.
+	tolerance_mm = 1e-6
+
+	while (direction > 0 and current <= end_mm + tolerance_mm) or (direction < 0 and current >= end_mm - tolerance_mm):
 		positions.append(round(current, 4))
 		current += step_mm * direction
 
