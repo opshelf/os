@@ -25,6 +25,8 @@ TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
 ROTATION_SAFE_X_MARGIN_MM = 200.0
+# The clearance move lands on the window edge; encoder reads settle a few hundredths either side.
+ROTATION_SAFE_X_TOLERANCE_MM = 1.0
 ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
 ROTATION_POSITION_EPSILON_DEG = 0.05
 DEFAULT_STAGE_RETRACT_TARGET_MM = 3.0
@@ -83,14 +85,6 @@ def _create_motor_if_enabled(
         home_limit_input = gpio.input(home_limit_pin)
 
     return Motor(controller, cfg, safety, home_limit_input=home_limit_input)
-
-
-def _limit_switches_enabled(motors: c.Motors, name: str) -> bool:
-    """Only false when this machine's config says the axis has no limit switches."""
-    try:
-        return motors.by_name(name).limit_switches_enabled is not False
-    except KeyError:
-        return True
 
 
 def derive_rotation_home_orientation(
@@ -160,22 +154,6 @@ class Tool:
         )
 
         self._gpio = gpio
-        # Unfitted clearance inputs float, so reading them on a machine without
-        # the switches would report every rotation as unsafe.
-        if _limit_switches_enabled(motors, "x_axis") is False:
-            self._x_lim_minunsafe_input = None
-            self._x_lim_maxunsafe_input = None
-            self._logger.info(
-                "Motor 'x_axis' limit switches disabled via config; skipping rotation clearance "
-                "limit switches 'x_lim_minunsafe' and 'x_lim_maxunsafe'"
-            )
-        else:
-            self._x_lim_minunsafe_input = (
-                gpio.input("x_lim_minunsafe") if gpio is not None and gpio.has_pin("x_lim_minunsafe") else None
-            )
-            self._x_lim_maxunsafe_input = (
-                gpio.input("x_lim_maxunsafe") if gpio is not None and gpio.has_pin("x_lim_maxunsafe") else None
-            )
 
         self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
         self.is_grip_detection_enabled = self._params.gripper.object_detection_enabled
@@ -1134,13 +1112,25 @@ class Tool:
                     f"z_axis={z_position:.3f}mm exceeds maximum {maximum_z_mm:.3f}mm"
                 )
 
-        x_lim_minunsafe_input = getattr(self, "_x_lim_minunsafe_input", None)
-        if x_lim_minunsafe_input is not None and x_lim_minunsafe_input.read() is not True:
-            unsafe.append("x_lim_minunsafe is not engaged")
+        # The tool only clears the gantry uprights while X is ROTATION_SAFE_X_MARGIN_MM from both
+        # ends of its travel; ensure_safe_rotation_x_position moves it there before rotating.
+        x_motor = getattr(self, "_mx", None)
+        if x_motor is not None:
+            if getattr(x_motor, "_is_homed", True) is False:
+                unsafe.append("x_axis is not homed")
+            else:
+                x_position = float(await x_motor.get_position())
+                window_min_mm = float(getattr(x_motor._params, "lower_lim", 0.0)) + ROTATION_SAFE_X_MARGIN_MM
+                window_max_mm = float(x_motor._params.lim) - ROTATION_SAFE_X_MARGIN_MM
 
-        x_lim_maxunsafe_input = getattr(self, "_x_lim_maxunsafe_input", None)
-        if x_lim_maxunsafe_input is not None and x_lim_maxunsafe_input.read() is not True:
-            unsafe.append("x_lim_maxunsafe is not engaged")
+                if (
+                    x_position < window_min_mm - ROTATION_SAFE_X_TOLERANCE_MM
+                    or x_position > window_max_mm + ROTATION_SAFE_X_TOLERANCE_MM
+                ):
+                    unsafe.append(
+                        f"x_axis={x_position:.3f}mm is outside the rotation window "
+                        f"{window_min_mm:.1f}-{window_max_mm:.1f}mm"
+                    )
 
         if unsafe:
             raise MovementError("Unsafe tool clearance for rotation: " + "; ".join(unsafe))

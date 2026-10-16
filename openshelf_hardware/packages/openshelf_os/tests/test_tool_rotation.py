@@ -137,7 +137,14 @@ async def test_rotate_to_position_restores_original_x_after_safe_edge_move() -> 
     events: list[str] = []
 
     x_motor = _mock_x_motor(position=25.0)
-    x_motor.move_to_position = AsyncMock(side_effect=lambda position: events.append(f"x_move:{position}"))
+    x_position = {"mm": 25.0}
+
+    def didMoveX(position: float) -> None:
+        events.append(f"x_move:{position}")
+        x_position["mm"] = float(position)
+
+    x_motor.move_to_position = AsyncMock(side_effect=didMoveX)
+    x_motor.get_position = AsyncMock(side_effect=lambda: x_position["mm"])
 
     rotate_motor = AsyncMock()
     rotate_motor.get_position = AsyncMock(return_value=0.0)
@@ -222,9 +229,7 @@ async def test_rotate_to_position_refuses_unsafe_z_clearance() -> None:
     tool._handle_fault.assert_awaited_once()
 
 
-def _tool_for_x_lim_safe_check(
-    *, x_lim_minunsafe: bool | None = True, x_lim_maxunsafe: bool | None = True
-) -> tuple[Tool, AsyncMock]:
+def _tool_for_x_window_check(*, x_mm: float | None, is_homed: bool = True) -> tuple[Tool, AsyncMock]:
     rotate_motor = AsyncMock()
     rotate_motor.get_position = AsyncMock(return_value=2.0)
     rotate_motor.move_to_position = AsyncMock()
@@ -237,48 +242,48 @@ def _tool_for_x_lim_safe_check(
     tool._ms = None
     tool._mg = None
     tool._mr = rotate_motor
-    tool._mx = None
+    tool._mx = None if x_mm is None else _mock_x_motor(limit=950.0, position=x_mm)
+    if tool._mx is not None:
+        tool._mx._is_homed = is_homed
+        # The guard is under test, so keep the clearance move from correcting the position first.
+        tool.ensure_safe_rotation_x_position = AsyncMock(return_value=None)
+        tool.restore_safe_rotation_x_position = AsyncMock()
     tool._handle_fault = AsyncMock()
     tool.get_param = AsyncMock(side_effect=lambda name: {
         'ROTATION_FRONT': 182.25,
         'ROTATION_BACK': 2.0,
     }[name])
-    tool._x_lim_minunsafe_input = (
-        None if x_lim_minunsafe is None else SimpleNamespace(read=lambda: x_lim_minunsafe)
-    )
-    tool._x_lim_maxunsafe_input = (
-        None if x_lim_maxunsafe is None else SimpleNamespace(read=lambda: x_lim_maxunsafe)
-    )
 
     return tool, rotate_motor
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-	"kwargs, error",
+	"x_mm, is_homed, error",
 	[
-		pytest.param(
-			{"x_lim_minunsafe": False},
-			"x_lim_minunsafe is not engaged",
-			id="min_unsafe",
-		),
-		pytest.param(
-			{"x_lim_maxunsafe": False},
-			"x_lim_maxunsafe is not engaged",
-			id="max_unsafe",
-		),
+		pytest.param(150.0, True, "outside the rotation window 200.0-750.0mm", id="near_min_end"),
+		pytest.param(800.0, True, "outside the rotation window 200.0-750.0mm", id="near_max_end"),
+		pytest.param(400.0, False, "x_axis is not homed", id="unhomed"),
 	],
 )
-async def test_rotate_to_position_refuses_when_x_lim_not_engaged(
-	kwargs: dict, error: str
-) -> None:
-    tool, rotate_motor = _tool_for_x_lim_safe_check(**kwargs)
+async def test_rotate_to_position_refuses_outside_the_x_window(x_mm: float, is_homed: bool, error: str) -> None:
+    tool, rotate_motor = _tool_for_x_window_check(x_mm=x_mm, is_homed=is_homed)
 
     with pytest.raises(MovementError, match=error):
         await tool.rotate_to_position("front")
 
     rotate_motor.move_to_position.assert_not_awaited()
     tool._handle_fault.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("x_mm", [199.5, 400.0, 750.5])
+async def test_rotate_to_position_rotates_inside_the_x_window(x_mm: float) -> None:
+    tool, rotate_motor = _tool_for_x_window_check(x_mm=x_mm)
+
+    await tool.rotate_to_position("front")
+
+    rotate_motor.move_to_position.assert_awaited()
 
 
 @pytest.mark.asyncio
