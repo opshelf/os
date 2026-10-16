@@ -45,6 +45,10 @@ FLYING_SCAN_MAX_LINE_SECONDS = 100.0
 # The drive stops reporting progress when it has finished or faulted; the sampler breaks on that
 # and lets gantry_wait surface the reason.
 FLYING_SCAN_STALL_S = 0.5
+# Drives settle a few hundredths short of the commanded end, so an exact arrival check never fires
+# and every pass waited out FLYING_SCAN_STALL_S instead. Well inside FLYING_SCAN_LEAD_OUT_MARGIN_MM,
+# so the reads it drops lie past the grid anyway.
+FLYING_SCAN_ARRIVAL_TOLERANCE_MM = 0.2
 FLYING_SCAN_PROGRESS_EPS_MM = 0.02
 # Velocity for the depth-to-position correction is a median over the trailing deltas so a single
 # jittered timestamp cannot move a sample.
@@ -1001,7 +1005,7 @@ async def _scan_axis_flying_pass(
 			is_slow_read = slow_read_cap_s is not None and encoder_delay_s > slow_read_cap_s
 			# The axis may have stopped anywhere inside the latency window before this read, so
 			# no velocity correction can place its depth; the settled end sample covers the end.
-			has_arrived = direction * (position_mm - motion_end_mm) >= 0.0
+			has_arrived = direction * (position_mm - motion_end_mm) >= -FLYING_SCAN_ARRIVAL_TOLERANCE_MM
 
 			is_sample = is_slow_read is False and has_arrived is False
 
@@ -1097,7 +1101,7 @@ async def _scan_axis_flying_pass(
 				stopped_early = True
 				break
 
-			if direction * (position_mm - motion_end_mm) >= 0.0:
+			if has_arrived is True:
 				break
 
 			# Move the anchor only once motion clears the epsilon: at low feeds consecutive

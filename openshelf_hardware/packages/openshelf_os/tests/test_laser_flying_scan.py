@@ -948,3 +948,40 @@ async def test_flying_shelf_scout_flies_from_the_nearer_end_and_walks_the_grid_u
 	)
 	assert len(expected_edges) == 2
 	assert edges == expected_edges
+
+
+class FakeShortSettlingAxisMotor(FakeTimedAxisMotor):
+	"""Stops a few hundredths short of the commanded target, as the real drives settle."""
+
+	async def get_position(self, *, timeout_s: float | None = None) -> float:
+		position_mm = await super().get_position(timeout_s=timeout_s)
+
+		if self.is_moving is False and self.move_started_at is not None:
+			direction = 1.0 if self.target_mm >= self.move_start_mm else -1.0
+			self.position_mm = self.target_mm - direction * 0.06
+			return float(self.position_mm)
+
+		return position_mm
+
+
+@pytest.mark.asyncio
+async def test_flying_pass_ends_on_arrival_when_the_drive_settles_short(monkeypatch) -> None:
+	# A long stall timeout makes waiting it out visible: an exact arrival check would sit here for 30s.
+	monkeypatch.setattr(flying_module, "FLYING_SCAN_STALL_S", 30.0)
+	tool = FakeFlyingTool()
+	tool._mx = FakeShortSettlingAxisMotor(feed_mm_s=400.0)
+
+	started = time.monotonic()
+	_, line = await scan_line_positions_flying(
+		tool,
+		axis="x",
+		positions=[float(mm) for mm in range(0, 41, 2)],
+		fixed_mm=10.0,
+		rpm=30,
+		progress_label="settle_short",
+		progress_printer=lambda message: None,
+		capture_latency_s=0.0,
+	)
+
+	assert time.monotonic() - started < 2.0
+	assert len(line.samples) > 0
