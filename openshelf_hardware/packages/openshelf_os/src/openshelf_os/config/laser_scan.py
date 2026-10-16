@@ -85,6 +85,10 @@ class LaserScanConfig(BaseModel):
     # the same rpm is a different speed on x and y.
     fine_scan_style: Literal["stepped", "flying"] = "stepped"
     fine_scan_feed_mm_s: float = Field(40.0, gt=0)
+    # Fly each fine line from whichever end the gantry stands nearer, instead of always from the low
+    # end, which saves the return move between rows. Off until reversed fine lines are shown to
+    # land on the same edges as forward ones.
+    fine_scan_alternate_direction: bool = False
     # Laser-to-encoder read delay that flying passes correct each depth by (feed x latency).
     # Unset falls back to `defaults.FLYING_CAPTURE_LATENCY_MS`, which was fit on one machine;
     # store this sensor's own stopped-vs-moving edge measurement here. 0 disables the correction.

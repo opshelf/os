@@ -440,6 +440,10 @@ def get_flying_capture_latency_s(scan_config: Any) -> float:
 	return get_flying_capture_latency_ms(scan_config) / 1000.0
 
 
+def get_fine_scan_alternate_direction(scan_config: Any) -> bool:
+	return getattr(scan_config, "fine_scan_alternate_direction", False) is True
+
+
 def get_coarse_scan_rpm(scan_config: Any) -> int:
 	configured_rpm = getattr(scan_config, "coarse_scan_rpm", None)
 

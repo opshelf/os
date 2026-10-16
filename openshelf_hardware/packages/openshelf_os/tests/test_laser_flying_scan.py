@@ -1059,3 +1059,34 @@ async def test_scan_axis_flying_with_a_stop_predicate_restarts_from_start() -> N
 
 	assert any("restart=from_start" in message for message in printed)
 	assert [value for value, _ in tool._my.moves].count(0.0) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("is_enabled", "flies_down"), [(True, True), (False, False)])
+async def test_fine_line_flies_from_the_nearer_end_only_when_enabled(monkeypatch, is_enabled, flies_down) -> None:
+	flights: list[tuple[float, float]] = []
+
+	async def didScanLineFlying(tool, *, axis, positions, fixed_mm, rpm, progress_label, **kwargs):
+		flights.append((float(positions[0]), float(positions[-1])))
+		return [float(position) for position in positions], FlyingScanLine(
+			axis=axis, fixed_mm=fixed_mm, start_mm=positions[0], end_mm=positions[-1], rpm=rpm, samples=[]
+		)
+
+	monkeypatch.setattr(flying_module, "scan_line_positions_flying", didScanLineFlying)
+	tool = SimpleNamespace(_mx=SimpleNamespace(_params=SimpleNamespace(mpr=80.0), _cur_pos=48.0))
+	positions = [float(mm) for mm in range(0, 51, 1)]
+
+	values, _ = await flying_module.prefetch_line_depth_values(
+		tool,
+		scan_config=SimpleNamespace(
+			fine_scan_style="flying", fine_scan_feed_mm_s=40.0, fine_scan_alternate_direction=is_enabled
+		),
+		axis="x",
+		positions=positions,
+		fixed_mm=10.0,
+		progress_label="probe",
+	)
+
+	assert flights == ([(50.0, 0.0)] if flies_down else [(0.0, 50.0)])
+	# The caller's walk always gets values in its own grid order.
+	assert values == positions
