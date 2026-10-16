@@ -627,9 +627,12 @@ def build_fine_scan_bounds(
 	scan_config: Any,
 ) -> ScanBounds:
 	fine_cell_scan_y_margin_mm = get_fine_cell_scan_y_margin_mm(scan_config)
+	# The coarse sweep crosses the opening at a fixed height above the shelf edge, not at its
+	# centre, so the opening can reach a full hole height above or below the sweep row. A window
+	# short of that runs off the top of the hole and the far edge has to be assumed, not measured.
 	y_margin_mm = max(
 		fine_cell_scan_y_margin_mm + 10.0,
-		(EXPECTED_HOLE_HEIGHT_MM / 2.0) + 12.0,
+		EXPECTED_HOLE_HEIGHT_MM + FINE_SCAN_Y_WALL_MARGIN_MM,
 	)
 
 	return build_fine_scan_bounds_with_y_margin(
