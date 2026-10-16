@@ -12,6 +12,14 @@
 - Server tests run every async test and fixture under pytest-asyncio auto mode; `pytest.ini` disables AnyIO's pytest plugin (`-p no:anyio`). Do not re-enable it: with both plugins loaded, a plain async fixture of an anyio-marked test runs on whichever plugin registered last (site-packages order), so a fixture-started worker such as the mock robot can land on a different event loop than the test.
 - The backend suite is order-dependent only because collection order is stable — before landing test changes, run it shuffled at least once: `uv run pytest --random-order` (`--random-order-bucket=global` to interleave modules, `--random-order-seed=<seed>` to replay a failing order).
 
+## Testing coverage
+- Keep the smallest suite that protects critical behavior: physical safety and interlocks, security boundaries and audit integrity, persistent data and migration integrity, and recovery from failures that could leave unsafe motion or incorrect inventory.
+- Before adding or retaining a test, identify the concrete consequential failure it catches and why existing coverage does not catch it. Routine changes do not require new tests; do not target coverage percentages or test counts.
+- Prefer tests that exercise a real failure through the relevant behavior boundary and assert the resulting safety, access, or persisted state. Mock hardware and external services as needed, but keep the logic under test real.
+- Do not add tests solely for getters/setters, framework behavior, serialization, status payloads, log wording, argument forwarding, mock bookkeeping, or routine CRUD success. An exception needs a concrete critical failure, not hypothetical regression risk.
+- Keep one representative case per distinct failure mechanism. Add parameter variants only when they exercise different critical outcomes; avoid exhaustive value matrices, duplicate happy paths, and tests that mirror implementation steps.
+- When changing tests, remove superseded cases and newly unused fixtures, helpers, and test-only dependencies. Run the relevant retained tests, including the shuffled backend run required above, and report failures accurately.
+
 ## Dev UI
 - Report errors through the toast system (`postToast('error', …)` from `$lib/toasts`), not inline error text in pages, dialogs, or components.
 - Keep a button's label unchanged while its action is busy or queued — only disable it; do not swap in "homing…"/"queued"-style titles.
