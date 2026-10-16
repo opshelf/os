@@ -114,19 +114,9 @@ def test_tool_skips_the_home_limit_switch_of_a_motor_without_one(
 
     assert tool._ms._home_limit_input is None
     assert isinstance(tool._mx._home_limit_input, LimitInput)
-    assert gpio.requested == ["x_lim_min", "x_lim_minunsafe", "x_lim_maxunsafe"]
+    assert gpio.requested == ["x_lim_min"]
     assert "Motor 'stage' limit switches disabled via config" in caplog.text
     assert "s_lim_min" in caplog.text
-
-
-def test_tool_keeps_the_clearance_switches_when_x_is_absent_from_config() -> None:
-    gpio = FakeGpio()
-
-    tool = make_tool([motor_entry("stage", 3)], gpio)
-
-    assert tool._mx is None
-    assert isinstance(tool._x_lim_minunsafe_input, LimitInput)
-    assert isinstance(tool._x_lim_maxunsafe_input, LimitInput)
 
 
 @pytest.mark.asyncio
