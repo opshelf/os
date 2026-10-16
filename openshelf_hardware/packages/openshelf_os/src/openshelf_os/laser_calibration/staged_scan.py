@@ -334,52 +334,54 @@ async def run_staged_scan(
 						line=flying_line,
 					)
 
-				fine_scan, detected_cells = await capture_cross_scan(
-					tool,
-					candidate=candidate,
-					bounds=selected_fine_bounds,
-					step_mm=fine_step_mm,
-					settle_ms=settle_ms,
-					samples_per_point=samples_per_point,
-					wall_depth_mm=candidate_wall_depth_mm,
-					scan_config=scan_config,
-					progress_prefix=f"fine_{candidate_idx}",
-					on_update=didUpdateFineScan,
-					should_abort=should_abort,
-					on_flying_line=didRecordFlyingLine,
-				)
-				raise_if_cancelled(should_abort)
-
-				if len(detected_cells) == 0:
-					retry_fine_bounds = build_fine_scan_retry_bounds(
-						candidate,
-						current_bounds=selected_fine_bounds,
-						overall_bounds=bounds,
+				# A retry re-flies the same horizontal rows, so the first attempt's lines are kept for it.
+				with reuse_flown_fine_lines():
+					fine_scan, detected_cells = await capture_cross_scan(
+						tool,
+						candidate=candidate,
+						bounds=selected_fine_bounds,
+						step_mm=fine_step_mm,
+						settle_ms=settle_ms,
+						samples_per_point=samples_per_point,
+						wall_depth_mm=candidate_wall_depth_mm,
 						scan_config=scan_config,
+						progress_prefix=f"fine_{candidate_idx}",
+						on_update=didUpdateFineScan,
+						should_abort=should_abort,
+						on_flying_line=didRecordFlyingLine,
 					)
+					raise_if_cancelled(should_abort)
 
-					if scan_bounds_match(retry_fine_bounds, selected_fine_bounds) is False:
-						print_status(
-							f"phase=fine-scan-retry candidate={candidate_idx}/{len(candidates)} "
-							f"bounds:x=({retry_fine_bounds.x_min:.2f},{retry_fine_bounds.x_max:.2f}) "
-							f"y=({retry_fine_bounds.y_min:.2f},{retry_fine_bounds.y_max:.2f})"
-						)
-						fine_scan, detected_cells = await capture_cross_scan(
-							tool,
-							candidate=candidate,
-							bounds=retry_fine_bounds,
-							step_mm=fine_step_mm,
-							settle_ms=settle_ms,
-							samples_per_point=samples_per_point,
-							wall_depth_mm=candidate_wall_depth_mm,
+					if len(detected_cells) == 0:
+						retry_fine_bounds = build_fine_scan_retry_bounds(
+							candidate,
+							current_bounds=selected_fine_bounds,
+							overall_bounds=bounds,
 							scan_config=scan_config,
-							progress_prefix=f"fine_{candidate_idx}_retry",
-							on_update=didUpdateFineScan,
-							should_abort=should_abort,
-							on_flying_line=didRecordFlyingLine,
 						)
-						raise_if_cancelled(should_abort)
-						selected_fine_bounds = retry_fine_bounds
+
+						if scan_bounds_match(retry_fine_bounds, selected_fine_bounds) is False:
+							print_status(
+								f"phase=fine-scan-retry candidate={candidate_idx}/{len(candidates)} "
+								f"bounds:x=({retry_fine_bounds.x_min:.2f},{retry_fine_bounds.x_max:.2f}) "
+								f"y=({retry_fine_bounds.y_min:.2f},{retry_fine_bounds.y_max:.2f})"
+							)
+							fine_scan, detected_cells = await capture_cross_scan(
+								tool,
+								candidate=candidate,
+								bounds=retry_fine_bounds,
+								step_mm=fine_step_mm,
+								settle_ms=settle_ms,
+								samples_per_point=samples_per_point,
+								wall_depth_mm=candidate_wall_depth_mm,
+								scan_config=scan_config,
+								progress_prefix=f"fine_{candidate_idx}_retry",
+								on_update=didUpdateFineScan,
+								should_abort=should_abort,
+								on_flying_line=didRecordFlyingLine,
+							)
+							raise_if_cancelled(should_abort)
+							selected_fine_bounds = retry_fine_bounds
 
 				print_status(
 					f"fine_detected_cells={len(detected_cells)} "

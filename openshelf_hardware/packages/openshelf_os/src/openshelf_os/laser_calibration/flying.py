@@ -1243,6 +1243,11 @@ FINE_LINE_CACHE_FIXED_EPS_MM = 0.01
 
 @contextmanager
 def reuse_flown_fine_lines() -> Iterator[None]:
+	"""Keep lines flown inside this block for reuse; a nested block shares the outer cache."""
+	if _FINE_LINE_CACHE.get() is not None:
+		yield
+		return
+
 	token = _FINE_LINE_CACHE.set({})
 
 	try:
