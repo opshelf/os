@@ -985,3 +985,77 @@ async def test_flying_pass_ends_on_arrival_when_the_drive_settles_short(monkeypa
 
 	assert time.monotonic() - started < 2.0
 	assert len(line.samples) > 0
+
+
+@pytest.mark.asyncio
+class FakeFlakyAtPositionTool(FakeFlyingTool):
+	"""Fails one bounded laser read once the y axis passes a position."""
+
+	def __init__(self, fail_after_mm: float) -> None:
+		super().__init__(depth_mm=5.0)
+		self._my = FakeTimedAxisMotor(feed_mm_s=200.0)
+		self.fail_after_mm = float(fail_after_mm)
+		self.has_failed = False
+
+	async def get_laser_distance(self, *, timeout_s: float | None = None) -> float | None:
+		await asyncio.sleep(0.001)
+
+		if self.has_failed is False and timeout_s is not None and self._my.position_mm > self.fail_after_mm:
+			self.has_failed = True
+			raise ModbusTimeoutError("laser did not answer")
+
+		return self.depth_mm
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_resumes_a_pass_stopped_mid_line_instead_of_reflying_it() -> None:
+	tool = FakeFlakyAtPositionTool(fail_after_mm=28.0)
+	printed: list[str] = []
+
+	line = await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=60.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_resume",
+		progress_printer=printed.append,
+		capture_latency_s=0.0,
+	)
+
+	resume = [message for message in printed if "read_overrun=stopped" in message]
+	assert len(resume) == 1 and "resume=from" in resume[0]
+	# The second pass starts near the stop, not back at start_mm.
+	starts = [value for value, _ in tool._my.moves if value < 60.0]
+	assert starts.count(0.0) == 1
+	assert any(20.0 <= value <= 30.0 for value in starts)
+	positions = [sample_position for sample_position in (s.depth_position_mm or s.position_mm for s in line.samples)]
+	assert positions[0] == pytest.approx(0.0)
+	assert positions[-1] == pytest.approx(60.0)
+	# Kept and resumed samples join without overlapping or going back.
+	assert all(later >= earlier for earlier, later in zip(positions, positions[1:]))
+	values = flying_module.bin_samples_to_positions(samples=line.samples, positions=[float(mm) for mm in range(0, 61, 2)])
+	assert all(value is not None for value in values)
+
+
+@pytest.mark.asyncio
+async def test_scan_axis_flying_with_a_stop_predicate_restarts_from_start() -> None:
+	tool = FakeFlyingTool(depth_mm=5.0)
+	tool.failing_reads = {30}
+	printed: list[str] = []
+
+	await scan_axis_flying(
+		tool=tool,
+		axis="y",
+		start_mm=0.0,
+		end_mm=60.0,
+		fixed_mm=0.0,
+		rpm=30,
+		progress_label="flying_predicate",
+		progress_printer=printed.append,
+		stop_when=lambda samples: False,
+	)
+
+	assert any("restart=from_start" in message for message in printed)
+	assert [value for value, _ in tool._my.moves].count(0.0) == 2

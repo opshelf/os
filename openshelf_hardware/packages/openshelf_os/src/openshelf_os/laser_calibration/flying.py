@@ -98,6 +98,9 @@ FLYING_SCAN_SAFETY_POLL_S = 0.1
 FLYING_SCAN_READ_TIMEOUT_S = 0.15
 # A pass stopped by a read overrun is flown again; a bus that keeps overrunning fails the line.
 FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS = 2
+# An interrupted pass resumes this far before the furthest depth it placed, so the bins around the
+# stop are flown again at feed rather than taken from the deceleration.
+FLYING_SCAN_RESUME_OVERLAP_MM = 5.0
 # Tolerance when matching an interpolated crossing to the grid interval an edge sits in.
 FLYING_EDGE_INTERVAL_EPS_MM = 0.01
 
@@ -654,11 +657,15 @@ async def _stop_axis_early(scan_motor: Any) -> None:
 
 
 class FlyingScanSafetyInterrupted(Exception):
-	"""A safety guard engaged while a pass was sampling, so its samples were discarded."""
+	"""A safety guard engaged while a pass was sampling; the pass's samples ride along."""
+
+	partial_samples: list["FlyingScanSample"] = []
 
 
 class FlyingScanReadOverrun(TimeoutError):
 	"""A moving read failed or outlasted FLYING_SCAN_READ_TIMEOUT_S, so the axis was stopped."""
+
+	partial_samples: list["FlyingScanSample"] = []
 
 
 def _is_safety_blocked(*motors: Any) -> bool:
@@ -785,23 +792,63 @@ async def scan_axis_flying(
 	capture_latency_s: Optional[float] = None,
 	stop_when: Optional[Callable[[list[FlyingScanSample]], bool]] = None,
 ) -> FlyingScanLine:
-	"""Fly one line, restarting it from start_mm whenever a safety guard interrupts the pass.
+	"""Fly one line, resuming it after a safety guard or a read overrun stops the pass.
 
-	A stepped move pauses at the guard and resumes toward the same target, but a flying pass
-	cannot splice samples taken across a stop into one latency-corrected line, so the interrupted
-	pass is discarded and flown again after the guard clears. A pass stopped because a read
-	overran FLYING_SCAN_READ_TIMEOUT_S is flown again the same way, up to
-	FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS times.
+	Every sample carries its own latency-corrected position, so the samples a stopped pass placed
+	at feed stay valid: the line keeps them and flies on from just before the furthest one. A line
+	with a stateful stop predicate restarts from start_mm instead, since the predicate cannot be
+	replayed across the splice. A read overrun stops the line for good after
+	FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS restarts.
 	"""
 	printer = progress_printer if progress_printer is not None else print_status
 	read_overrun_restarts = 0
+	direction = 1.0 if float(end_mm) >= float(start_mm) else -1.0
+	can_splice = stop_when is None
+	pass_start_mm = float(start_mm)
+	kept_samples: list[FlyingScanSample] = []
+	kept_duration_s = 0.0
+
+	def didKeepPartialPass(exc: BaseException) -> str:
+		nonlocal pass_start_mm, kept_samples, kept_duration_s
+
+		partial_samples = list(getattr(exc, "partial_samples", []))
+
+		if can_splice is False or len(partial_samples) == 0:
+			kept_samples = []
+			pass_start_mm = float(start_mm)
+			return "restart=from_start"
+
+		is_first_pass = len(kept_samples) == 0 and pass_start_mm == float(start_mm)
+		placed = [
+			sample
+			for sample in partial_samples
+			if is_first_pass or direction * (sample_depth_position_mm(sample) - pass_start_mm) >= 0.0
+		]
+		reached_mm = [sample_depth_position_mm(sample) for sample in placed]
+
+		if len(reached_mm) == 0:
+			return f"restart=from {pass_start_mm:.2f}"
+
+		furthest_mm = max(reached_mm) if direction > 0 else min(reached_mm)
+		resume_mm = furthest_mm - direction * FLYING_SCAN_RESUME_OVERLAP_MM
+
+		if direction * (resume_mm - pass_start_mm) <= 0.0:
+			return f"restart=from {pass_start_mm:.2f}"
+
+		kept_samples = kept_samples + [
+			sample for sample in placed if direction * (sample_depth_position_mm(sample) - resume_mm) < 0.0
+		]
+		kept_duration_s += partial_samples[-1].elapsed_s
+		pass_start_mm = resume_mm
+
+		return f"resume=from {resume_mm:.2f} kept_samples={len(kept_samples)}"
 
 	while True:
 		try:
-			return await _scan_axis_flying_pass(
+			line = await _scan_axis_flying_pass(
 				tool=tool,
 				axis=axis,
-				start_mm=start_mm,
+				start_mm=pass_start_mm,
 				end_mm=end_mm,
 				fixed_mm=fixed_mm,
 				rpm=rpm,
@@ -813,8 +860,20 @@ async def scan_axis_flying(
 				capture_latency_s=capture_latency_s,
 				stop_when=stop_when,
 			)
-		except FlyingScanSafetyInterrupted:
-			printer(f"flying_line={progress_label} safety_guard=stopped restart=after_clear")
+
+			if len(kept_samples) > 0:
+				line.samples = kept_samples + [
+					sample
+					for sample in line.samples
+					if direction * (sample_depth_position_mm(sample) - pass_start_mm) >= 0.0
+				]
+				line.start_mm = float(start_mm)
+				line.duration_s += kept_duration_s
+
+			return line
+		except FlyingScanSafetyInterrupted as exc:
+			resume_text = didKeepPartialPass(exc)
+			printer(f"flying_line={progress_label} safety_guard=stopped {resume_text} after_clear")
 			await _wait_for_safety_clear(
 				getattr(tool, "_mx", None),
 				getattr(tool, "_my", None),
@@ -825,9 +884,10 @@ async def scan_axis_flying(
 				raise
 
 			read_overrun_restarts += 1
+			resume_text = didKeepPartialPass(exc)
 			printer(
 				f"flying_line={progress_label} read_overrun=stopped "
-				f"restart={read_overrun_restarts}/{FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS} ({exc})"
+				f"restart={read_overrun_restarts}/{FLYING_SCAN_MAX_READ_OVERRUN_RESTARTS} {resume_text} ({exc})"
 			)
 			# The guard may be why the bus went quiet; never restart into it.
 			await _wait_for_safety_clear(
@@ -1148,6 +1208,9 @@ async def _scan_axis_flying_pass(
 				)
 			)
 	except BaseException as exc:
+		if isinstance(exc, (FlyingScanSafetyInterrupted, FlyingScanReadOverrun)):
+			exc.partial_samples = list(samples)
+
 		stop_failures = await _stop_flying_axes(tool, scan_motor, hold_motor)
 
 		try:
