@@ -1115,10 +1115,10 @@ async def test_scan_axis_flying_resumes_a_pass_stopped_mid_line_instead_of_refly
 	# Kept and resumed samples join without overlapping or going back; order is only checked
 	# across the splice (see the guard-resume test below).
 	resume_mm = float(resume[0].split("resume=from ")[1].split()[0])
-	splice_idx = next(index for index, value in enumerate(positions) if value >= resume_mm - 0.01)
-	assert splice_idx > 0
-	assert all(value < resume_mm + 0.01 for value in positions[:splice_idx])
-	assert all(value >= resume_mm - 0.01 for value in positions[splice_idx:])
+	kept_count = int(resume[0].split("kept_samples=")[1].split()[0])
+	assert 0 < kept_count < len(positions)
+	assert max(positions[:kept_count]) < resume_mm + 0.01
+	assert min(positions[kept_count:]) >= resume_mm - 0.01
 
 
 class FakePositionGuardInterlock:
@@ -1177,10 +1177,10 @@ async def test_scan_axis_flying_resumes_a_pass_stopped_mid_line_by_a_guard(monke
 	# splice never goes back. Within a pass the fake's sub-0.01mm spacing is below the jitter of
 	# the latency correction, so order is only checked across the splice (logged to 0.01mm).
 	resume_mm = float(guard[0].split("resume=from ")[1].split()[0])
-	splice_idx = next(index for index, value in enumerate(positions) if value >= resume_mm - 0.01)
-	assert splice_idx > 0
-	assert all(value < resume_mm + 0.01 for value in positions[:splice_idx])
-	assert all(value >= resume_mm - 0.01 for value in positions[splice_idx:])
+	kept_count = int(guard[0].split("kept_samples=")[1].split()[0])
+	assert 0 < kept_count < len(positions)
+	assert max(positions[:kept_count]) < resume_mm + 0.01
+	assert min(positions[kept_count:]) >= resume_mm - 0.01
 
 
 @pytest.mark.asyncio
