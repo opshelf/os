@@ -810,6 +810,22 @@ async def _capture_cross_scan(
 		horizontal_probe_indices.append(row_idx)
 
 	horizontal_segment: Optional[LineGapSegment] = None
+	# A flying coarse sweep already measured this opening along its row, and the horizontal probes
+	# only have to land the vertical probe inside a ~27mm hole, so the coarse centre seeds it. The
+	# final horizontal pass still has to confirm the hole, so no width or centre comes from coarse.
+	is_seeded_from_coarse = get_fine_scan_style(scan_config) == COARSE_SCAN_STYLE_FLYING
+
+	if is_seeded_from_coarse is True:
+		horizontal_segment = LineGapSegment(
+			start_idx=find_nearest_position_index(x_positions, float(candidate.x_min)),
+			end_idx=find_nearest_position_index(x_positions, float(candidate.x_max)),
+			start_mm=float(candidate.x_min),
+			end_mm=float(candidate.x_max),
+			width_mm=float(candidate.x_max - candidate.x_min),
+			center_mm=candidate_center_x_mm,
+		)
+		print_status(f"{progress_prefix}_h=seeded_from_coarse center_mm={candidate_center_x_mm:.2f}")
+		horizontal_probe_indices = []
 
 	for probe_idx, row_idx in enumerate(horizontal_probe_indices, start=1):
 		raise_if_cancelled(should_abort)
@@ -912,6 +928,8 @@ async def _capture_cross_scan(
 
 	if refined_horizontal_segment is not None:
 		horizontal_segment = refined_horizontal_segment
+	elif is_seeded_from_coarse is True:
+		return fine_scan, []
 
 	precision_horizontal_segment = await refine_horizontal_segment_across_rows(
 		tool,
