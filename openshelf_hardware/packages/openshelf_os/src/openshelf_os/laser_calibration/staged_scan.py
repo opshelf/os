@@ -153,6 +153,13 @@ async def run_staged_scan(
 
 
 				if wall_depth_mm <= 0.0:
+					def didRecordSeededFlyingLine(probe_label: str, flying_line: Any) -> None:
+						write_flying_line_samples(
+							run_dir=recorder.run_dir,
+							label=probe_label,
+							line=flying_line,
+						)
+
 					await estimate_seeded_candidate_wall_depths(
 						tool,
 						bounds=bounds,
@@ -162,6 +169,7 @@ async def run_staged_scan(
 						scan_config=scan_config,
 						coarse_scan=coarse_scan,
 						should_abort=should_abort,
+						on_flying_line=didRecordSeededFlyingLine,
 					)
 				if wall_depth_mm <= 0.0:
 					seeded_wall_depth_values = [
@@ -319,50 +327,61 @@ async def run_staged_scan(
 					fine_entries[candidate_idx - 1]["x_positions"] = partial_scan.x_positions
 					fine_entries[candidate_idx - 1]["y_positions"] = partial_scan.y_positions
 
-				fine_scan, detected_cells = await capture_cross_scan(
-					tool,
-					candidate=candidate,
-					bounds=selected_fine_bounds,
-					step_mm=fine_step_mm,
-					settle_ms=settle_ms,
-					samples_per_point=samples_per_point,
-					wall_depth_mm=candidate_wall_depth_mm,
-					scan_config=scan_config,
-					progress_prefix=f"fine_{candidate_idx}",
-					on_update=didUpdateFineScan,
-					should_abort=should_abort,
-				)
-				raise_if_cancelled(should_abort)
-
-				if len(detected_cells) == 0:
-					retry_fine_bounds = build_fine_scan_retry_bounds(
-						candidate,
-						current_bounds=selected_fine_bounds,
-						overall_bounds=bounds,
-						scan_config=scan_config,
+				def didRecordFlyingLine(probe_label: str, flying_line: Any) -> None:
+					write_flying_line_samples(
+						run_dir=recorder.run_dir,
+						label=probe_label,
+						line=flying_line,
 					)
 
-					if scan_bounds_match(retry_fine_bounds, selected_fine_bounds) is False:
-						print_status(
-							f"phase=fine-scan-retry candidate={candidate_idx}/{len(candidates)} "
-							f"bounds:x=({retry_fine_bounds.x_min:.2f},{retry_fine_bounds.x_max:.2f}) "
-							f"y=({retry_fine_bounds.y_min:.2f},{retry_fine_bounds.y_max:.2f})"
-						)
-						fine_scan, detected_cells = await capture_cross_scan(
-							tool,
-							candidate=candidate,
-							bounds=retry_fine_bounds,
-							step_mm=fine_step_mm,
-							settle_ms=settle_ms,
-							samples_per_point=samples_per_point,
-							wall_depth_mm=candidate_wall_depth_mm,
+				# A retry re-flies the same horizontal rows, so the first attempt's lines are kept for it.
+				with reuse_flown_fine_lines():
+					fine_scan, detected_cells = await capture_cross_scan(
+						tool,
+						candidate=candidate,
+						bounds=selected_fine_bounds,
+						step_mm=fine_step_mm,
+						settle_ms=settle_ms,
+						samples_per_point=samples_per_point,
+						wall_depth_mm=candidate_wall_depth_mm,
+						scan_config=scan_config,
+						progress_prefix=f"fine_{candidate_idx}",
+						on_update=didUpdateFineScan,
+						should_abort=should_abort,
+						on_flying_line=didRecordFlyingLine,
+					)
+					raise_if_cancelled(should_abort)
+
+					if len(detected_cells) == 0:
+						retry_fine_bounds = build_fine_scan_retry_bounds(
+							candidate,
+							current_bounds=selected_fine_bounds,
+							overall_bounds=bounds,
 							scan_config=scan_config,
-							progress_prefix=f"fine_{candidate_idx}_retry",
-							on_update=didUpdateFineScan,
-							should_abort=should_abort,
 						)
-						raise_if_cancelled(should_abort)
-						selected_fine_bounds = retry_fine_bounds
+
+						if scan_bounds_match(retry_fine_bounds, selected_fine_bounds) is False:
+							print_status(
+								f"phase=fine-scan-retry candidate={candidate_idx}/{len(candidates)} "
+								f"bounds:x=({retry_fine_bounds.x_min:.2f},{retry_fine_bounds.x_max:.2f}) "
+								f"y=({retry_fine_bounds.y_min:.2f},{retry_fine_bounds.y_max:.2f})"
+							)
+							fine_scan, detected_cells = await capture_cross_scan(
+								tool,
+								candidate=candidate,
+								bounds=retry_fine_bounds,
+								step_mm=fine_step_mm,
+								settle_ms=settle_ms,
+								samples_per_point=samples_per_point,
+								wall_depth_mm=candidate_wall_depth_mm,
+								scan_config=scan_config,
+								progress_prefix=f"fine_{candidate_idx}_retry",
+								on_update=didUpdateFineScan,
+								should_abort=should_abort,
+								on_flying_line=didRecordFlyingLine,
+							)
+							raise_if_cancelled(should_abort)
+							selected_fine_bounds = retry_fine_bounds
 
 				print_status(
 					f"fine_detected_cells={len(detected_cells)} "
@@ -670,6 +689,7 @@ async def estimate_seeded_candidate_wall_depths(
 	scan_config: Any,
 	coarse_scan: GridScanResult,
 	should_abort: Callable[[], bool] | None = None,
+	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 ) -> None:
 	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
 
@@ -685,16 +705,34 @@ async def estimate_seeded_candidate_wall_depths(
 
 		raise_if_cancelled(should_abort)
 		scan_y_mm = float((candidate.y_min + candidate.y_max) / 2.0)
-		depth_values = await scan_line_positions(
-			tool,
-			axis="x",
-			positions=x_positions,
-			fixed_mm=scan_y_mm,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			progress_label=f"seeded_wall_depth_{candidate_idx}",
-			should_abort=should_abort,
-		)
+		progress_label = f"seeded_wall_depth_{candidate_idx}"
+
+		if get_coarse_scan_style(scan_config) == COARSE_SCAN_STYLE_FLYING:
+			depth_values, seeded_flying_line = await scan_line_positions_flying(
+				tool,
+				axis="x",
+				positions=x_positions,
+				fixed_mm=scan_y_mm,
+				rpm=get_coarse_scan_rpm(scan_config),
+				progress_label=progress_label,
+				should_abort=should_abort,
+				bin_mode=get_coarse_scan_bin_mode(scan_config),
+				capture_latency_s=get_flying_capture_latency_s(scan_config),
+			)
+
+			if on_flying_line is not None:
+				on_flying_line(f"{progress_label}_flying", seeded_flying_line)
+		else:
+			depth_values = await scan_line_positions(
+				tool,
+				axis="x",
+				positions=x_positions,
+				fixed_mm=scan_y_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				progress_label=progress_label,
+				should_abort=should_abort,
+			)
 		merge_line_scan_into_sparse_scan(
 			coarse_scan,
 			axis="x",
@@ -1018,6 +1056,28 @@ def resolve_target_shelf(
 	return target_shelf
 
 
+def convert_stored_y_mm_to_laser_frame(
+	*,
+	stored_y_mm: float,
+	side: StorageModuleSide,
+	scan_config: Any,
+) -> float:
+	"""Convert a stored calibration y into the laser frame the scan moves in.
+
+	Stored calibration points already include the fixed laser-to-gripper reference correction,
+	so a stored y is a gripper coordinate. Scan bounds and seeded shelf edges are laser
+	coordinates; use this everywhere a stored y is turned into scan geometry.
+	"""
+	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
+	laser_y_mm = float(stored_y_mm) + float(laser_offset_y_mm)
+
+	if xy_offset is not None:
+		laser_y_mm -= float(xy_offset[1])
+
+	return laser_y_mm
+
+
 def build_single_shelf_known_edge_y(
 	*,
 	grid: StorageGrid,
@@ -1030,23 +1090,19 @@ def build_single_shelf_known_edge_y(
 		side=side,
 		shelf_idx=shelf_idx,
 	)
-	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
-	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	candidate_center_y_values: list[float] = []
 
 	for cell in target_shelf.cells:
 		if cell.calibration_point is None:
 			continue
 
-		candidate_center_y_mm = float(cell.calibration_point.y) + laser_offset_y_mm
-
-		# Stored calibration points already include the fixed laser-to-gripper reference
-		# correction. Convert them back into the laser frame before seeding a shelf scan,
-		# just as build_single_cell_rescan_candidate does for a cell-scoped scan.
-		if xy_offset is not None:
-			candidate_center_y_mm -= float(xy_offset[1])
-
-		candidate_center_y_values.append(candidate_center_y_mm)
+		candidate_center_y_values.append(
+			convert_stored_y_mm_to_laser_frame(
+				stored_y_mm=float(cell.calibration_point.y),
+				side=side,
+				scan_config=scan_config,
+			)
+		)
 
 	if len(candidate_center_y_values) == 0:
 		raise ValueError(f"Shelf {shelf_idx} has no calibration points on {side.value}")
@@ -1588,6 +1644,41 @@ def build_detected_cell_from_saved_fine_scan(
 	)
 
 
+def apply_recorded_cell_geometry(
+	*,
+	detected_cell: ScanDetectedCell,
+	recorded_cell: ScanDetectedCell,
+	scan_config: Any,
+) -> ScanDetectedCell:
+	"""Keep the laser-frame geometry the capture measured instead of the grid-quantized replay.
+
+	A flying fine scan interpolates its edges between samples, so the recorded centre and size
+	are finer than the saved grid the replay reads back. Re-deriving the cell from the .npy grid
+	alone drops that refinement and shifts the applied point by up to half a step. Acceptance
+	stays grid-based, so the current code constants still decide whether an opening is a hole,
+	and the tool coordinates are recomputed from the current laser offsets; only the measured
+	laser-frame geometry is carried over.
+	"""
+	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
+	center_x_mm = float(recorded_cell.center_x_mm)
+	center_y_mm = float(recorded_cell.center_y_mm)
+
+	return detected_cell.model_copy(
+		update={
+			"center_x_mm": center_x_mm,
+			"center_y_mm": center_y_mm,
+			"tool_x_mm": center_x_mm + float(laser_offset_x_mm),
+			"tool_y_mm": center_y_mm - float(laser_offset_y_mm),
+			"width_mm": float(recorded_cell.width_mm),
+			"height_mm": float(recorded_cell.height_mm),
+			"bbox_x_min": float(recorded_cell.bbox_x_min),
+			"bbox_x_max": float(recorded_cell.bbox_x_max),
+			"bbox_y_min": float(recorded_cell.bbox_y_min),
+			"bbox_y_max": float(recorded_cell.bbox_y_max),
+		}
+	)
+
+
 def load_staged_scan_analysis(
     path: Path | str,
     *,
@@ -1651,6 +1742,17 @@ def load_staged_scan_analysis(
             wall_depth_mm=candidate_wall_depth_mm,
             scan_config=scan_config,
         )
+        recorded_cells = fine_entry.get("detected_cells", [])
+
+        # The capture returns at most one cell per fine entry, so its recorded geometry is the
+        # measurement of the opening the grid walk just accepted. Reusing it keeps the
+        # interpolated edges a flying pass measured that the quantized grid cannot express.
+        if detected_cell is not None and len(recorded_cells) > 0:
+            detected_cell = apply_recorded_cell_geometry(
+                detected_cell=detected_cell,
+                recorded_cell=ScanDetectedCell.model_validate(recorded_cells[0]),
+                scan_config=scan_config,
+            )
 
         if detected_cell is not None:
             detected_cells.append(detected_cell)

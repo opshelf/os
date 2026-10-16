@@ -2,10 +2,20 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from openshelf_os.laser_calibration.core import (
+	COARSE_SCAN_STYLE_FLYING,
+	get_coarse_scan_bin_mode,
+	get_coarse_scan_rpm,
+	get_coarse_scan_style,
+	get_flying_capture_latency_s,
+)
+from openshelf_os.laser_calibration.flying import scan_shelf_scout_line_flying
 from openshelf_os.laser_calibration.shelf_scout import (
+	build_shelf_edge_stop_predicate,
 	build_shelf_scout_x_positions as build_shared_shelf_scout_x_positions,
 	scan_shelf_scout_line as scan_shared_shelf_scout_line,
 	SHELF_SCOUT_POST_EDGE_SKIP_MM,
+	SHELF_SCOUT_STEP_MM,
 )
 
 from .models import ShelfSurfaceEdge
@@ -77,8 +87,35 @@ async def scan_shelf_scout_line(
 	stop_after_first_edge: bool = False,
 	progress_every: int = 25,
 	post_edge_skip_mm: float = SHELF_SCOUT_POST_EDGE_SKIP_MM,
+	scan_config: Any = None,
 	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
+	if scan_config is not None and get_coarse_scan_style(scan_config) == COARSE_SCAN_STYLE_FLYING:
+		stop_when = None
+
+		if stop_after_first_edge is True:
+			stop_when = build_shelf_edge_stop_predicate(grid_step_mm=SHELF_SCOUT_STEP_MM)
+
+		depth_values, edges, _line = await scan_shelf_scout_line_flying(
+			tool,
+			x_mm=x_mm,
+			y_positions=y_positions,
+			rpm=get_coarse_scan_rpm(scan_config),
+			progress_label=progress_label,
+			post_edge_skip_mm=post_edge_skip_mm,
+			should_abort=should_abort,
+			bin_mode=get_coarse_scan_bin_mode(scan_config),
+			progress_every=progress_every,
+			capture_latency_s=get_flying_capture_latency_s(scan_config),
+			stop_after_first_edge=stop_after_first_edge,
+			stop_when=stop_when,
+			sample_depth=sample_laser_depth,
+			settle_ms=settle_ms,
+			samples_per_point=samples_per_point,
+		)
+
+		return depth_values, edges
+
 	return await scan_shared_shelf_scout_line(
 		tool,
 		x_mm=x_mm,

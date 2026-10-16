@@ -40,6 +40,13 @@ def build_run_parameters(
 	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
 	post_edge_skip_mm = get_shelf_scout_post_edge_skip_mm(scan_config)
 	brim_max_height_mm = get_shelf_brim_max_height_mm(scan_config)
+	coarse_scan_style = get_coarse_scan_style(scan_config)
+	coarse_scan_rpm = get_coarse_scan_rpm(scan_config)
+	coarse_scan_bin_mode = get_coarse_scan_bin_mode(scan_config)
+	coarse_scan_alternate_direction = get_coarse_scan_alternate_direction(scan_config)
+	fine_scan_style = get_fine_scan_style(scan_config)
+	fine_scan_feed_mm_s = get_fine_scan_feed_mm_s(scan_config)
+	flying_capture_latency_ms = get_flying_capture_latency_ms(scan_config)
 
 	return {
 		"module": side.value,
@@ -70,6 +77,14 @@ def build_run_parameters(
 			"apply": args.apply,
 			"shelf_scout_only": args.shelf_scout_only,
 			"rescan_cell": args.rescan_cell,
+			"coarse_scan_style": getattr(args, "coarse_scan_style", None),
+			"coarse_scan_rpm": getattr(args, "coarse_scan_rpm", None),
+			"coarse_scan_bin_mode": getattr(args, "coarse_scan_bin_mode", None),
+			"coarse_scan_alternate_direction": getattr(args, "coarse_scan_alternate_direction", None),
+			"fine_scan_style": getattr(args, "fine_scan_style", None),
+			"fine_scan_feed_mm_s": getattr(args, "fine_scan_feed_mm_s", None),
+			"flying_capture_latency_ms": getattr(args, "flying_capture_latency_ms", None),
+			"rescan_shelf": getattr(args, "rescan_shelf", None),
 		},
 		"resolved": {
 			"bounds": bounds.model_dump(),
@@ -84,6 +99,13 @@ def build_run_parameters(
 			"samples_per_point": samples_per_point,
 			"coarse_settle_ms": coarse_settle_ms,
 			"coarse_samples_per_point": coarse_samples_per_point,
+			"coarse_scan_style": coarse_scan_style,
+			"coarse_scan_rpm": coarse_scan_rpm,
+			"coarse_scan_bin_mode": coarse_scan_bin_mode,
+			"coarse_scan_alternate_direction": coarse_scan_alternate_direction,
+			"fine_scan_style": fine_scan_style,
+			"fine_scan_feed_mm_s": fine_scan_feed_mm_s,
+			"flying_capture_latency_ms": flying_capture_latency_ms,
 			"laser_scan_pose_stage_mm": laser_scan_pose_stage_mm,
 			"laser_scan_pose_z_delta_from_place_mm": laser_scan_pose_z_delta_from_place_mm,
 			"laser_offset_x_mm": laser_offset_x_mm,

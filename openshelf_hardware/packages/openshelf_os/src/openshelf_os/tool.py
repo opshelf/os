@@ -519,14 +519,17 @@ class Tool:
     #  Laser
     # ------------------------------------------------------------------ #
 
-    async def get_laser_distance(self) -> Optional[float]:
+    async def get_laser_distance(self, *, timeout_s: Optional[float] = None) -> Optional[float]:
         if self._laser_enabled is False or self._laser is None:
             return None
 
         if self._laser_ready is False:
             raise ConfigError("Laser is not initialized")
 
-        return await self._laser.read_distance_mm()
+        if timeout_s is None:
+            return await self._laser.read_distance_mm()
+
+        return await self._laser.read_distance_mm(timeout_s=timeout_s)
 
     async def capture_laser_scan(
         self,

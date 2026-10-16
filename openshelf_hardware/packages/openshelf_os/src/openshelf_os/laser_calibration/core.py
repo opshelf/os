@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.laser_calibration.defaults import (
+	FLYING_CAPTURE_LATENCY_MS,
 	LASER_SAMPLES_PER_POINT,
 	LASER_SAMPLE_SETTLE_MS,
 )
@@ -50,6 +51,18 @@ from openshelf_os.laser_calibration.shelf_scout import (
 LASER_SCAN_STAGE_EXTENSION_MM = 13.0
 LASER_SCAN_Z_OFFSET_MM = 10.0
 COARSE_SCAN_STEP_MM = 4.0
+COARSE_SCAN_STYLE_STEPPED = "stepped"
+COARSE_SCAN_STYLE_FLYING = "flying"
+COARSE_SCAN_BIN_NEAREST = "nearest"
+COARSE_SCAN_BIN_MEDIAN = "median"
+COARSE_SCAN_BIN_MEDIAN3 = "median3"
+# Conservative first feed for a moving pass: 30rpm is 20mm/s on y (mpr 40mm) and 40mm/s on x
+# (mpr 80mm). Sample spacing is set by the bus loop time, not by this value, so raise it only
+# after the sample cadence logged in flying_samples.jsonl shows the grid is still covered.
+FLYING_COARSE_SCAN_RPM = 30
+# Fine line probes are short, so their speed is set in mm/s (converted to rpm per axis). 40mm/s
+# keeps the delay correction sub-0.5mm while halving the per-line travel time.
+FINE_SCAN_FEED_MM_S = 40.0
 BACK_MODULE_ROTATION_SAFE_X_MM = 475.0
 SHELF_SWEEP_X_STEP_MM = 4.0
 # Coarse sweep widths quantize to the 4mm step. Across two full hardware runs (43 confirmed
@@ -63,6 +76,8 @@ Y_AXIS_FLOOR_MM = 0.0
 FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.4
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 6.0
+# Wall the vertical fine window reads past a full hole height, so both edges are measured.
+FINE_SCAN_Y_WALL_MARGIN_MM = 4.0
 FINE_SCAN_RETRY_MIN_Y_MARGIN_MM = 36.0
 FINE_OPPOSITE_EDGE_MARGIN_MM = 5.0
 FINE_OPPOSITE_EDGE_BACKTRACK_MM = 8.0
@@ -364,6 +379,100 @@ def get_shelf_scout_post_edge_skip_mm(scan_config: Any) -> float:
 		raise ValueError("robot.grid.scan.shelf_scout_post_edge_skip_mm must be zero or greater")
 
 	return validated_skip_mm
+
+
+def _get_scan_style(scan_config: Any, parameter_name: str) -> str:
+	configured_style = getattr(scan_config, parameter_name, None)
+
+	if configured_style is None:
+		return COARSE_SCAN_STYLE_STEPPED
+
+	if configured_style not in (COARSE_SCAN_STYLE_STEPPED, COARSE_SCAN_STYLE_FLYING):
+		raise ValueError(
+			f"robot.grid.scan.{parameter_name} must be "
+			f"'{COARSE_SCAN_STYLE_STEPPED}' or '{COARSE_SCAN_STYLE_FLYING}'"
+		)
+
+	return str(configured_style)
+
+
+def get_coarse_scan_style(scan_config: Any) -> str:
+	return _get_scan_style(scan_config, "coarse_scan_style")
+
+
+def get_fine_scan_style(scan_config: Any) -> str:
+	return _get_scan_style(scan_config, "fine_scan_style")
+
+
+def get_fine_scan_feed_mm_s(scan_config: Any) -> float:
+	configured_feed = getattr(scan_config, "fine_scan_feed_mm_s", None)
+
+	if configured_feed is None:
+		return float(FINE_SCAN_FEED_MM_S)
+
+	validated_feed = validate_finite_value(
+		configured_feed,
+		"robot.grid.scan.fine_scan_feed_mm_s",
+	)
+
+	if validated_feed <= 0.0:
+		raise ValueError("robot.grid.scan.fine_scan_feed_mm_s must be greater than zero")
+
+	return validated_feed
+
+
+def get_flying_capture_latency_ms(scan_config: Any) -> float:
+	configured_latency_ms = getattr(scan_config, "flying_capture_latency_ms", None)
+
+	if configured_latency_ms is None:
+		return float(FLYING_CAPTURE_LATENCY_MS)
+
+	validated_latency_ms = validate_finite_value(
+		configured_latency_ms,
+		"robot.grid.scan.flying_capture_latency_ms",
+	)
+
+	if validated_latency_ms < 0.0:
+		raise ValueError("robot.grid.scan.flying_capture_latency_ms must be zero or greater")
+
+	return validated_latency_ms
+
+
+def get_flying_capture_latency_s(scan_config: Any) -> float:
+	return get_flying_capture_latency_ms(scan_config) / 1000.0
+
+
+def get_coarse_scan_rpm(scan_config: Any) -> int:
+	configured_rpm = getattr(scan_config, "coarse_scan_rpm", None)
+
+	if configured_rpm is None:
+		return int(FLYING_COARSE_SCAN_RPM)
+
+	validated_rpm = validate_finite_value(configured_rpm, "robot.grid.scan.coarse_scan_rpm")
+
+	if validated_rpm <= 0.0:
+		raise ValueError("robot.grid.scan.coarse_scan_rpm must be greater than zero")
+
+	return int(validated_rpm)
+
+
+def get_coarse_scan_bin_mode(scan_config: Any) -> str:
+	configured_mode = getattr(scan_config, "coarse_scan_bin_mode", None)
+
+	if configured_mode is None:
+		return COARSE_SCAN_BIN_NEAREST
+
+	if configured_mode not in (COARSE_SCAN_BIN_NEAREST, COARSE_SCAN_BIN_MEDIAN, COARSE_SCAN_BIN_MEDIAN3):
+		raise ValueError(
+			"robot.grid.scan.coarse_scan_bin_mode must be "
+			f"'{COARSE_SCAN_BIN_NEAREST}', '{COARSE_SCAN_BIN_MEDIAN}' or '{COARSE_SCAN_BIN_MEDIAN3}'"
+		)
+
+	return str(configured_mode)
+
+
+def get_coarse_scan_alternate_direction(scan_config: Any) -> bool:
+	return getattr(scan_config, "coarse_scan_alternate_direction", None) is True
 
 
 def get_shelf_brim_max_height_mm(scan_config: Any) -> float:

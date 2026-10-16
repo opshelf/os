@@ -1058,6 +1058,29 @@ async def test_motor_get_position_falls_back_to_separate_reads_for_noncontiguous
     mock_controller.read_holding_register_block.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_motor_get_position_bounded_reads_one_transaction_without_retries(mock_controller):
+    params = SimpleNamespace(
+        motor_id=31,
+        position_reg_high=0x602E,
+        position_reg_low=0x602D,
+        ppr=10000,
+        mpr=12,
+        lim=100,
+        physical_to_logical=lambda physical: physical,
+    )
+    motor = Motor(mock_controller, params)
+
+    mock_controller.read_holding_register_block.return_value = (0, 1)
+
+    position = await motor.get_position(timeout_s=0.15)
+
+    assert position == pytest.approx(78.6432)
+    mock_controller.read_holding_register_block.assert_awaited_once_with(
+        31, 0x602D, count=2, attempts=1, modbus_retries=0, modbus_timeout_s=0.15
+    )
+
+
 def test_prune_motion_fault_dumps_removes_only_stale_files(tmp_path):
     now = 1_000_000.0
     stale = tmp_path / "20260101T000000.000000Z-no_run-motor_1-fault.json"

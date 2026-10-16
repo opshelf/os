@@ -13,6 +13,12 @@ from openshelf_os.laser_calibration.defaults import (
 from .core import *
 from .recording import *
 from .motion import *
+from .flying import (
+	prefetch_line_depth_values,
+	scan_line_positions_flying,
+	scan_shelf_scout_line_flying,
+	write_flying_line_samples,
+)
 from openshelf_os.laser_calibration.shelf_scout import (
 	build_shelf_scout_x_positions as build_shared_shelf_scout_x_positions,
 	filter_shelf_edges as filter_shared_shelf_edges,
@@ -95,6 +101,11 @@ async def capture_shelf_candidates(
 	should_abort: Callable[[], bool] | None = None,
 ) -> tuple[GridScanResult, float, list[GapCandidateRegion], list[ShelfSurfaceEdge]]:
 	coarse_scan = create_sparse_shelf_scan(bounds=bounds)
+	coarse_scan_style = get_coarse_scan_style(scan_config)
+	coarse_scan_rpm = get_coarse_scan_rpm(scan_config)
+	coarse_scan_bin_mode = get_coarse_scan_bin_mode(scan_config)
+	capture_latency_s = get_flying_capture_latency_s(scan_config)
+	coarse_scan_alternate_direction = get_coarse_scan_alternate_direction(scan_config)
 	scout_x_positions = build_shelf_scout_x_positions(bounds=bounds, side=side, scan_config=scan_config)
 	scout_y_positions = list(reversed(build_axis_positions(bounds.y_min, bounds.y_max, SHELF_SCOUT_STEP_MM)))
 	hole_sweep_x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
@@ -114,6 +125,14 @@ async def capture_shelf_candidates(
 			recorder=recorder,
 			phase=phase,
 			progress=progress,
+		)
+
+	if coarse_scan_style == COARSE_SCAN_STYLE_FLYING:
+		print_status(
+			f"coarse_scan_style=flying rpm={coarse_scan_rpm} bin_mode={coarse_scan_bin_mode} "
+			f"alternate_direction={coarse_scan_alternate_direction} "
+			f"settle_ms={settle_ms} samples_per_point={samples_per_point} "
+			"(settle and sample count apply only to resampled bins while flying)"
 		)
 
 	if known_shelf_edge_y is not None:
@@ -141,17 +160,37 @@ async def capture_shelf_candidates(
 				raise_if_cancelled(should_abort)
 				print_status(f"phase=shelf-scout scout={scout_idx}/{len(scout_x_positions)} x={scout_x_mm:.2f}")
 
-				scout_depth_values, scout_edges = await scan_shelf_scout_line(
-					tool,
-					x_mm=scout_x_mm,
-					y_positions=scout_y_positions,
-					settle_ms=settle_ms,
-					samples_per_point=samples_per_point,
-					progress_label=f"shelf_scout_{scout_idx}",
-					post_edge_skip_mm=post_edge_skip_mm,
-					brim_max_height_mm=brim_max_height_mm,
-					should_abort=should_abort,
-				)
+				if coarse_scan_style == COARSE_SCAN_STYLE_FLYING:
+					scout_depth_values, scout_edges, scout_line = await scan_shelf_scout_line_flying(
+						tool,
+						x_mm=scout_x_mm,
+						y_positions=scout_y_positions,
+						rpm=coarse_scan_rpm,
+						progress_label=f"shelf_scout_{scout_idx}",
+						post_edge_skip_mm=post_edge_skip_mm,
+						should_abort=should_abort,
+						bin_mode=coarse_scan_bin_mode,
+						capture_latency_s=capture_latency_s,
+						settle_ms=settle_ms,
+						samples_per_point=samples_per_point,
+					)
+					write_flying_line_samples(
+						run_dir=getattr(recorder, "run_dir", None),
+						label=f"shelf_scout_{scout_idx}",
+						line=scout_line,
+					)
+				else:
+					scout_depth_values, scout_edges = await scan_shelf_scout_line(
+						tool,
+						x_mm=scout_x_mm,
+						y_positions=scout_y_positions,
+						settle_ms=settle_ms,
+						samples_per_point=samples_per_point,
+						progress_label=f"shelf_scout_{scout_idx}",
+						post_edge_skip_mm=post_edge_skip_mm,
+						brim_max_height_mm=brim_max_height_mm,
+						should_abort=should_abort,
+					)
 				raise_if_cancelled(should_abort)
 				merge_line_scan_into_sparse_scan(
 					coarse_scan,
@@ -202,6 +241,8 @@ async def capture_shelf_candidates(
 	if shelf_scout_only is True:
 		return coarse_scan, 0.0, [], filtered_shelf_edges
 
+	flown_sweep_count = 0
+
 	for shelf_idx, shelf_edge in enumerate(filtered_shelf_edges, start=1):
 		raise_if_cancelled(should_abort)
 		shelf_probe_y_offsets_mm = hole_probe_y_offsets_mm
@@ -220,16 +261,72 @@ async def capture_shelf_candidates(
 				f"phase=shelf-hole-scan shelf={shelf_idx}/{len(filtered_shelf_edges)} "
 				f"offset={offset_idx}/{len(shelf_probe_y_offsets_mm)} y={sweep_y_mm:.2f}"
 			)
-			sweep_depth_values = await scan_line_positions(
-				tool,
-				axis="x",
-				positions=hole_sweep_x_positions,
-				fixed_mm=sweep_y_mm,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
-				progress_label=f"shelf_{shelf_idx}_offset_{offset_idx}",
-				should_abort=should_abort,
-			)
+			if coarse_scan_style == COARSE_SCAN_STYLE_FLYING:
+				# Boustrophedon: every other line flies from x_max back to x_min, so the axis
+				# starts each pass where the last one ended instead of travelling back to x_min.
+				# Binning handles a descending grid; the values are flipped back to ascending
+				# order for the gap detection and the sparse grid below.
+				is_reversed_sweep = coarse_scan_alternate_direction is True and flown_sweep_count % 2 == 1
+				flown_sweep_count += 1
+				flown_x_positions = (
+					list(reversed(hole_sweep_x_positions))
+					if is_reversed_sweep is True
+					else hole_sweep_x_positions
+				)
+				flown_depth_values, sweep_line = await scan_line_positions_flying(
+					tool,
+					axis="x",
+					positions=flown_x_positions,
+					fixed_mm=sweep_y_mm,
+					rpm=coarse_scan_rpm,
+					progress_label=f"shelf_{shelf_idx}_offset_{offset_idx}",
+					should_abort=should_abort,
+					bin_mode=coarse_scan_bin_mode,
+					capture_latency_s=capture_latency_s,
+				)
+				sweep_depth_values = (
+					list(reversed(flown_depth_values))
+					if is_reversed_sweep is True
+					else flown_depth_values
+				)
+
+				# Gap detection reads an empty bin as material, so one missing bin would split
+				# an opening into rejected segments; probe each one as the stepped sweep would.
+				for position_idx, x_mm in enumerate(hole_sweep_x_positions):
+					if sweep_depth_values[position_idx] is not None:
+						continue
+
+					depth_mm = await sample_scan_point(
+						tool,
+						x_mm=x_mm,
+						y_mm=sweep_y_mm,
+						settle_ms=settle_ms,
+						samples_per_point=samples_per_point,
+						should_abort=should_abort,
+					)
+					sweep_depth_values[position_idx] = depth_mm
+					sweep_line.record_resample(x_mm, depth_mm)
+					print_status(
+						f"shelf_{shelf_idx}_offset_{offset_idx}=resampled idx={position_idx} "
+						f"x={x_mm:.2f} y={sweep_y_mm:.2f} depth={depth_to_label(depth_mm)}"
+					)
+
+				write_flying_line_samples(
+					run_dir=getattr(recorder, "run_dir", None),
+					label=f"shelf_{shelf_idx}_offset_{offset_idx}",
+					line=sweep_line,
+				)
+			else:
+				sweep_depth_values = await scan_line_positions(
+					tool,
+					axis="x",
+					positions=hole_sweep_x_positions,
+					fixed_mm=sweep_y_mm,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					progress_label=f"shelf_{shelf_idx}_offset_{offset_idx}",
+					should_abort=should_abort,
+				)
 			raise_if_cancelled(should_abort)
 			merge_line_scan_into_sparse_scan(
 				coarse_scan,
@@ -530,9 +627,12 @@ def build_fine_scan_bounds(
 	scan_config: Any,
 ) -> ScanBounds:
 	fine_cell_scan_y_margin_mm = get_fine_cell_scan_y_margin_mm(scan_config)
+	# The coarse sweep crosses the opening at a fixed height above the shelf edge, not at its
+	# centre, so the opening can reach a full hole height above or below the sweep row. A window
+	# short of that runs off the top of the hole and the far edge has to be assumed, not measured.
 	y_margin_mm = max(
 		fine_cell_scan_y_margin_mm + 10.0,
-		(EXPECTED_HOLE_HEIGHT_MM / 2.0) + 12.0,
+		EXPECTED_HOLE_HEIGHT_MM + FINE_SCAN_Y_WALL_MARGIN_MM,
 	)
 
 	return build_fine_scan_bounds_with_y_margin(
@@ -844,7 +944,28 @@ async def find_hole_interior_idx_from_seed(
 	wall_depth_mm: float,
 	on_update: Optional[Callable[[GridScanResult, str, float], None]] = None,
 	should_abort: Callable[[], bool] | None = None,
+	scan_config: Any = None,
+	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 ) -> Optional[int]:
+	prefetched_depth_values: list[float | None] | None = None
+
+	if scan_config is not None:
+		prefetched = await prefetch_line_depth_values(
+			tool,
+			scan_config=scan_config,
+			axis=axis,
+			positions=positions,
+			fixed_mm=fixed_mm,
+			progress_label=f"{progress_prefix}_flying",
+			should_abort=should_abort,
+		)
+
+		if prefetched is not None:
+			prefetched_depth_values, flying_line = prefetched
+
+			if on_flying_line is not None:
+				on_flying_line(f"{progress_prefix}_flying", flying_line)
+
 	sampled_count = 0
 	sampled_depths: dict[int, float | None] = {}
 	total_count = len(positions)
@@ -866,14 +987,34 @@ async def find_hole_interior_idx_from_seed(
 			x_mm = fixed_mm
 			y_mm = position_mm
 
-		depth_mm = await sample_scan_point(
-			tool,
-			x_mm=x_mm,
-			y_mm=y_mm,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			should_abort=should_abort,
-		)
+		if prefetched_depth_values is None:
+			depth_mm = await sample_scan_point(
+				tool,
+				x_mm=x_mm,
+				y_mm=y_mm,
+				settle_ms=settle_ms,
+				samples_per_point=samples_per_point,
+				should_abort=should_abort,
+			)
+		else:
+			depth_mm = prefetched_depth_values[position_idx]
+
+			# An empty flying bin is no evidence against an opening; probe it directly so a
+			# sparse pass cannot hide the hole and reject the candidate.
+			if depth_mm is None:
+				depth_mm = await sample_scan_point(
+					tool,
+					x_mm=x_mm,
+					y_mm=y_mm,
+					settle_ms=settle_ms,
+					samples_per_point=samples_per_point,
+					should_abort=should_abort,
+				)
+				prefetched_depth_values[position_idx] = depth_mm
+				print_status(
+					f"{progress_prefix}=resampled idx={position_idx} "
+					f"x={x_mm:.2f} y={y_mm:.2f} depth={depth_to_label(depth_mm)}"
+				)
 
 		set_scan_point(
 			base_scan,

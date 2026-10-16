@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -64,12 +64,31 @@ class LaserScanConfig(BaseModel):
 
     laser_offset_x_mm: Optional[float] = None
     laser_offset_y_mm: Optional[float] = None
+    # Coarse scan motion. `stepped` stops and settles at every grid point; `flying` drives the
+    # axis at a constant feed and bins samples taken along the way onto the same grid. Flying is
+    # a POC: keep it unset until a run on the machine has been compared against a stepped one.
+    coarse_scan_style: Literal["stepped", "flying"] = "stepped"
+    coarse_scan_rpm: Optional[int] = Field(default=None, gt=0)
+    coarse_scan_bin_mode: Literal["nearest", "median", "median3"] = "nearest"
+    # Fly alternate hole-sweep lines in opposite directions instead of returning to x_min before
+    # each one. Off until the capture latency has been fitted in both directions: backlash is
+    # direction-dependent and FLYING_CAPTURE_LATENCY_MS was fitted in one direction only.
+    coarse_scan_alternate_direction: bool = False
     # Scan pose: absolute stage position and Z delta relative to Z_EXTENSION_PLACE.
     laser_scan_pose_stage_mm: Optional[float] = Field(default=None, ge=0)
     laser_scan_pose_z_delta_from_place_mm: Optional[float] = None
     shelf_hole_probe_y_offsets_mm: Optional[List[float]] = None
     fine_cell_scan_y_margin_mm: Optional[float] = Field(default=None, gt=0)
     fine_scan_step_mm: float = Field(1.0, gt=0)
+    # Fine probes are the final measurement, so flying stays opt-in until a machine's capture
+    # latency and edge response have been measured. Feed is mm/s and converted per axis, because
+    # the same rpm is a different speed on x and y.
+    fine_scan_style: Literal["stepped", "flying"] = "stepped"
+    fine_scan_feed_mm_s: float = Field(40.0, gt=0)
+    # Laser-to-encoder read delay that flying passes correct each depth by (feed x latency).
+    # Unset falls back to `defaults.FLYING_CAPTURE_LATENCY_MS`, which was fit on one machine;
+    # store this sensor's own stopped-vs-moving edge measurement here. 0 disables the correction.
+    flying_capture_latency_ms: Optional[float] = Field(default=None, ge=0)
     front_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     back_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     shelf_scout_post_edge_skip_mm: float = Field(40.0, ge=0)

@@ -13,6 +13,7 @@ _MODULE_NAMES = (
     "staged_scan",
     "reference_offsets",
     "z_stall",
+    "flying",
 )
 
 _PATCH_TARGET_NAMES = (
@@ -25,6 +26,8 @@ _PATCH_TARGET_NAMES = (
     "set_y_brake_for_scan_motion",
     "capture_cross_scan",
     "scan_line_positions",
+    "scan_line_positions_flying",
+    "scan_shelf_scout_line_flying",
     "build_shelves_from_scan",
     "apply_wall_depth_z_offsets",
     "print_status",

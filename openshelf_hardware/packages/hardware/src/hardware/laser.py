@@ -57,8 +57,20 @@ class LaserSensor:
 
         await self.modbus_controller.close()
 
-    async def read_registers(self) -> tuple[int, ...]:
-        if self.read_function_code == 4:
+    async def read_registers(self, *, timeout_s: Optional[float] = None) -> tuple[int, ...]:
+        if timeout_s is not None:
+            # One transaction with no retries, so a silent sensor fails inside timeout_s
+            # instead of holding the shared port lock through the client's retry loop.
+            registers = await self.modbus_controller.read_register_block(
+                unit_id=self.device_id,
+                address=self.register_address,
+                count=self.register_count,
+                function_code=self.read_function_code,
+                attempts=1,
+                modbus_retries=0,
+                modbus_timeout_s=float(timeout_s),
+            )
+        elif self.read_function_code == 4:
             registers = await self.modbus_controller.read_input_register_block(
                 unit_id=self.device_id,
                 address=self.register_address,
@@ -84,8 +96,9 @@ class LaserSensor:
 
         return registers
 
-    async def read_distance_mm(self) -> float:
-        registers = await self.read_registers()
+    async def read_distance_mm(self, *, timeout_s: Optional[float] = None) -> float:
+        """Read one distance; `timeout_s` bounds it to a single transaction with no retries."""
+        registers = await self.read_registers(timeout_s=timeout_s)
         raw_distance = registers[self.distance_register_index]
         distance_mm = float(raw_distance) * self.distance_scale_mm
 

@@ -27,6 +27,15 @@ MIN_HORIZONTAL_WALL_COVERAGE_MM = 30.0
 LASER_SAMPLE_SETTLE_MS = 50
 LASER_SAMPLES_PER_POINT = 3
 
+# A moving pass reads the laser and then the encoder, so each depth is assigned to a position
+# read a fixed interval later. The distance error is feed x latency: fitting that delay against
+# hole-edge midpoints on lb4a-2 at 40mm/s and 79mm/s gives 42ms (mean residual <=0.03mm at both
+# feeds; the per-hole scatter that remains is edge-detection noise, not delay). It scales with
+# feed, so it is subtracted per sample from the measured velocity. Re-measure it per sensor with
+# a stopped-vs-moving edge comparison before trusting the default, and store the result in
+# `robot.grid.scan.flying_capture_latency_ms`; this is only the fallback when that is unset.
+FLYING_CAPTURE_LATENCY_MS = 42.0
+
 # A wall depth reading is turned into a gripper z offset by a per-machine model. The
 # model records the tool geometry it was derived at; this is how far the live
 # Z_EXTENSION_PLACE may drift before the model is refused as stale (stage drift is carried).

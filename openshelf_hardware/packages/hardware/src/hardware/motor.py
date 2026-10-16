@@ -31,6 +31,9 @@ MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
 POSITION_TOLERANCE_MM = 1.0
 NOOP_POSITION_TOLERANCE_MM = 0.01
+# Drives settle a few hundredths short of a commanded target; a stale complete bit can only pass for
+# done here if the whole move was shorter than this.
+SETTLED_ON_TARGET_TOLERANCE_MM = 0.1
 HOME_APPROACH_TOLERANCE_MM = 1.0
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
 # Y following-error trip for homing only; restored to max_following_error after,
@@ -606,13 +609,55 @@ class Motor():
             )
             return None
 
-    async def get_position(self) -> float:
+    async def _read_bounded_position_registers(
+        self,
+        reg_high: int,
+        reg_low: int,
+        timeout_s: float,
+    ) -> tuple[int, int]:
+        # One transaction per block with no retries, so a dead drive fails inside timeout_s
+        # instead of holding the shared port lock through the client's retry loop.
+        async def read_block(address: int, count: int) -> tuple[int, ...]:
+            return await self._controller.read_holding_register_block(
+                self._motor_id,
+                address,
+                count=count,
+                attempts=1,
+                modbus_retries=0,
+                modbus_timeout_s=timeout_s,
+            )
+
+        if abs(reg_low - reg_high) == 1:
+            reg_start = min(reg_high, reg_low)
+            first_reg, second_reg = await read_block(reg_start, 2)
+
+            if reg_high == reg_start:
+                return first_reg, second_reg
+
+            return second_reg, first_reg
+
+        (pos_l,) = await read_block(reg_low, 1)
+        (pos_h,) = await read_block(reg_high, 1)
+
+        return pos_h, pos_l
+
+    async def get_position(self, *, timeout_s: Optional[float] = None) -> float:
+        """Read the encoder position in logical mm.
+
+        `timeout_s` bounds the read for latency-critical callers: each transaction gets that
+        Modbus timeout with no retries, and a garbage value raises rather than sleeping for a
+        re-read or falling back to the cached position.
+        """
         try:
             read_started_at = time.monotonic()
             reg_high = getattr(self._params, "position_reg_high", 0x602C)
             reg_low = getattr(self._params, "position_reg_low", 0x602D)
 
-            if abs(reg_low - reg_high) == 1:
+            if timeout_s is not None:
+                pos_h, pos_l = await self._read_bounded_position_registers(
+                    reg_high, reg_low, float(timeout_s)
+                )
+            elif abs(reg_low - reg_high) == 1:
                 reg_start = min(reg_high, reg_low)
                 first_reg, second_reg = await self._controller.read_holding_register_block(
                     self._motor_id,
@@ -641,6 +686,11 @@ class Motor():
             logical_pos = self._params.physical_to_logical(physical_pos)
 
             max_valid = self._params.lim * 2
+
+            if abs(logical_pos) > max_valid and timeout_s is not None:
+                raise MotorError(
+                    f"Garbage position {logical_pos:.2f} from motor {self._motor_id} on a bounded read"
+                )
 
             if abs(logical_pos) > max_valid:
                 self._logger.debug(
@@ -1582,7 +1632,21 @@ class Motor():
             raise
 
     def _is_completion_stable(self, state: MotionWaitState) -> bool:
-        return state.has_moved or time.monotonic() - state.start_time > 0.5
+        # A complete bit read before the drive starts a new move is stale, so completion only
+        # counts once the axis moved during this wait or 0.5s passed. An axis already standing on
+        # its target finished the move before this wait began (a flying pass watches the whole
+        # move itself), so making it wait out the 0.5s gains nothing.
+        if state.has_moved is True:
+            return True
+
+        if (
+            self._target_pos is not None
+            and self._cur_pos is not None
+            and abs(self._cur_pos - self._target_pos) <= SETTLED_ON_TARGET_TOLERANCE_MM
+        ):
+            return True
+
+        return time.monotonic() - state.start_time > 0.5
 
     def _clear_pending_motion(self) -> None:
         self._pending_motion = None
