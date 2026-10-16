@@ -71,6 +71,19 @@ async def test_isolated_home_keeps_the_provisional_x_home_when_rotate_fails():
     assert events == ["z_axis", "stage", "x_axis", "y_axis"]
 
 
+@pytest.mark.asyncio
+async def test_isolated_home_keeps_the_provisional_x_home_when_rotate_dependency_fails():
+    tool = _make_tool()
+    tool._mr = AsyncMock()
+    tool._emit_init = lambda *args: None
+    events = _record_home_order(tool)
+    tool._ms.home.side_effect = RuntimeError("stage fault")
+
+    await tool.home(isolate=True)
+
+    assert "rotate" not in events
+    assert events == ["z_axis", "x_axis", "y_axis"]
+    assert tool._mx.home.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -85,3 +98,4 @@ async def test_isolated_home_skips_rotate_when_x_home_fails():
 
     assert "rotate" not in events
     assert events == ["z_axis", "stage", "y_axis"]
+    assert tool._mx.home.await_count == 1
