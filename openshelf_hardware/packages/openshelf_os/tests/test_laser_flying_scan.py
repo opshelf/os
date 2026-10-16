@@ -840,3 +840,66 @@ async def test_fine_scan_rebins_a_line_it_already_flew_instead_of_flying_it_agai
 	# Outside a fine scan nothing is cached.
 	await prefetch(narrow, 10.0)
 	assert len(flown) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("h_final_found", [True, False])
+async def test_flying_fine_scan_seeds_the_vertical_probe_from_the_coarse_centre(
+	monkeypatch, h_final_found: bool
+) -> None:
+	import openshelf_os.laser_calibration.fine_scan as fine_scan_module
+	from openshelf_os.laser_calibration.core import GapCandidateRegion, LineGapSegment
+
+	probes: list[tuple[str, float]] = []
+
+	def segment(center_mm: float, width_mm: float) -> LineGapSegment:
+		return LineGapSegment(
+			start_idx=0,
+			end_idx=1,
+			start_mm=center_mm - width_mm / 2.0,
+			end_mm=center_mm + width_mm / 2.0,
+			width_mm=width_mm,
+			center_mm=center_mm,
+		)
+
+	async def didProbeLine(tool, *, axis, fixed_mm, progress_prefix, **kwargs):
+		probes.append((progress_prefix, float(fixed_mm)))
+
+		if progress_prefix.endswith("_v1"):
+			return segment(440.0, 30.0)
+
+		if progress_prefix.endswith("_h_final"):
+			return segment(301.0, 27.0) if h_final_found is True else None
+
+		return segment(300.0, 27.0)
+
+	async def didSeekInterior(tool, *, fixed_mm, progress_prefix, **kwargs):
+		probes.append((progress_prefix, float(fixed_mm)))
+		return 5
+
+	monkeypatch.setattr(fine_scan_module, "probe_line_from_center", didProbeLine)
+	monkeypatch.setattr(fine_scan_module, "find_hole_interior_idx_from_seed", didSeekInterior)
+	monkeypatch.setattr(fine_scan_module, "refine_horizontal_segment_across_rows", AsyncMock(return_value=None))
+
+	_, cells = await fine_scan_module.capture_cross_scan(
+		SimpleNamespace(),
+		candidate=GapCandidateRegion(x_min=289.0, x_max=313.0, y_min=440.0, y_max=440.0, wall_depth_mm=9.6),
+		bounds=ScanBounds(x_min=279.0, x_max=323.0, y_min=413.0, y_max=467.0),
+		step_mm=2.0,
+		settle_ms=0,
+		samples_per_point=1,
+		wall_depth_mm=9.6,
+		scan_config=SimpleNamespace(
+			fine_scan_style="flying",
+			fine_scan_feed_mm_s=40.0,
+			laser_offset_x_mm=51.0,
+			laser_offset_y_mm=0.0,
+		),
+		progress_prefix="fine_1",
+	)
+
+	# No horizontal probe flies: the vertical seek lands on the coarse centre column.
+	assert [label for label, _ in probes] == ["fine_1_v_seek", "fine_1_v1", "fine_1_h_final"]
+	assert probes[0][1] == pytest.approx(301.0)
+	# Only a confirming final horizontal pass makes a cell; the coarse width never does.
+	assert (len(cells) == 1) is h_final_found
