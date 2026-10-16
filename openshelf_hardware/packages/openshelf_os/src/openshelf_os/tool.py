@@ -1545,8 +1545,10 @@ class Tool:
         failed_config_motors = failed_config_motors or []
         failed_home_motors: List[Motor] = []
 
-        # X homes before rotate: the rotate step moves X out for clearance, which is only
-        # safe once X knows where it is.
+        # X homes twice around rotate. The first home only gives the rotate clearance move real
+        # coordinates (after a power loss the drive reads 0 wherever the carriage stands), and
+        # with the tool at an unknown angle it can stop on a gantry upright short of the hard
+        # stop. The second runs with the tool straight and sets the zero every later move uses.
         for motor in (self._mg, self._ms, self._mx):
             if isolate is True:
                 if await self._home_step_isolated(motor, failed_config_motors) is False and motor is not None:
@@ -1554,10 +1556,19 @@ class Tool:
             elif motor is not None:
                 await motor.home()
 
+        did_home_rotate = False
+
         if isolate is True:
-            await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
+            did_home_rotate = await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
         elif self._mr is not None:
             await self._home_rotate_sequence()
+            did_home_rotate = True
+
+        if did_home_rotate is True and self._mx is not None:
+            if isolate is True:
+                await self._home_step_isolated(self._mx, failed_config_motors)
+            else:
+                await self._mx.home()
 
         if isolate is True:
             await self._home_step_isolated(
@@ -1608,11 +1619,11 @@ class Tool:
         self,
         failed_config_motors: List[Motor],
         failed_home_motors: Optional[List[Motor]] = None,
-    ) -> None:
+    ) -> bool:
         if self._mr is None:
-            return
+            return False
         if self._did_motor_configure_fail(self._mr, failed_config_motors) is True:
-            return
+            return False
         failed_home_motors = failed_home_motors or []
         if any(
             self._did_motor_configure_fail(motor, failed_config_motors) is True
@@ -1620,12 +1631,14 @@ class Tool:
             for motor in (self._mx, self._ms)
         ):
             self._emit_init("rotate", "failed", "home", "dependency failed")
-            return
+            return False
         try:
             await self._home_rotate_sequence()
+            return True
         except Exception as e:
             self._emit_init("rotate", "failed", "home", str(e))
             self._logger.warning("init rotate home failed: %s", e)
+            return False
 
     async def home(
         self,
