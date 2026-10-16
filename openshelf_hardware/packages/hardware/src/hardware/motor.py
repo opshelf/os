@@ -31,6 +31,9 @@ MOTOR_JOG_TIMEOUT = 10.0
 MOTOR_WAIT_TIMEOUT = 60.0
 POSITION_TOLERANCE_MM = 1.0
 NOOP_POSITION_TOLERANCE_MM = 0.01
+# Drives settle a few hundredths short of a commanded target; a stale complete bit can only pass for
+# done here if the whole move was shorter than this.
+SETTLED_ON_TARGET_TOLERANCE_MM = 0.1
 HOME_APPROACH_TOLERANCE_MM = 1.0
 DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
 # Y following-error trip for homing only; restored to max_following_error after,
@@ -1629,7 +1632,21 @@ class Motor():
             raise
 
     def _is_completion_stable(self, state: MotionWaitState) -> bool:
-        return state.has_moved or time.monotonic() - state.start_time > 0.5
+        # A complete bit read before the drive starts a new move is stale, so completion only
+        # counts once the axis moved during this wait or 0.5s passed. An axis already standing on
+        # its target finished the move before this wait began (a flying pass watches the whole
+        # move itself), so making it wait out the 0.5s gains nothing.
+        if state.has_moved is True:
+            return True
+
+        if (
+            self._target_pos is not None
+            and self._cur_pos is not None
+            and abs(self._cur_pos - self._target_pos) <= SETTLED_ON_TARGET_TOLERANCE_MM
+        ):
+            return True
+
+        return time.monotonic() - state.start_time > 0.5
 
     def _clear_pending_motion(self) -> None:
         self._pending_motion = None
