@@ -78,3 +78,11 @@ def test_analyze_scan_capture_detects_enclosed_holes_and_rejects_boundary_gaps(t
 	assert_synthetic_analysis(analysis, shelves)
 
 
+
+
+def test_axis_positions_never_step_past_the_bound() -> None:
+	from openshelf_os.laser_calibration.scan import build_axis_positions
+
+	assert build_axis_positions(220.0, 950.0, 4.0)[-3:] == [944.0, 948.0, 950.0]
+	assert build_axis_positions(950.0, 220.0, 4.0)[-2:] == [222.0, 220.0]
+	assert build_axis_positions(0.0, 8.0, 2.0) == [0.0, 2.0, 4.0, 6.0, 8.0]
