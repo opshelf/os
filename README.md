@@ -22,7 +22,7 @@ the backend persists runtime data in `openshelf_hardware/data` (including local 
 - `docker-compose.dev.yml`: development overrides (hot reload for api/ui source)
 - `docker-compose.hardware.yml`: usb/device passthrough for hardware-connected machines
 - `scripts/start`, `scripts/stop`: preferred lifecycle commands
-- `scripts/laser.py`, `scripts/z_stall_probe.py`, `scripts/y_*_diagnostic.py` (+ `scripts/run_y_*.sh` wrappers): hardware debugging helpers
+- `scripts/laser.py`, `scripts/y_*_diagnostic.py` (+ `scripts/run_y_*.sh` wrappers): hardware debugging helpers
 
 ## development setup
 

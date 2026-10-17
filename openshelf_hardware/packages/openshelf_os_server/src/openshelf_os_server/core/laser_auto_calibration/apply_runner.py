@@ -204,17 +204,6 @@ def _get_x_axis_lower_limit_mm(worker: RobotWorker) -> float | None:
     return float(limit)
 
 
-def _get_z_axis_limit_mm(worker: RobotWorker) -> float | None:
-    """Max reachable Z for the gripper, or None when the motor does not expose it."""
-    motor = getattr(getattr(worker._robot, "_tool", None), "_mg", None)
-    limit = getattr(getattr(motor, "_params", None), "lim", None)
-
-    if limit is None:
-        return None
-
-    return float(limit)
-
-
 class ApplyRunnerMixin:
     _reference_offset_entries: list[LaserAutoCalibrationReferenceOffset]
 
@@ -297,6 +286,12 @@ class ApplyRunnerMixin:
             sample for sample in result.samples if (int(sample.shelf_idx), int(sample.cell_idx)) in datum_cells
         ]
         tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
+
+        if len(datum_cells) > 0 and len(datum_samples) == 0:
+            raise ValueError(
+                "grip edge: the datum cell gave no steady grip within its search window; re-check its "
+                "hand-set z and the gripper (open position, object detection) before retrying"
+            )
 
         if len(datum_samples) > 0:
             disagreement_mm = sample_intercept_mm(datum_samples[0]) - manual_intercept_mm
@@ -537,15 +532,11 @@ class ApplyRunnerMixin:
 
         if datum_intercept_mm is not None:
             # The hand-calibrated datum is this machine's own z, so it sets the intercept; the
-            # configured slope is kept because one opening cannot measure a tilt. Probed shelf
-            # intercepts keep their offsets from the datum's shelf. Installed on the run's config,
-            # pinned to the live geometry, so later rescans stay consistent.
-            datum_y_mm = laser_module.stamped_datum_y_mm(manual_reference)
-            shift_mm = datum_intercept_mm - laser_module.z_intercept_for_y(
-                intercept_mm=float(configured_intercept_mm if configured_intercept_mm is not None else datum_intercept_mm),
-                shelf_intercepts=configured_shelves,
-                y_mm=datum_y_mm,
-            )
+            # configured slope is kept because one opening cannot measure a tilt. Shelf intercepts
+            # keep their offsets from the model intercept, which is the datum's on every install
+            # path (a shelf entry is its deepest cell, not the datum). Installed on the run's
+            # config, pinned to the live geometry, so later rescans stay consistent.
+            shift_mm = 0.0 if configured_intercept_mm is None else datum_intercept_mm - configured_intercept_mm
             shelf_intercepts = [(y_mm, intercept_mm + shift_mm) for y_mm, intercept_mm in configured_shelves]
             self._install_shelf_z_model(
                 scan_config,
@@ -817,6 +808,7 @@ class ApplyRunnerMixin:
             z_delta_override_mm=None if z_delta_model is None else z_delta_model[0],
             z_delta_slope_per_mm=0.0 if z_delta_model is None else z_delta_model[1],
             shelf_intercepts=None if z_delta_model is None else z_delta_model[2],
+            cell_z_offsets=None if z_delta_model is None else z_delta_model[3],
         )
 
         if apply_config is not config:

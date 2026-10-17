@@ -53,8 +53,9 @@ class GripEdgeResult:
 	skipped: list[str] = field(default_factory=list)
 
 
-async def _grips_at(tool: Any, coordinate: Any, z_offset_mm: float, coordinate_type: Any) -> bool:
-	probe = coordinate_type(x=coordinate.x, y=coordinate.y, s=coordinate.s, z_offset=float(z_offset_mm))
+async def probe_grip_at(tool: Any, coordinate: Any, z_offset_mm: float) -> Any:
+	"""The gripper's state with the fingers splayed at z_offset_mm, the tool retracted again after."""
+	probe = type(coordinate)(x=coordinate.x, y=coordinate.y, s=coordinate.s, z_offset=float(z_offset_mm))
 	await tool.extend_empty(probe)
 
 	try:
@@ -65,7 +66,7 @@ async def _grips_at(tool: Any, coordinate: Any, z_offset_mm: float, coordinate_t
 
 	await tool.retract_empty()
 
-	return bool(state.gripped)
+	return state
 
 
 async def find_grip_edge(
@@ -83,7 +84,6 @@ async def find_grip_edge(
 	Coarse steps go deeper until two in a row grip (one is not enough: a multi-item bin or a
 	misaligned opening produces single stray grips), then fine steps from the last miss find the edge.
 	"""
-	coordinate_type = type(coordinate)
 	z_mm = float(start_z_mm)
 	z_max_mm = float(max_z_mm)
 	last_miss_mm: float | None = None
@@ -91,7 +91,7 @@ async def find_grip_edge(
 
 	while z_mm <= z_max_mm + 1e-6:
 		raise_if_cancelled(should_abort)
-		gripped = await _grips_at(tool, coordinate, z_mm, coordinate_type)
+		gripped = bool((await probe_grip_at(tool, coordinate, z_mm)).gripped)
 		print_status(f"grip_edge={label} z_mm={z_mm:.2f} gripped={gripped}")
 
 		if gripped is False:
@@ -114,7 +114,7 @@ async def find_grip_edge(
 
 	while z_mm < first_grip_mm - 1e-6:
 		raise_if_cancelled(should_abort)
-		gripped = await _grips_at(tool, coordinate, z_mm, coordinate_type)
+		gripped = bool((await probe_grip_at(tool, coordinate, z_mm)).gripped)
 		print_status(f"grip_edge={label} z_mm={z_mm:.2f} gripped={gripped} fine=true")
 
 		if gripped is True:

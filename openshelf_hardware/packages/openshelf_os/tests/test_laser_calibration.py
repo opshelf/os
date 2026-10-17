@@ -102,30 +102,6 @@ def test_disable_unreachable_cells_disables_only_cells_past_the_x_axis_limit() -
 	assert shelf.cells[2].status == CellStatus.DISABLED
 
 
-def _build_probe_tool(fast_move_error: Exception | None = None) -> SimpleNamespace:
-	positions = {'z': 0.0}
-
-	async def move_to_position(target_mm: float, rpm: int | None = None) -> None:
-		if fast_move_error is not None and target_mm > 100.0:
-			positions['z'] = 56.2
-			raise fast_move_error
-
-		positions['z'] = float(target_mm)
-
-	async def get_position() -> float:
-		return positions['z']
-
-	motor = SimpleNamespace(
-		move_to_position=move_to_position,
-		move_to_position_no_wait=AsyncMock(),
-		get_position=get_position,
-		get_param=AsyncMock(return_value=0),
-		clear_alarm=AsyncMock(),
-		stop=AsyncMock(),
-	)
-	return SimpleNamespace(_mg=motor)
-
-
 def test_require_z_offset_model_matches_z_place_rejects_a_moved_place_height() -> None:
 	model = SimpleNamespace(intercept_mm=4.85, x_slope_mm_per_mm=-0.00285, reference_stage_mm=46.0, reference_z_place_mm=160.5)
 

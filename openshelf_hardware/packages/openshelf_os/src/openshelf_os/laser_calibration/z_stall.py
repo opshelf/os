@@ -124,20 +124,20 @@ def excluded_probe_cells(
 	scanned_cells: Iterable[tuple[int, int]] | None = None,
 	scan_config: Any | None = None,
 ) -> set[tuple[int, int]]:
-	"""Keys of the detected cells a probe must leave alone.
+	"""Keys of the detected cells the grip-edge sweep must leave alone.
 
 	Neither a reserved tray home nor a cell holding an item is excluded: a tray presents the same
 	gripper interface and the same divider surface to the laser as an empty cell, and an item sits
-	out of the probe's way, so pressing beside any opening measures the same plate. What is left out
+	out of the gripper's way, so any opening measures the same grip edge. What is left out
 	is a cell the rack does not actually have (DISABLED, i.e. beyond the carriage travel) and a
 	hand-calibrated cell - that datum is the yardstick the fit is judged against, so it must stay
 	out of the sample set.
 
 	The datum is held out only while the scope still holds an independent opening to judge it, so a
-	scope that holds nothing but the manual cell - the cheapest way to verify that cell's z by
-	contact - keeps the datum probeable instead of finding nothing to press.
+	scope that holds nothing but the manual cell - the cheapest way to verify that cell's z - keeps
+	the datum measurable instead of finding nothing to sweep.
 
-	The returned keys are the ones `select_z_stall_probes` sees, i.e. the analysis' own:
+	The returned keys are the ones `run_grip_edge_sweep` sees, i.e. the analysis' own:
 	`analysis` is the in-scope scan, and a stored shielded cell is matched to a detected opening by
 	key *and* by position (`_scanned_cell_is_shielded`). Without an analysis the whole side is the
 	scope and `scanned_cells` may name cells in grid keys.

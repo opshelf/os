@@ -1219,6 +1219,7 @@ def apply_single_shelf_analysis(
 	z_delta_override_mm: float | None = None,
 	z_delta_slope_per_mm: float = 0.0,
 	shelf_intercepts: list[tuple[float, float]] | None = None,
+	cell_z_offsets: dict[tuple[int, int], float] | None = None,
 	) -> None:
 	if len(analysis.shelves) == 0:
 		raise ValueError("No tray openings detected from scan")
@@ -1321,6 +1322,7 @@ def apply_single_shelf_analysis(
 			z_delta_mm=z_delta_override_mm,
 			z_delta_slope_per_mm=z_delta_slope_per_mm,
 			shelf_intercepts=shelf_intercepts,
+			cell_z_offsets=cell_z_offsets,
 			**z_apply_kwargs,
 		)
 	else:

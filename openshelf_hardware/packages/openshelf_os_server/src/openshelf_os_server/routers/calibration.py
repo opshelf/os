@@ -27,6 +27,7 @@ from openshelf_os.storage import (
 	StorageModuleCellLocation,
 	StorageModuleSide,
 )
+from openshelf_os.laser_calibration.grip_edge import probe_grip_at
 from openshelf_os.exceptions import ConfigError, IOBoxError, MotorError, MovementError, ToolError
 from hardware.exceptions import MotorError as HardwareMotorError
 
@@ -1401,14 +1402,7 @@ async def grip_probe(request: GripProbeRequest) -> list[GripProbePoint]:
 			await tool.rotate_to_position(target_position)
 
 			for z_offset in request.z_offsets:
-				probe = AxisCoordinate(x=coordinate.x, y=coordinate.y, s=coordinate.s, z_offset=float(z_offset))
-				await tool.extend_empty(probe)
-				try:
-					state = await tool._gs.open()
-				finally:
-					# Release before any retract: splayed fingers would drag the tray out with the tool.
-					await tool._gs.close()
-				await tool.retract_empty()
+				state = await probe_grip_at(tool, coordinate, z_offset)
 				points.append(
 					GripProbePoint(
 						z_offset=float(z_offset),

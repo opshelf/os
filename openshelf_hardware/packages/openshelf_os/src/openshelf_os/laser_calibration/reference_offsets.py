@@ -210,17 +210,6 @@ def _require_stage_carry(
 		)
 
 
-def stamped_datum_y_mm(result: ReferenceOffsetResult | None) -> float:
-	"""Grab y of the stamped hand-calibrated cells (their median), where the datum intercept applies."""
-	ys = [
-		float(sample.manual_y_mm)
-		for sample in ([] if result is None else result.samples)
-		if sample.derived_intercept_mm is not None and sample.z_captured_stage_mm is not None
-	]
-
-	return float(median(ys)) if ys else 0.0
-
-
 def stamped_datum_intercept_mm(result: ReferenceOffsetResult | None) -> float | None:
 	"""The z intercept the hand-calibrated cells imply at the live stage, or None without one.
 
@@ -268,46 +257,6 @@ def stamped_datum_intercept_mm(result: ReferenceOffsetResult | None) -> float | 
 
 	return intercept_mm
 
-
-def z_model_datum_agreement_mm(
-	*,
-	intercept_mm: float,
-	slope_per_mm: float,
-	configured_slope_per_mm: float,
-	manual_reference: ReferenceOffsetResult | None,
-) -> float | None:
-	"""Worst-case residual, in mm, between a probed z model and the hand-calibrated datum.
-
-	"Agrees" means where the two models put the datum cells: `intercept + slope * grab_x`
-	evaluated at each reference sample. The datum's intercept was derived with the configured
-	slope, so comparing bare intercepts would let a probe-fitted tilt move the installed model
-	away from the datum cells unchecked.
-
-	Returns `None` when there is no datum or no datum intercept, and falls back to the bare
-	intercept difference when the datum has no usable samples.
-	"""
-	if manual_reference is None or manual_reference.intercept_mm is None:
-		return None
-
-	if len(manual_reference.samples) == 0:
-		return abs(float(intercept_mm) - float(manual_reference.intercept_mm))
-
-	residuals = [
-		abs(
-			(float(intercept_mm) + float(slope_per_mm) * float(sample.manual_x_mm))
-			- (
-				float(sample.derived_intercept_mm)
-				+ float(configured_slope_per_mm) * float(sample.manual_x_mm)
-			)
-		)
-		for sample in manual_reference.samples
-		if sample.derived_intercept_mm is not None
-	]
-
-	if len(residuals) == 0:
-		return abs(float(intercept_mm) - float(manual_reference.intercept_mm))
-
-	return max(residuals)
 
 
 def select_reference_datum_cell(

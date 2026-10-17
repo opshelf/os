@@ -355,6 +355,7 @@ def _build_manual_reference(
 		intercept_mm=intercept_mm,
 		z_captured_stage_mm=captured_stage_mm,
 		z_captured_stage_samples=0 if captured_stage_mm is None else 1,
+		z_stage_extension_mm=captured_stage_mm,
 	)
 
 
@@ -446,15 +447,26 @@ async def test_grip_edge_gives_every_cell_its_own_z_and_shelves_their_deepest() 
 		(pytest.approx(SECOND_SHELF_MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM - 0.75)),
 	]
 
+	# A later datum run with grip-edge off must not shift the stored shelves on an unchanged machine.
+	scan_config.z_stall_anchor_enabled = False
+	_, _, rerun_shelves, _ = await _resolve_with_edges(manager, scan_config, edges)
+	assert sorted(rerun_shelves) == [(y_mm, pytest.approx(mm)) for y_mm, mm in sorted(shelf_intercepts)]
+
 
 @pytest.mark.asyncio
-async def test_grip_edge_refuses_a_datum_edge_far_from_its_hand_set_z() -> None:
+@pytest.mark.parametrize("datum_gripped", [True, False], ids=["far_edge", "no_datum_edge"])
+async def test_grip_edge_refuses_a_datum_edge_far_from_its_hand_set_z(datum_gripped: bool) -> None:
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
 	edges = _grip_edges(datum_target_mm=MANUAL_Z_OFFSET_MM + 1.6, upper_target_mm=MANUAL_Z_OFFSET_MM)
 
-	with pytest.raises(ValueError, match="grip edge puts its z 1.60mm deeper than its hand-set z"):
+	if not datum_gripped:
+		edges.samples.pop(0)
+
+	match = "grip edge puts its z 1.60mm deeper than its hand-set z" if datum_gripped else "datum cell gave no steady grip"
+
+	with pytest.raises(ValueError, match=match):
 		await _resolve_with_edges(manager, scan_config, edges)
 
 	assert scan_config.front_wall_depth_to_gripper_z_model is None
