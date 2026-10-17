@@ -681,40 +681,6 @@ export interface LaserAutoCalibrationReferenceOffset {
 	skipped: string[];
 }
 
-export interface LaserAutoCalibrationZStallSample {
-	shelf_idx: number;
-	cell_idx: number;
-	probe_x_mm: number;
-	probe_y_mm: number;
-	wall_depth_mm: number;
-	z_contact_mm: number;
-	z_contact_repeat_mm: number | null;
-	delta_mm: number;
-}
-
-export interface LaserAutoCalibrationZStallResult {
-		// The side arrives in the device vocabulary; compare via sideIndex().
-		side: string;
-	intercept_mm: number;
-	slope_per_mm: number;
-	slope_source: string;
-	fit_source: string;
-	sample_count: number;
-	x_span_mm: number;
-	stage_extension_mm: number;
-	z_place_mm: number;
-	manual_intercept_mm: number | null;
-	manual_agreement_mm: number | null;
-	manual_agreement_tolerance_mm: number;
-	manual_captured_stage_mm: number | null;
-	manual_capture_unstamped: number;
-	applied: boolean;
-	persisted: boolean;
-	samples: LaserAutoCalibrationZStallSample[];
-	skipped: string[];
-	dropped_repeats: string[];
-}
-
 export interface LaserAutoCalibrationRequest {
 	mode: 'all' | 'both' | 'side' | 'shelf' | 'cell';
 	side?: StorageModuleSide;
@@ -775,7 +741,6 @@ export interface LaserAutoCalibrationSnapshot {
 	detected_cells: LaserAutoCalibrationCell[];
 	angle_results: LaserAutoCalibrationAngleResult[];
 	reference_offset_results: LaserAutoCalibrationReferenceOffset[];
-	z_stall_results: LaserAutoCalibrationZStallResult[];
 	stage_detail: Record<string, unknown>;
 	error: string | null;
 }

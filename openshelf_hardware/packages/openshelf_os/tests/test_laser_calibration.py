@@ -12,7 +12,6 @@ from openshelf_os.laser_calibration import (
 	disable_unreachable_cells,
 	run_staged_scan,
 )
-from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
 from openshelf_os.laser_calibration.scan import ScanBounds
 from openshelf_os.storage import CalibrationCoordinate, Cell, CellStatus, Dimensions, Shelf, StorageModuleSide
 
@@ -101,54 +100,6 @@ def test_disable_unreachable_cells_disables_only_cells_past_the_x_axis_limit() -
 	assert shelf.cells[0].status == CellStatus.AVAILABLE
 	assert shelf.cells[1].status == CellStatus.AVAILABLE
 	assert shelf.cells[2].status == CellStatus.DISABLED
-
-
-def _build_probe_tool(fast_move_error: Exception | None = None) -> SimpleNamespace:
-	positions = {'z': 0.0}
-
-	async def move_to_position(target_mm: float, rpm: int | None = None) -> None:
-		if fast_move_error is not None and target_mm > 100.0:
-			positions['z'] = 56.2
-			raise fast_move_error
-
-		positions['z'] = float(target_mm)
-
-	async def get_position() -> float:
-		return positions['z']
-
-	motor = SimpleNamespace(
-		move_to_position=move_to_position,
-		move_to_position_no_wait=AsyncMock(),
-		get_position=get_position,
-		get_param=AsyncMock(return_value=0),
-		clear_alarm=AsyncMock(),
-		stop=AsyncMock(),
-	)
-	return SimpleNamespace(_mg=motor)
-
-
-def test_probe_z_until_stall_does_not_report_fast_approach_fault_as_wall_contact() -> None:
-	tool = _build_probe_tool(fast_move_error=RuntimeError('Movement failed for motor 30 (status=FAULT)'))
-
-	did_stall, z_contact_mm, reason, _alarm = asyncio.run(
-		probe_z_until_stall(
-			tool,
-			target_z_mm=180.0,
-			retract_z_mm=5.0,
-			settle_ms=0,
-			timeout_s=5.0,
-			probe_rpm=20,
-			no_progress_s=0.25,
-			probe_step_mm=0.5,
-			fast_approach_mm=130.0,
-			fast_approach_rpm=20,
-			auto_retract=True,
-		)
-	)
-
-	assert reason == 'fast_approach_fault'
-	assert did_stall is False
-	assert z_contact_mm == pytest.approx(56.2)
 
 
 def test_require_z_offset_model_matches_z_place_rejects_a_moved_place_height() -> None:

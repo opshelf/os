@@ -624,6 +624,10 @@ class Gripper(BaseModel):
     # Picks and tray returns fail unless the gripper reports object contact. Machines
     # whose gripper never reports contact for a held cell turn the check off here.
     object_detection_enabled: bool = Field(default=True)
+    # Preset 1 target, 0x00 fully open to 0xFF closed over 50mm (HEPG50). Contact is only reported
+    # when the target lies >= ~6 counts past where the hole stops the fingers; lb4a-3's square 26mm
+    # holes stop them at 34, two counts past the default. Must stay wider than safe-open (0xC0).
+    open_position: int = Field(default=0x20, ge=0x00, lt=0xC0)
 
 
 class Tool(BaseModel):

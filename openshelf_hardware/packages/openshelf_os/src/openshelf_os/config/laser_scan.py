@@ -29,6 +29,13 @@ class LaserScanXYOffsetConfig(BaseModel):
     y_mm: float
 
 
+class LaserScanShelfInterceptConfig(BaseModel):
+    """One shelf's own intercept, keyed by the grab y of the opening it was probed at."""
+
+    y_mm: float
+    intercept_mm: float
+
+
 class LaserScanZOffsetModelConfig(BaseModel):
     """Turns a laser wall depth reading into a gripper z offset, without touching the rack.
 
@@ -47,6 +54,11 @@ class LaserScanZOffsetModelConfig(BaseModel):
     x_slope_mm_per_mm: float = 0.0
     reference_stage_mm: float
     reference_z_place_mm: float
+    # The laser sees every tray face, but where the gripper meets it also shifts per shelf by up to
+    # ~2mm (lb4a-3: 0 on the floor shelf, -0.7/-1.8/-1.4 above), which no single intercept fits.
+    # The z stall probe measures each shelf; a cell takes its nearest shelf's entry, else
+    # intercept_mm. Pinned to the same stage and z place as the model.
+    shelf_intercepts: List[LaserScanShelfInterceptConfig] = Field(default_factory=list)
 
 
     @model_validator(mode="before")

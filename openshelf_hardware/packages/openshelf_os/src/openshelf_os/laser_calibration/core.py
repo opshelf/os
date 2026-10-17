@@ -326,6 +326,40 @@ def z_offset_model_intercept_at_stage(*, model: Any, stage_extension_mm: float) 
 	)
 
 
+# A cell takes the intercept of a probed shelf within this much of its grab y, i.e. its own shelf:
+# well under the shelf pitch (~150mm) and well over a cell's y spread along a shelf.
+SHELF_INTERCEPT_MATCH_MM = 40.0
+
+
+def shelf_intercepts_at_stage(*, model: Any, stage_extension_mm: float) -> list[tuple[float, float]]:
+	"""The model's per-shelf intercepts as (grab y, intercept), carried to the live stage like the model."""
+	carry_mm = float(model.reference_stage_mm) - float(stage_extension_mm)
+
+	return [
+		(float(entry.y_mm), float(entry.intercept_mm) + carry_mm)
+		for entry in getattr(model, "shelf_intercepts", None) or []
+	]
+
+
+def z_intercept_for_y(
+	*,
+	intercept_mm: float,
+	shelf_intercepts: list[tuple[float, float]] | None,
+	y_mm: float,
+) -> float:
+	"""The intercept a cell at grab y uses: its shelf's probed one when there is one, else the model's."""
+	nearest: tuple[float, float] | None = None
+
+	for shelf_y_mm, shelf_intercept_mm in shelf_intercepts or []:
+		if abs(shelf_y_mm - float(y_mm)) > SHELF_INTERCEPT_MATCH_MM:
+			continue
+
+		if nearest is None or abs(shelf_y_mm - float(y_mm)) < abs(nearest[0] - float(y_mm)):
+			nearest = (shelf_y_mm, shelf_intercept_mm)
+
+	return float(intercept_mm) if nearest is None else float(nearest[1])
+
+
 def require_scan_xy_correction(
 	*,
 	scan_config: Any,
