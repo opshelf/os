@@ -901,7 +901,10 @@ def apply_wall_depth_z_offsets(
 	z_delta_slope_per_mm: float = 0.0,
 	detected_cell_key_map: dict[tuple[int, int], tuple[int, int]] | None = None,
 	shelf_intercepts: list[tuple[float, float]] | None = None,
+	cell_z_offsets: dict[tuple[int, int], float] | None = None,
 	) -> None:
+	"""`cell_z_offsets` (analysis keys) are z values measured on the cell itself, e.g. by its grip
+	edge, and replace the model's z for those cells."""
 	metadata_file = Path(metadata_path)
 
 	if metadata_file.exists() is False:
@@ -922,6 +925,7 @@ def apply_wall_depth_z_offsets(
 		)
 
 	updated_cell_count = 0
+	measured_cell_count = 0
 	preserved_cell_count = 0
 	output_to_analysis_key: dict[tuple[int, int], tuple[int, int]] | None = None
 	if detected_cell_key_map is not None:
@@ -964,6 +968,11 @@ def apply_wall_depth_z_offsets(
 			)
 			cell_delta_mm = cell_intercept_mm + float(z_delta_slope_per_mm) * float(cell.calibration_point.x)
 			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + cell_delta_mm
+
+			if cell_z_offsets is not None and analysis_key in cell_z_offsets:
+				cell.calibration_point.z_offset = float(cell_z_offsets[analysis_key])
+				measured_cell_count += 1
+
 			updated_cell_count += 1
 
 	if len(missing_cells) > 0:
@@ -976,7 +985,7 @@ def apply_wall_depth_z_offsets(
 	print_status(
 		f"z_offset_inference=applied intercept_mm={float(z_delta_mm):.3f} "
 		f"slope_per_mm={float(z_delta_slope_per_mm):.5f} shelf_intercepts={len(shelf_intercepts or [])} "
-		f"updated_cells={updated_cell_count} preserved_cells={preserved_cell_count}"
+		f"updated_cells={updated_cell_count} measured_cells={measured_cell_count} preserved_cells={preserved_cell_count}"
 	)
 
 

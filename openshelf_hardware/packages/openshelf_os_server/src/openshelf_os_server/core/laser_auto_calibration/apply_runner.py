@@ -247,13 +247,15 @@ class ApplyRunnerMixin:
         *,
         source_grid: Any,
         manual_reference: laser_module.ReferenceOffsetResult | None,
-    ) -> tuple[float, float, list[tuple[float, float]]]:
-        """Give every shelf its own intercept from where the gripper starts to grip there.
+    ) -> tuple[float, float, list[tuple[float, float]], dict[tuple[int, int], float]]:
+        """Give every regular cell its own z from where the gripper starts to grip it.
 
         The laser sees each tray face, but where the hook-shaped fingers catch the hole shifts per
-        shelf (lb4a-3: 1.2-3.9mm against the wall), so one intercept cannot place every cell. Each
-        shelf's edge is found with the gripper's object detection (`run_grip_edge_sweep`) and its
-        z is set just past it. The datum's own edge is checked against its hand-set z, which
+        shelf (lb4a-3: 1.2-3.9mm against the wall) and by up to 1.25mm between trays on one shelf,
+        so one intercept cannot place every cell. Each cell's edge is found with the gripper's
+        object detection (`run_grip_edge_sweep`) and its z is set just past it; each shelf's stored
+        intercept is its deepest cell's, since the hook tolerates overshoot but not falling short,
+        and places what was not measured (single-shelf rescans). The datum's own edge is checked against its hand-set z, which
         refuses the run when they disagree by more than z_stall_manual_agreement_mm. A shelf where
         no cell grips steadily (multi-item bins) keeps the datum's intercept and is reported.
         """
@@ -306,7 +308,20 @@ class ApplyRunnerMixin:
                     f"{tolerance_mm:.2f}mm); re-check the datum's z or its tray before retrying"
                 )
 
-        shelf_intercepts = [(float(sample.grab_y_mm), sample_intercept_mm(sample)) for sample in result.samples]
+        deepest_by_shelf: dict[int, Any] = {}
+
+        for sample in result.samples:
+            current = deepest_by_shelf.get(int(sample.shelf_idx))
+
+            if current is None or sample_intercept_mm(sample) > sample_intercept_mm(current):
+                deepest_by_shelf[int(sample.shelf_idx)] = sample
+
+        shelf_intercepts = [
+            (float(sample.grab_y_mm), sample_intercept_mm(sample)) for sample in deepest_by_shelf.values()
+        ]
+        cell_z_offsets = {
+            (int(sample.shelf_idx), int(sample.cell_idx)): float(sample.target_z_mm) for sample in result.samples
+        }
         sampled_shelves = {int(sample.shelf_idx) for sample in result.samples}
 
         for shelf in analysis.shelves:
@@ -345,7 +360,7 @@ class ApplyRunnerMixin:
             shelf_intercepts=shelf_intercepts,
         )
 
-        return float(manual_intercept_mm), slope_per_mm, shelf_intercepts
+        return float(manual_intercept_mm), slope_per_mm, shelf_intercepts, cell_z_offsets
 
     def _record_reference_offset_result(
         self,
@@ -449,8 +464,9 @@ class ApplyRunnerMixin:
         source_grid: Any = None,
         manual_reference: laser_module.ReferenceOffsetResult | None = None,
         allow_probe: bool = True,
-    ) -> tuple[float, float, list[tuple[float, float]]] | None:
-        """Resolve (intercept, slope, shelf intercepts) for z_offset = wall_depth + intercept + slope * grab_x.
+    ) -> tuple[float, float, list[tuple[float, float]], dict[tuple[int, int], float]] | None:
+        """Resolve (intercept, slope, shelf intercepts, measured cell z) for z_offset = wall_depth +
+        intercept + slope * grab_x; measured cell z (analysis keys) replaces that for its cells.
 
         A cell's intercept is its shelf's entry in the (grab y, intercept) list when it has one: the
         z stall probe measures every shelf, and the other paths carry what it stored.
@@ -548,7 +564,7 @@ class ApplyRunnerMixin:
                 f"{'none' if configured_intercept_mm is None else f'{configured_intercept_mm:.3f}'} "
                 f"shelf_intercepts={len(shelf_intercepts)}"
             )
-            return datum_intercept_mm, slope_per_mm, shelf_intercepts
+            return datum_intercept_mm, slope_per_mm, shelf_intercepts, {}
 
         assert configured_model is not None and configured_intercept_mm is not None
         laser_module.require_z_offset_model_matches_z_place(
@@ -563,7 +579,7 @@ class ApplyRunnerMixin:
             f"pinned_stage_mm={float(configured_model.reference_stage_mm):.2f} z_place_mm={z_place_mm:.2f} "
             f"shelf_intercepts={len(configured_shelves)}"
         )
-        return configured_intercept_mm, slope_per_mm, configured_shelves
+        return configured_intercept_mm, slope_per_mm, configured_shelves, {}
 
     def _install_shelf_z_model(
         self,
@@ -669,7 +685,7 @@ class ApplyRunnerMixin:
             if z_delta_model is None:
                 raise ValueError("z offset model could not be resolved for a full side rebuild")
 
-            z_delta_intercept_mm, z_delta_slope_per_mm, z_shelf_intercepts = z_delta_model
+            z_delta_intercept_mm, z_delta_slope_per_mm, z_shelf_intercepts, z_cell_offsets = z_delta_model
             laser_module.apply_wall_depth_z_offsets(
                 analysis=completed_result.analysis,
                 scanned_shelves=scanned_shelves,
@@ -677,6 +693,7 @@ class ApplyRunnerMixin:
                 z_delta_mm=z_delta_intercept_mm,
                 z_delta_slope_per_mm=z_delta_slope_per_mm,
                 shelf_intercepts=z_shelf_intercepts,
+                cell_z_offsets=z_cell_offsets,
             )
 
             existing_side_shelves = (

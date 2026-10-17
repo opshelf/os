@@ -424,10 +424,10 @@ def _build_z_worker(*, grid: StorageGrid | None = None) -> SimpleNamespace:
 def _grip_edges(*, datum_target_mm: float, upper_target_mm: float) -> "laser_module.GripEdgeResult":
 	from openshelf_os.laser_calibration.grip_edge import GripEdgeResult, GripEdgeSample
 
-	def sample(shelf_idx: int, y_mm: float, target_mm: float) -> GripEdgeSample:
+	def sample(shelf_idx: int, y_mm: float, target_mm: float, cell_idx: int = 0) -> GripEdgeSample:
 		return GripEdgeSample(
 			shelf_idx=shelf_idx,
-			cell_idx=0,
+			cell_idx=cell_idx,
 			grab_x_mm=MANUAL_X_MM,
 			grab_y_mm=y_mm,
 			wall_depth_mm=MANUAL_WALL_DEPTH_MM,
@@ -439,6 +439,8 @@ def _grip_edges(*, datum_target_mm: float, upper_target_mm: float) -> "laser_mod
 		samples=[
 			sample(0, MANUAL_Y_MM, datum_target_mm),
 			sample(SECOND_SHELF_IDX, SECOND_SHELF_MANUAL_Y_MM, upper_target_mm),
+			# lb4a-3 F3:0: one tray on a shelf grips 1.25mm deeper than its neighbours.
+			sample(SECOND_SHELF_IDX, SECOND_SHELF_MANUAL_Y_MM, upper_target_mm + 1.25, cell_idx=1),
 		]
 	)
 
@@ -466,24 +468,30 @@ async def _resolve_with_edges(manager, scan_config, edges):
 
 
 @pytest.mark.asyncio
-async def test_grip_edge_gives_every_shelf_its_own_intercept() -> None:
-	"""lb4a-3: the upper shelves gripped from ~1.5-2.7mm shallower than the floor datum, unseen by the laser."""
+async def test_grip_edge_gives_every_cell_its_own_z_and_shelves_their_deepest() -> None:
+	"""lb4a-3: the upper shelves gripped from ~1.5-2.7mm shallower than the floor datum, unseen by the
+	laser, and trays on one shelf differed by 1.25mm; a cell placed short of its edge misses its tray."""
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
 	edges = _grip_edges(datum_target_mm=MANUAL_Z_OFFSET_MM + 0.4, upper_target_mm=MANUAL_Z_OFFSET_MM - 2.0)
 
-	intercept_mm, _, shelf_intercepts = await _resolve_with_edges(manager, scan_config, edges)
+	intercept_mm, _, shelf_intercepts, cell_z_offsets = await _resolve_with_edges(manager, scan_config, edges)
 
 	assert intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
 	assert sorted(shelf_intercepts) == [
 		(pytest.approx(MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM + 0.4)),
-		(pytest.approx(SECOND_SHELF_MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM - 2.0)),
+		(pytest.approx(SECOND_SHELF_MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM - 0.75)),
 	]
+	assert cell_z_offsets == {
+		(0, 0): pytest.approx(MANUAL_Z_OFFSET_MM + 0.4),
+		(SECOND_SHELF_IDX, 0): pytest.approx(MANUAL_Z_OFFSET_MM - 2.0),
+		(SECOND_SHELF_IDX, 1): pytest.approx(MANUAL_Z_OFFSET_MM - 0.75),
+	}
 	installed = scan_config.front_wall_depth_to_gripper_z_model
 	assert [(entry.y_mm, entry.intercept_mm) for entry in installed.shelf_intercepts] == [
 		(pytest.approx(MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM + 0.4)),
-		(pytest.approx(SECOND_SHELF_MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM - 2.0)),
+		(pytest.approx(SECOND_SHELF_MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM - 0.75)),
 	]
 
 

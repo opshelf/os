@@ -39,7 +39,8 @@ async def test_grip_edge_ignores_a_stray_grip_and_refines_to_the_first_steady_on
 	edge_mm = await find_grip_edge(
 		tool,
 		coordinate=AxisCoordinate(x=500.0, y=440.0, s=0, z_offset=0.0),
-		predicted_z_mm=8.0,
+		start_z_mm=3.0,
+		max_z_mm=9.0,
 		label="1:2",
 	)
 
@@ -56,7 +57,8 @@ async def test_grip_edge_reports_none_when_nothing_grips_steadily() -> None:
 	edge_mm = await find_grip_edge(
 		FakeGripTool(edge_mm=99.0, stray_mm=7.0),
 		coordinate=AxisCoordinate(x=500.0, y=640.0, s=0, z_offset=0.0),
-		predicted_z_mm=8.0,
+		start_z_mm=3.0,
+		max_z_mm=9.0,
 		label="2:2",
 	)
 
