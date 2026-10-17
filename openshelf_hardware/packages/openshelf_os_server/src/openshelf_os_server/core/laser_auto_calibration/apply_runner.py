@@ -2,6 +2,7 @@
 # mypy: disable-error-code=attr-defined
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from openshelf_os.config.laser_scan import (
     LaserScanZOffsetModelConfig,
 )
 from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
+from openshelf_os.storage import StorageModuleCellLocation
 from openshelf_os.laser_calibration.defaults import Z_OFFSET_MODEL_PARAM_TOLERANCE_MM
 from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
 
@@ -216,6 +218,38 @@ def _get_z_axis_limit_mm(worker: RobotWorker) -> float | None:
     return float(limit)
 
 
+def _bin_home_cells(grid: Any, side: StorageModuleSide, analysis: Any) -> set[tuple[int, int]]:
+    """Scanned openings at configured bin homes: a multi-item bin's opening reports grips ~3-5mm
+    deeper than a tray's (lb4a-3 F1:4, F2:3), which no grip-edge check can tell from a real edge."""
+    positions: list[tuple[float, float]] = []
+
+    for entry in get_root_config().storage.bins:
+        if entry.home_location.side != side.value:
+            continue
+
+        try:
+            point = grid.get_cell_coordinate(
+                StorageModuleCellLocation(
+                    side=side, shelf_idx=entry.home_location.shelf_idx, cell_idx=entry.home_location.cell_idx
+                )
+            )
+        except (IndexError, ValueError):
+            continue
+
+        positions.append((float(point.x), float(point.y)))
+
+    return {
+        (int(cell.shelf_idx), int(cell.cell_idx))
+        for shelf in analysis.shelves
+        for cell in shelf.cells
+        if any(
+            math.hypot(float(cell.tool_x_mm) - x_mm, float(cell.tool_y_mm) - y_mm)
+            <= laser_module.REFERENCE_MATCH_WINDOW_MM
+            for x_mm, y_mm in positions
+        )
+    }
+
+
 class ApplyRunnerMixin:
     _reference_offset_entries: list[LaserAutoCalibrationReferenceOffset]
     _z_stall_entries: list[LaserAutoCalibrationZStallResult]
@@ -268,7 +302,7 @@ class ApplyRunnerMixin:
         disabled_cells = (
             laser_module.excluded_probe_cells(grid=device_grid, side=side, analysis=analysis, scan_config=scan_config)
             - datum_cells
-        )
+        ) | _bin_home_cells(device_grid, side, analysis)
         configured_model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
         slope_per_mm = 0.0 if configured_model is None else float(configured_model.x_slope_mm_per_mm)
         metadata_path = getattr(analysis, "metadata_path", None)
