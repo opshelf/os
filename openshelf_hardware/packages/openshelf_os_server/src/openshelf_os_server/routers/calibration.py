@@ -6,6 +6,8 @@ import asyncio
 import functools
 import logging
 import re
+from datetime import datetime, timezone
+from uuid import uuid4
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Literal, Optional, ParamSpec, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -1227,17 +1229,27 @@ async def test_gripper(
 	Runs the selected cell gripper test on physical hardware. Optional `lift` requests a
 	bounded pick/lift/place test. Tray homes are supported; disabled or maintenance cells
 	are rejected. This tests
-	motion without saving new calibration coordinates.
+	motion without saving new calibration coordinates. To queue many cells without
+	depending on the browser tab staying active, use the cell test queue.
 	"""
-	global _current_position, _current_side
-
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
 
+	await _perform_quick_test(worker, _build_test_location(request), lift)
+	return {"success": True}
+
+
+async def _perform_quick_test(
+	worker,
+	location: StorageModuleCellLocation,
+	lift: float | None,
+) -> None:
+	"""Run one cell gripper test; shared by the single-cell endpoint and the test queue."""
+	global _current_position, _current_side
+
 	_ensure_ready(worker)
 
-	location = _build_test_location(request)
 	grid = worker._robot._grid
 
 	await _ensure_cell_is_testable(grid, location)
@@ -1276,7 +1288,6 @@ async def test_gripper(
 				await tool.pick_lift_place(coord, lift, QUICK_LIFT_HOLD_SECONDS)
 		except (MotorError, HardwareMotorError, ToolError) as e:
 			await _raise_motor_error(worker, f"Test failed: {str(e)}", e)
-	return {"success": True}
 
 
 
@@ -1292,18 +1303,24 @@ async def test_cycle(request: TestRequest):
 
 	Runs the IO pick/place cycle for the selected calibration cell. Tray homes are supported;
 	disabled or maintenance cells are rejected. This moves the tool through the IO box; use
-	only with the physical setup prepared for the test. Does not save calibration.
+	only with the physical setup prepared for the test. Does not save calibration. To queue
+	many cells without depending on the browser tab staying active, use the cell test queue.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
 
+	await _perform_cycle_test(worker, _build_test_location(request))
+	return {"success": True}
+
+
+async def _perform_cycle_test(worker, location: StorageModuleCellLocation) -> None:
+	"""Run one IO transfer cycle test; shared by the single-cell endpoint and the test queue."""
 	_ensure_ready(worker)
 
 	robot = worker._robot
 	tool = robot._tool
 	grid = robot._grid
-	location = _build_test_location(request)
 
 	cell = await _ensure_cell_is_testable(grid, location)
 
@@ -1340,7 +1357,228 @@ async def test_cycle(request: TestRequest):
 				status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
 				detail=f"Cycle test failed: {exc}",
 			) from exc
-	return {"success": True}
+
+
+MAX_TEST_QUEUE_CELLS = 64
+
+
+class TestQueueCell(BaseModel):
+	shelf_idx: int = Field(ge=0)
+	cell_idx: int = Field(ge=0)
+
+
+class TestQueueRequest(BaseModel):
+	side: StorageModuleSide
+	mode: Literal["quick", "cycle"]
+	cells: list[TestQueueCell] = Field(min_length=1, max_length=MAX_TEST_QUEUE_CELLS)
+	lift: Optional[float] = Field(
+		None,
+		gt=0,
+		le=MAX_PICK_LIFT_MM,
+		description="Optional pick/lift/place height in millimeters for quick mode",
+	)
+
+
+class TestQueueSnapshot(BaseModel):
+	state: Literal["idle", "running", "completed", "failed", "cancelled"] = "idle"
+	job_id: Optional[str] = None
+	side: Optional[str] = None
+	mode: Optional[Literal["quick", "cycle"]] = None
+	total: int = 0
+	completed: int = 0
+	current: Optional[TestQueueCell] = None
+	failed: Optional[TestQueueCell] = None
+	error: Optional[str] = None
+	started_at: Optional[str] = None
+	updated_at: Optional[str] = None
+
+
+# The per-cell walk lives here instead of the browser so a frozen or throttled
+# background tab cannot stall the queue mid-walk. One job at a time; the motion
+# guard and cell checks inside each test still apply per cell.
+_test_queue_lock = asyncio.Lock()
+_test_queue_task: Optional[asyncio.Task[None]] = None
+_test_queue_snapshot = TestQueueSnapshot()
+_test_queue_abort_requested = False
+
+
+def _test_queue_now_iso() -> str:
+	return datetime.now(timezone.utc).isoformat()
+
+
+async def _publish_test_queue_event(
+	worker,
+	snapshot: TestQueueSnapshot,
+	cell: Optional[TestQueueCell] = None,
+	ok: Optional[bool] = None,
+) -> None:
+	payload: dict[str, Any] = {
+		"kind": "calibration_test_queue",
+		"payload": snapshot.model_dump(),
+	}
+	if cell is not None:
+		payload["payload"]["cell"] = cell.model_dump()
+		payload["payload"]["ok"] = ok
+	try:
+		await worker.publish_event(payload)
+	except Exception:
+		# A failed publish must not stall the walk; the snapshot endpoint still
+		# carries the state and the stream replays from the durable log.
+		logger.warning("Failed to publish calibration_test_queue event", exc_info=True)
+
+
+async def _finish_test_queue(
+	worker,
+	snapshot: TestQueueSnapshot,
+	state: Literal["completed", "failed", "cancelled"],
+	failed: Optional[TestQueueCell] = None,
+	error: Optional[str] = None,
+) -> None:
+	snapshot.state = state
+	snapshot.current = None
+	snapshot.failed = failed
+	snapshot.error = error
+	snapshot.updated_at = _test_queue_now_iso()
+	await _publish_test_queue_event(worker, snapshot)
+
+
+async def _run_cell_test_queue(
+	worker,
+	snapshot: TestQueueSnapshot,
+	locations: list[StorageModuleCellLocation],
+	lift: Optional[float],
+) -> None:
+	global _test_queue_abort_requested
+
+	for location in locations:
+		if _test_queue_abort_requested:
+			await _finish_test_queue(worker, snapshot, "cancelled")
+			return
+
+		cell = TestQueueCell(shelf_idx=location.shelf_idx, cell_idx=location.cell_idx)
+		snapshot.current = cell
+
+		error: Optional[str] = None
+		try:
+			if snapshot.mode == "quick":
+				async with _calibration_state_lock:
+					await _perform_quick_test(worker, location, lift)
+			else:
+				await _perform_cycle_test(worker, location)
+		except HTTPException as exc:
+			error = str(exc.detail)
+		except Exception as exc:
+			error = str(exc)
+
+		snapshot.completed += 1
+		snapshot.current = None
+		snapshot.updated_at = _test_queue_now_iso()
+
+		if error is not None:
+			await _finish_test_queue(worker, snapshot, "failed", failed=cell, error=error)
+			return
+
+		await _publish_test_queue_event(worker, snapshot, cell, True)
+
+	await _finish_test_queue(worker, snapshot, "completed")
+
+
+@router.post(
+    "/test/queue",
+    dependencies=[ROBOT_CONTROL],
+    response_model=TestQueueSnapshot,
+    summary="Start a server-side calibration test queue",
+    responses=response_docs(errors=(400, 401, 403, 409, 503)),
+)
+async def start_cell_test_queue(request: TestQueueRequest) -> TestQueueSnapshot:
+	"""Start a server-side calibration test queue.
+
+	Walks the given cells one at a time in the given order on the server, running the quick
+	or cycle test for each, and stops at the first failure. Progress and the terminal state
+	are published as `calibration_test_queue` events on `/api/robot/events`; the current
+	state is also readable at `GET /api/calibration/test/queue`. Requires `robot:control`;
+	returns `409` while another test queue is running.
+	"""
+	global _test_queue_task, _test_queue_snapshot, _test_queue_abort_requested
+
+	await ensure_laser_auto_calibration_not_running()
+
+	worker = await get_robot_worker_or_503()
+
+	async with _test_queue_lock:
+		if _test_queue_task is not None and _test_queue_task.done() is False:
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail="a calibration test queue is already running",
+			)
+
+		_test_queue_abort_requested = False
+		now = _test_queue_now_iso()
+		snapshot = TestQueueSnapshot(
+			state="running",
+			job_id=uuid4().hex,
+			side=request.side.value,
+			mode=request.mode,
+			total=len(request.cells),
+			started_at=now,
+			updated_at=now,
+		)
+		_test_queue_snapshot = snapshot
+		locations = [
+			StorageModuleCellLocation(
+				side=request.side,
+				shelf_idx=cell.shelf_idx,
+				cell_idx=cell.cell_idx,
+			)
+			for cell in request.cells
+		]
+		_test_queue_task = asyncio.create_task(
+			_run_cell_test_queue(worker, snapshot, locations, request.lift)
+		)
+
+	return snapshot.model_copy(deep=True)
+
+
+@router.get(
+    "/test/queue",
+    response_model=TestQueueSnapshot,
+    summary="Read the calibration test queue state",
+    responses=response_docs(model=TestQueueSnapshot, errors=(401, 403)),
+)
+async def get_cell_test_queue() -> TestQueueSnapshot:
+	"""Read the calibration test queue state.
+
+	Returns the current or most recent queue snapshot; `state` is `idle` until the first
+	queue starts on this process. Clients resuming a backgrounded or reloaded page use this
+	to catch up between `calibration_test_queue` events.
+	"""
+	return _test_queue_snapshot.model_copy(deep=True)
+
+
+@router.post(
+    "/test/queue/abort",
+    dependencies=[ROBOT_CONTROL],
+    response_model=TestQueueSnapshot,
+    summary="Abort the calibration test queue",
+    responses=response_docs(model=TestQueueSnapshot, errors=(401, 403, 409)),
+)
+async def abort_cell_test_queue() -> TestQueueSnapshot:
+	"""Abort the calibration test queue.
+
+	Requests cancellation before the next cell; the cell currently moving finishes first,
+	matching the single-cell tests. The queue publishes a `cancelled` terminal event once
+	it stops. Requires `robot:control`; returns `409` when no queue is running.
+	"""
+	global _test_queue_abort_requested
+
+	if _test_queue_task is None or _test_queue_task.done() is True:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail="no calibration test queue is running",
+		)
+
+	_test_queue_abort_requested = True
+	return _test_queue_snapshot.model_copy(deep=True)
 
 
 def _validate_saved_dimensions(dimensions: Dimensions) -> None:

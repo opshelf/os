@@ -14,8 +14,9 @@
 		updateTrayLayout,
 		assignTray,
 		unassignTray,
-		runCalibrationQuickTest,
-		runCalibrationCycleTest,
+		startCalibrationTestQueue,
+		getCalibrationTestQueue,
+		abortCalibrationTestQueue,
 		storeItem,
 		retrieveItem,
 		moveMotor,
@@ -52,11 +53,13 @@
 	let overlayOpen = $state<boolean>(false);
 	let scanStream: ReconnectingEventSource | null = null;
 
-	// Multi-cell test walk (client-side equivalent of provision/scripts/cycle_test.py):
-	// walks the testable cells on the current side from the selected cell, one
-	// operation per cell, and reports the outcome as a single toast.
+	// The quick/cycle multi-cell walk runs as a server-side queue (POST
+	// /calibration/test/queue) so a frozen or throttled background tab cannot stall it;
+	// this component only observes progress events and toasts the outcome. store/retrieve
+	// still walk the selection client-side, one durable command per cell.
 	let testRunning = $state<boolean>(false);
 	let testAborting = $state<boolean>(false);
+	let activeTestQueueJobId = $state<string | null>(null);
 	let isMovingToCell = $state<boolean>(false);
 
 	const selectedSide = $derived.by(
@@ -1091,6 +1094,10 @@
 			onMessage: (event) => {
 				try {
 					const data = JSON.parse(event.data);
+					if (data.kind === 'calibration_test_queue') {
+						didReceiveTestQueueEvent(data.payload);
+						return;
+					}
 					if (data.kind === 'label_scanned' && typeof data.payload === 'string') {
 						didReceiveScannedLabel(data.payload);
 						return;
@@ -1212,17 +1219,9 @@
 		};
 	}
 
-	async function runCellTest(mode: TestMode, target: { shelf: number; cell: Cell }): Promise<TestCommandResult> {
+	async function runCellTest(mode: 'store' | 'retrieve', target: { shelf: number; cell: Cell }): Promise<TestCommandResult> {
 		const { shelf, cell } = target;
 		try {
-			if (mode === 'quick') {
-				await runCalibrationQuickTest(selectedSide, shelf, cell.cell_idx);
-				return { ok: true };
-			}
-			if (mode === 'cycle') {
-				await runCalibrationCycleTest(selectedSide, shelf, cell.cell_idx);
-				return { ok: true };
-		}
 			if (mode === 'store') {
 				const receipt = await storeItem(selectedSide, shelf, cell.cell_idx, buildMockStoreItem(cell));
 				return await waitForTestCommand(receipt.command_id);
@@ -1234,6 +1233,74 @@
 		}
 	}
 
+	// quick/cycle walks run as a server-side queue so backgrounding this tab (camera
+	// view) cannot stall the walk; progress arrives as calibration_test_queue events.
+	async function didStartServerTestQueue(
+		mode: 'quick' | 'cycle',
+		queue: Array<{ shelf: number; cell: Cell }>
+	): Promise<void> {
+		try {
+			const snapshot = await startCalibrationTestQueue(
+				selectedSide,
+				mode,
+				queue.map((target) => ({ shelf_idx: target.shelf, cell_idx: target.cell.cell_idx }))
+			);
+			activeTestQueueJobId = snapshot.job_id;
+			testRunning = true;
+			testAborting = false;
+		} catch (err) {
+			postToast('error', err instanceof Error ? err.message : 'failed to start test queue');
+		}
+	}
+
+	function didReceiveTestQueueEvent(payload: unknown): void {
+		if (typeof payload !== 'object' || payload === null) {
+			return;
+		}
+		const event = payload as Record<string, unknown>;
+		const state = event.state;
+		const jobId = typeof event.job_id === 'string' ? event.job_id : null;
+		if (state === 'running') {
+			// Adopt a queue started from another tab or before a reload.
+			if (activeTestQueueJobId === null) {
+				activeTestQueueJobId = jobId;
+				testRunning = true;
+				testAborting = false;
+			}
+			return;
+		}
+		if (state !== 'completed' && state !== 'failed' && state !== 'cancelled') {
+			return;
+		}
+		if (activeTestQueueJobId !== null && jobId !== null && jobId !== activeTestQueueJobId) {
+			return;
+		}
+		if (state === 'failed') {
+			const failed = event.failed as Record<string, unknown> | undefined;
+			const label = failed ? `${sideInitialLetter}:${failed.shelf_idx}:${failed.cell_idx}` : 'test';
+			const reason = typeof event.error === 'string' ? `: ${event.error}` : '';
+			postToast('error', `failed at ${label}${reason}`);
+		} else {
+			postToast('status', state === 'cancelled' ? 'test aborted' : 'all tests passed');
+		}
+		activeTestQueueJobId = null;
+		testRunning = false;
+		testAborting = false;
+	}
+
+	async function syncTestQueue(): Promise<void> {
+		try {
+			const snapshot = await getCalibrationTestQueue();
+			if (snapshot.state === 'running' && activeTestQueueJobId === null) {
+				// Adopt a queue that survived this tab being frozen, reloaded, or reopened.
+				activeTestQueueJobId = snapshot.job_id;
+				testRunning = true;
+			}
+		} catch {
+			// A failed read only hides the running indicator until the next event or reopen.
+		}
+	}
+
 	async function didStartTest(mode: TestMode): Promise<void> {
 		if (testRunning || hasSelection === false) {
 			return;
@@ -1241,6 +1308,10 @@
 		const queue = buildTestQueue();
 		if (queue.length === 0) {
 			postToast('error', 'no testable cells selected');
+			return;
+		}
+		if (mode === 'quick' || mode === 'cycle') {
+			await didStartServerTestQueue(mode, queue);
 			return;
 		}
 		testRunning = true;
@@ -1265,9 +1336,17 @@
 	}
 
 	function didAbortTest(): void {
-		if (testRunning) {
-			testAborting = true;
+		if (testRunning === false) {
+			return;
 		}
+		if (activeTestQueueJobId !== null) {
+			testAborting = true;
+			abortCalibrationTestQueue().catch((err) => {
+				postToast('error', err instanceof Error ? err.message : 'failed to abort test queue');
+			});
+			return;
+		}
+		testAborting = true;
 	}
 
 	// Gantry jog to the selected cell's calibrated x/y (z untouched). Hardware only:
@@ -1315,6 +1394,7 @@
 		}
 		void load();
 		connectScanStream();
+		void syncTestQueue();
 		document.addEventListener('mousedown', didOutsideMouseDown);
 		document.addEventListener('mouseup', didOutsideMouseUp);
 		document.addEventListener('click', didClickOutside);
