@@ -486,6 +486,42 @@ export async function runCalibrationCycleTest(
 	});
 }
 
+export type CalibrationTestQueueCell = { shelf_idx: number; cell_idx: number };
+
+export type CalibrationTestQueueSnapshot = {
+	state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
+	job_id: string | null;
+	side: string | null;
+	mode: 'quick' | 'cycle' | null;
+	total: number;
+	completed: number;
+	current: CalibrationTestQueueCell | null;
+	failed: CalibrationTestQueueCell | null;
+	error: string | null;
+	started_at: string | null;
+	updated_at: string | null;
+};
+
+export async function startCalibrationTestQueue(
+	side: StorageModuleSide,
+	mode: 'quick' | 'cycle',
+	cells: CalibrationTestQueueCell[]
+): Promise<CalibrationTestQueueSnapshot> {
+	return apiFetch<CalibrationTestQueueSnapshot>('/calibration/test/queue', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ side: toDeviceSide(side), mode, cells })
+	});
+}
+
+export async function getCalibrationTestQueue(): Promise<CalibrationTestQueueSnapshot> {
+	return apiFetch<CalibrationTestQueueSnapshot>('/calibration/test/queue');
+}
+
+export async function abortCalibrationTestQueue(): Promise<CalibrationTestQueueSnapshot> {
+	return apiFetch<CalibrationTestQueueSnapshot>('/calibration/test/queue/abort', { method: 'POST' });
+}
+
 export type RobotCommandReceipt = {
 	message: string;
 	command_id: string;
