@@ -137,9 +137,9 @@ def test_refuses_to_predict_from_zero_when_no_offset_is_configured() -> None:
 		derive(grid, analysis, build_scan_config(xy_offset=None))
 
 
-def test_datum_stamped_with_the_stage_retracted_is_refused() -> None:
-	# Cell calibration retracts the stage before a tool move, so a z saved then is stamped ~0.5mm;
-	# carrying it to 46mm would install an intercept of -45.1 on every cell.
+def test_datum_stamped_at_another_stage_extension_is_refused() -> None:
+	# lb4a-3: the datum kept a 47.875mm stamp after the shelf extension moved to 46mm and its z was
+	# re-validated there; carrying it put every derived cell 1.9mm too deep.
 	cells = [build_cell(cell_idx=0, x=354.0, y=41.0, z_offset=10.0)]
 	analysis = build_analysis([build_detected_cell(cell_idx=0, tool_x=358.0, tool_y=44.0)])
 	analysis.wall_depths_by_cell = {(0, 0): 9.6}
@@ -152,17 +152,17 @@ def test_datum_stamped_with_the_stage_retracted_is_refused() -> None:
 		stage_extension_mm=46.0,
 	)
 
-	cells[0].calibration_point.z_captured_at_stage_mm = 0.5
+	cells[0].calibration_point.z_captured_at_stage_mm = 47.875
 	result = derive_reference_offsets(**derive_args)
-	with pytest.raises(ValueError, match=r"0:0 had its z saved at stage extension 0\.50mm.*46\.00mm.*shelf extension"):
+	with pytest.raises(ValueError, match=r"0:0 had its z saved at stage extension 47\.88mm.*46\.00mm.*shelf extension"):
 		stamped_datum_intercept_mm(result)
 	with pytest.raises(ValueError, match="cannot be carried"):
 		check_datum_stage_carry(result)
 
-	cells[0].calibration_point.z_captured_at_stage_mm = 49.0
+	cells[0].calibration_point.z_captured_at_stage_mm = 46.5
 	result = derive_reference_offsets(**derive_args)
 	check_datum_stage_carry(result)
-	assert stamped_datum_intercept_mm(result) == pytest.approx(10.0 + 3.0 - 9.6)
+	assert stamped_datum_intercept_mm(result) == pytest.approx(10.0 + 0.5 - 9.6)
 
 
 def test_datum_intercept_beyond_the_plausible_z_delta_is_refused() -> None:
