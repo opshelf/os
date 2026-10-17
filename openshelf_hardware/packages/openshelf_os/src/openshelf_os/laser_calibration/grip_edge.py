@@ -19,9 +19,11 @@ from openshelf_os.storage import StorageModuleSide
 from .core import print_status, raise_if_cancelled
 
 # The search starts this far shallower than the laser's prediction, where the fingers cannot reach
-# the hole, and stops this far deeper: lb4a-3's edges sat 1.2-3.9mm shallower than predicted.
+# the hole (lb4a-3's edges sat 1.2-3.9mm shallower than predicted), and stops just past it: the hook
+# reports a grip however deep it goes, so a multi-item bin "grips" 5mm deep (lb4a-3 F2:3) and a
+# deeper edge than the datum predicts is not one to trust.
 GRIP_EDGE_SEARCH_BELOW_MM = 5.0
-GRIP_EDGE_SEARCH_ABOVE_MM = 3.0
+GRIP_EDGE_SEARCH_ABOVE_MM = 1.0
 GRIP_EDGE_COARSE_STEP_MM = 1.0
 GRIP_EDGE_FINE_STEP_MM = 0.25
 # Just past the edge is the flat of the hook that seats the tray; further in, the hook only pushes.
