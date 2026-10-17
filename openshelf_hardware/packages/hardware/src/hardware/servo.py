@@ -59,6 +59,7 @@ class Servo:
         self._controller = controller
         self._control_reg = int(params.get("control_reg", 0x3E8))
         self._status_reg = int(params.get("status_reg", 0x07D0))
+        self._open_position = int(params.get("open_position", 0x20)) & 0xFF
         self._configured = False
         self._on_init_progress: Optional[Callable[[str, str, Optional[str]], None]] = None
 
@@ -91,7 +92,7 @@ class Servo:
             await self._controller.write_single_register(
                 self._motor_id, 
                 0x03EB, 
-                0x8020
+                0x8000 | self._open_position
             )
 
             await self._controller.write_single_register(
