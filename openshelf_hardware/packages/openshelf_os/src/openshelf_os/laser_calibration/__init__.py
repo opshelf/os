@@ -13,6 +13,7 @@ _MODULE_NAMES = (
     "staged_scan",
     "reference_offsets",
     "z_stall",
+    "grip_edge",
     "flying",
 )
 

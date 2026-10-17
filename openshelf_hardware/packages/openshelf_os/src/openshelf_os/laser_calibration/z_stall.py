@@ -32,7 +32,6 @@ from .core import (
 	print_status,
 )
 from .defaults import (
-	Z_STALL_PROBE_APPROACH_MARGIN_MM,
 	Z_STALL_PROBE_FAST_APPROACH_MM,
 	Z_STALL_PROBE_NO_PROGRESS_S,
 	Z_STALL_PROBE_RPM,
@@ -411,7 +410,6 @@ def select_z_stall_probes(
 	min_probe_tool_x_mm: float | None = None,
 	excluded_cells: set[tuple[int, int]] | None = None,
 	shelves_to_probe: int = 3,
-	preferred_cells: set[tuple[int, int]] | None = None,
 ) -> list[tuple[ScanDetectedCell, float]]:
 	"""Pick one opening on each of a few shelves, spread across the module.
 
@@ -469,16 +467,7 @@ def select_z_stall_probes(
 	seen_cells: set[tuple[int, int]] = set()
 
 	def add_probe(position: int, target_x_mm: float | None) -> None:
-		preferred = [
-			pair
-			for pair in valid_by_shelf[position]
-			if (int(pair[0].shelf_idx), int(pair[0].cell_idx)) in (preferred_cells or set())
-		]
-		picked = (
-			preferred[0]
-			if len(preferred) > 0
-			else _probe_cell_for_shelf(valid_by_shelf[position], target_x_mm=target_x_mm)
-		)
+		picked = _probe_cell_for_shelf(valid_by_shelf[position], target_x_mm=target_x_mm)
 
 		if picked is None:
 			return
@@ -516,16 +505,8 @@ async def run_z_stall_anchor(
 	z_axis_limit_mm: float | None = None,
 	xy_offset: tuple[float, float] | None = None,
 	should_abort: Callable[[], bool] | None = None,
-	every_shelf: bool = False,
-	preferred_cells: set[tuple[int, int]] | None = None,
-	approach_intercept_mm: float | None = None,
 ) -> ZStallResult:
 	"""Probe the plate beside each selected cell and fit the z delta model.
-
-	`every_shelf` probes one opening on every shelf, taking a `preferred_cells` opening where its
-	shelf has one (the datum, so the probe is checked against it). `approach_intercept_mm` is the
-	intercept the run already trusts: with it the probe approaches at place speed to just short
-	of the contact the laser predicts, instead of creeping the whole way.
 
 	Raises ValueError when the rack moves under the probe, the tool faults on approach, or no
 	contact separates the intercept from the tilt: every one of those means the fit would place
@@ -561,10 +542,7 @@ async def run_z_stall_anchor(
 		max_probe_tool_x_mm,
 		min_probe_tool_x_mm,
 		excluded_cells=excluded_cells,
-		shelves_to_probe=(
-			len(analysis.shelves) if every_shelf is True else int(getattr(scan_config, "z_stall_probe_shelves", 3))
-		),
-		preferred_cells=preferred_cells,
+		shelves_to_probe=int(getattr(scan_config, "z_stall_probe_shelves", 3)),
 	)
 	if len(probes) == 0:
 		raise ValueError(
@@ -625,10 +603,10 @@ async def run_z_stall_anchor(
 
 	# Probes are ordered requested shelves first, then reserves, so the run has the requested
 	# coverage once that many distinct shelves are in the sample set.
-	target_shelf_count = len({int(cell.shelf_idx) for cell, _ in probes})
-
-	if every_shelf is False:
-		target_shelf_count = min(int(getattr(scan_config, "z_stall_probe_shelves", 3)), target_shelf_count)
+	target_shelf_count = min(
+		int(getattr(scan_config, "z_stall_probe_shelves", 3)),
+		len({int(cell.shelf_idx) for cell, _ in probes}),
+	)
 
 	samples: list[ZStallSample] = []
 	sampled_shelves: set[int] = set()
@@ -646,18 +624,6 @@ async def run_z_stall_anchor(
 		probe_y_mm = float(detected_cell.tool_y_mm) + offset_y_mm
 		contacts: list[float] = []
 		probe_reason = "none"
-		fast_approach_mm = float(Z_STALL_PROBE_FAST_APPROACH_MM)
-		fast_approach_rpm = None if probe_rpm is None else int(probe_rpm)
-
-		if approach_intercept_mm is not None:
-			# The laser predicts where the tip meets this plate; shelves have been seen to differ from
-			# the trusted intercept by up to ~2mm, so stop well short of that and creep the rest. Place
-			# speed is no harsher than a normal place, which drives z past the contact into the tray.
-			predicted_contact_mm = (
-				z_place_mm + float(probe_wall_depth_mm) + float(approach_intercept_mm) - tray_engagement_mm
-			)
-			fast_approach_mm = max(fast_approach_mm, predicted_contact_mm - Z_STALL_PROBE_APPROACH_MARGIN_MM)
-			fast_approach_rpm = int(z_move_rpm)
 
 		for _attempt in range(max(1, probe_repeats)):
 			await enter_capture_mode(
@@ -683,11 +649,10 @@ async def run_z_stall_anchor(
 				probe_rpm=None if probe_rpm is None else int(probe_rpm),
 				no_progress_s=float(Z_STALL_PROBE_NO_PROGRESS_S),
 				probe_step_mm=float(Z_STALL_PROBE_STEP_MM),
-				fast_approach_mm=fast_approach_mm,
-				fast_approach_rpm=fast_approach_rpm,
+				fast_approach_mm=float(Z_STALL_PROBE_FAST_APPROACH_MM),
+				fast_approach_rpm=None if probe_rpm is None else int(probe_rpm),
 				auto_retract=True,
 				should_abort=should_abort,
-				retract_rpm=int(z_move_rpm),
 			)
 			last_reason = reason
 			probe_reason = reason
@@ -736,10 +701,11 @@ async def run_z_stall_anchor(
 
 			# The rapid approach already traversed to fast_approach_mm unobstructed, so a wall cannot
 			# sit closer than that. Anything shallower is the tool hitting something else.
-			if z_contact_mm < fast_approach_mm:
+			if z_contact_mm < float(Z_STALL_PROBE_FAST_APPROACH_MM):
 				print_status(
 					f"z_stall_anchor=reject_shallow probe={cell_key[0]}:{cell_key[1]} reason={reason} "
-					f"z_mm={z_contact_mm:.3f} fast_approach_mm={fast_approach_mm:.3f}"
+					f"z_mm={z_contact_mm:.3f} "
+					f"fast_approach_mm={float(Z_STALL_PROBE_FAST_APPROACH_MM):.3f}"
 				)
 				break
 
