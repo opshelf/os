@@ -139,9 +139,11 @@ async def run_grip_edge_sweep(
 	x_axis_limit_mm: float | None = None,
 	x_axis_lower_limit_mm: float | None = None,
 	should_abort: Callable[[], bool] | None = None,
+	check_preferred: Callable[[GripEdgeSample | None], None] | None = None,
 ) -> GripEdgeResult:
 	"""Every cell's grip edge, shelf by shelf: the datum's cell first where the shelf holds it, then
-	from the middle outwards."""
+	from the middle outwards. check_preferred gets each preferred cell's sample (None without a
+	steady grip) as soon as it is measured and may raise to stop the sweep before any further motion."""
 	from openshelf_os.common import AxisCoordinate  # noqa: PLC0415
 
 	offset_x_mm, offset_y_mm = (0.0, 0.0) if xy_offset is None else (float(xy_offset[0]), float(xy_offset[1]))
@@ -221,21 +223,29 @@ async def run_grip_edge_sweep(
 					should_abort=should_abort,
 				)
 
-			if edge_mm is None:
+			sample = (
+				None
+				if edge_mm is None
+				else GripEdgeSample(
+					shelf_idx=key[0],
+					cell_idx=key[1],
+					grab_x_mm=grab_x_mm,
+					grab_y_mm=grab_y_mm,
+					wall_depth_mm=wall_mm,
+					edge_z_mm=edge_mm,
+					target_z_mm=edge_mm + GRIP_EDGE_TARGET_MARGIN_MM,
+				)
+			)
+
+			if check_preferred is not None and key in preferred_cells:
+				check_preferred(sample)
+
+			if sample is None:
 				misses += 1
 				result.skipped.append(f"{key[0]}:{key[1]} (no steady grip)")
 				print_status(f"grip_edge=skip cell={key[0]}:{key[1]} reason=no_steady_grip")
 				continue
 
-			sample = GripEdgeSample(
-				shelf_idx=key[0],
-				cell_idx=key[1],
-				grab_x_mm=grab_x_mm,
-				grab_y_mm=grab_y_mm,
-				wall_depth_mm=wall_mm,
-				edge_z_mm=edge_mm,
-				target_z_mm=edge_mm + GRIP_EDGE_TARGET_MARGIN_MM,
-			)
 			result.samples.append(sample)
 			shelf_intercept_mm = sample.target_z_mm - wall_mm - float(slope_per_mm) * grab_x_mm
 			print_status(

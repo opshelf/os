@@ -408,8 +408,15 @@ def _grip_worker() -> SimpleNamespace:
 async def _resolve_with_edges(manager, scan_config, edges):
 	config = _build_root_config(scan_config)
 
+	async def sweep(**kwargs):
+		for sample in edges.samples:
+			if (sample.shelf_idx, sample.cell_idx) in kwargs["preferred_cells"]:
+				kwargs["check_preferred"](sample)
+
+		return edges
+
 	with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
-		with patch.object(laser_module, "run_grip_edge_sweep", AsyncMock(return_value=edges)):
+		with patch.object(laser_module, "run_grip_edge_sweep", sweep):
 			return await manager._resolve_z_delta_model(
 				_grip_worker(),
 				StorageModuleSide.FRONT,

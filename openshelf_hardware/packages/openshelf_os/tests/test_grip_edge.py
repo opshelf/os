@@ -107,3 +107,51 @@ async def test_grip_edge_sweep_never_moves_to_a_cell_past_the_x_travel() -> None
 
 	assert [event for event in tool.events if event.startswith("move")] == ["move x=508"]
 	assert [(sample.shelf_idx, sample.cell_idx) for sample in result.samples] == [(0, 1)]
+
+
+@pytest.mark.asyncio
+async def test_grip_edge_sweep_stops_at_a_refused_datum_before_moving_on() -> None:
+	"""A datum too deep or without a grip refuses the run; probing on first lets the hook push the
+	trays of every other cell before that refusal."""
+	tool = FakeGripTool(edge_mm=99.0)
+	analysis = SimpleNamespace(
+		shelves=[
+			SimpleNamespace(
+				shelf_idx=shelf_idx,
+				center_y_mm=40.0 + 200.0 * shelf_idx,
+				cells=[
+					SimpleNamespace(
+						shelf_idx=shelf_idx,
+						cell_idx=cell_idx,
+						center_x_mm=200.0 + 300.0 * cell_idx,
+						tool_x_mm=200.0 + 300.0 * cell_idx,
+						tool_y_mm=40.0 + 200.0 * shelf_idx,
+					)
+					for cell_idx in range(3)
+				],
+			)
+			for shelf_idx in range(2)
+		]
+	)
+	checked = []
+
+	def refuse(sample) -> None:
+		checked.append(sample)
+		raise ValueError("datum refused")
+
+	with pytest.raises(ValueError, match="datum refused"):
+		await run_grip_edge_sweep(
+			tool=tool,
+			analysis=analysis,
+			wall_depths={(shelf_idx, cell_idx): 9.4 for shelf_idx in range(2) for cell_idx in range(3)},
+			side=StorageModuleSide.FRONT,
+			xy_offset=None,
+			intercept_mm=-2.5,
+			slope_per_mm=0.0,
+			preferred_cells={(0, 0)},
+			excluded_cells=set(),
+			check_preferred=refuse,
+		)
+
+	assert checked == [None]
+	assert [event for event in tool.events if event.startswith("move")] == ["move x=200"]

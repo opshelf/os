@@ -264,6 +264,38 @@ class ApplyRunnerMixin:
             if metadata_path is not None and Path(metadata_path).exists()
             else []
         )
+
+        def sample_intercept_mm(sample: Any) -> float:
+            return float(sample.target_z_mm) - float(sample.wall_depth_mm) - slope_per_mm * float(sample.grab_x_mm)
+
+        tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
+        datum_checked = False
+
+        def check_datum(sample: Any) -> None:
+            # Runs as soon as the first datum is probed: a datum several mm off would otherwise steer
+            # every later search, and a too-deep one lets the hook push trays on the other shelves.
+            nonlocal datum_checked
+
+            if datum_checked:
+                return
+
+            if sample is None:
+                raise ValueError(
+                    "grip edge: the datum cell gave no steady grip within its search window; re-check its "
+                    "hand-set z and the gripper (open position, object detection) before retrying"
+                )
+
+            disagreement_mm = sample_intercept_mm(sample) - manual_intercept_mm
+
+            if abs(disagreement_mm) > tolerance_mm:
+                raise ValueError(
+                    f"grip edge: the datum cell's grip edge puts its z {abs(disagreement_mm):.2f}mm "
+                    f"{'deeper' if disagreement_mm > 0 else 'shallower'} than its hand-set z (tolerance "
+                    f"{tolerance_mm:.2f}mm); re-check the datum's z or its tray before retrying"
+                )
+
+            datum_checked = True
+
         result = await laser_module.run_grip_edge_sweep(
             tool=worker._robot._tool,
             analysis=analysis,
@@ -277,31 +309,12 @@ class ApplyRunnerMixin:
             x_axis_limit_mm=_get_x_axis_limit_mm(worker),
             x_axis_lower_limit_mm=_get_x_axis_lower_limit_mm(worker),
             should_abort=self._should_abort_work,
+            check_preferred=check_datum,
         )
 
-        def sample_intercept_mm(sample: Any) -> float:
-            return float(sample.target_z_mm) - float(sample.wall_depth_mm) - slope_per_mm * float(sample.grab_x_mm)
-
-        datum_samples = [
-            sample for sample in result.samples if (int(sample.shelf_idx), int(sample.cell_idx)) in datum_cells
-        ]
-        tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
-
-        if len(datum_cells) > 0 and len(datum_samples) == 0:
-            raise ValueError(
-                "grip edge: the datum cell gave no steady grip within its search window; re-check its "
-                "hand-set z and the gripper (open position, object detection) before retrying"
-            )
-
-        if len(datum_samples) > 0:
-            disagreement_mm = sample_intercept_mm(datum_samples[0]) - manual_intercept_mm
-
-            if abs(disagreement_mm) > tolerance_mm:
-                raise ValueError(
-                    f"grip edge: the datum cell's grip edge puts its z {abs(disagreement_mm):.2f}mm "
-                    f"{'deeper' if disagreement_mm > 0 else 'shallower'} than its hand-set z (tolerance "
-                    f"{tolerance_mm:.2f}mm); re-check the datum's z or its tray before retrying"
-                )
+        if len(datum_cells) > 0 and not datum_checked:
+            # The sweep never reached a datum (e.g. past the x travel): nothing anchored the edges.
+            check_datum(None)
 
         deepest_by_shelf: dict[int, Any] = {}
 

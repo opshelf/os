@@ -69,6 +69,27 @@ async def test_run_session_cancel_homes_via_abort_without_needs_home() -> None:
 
 
 @pytest.mark.asyncio
+async def test_home_after_abort_retracts_tool_before_moving_x() -> None:
+    manager = LaserAutoCalibrationManager()
+    calls = MagicMock()
+    tool = SimpleNamespace(
+        _mx=SimpleNamespace(move_to_position=AsyncMock(side_effect=lambda *a: calls.x_move())),
+        _gs=SimpleNamespace(close=AsyncMock(side_effect=lambda: calls.close())),
+        retract_empty=AsyncMock(side_effect=lambda: calls.retract()),
+        home=AsyncMock(side_effect=lambda: calls.home()),
+    )
+    worker = SimpleNamespace(
+        _robot=SimpleNamespace(_tool=tool, _io=SimpleNamespace(home_door=AsyncMock())),
+        clear_needs_home=MagicMock(),
+        get_status_snapshot=AsyncMock(),
+    )
+
+    await manager._home_after_abort(worker)
+
+    assert [c[0] for c in calls.mock_calls] == ['close', 'retract', 'x_move', 'home']
+
+
+@pytest.mark.asyncio
 async def test_run_angle_calibration_skips_final_retract_when_cancelled() -> None:
     manager = LaserAutoCalibrationManager()
     started = asyncio.Event()
