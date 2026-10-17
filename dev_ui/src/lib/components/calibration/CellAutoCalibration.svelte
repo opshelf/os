@@ -527,7 +527,7 @@
 			isZStallEnabled = await saveLaserZStallEnabled(requested);
 		} catch (err) {
 			target.checked = isZStallEnabled;
-			postToast('error', err instanceof Error ? err.message : 'failed to save the z stall probe setting');
+			postToast('error', err instanceof Error ? err.message : 'failed to save the grip edge setting');
 		} finally {
 			isSavingZStall = false;
 		}
@@ -759,14 +759,14 @@
 				</tr>
 				<tr>
 					<td colspan="3">
-						<label class="all-toggle" title="machine setting: press the tool against the shelf plate to fit the z model">
+						<label class="all-toggle" title="machine setting: set each cell's z from where the gripper starts to grip it">
 							<input
 								type="checkbox"
 								checked={isZStallEnabled}
 								onchange={didChangeZStall}
 								disabled={isSavingZStall === true || isSelectionDisabled === true}
 							/>
-							<span>z stall probe</span>
+							<span>grip edge z</span>
 						</label>
 					</td>
 				</tr>

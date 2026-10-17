@@ -11,7 +11,7 @@ from openshelf_os import laser_calibration as laser_module
 from openshelf_os.common import Parameters
 from openshelf_os.laser_calibration.reference_offsets import ReferenceOffsetResult, ReferenceOffsetSample
 from openshelf_os.laser_calibration.scan import ScanDetectedCell, ScanDetectedShelf
-from openshelf_os.laser_calibration.z_stall import ZStallResult, ZStallSample
+from openshelf_os.laser_calibration.grip_edge import GripEdgeResult, GripEdgeSample
 from openshelf_os.storage import (
     CalibrationCoordinate,
     Cell,
@@ -358,52 +358,6 @@ def _build_manual_reference(
 	)
 
 
-def _build_z_stall_result(
-	*,
-	intercept_mm: float = MANUAL_INTERCEPT_MM,
-	slope_per_mm: float = 0.0,
-	x_span_mm: float = 400.0,
-) -> "laser_module.ZStallResult":
-	# x_span_mm is derived from the samples, so the span under test has to be built into them.
-	lo_x_mm = 300.0
-	hi_x_mm = lo_x_mm + x_span_mm
-
-	return ZStallResult(
-		side=StorageModuleSide.FRONT,
-		intercept_mm=intercept_mm,
-		slope_per_mm=slope_per_mm,
-		fit_source="tilt" if slope_per_mm != 0.0 else "constant",
-		stage_extension_mm=47.0,
-		z_place_mm=160.5,
-		rotation_center_deg=183.0,
-		fit_centroid_x_mm=lo_x_mm + x_span_mm / 2.0,
-		samples=[
-			ZStallSample(
-				shelf_idx=0,
-				cell_idx=1,
-				probe_x_mm=lo_x_mm,
-				probe_y_mm=40.0,
-				wall_depth_mm=MANUAL_WALL_DEPTH_MM,
-				z_contact_mm=170.0,
-				z_contact_repeat_mm=170.1,
-				delta_mm=intercept_mm,
-				reason="stall",
-			),
-			ZStallSample(
-				shelf_idx=0,
-				cell_idx=2,
-				probe_x_mm=hi_x_mm,
-				probe_y_mm=40.0,
-				wall_depth_mm=MANUAL_WALL_DEPTH_MM,
-				z_contact_mm=170.2,
-				z_contact_repeat_mm=170.2,
-				delta_mm=intercept_mm,
-				reason="stall",
-			),
-		],
-	)
-
-
 def _build_z_worker(*, grid: StorageGrid | None = None) -> SimpleNamespace:
 	motor = SimpleNamespace(_params=SimpleNamespace(lim=950.0, lower_lim=0.0))
 	tool = SimpleNamespace(
@@ -421,9 +375,7 @@ def _build_z_worker(*, grid: StorageGrid | None = None) -> SimpleNamespace:
 	return SimpleNamespace(_robot=robot)
 
 
-def _grip_edges(*, datum_target_mm: float, upper_target_mm: float) -> "laser_module.GripEdgeResult":
-	from openshelf_os.laser_calibration.grip_edge import GripEdgeResult, GripEdgeSample
-
+def _grip_edges(*, datum_target_mm: float, upper_target_mm: float) -> GripEdgeResult:
 	def sample(shelf_idx: int, y_mm: float, target_mm: float, cell_idx: int = 0) -> GripEdgeSample:
 		return GripEdgeSample(
 			shelf_idx=shelf_idx,

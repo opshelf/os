@@ -12,7 +12,6 @@ from openshelf_os.config.laser_scan import (
 )
 from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
 from openshelf_os.laser_calibration.defaults import Z_OFFSET_MODEL_PARAM_TOLERANCE_MM
-from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
 
 from .models import *
 
@@ -218,7 +217,6 @@ def _get_z_axis_limit_mm(worker: RobotWorker) -> float | None:
 
 class ApplyRunnerMixin:
     _reference_offset_entries: list[LaserAutoCalibrationReferenceOffset]
-    _z_stall_entries: list[LaserAutoCalibrationZStallResult]
 
     def _resolve_manual_z_intercept(
         self,
@@ -287,6 +285,8 @@ class ApplyRunnerMixin:
             slope_per_mm=slope_per_mm,
             preferred_cells=datum_cells,
             excluded_cells=disabled_cells,
+            x_axis_limit_mm=_get_x_axis_limit_mm(worker),
+            x_axis_lower_limit_mm=_get_x_axis_lower_limit_mm(worker),
             should_abort=self._should_abort_work,
         )
 

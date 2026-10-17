@@ -136,6 +136,8 @@ async def run_grip_edge_sweep(
 	slope_per_mm: float,
 	preferred_cells: set[tuple[int, int]],
 	excluded_cells: set[tuple[int, int]],
+	x_axis_limit_mm: float | None = None,
+	x_axis_lower_limit_mm: float | None = None,
 	should_abort: Callable[[], bool] | None = None,
 ) -> GripEdgeResult:
 	"""Every cell's grip edge, shelf by shelf: the datum's cell first where the shelf holds it, then
@@ -148,12 +150,26 @@ async def run_grip_edge_sweep(
 	result = GripEdgeResult()
 	await tool._gs.safe_open()
 
+	def reachable(cell: Any) -> bool:
+		# The x axis clamps silently: a grab past either limit extends into the divider beside
+		# the hole (lb4-3 jammed a tray that way). A fresh scan marks such cells DISABLED only later.
+		grab_x_mm = float(cell.tool_x_mm) + offset_x_mm
+
+		if (x_axis_limit_mm is not None and grab_x_mm > float(x_axis_limit_mm)) or (
+			x_axis_lower_limit_mm is not None and grab_x_mm < float(x_axis_lower_limit_mm)
+		):
+			print_status(f"grip_edge=skip cell={cell.shelf_idx}:{cell.cell_idx} reason=unreachable x_mm={grab_x_mm:.1f}")
+			return False
+
+		return True
+
 	for shelf in sorted(analysis.shelves, key=lambda current: float(current.center_y_mm)):
 		cells = [
 			cell
 			for cell in sorted(shelf.cells, key=lambda current: float(current.center_x_mm))
 			if (int(cell.shelf_idx), int(cell.cell_idx)) not in excluded_cells
 			and float(wall_depths.get((int(cell.shelf_idx), int(cell.cell_idx)), 0.0)) > 0.0
+			and reachable(cell)
 		]
 		middle = len(cells) // 2
 		ordered = sorted(

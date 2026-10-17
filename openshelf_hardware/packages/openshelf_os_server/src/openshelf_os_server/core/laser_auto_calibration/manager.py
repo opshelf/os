@@ -33,7 +33,6 @@ class LaserAutoCalibrationManager(
         self._snapshot = LaserAutoCalibrationSnapshot(updated_at=_get_timestamp())
         self._side_states: dict[str, _SideState] = {}
         self._reference_offset_entries: list[LaserAutoCalibrationReferenceOffset] = []
-        self._z_stall_entries: list[LaserAutoCalibrationZStallResult] = []
         self._active_worker: RobotWorker | None = None
         self._abort_requested = False
         self._scans_dir = _build_default_scans_dir()
@@ -63,7 +62,6 @@ class LaserAutoCalibrationManager(
             started_at = _get_timestamp()
             self._side_states = {}
             self._reference_offset_entries = []
-            self._z_stall_entries = []
             self._active_worker = worker
             self._abort_requested = False
             self._snapshot = LaserAutoCalibrationSnapshot(

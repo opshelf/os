@@ -3,7 +3,8 @@ from types import SimpleNamespace
 import pytest
 
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.laser_calibration.grip_edge import find_grip_edge
+from openshelf_os.laser_calibration.grip_edge import find_grip_edge, run_grip_edge_sweep
+from openshelf_os.storage import StorageModuleSide
 
 
 class FakeGripTool:
@@ -14,7 +15,7 @@ class FakeGripTool:
 		self.stray_mm = stray_mm
 		self.z_mm = 0.0
 		self.events: list[str] = []
-		self._gs = SimpleNamespace(open=self._open, close=self._close)
+		self._gs = SimpleNamespace(open=self._open, close=self._close, safe_open=self._close)
 
 	async def extend_empty(self, coordinate) -> None:
 		self.z_mm = float(coordinate.z_offset)
@@ -30,6 +31,12 @@ class FakeGripTool:
 
 	async def retract_empty(self) -> None:
 		self.events.append("retract")
+
+	async def move(self, coordinate) -> None:
+		self.events.append(f"move x={coordinate.x:.0f}")
+
+	async def rotate_to_position(self, position) -> None:
+		pass
 
 
 @pytest.mark.asyncio
@@ -63,3 +70,40 @@ async def test_grip_edge_reports_none_when_nothing_grips_steadily() -> None:
 	)
 
 	assert edge_mm is None
+
+
+@pytest.mark.asyncio
+async def test_grip_edge_sweep_never_moves_to_a_cell_past_the_x_travel() -> None:
+	"""lb4-3: the x axis clamps silently, so a cell past its travel would be probed over the divider
+	beside the hole and jam a tray; a fresh scan has not marked such cells DISABLED yet."""
+	tool = FakeGripTool(edge_mm=6.0)
+	analysis = SimpleNamespace(
+		shelves=[
+			SimpleNamespace(
+				shelf_idx=0,
+				center_y_mm=40.0,
+				cells=[
+					SimpleNamespace(shelf_idx=0, cell_idx=0, center_x_mm=200.0, tool_x_mm=210.0, tool_y_mm=40.0),
+					SimpleNamespace(shelf_idx=0, cell_idx=1, center_x_mm=500.0, tool_x_mm=510.0, tool_y_mm=40.0),
+					SimpleNamespace(shelf_idx=0, cell_idx=2, center_x_mm=950.0, tool_x_mm=960.0, tool_y_mm=40.0),
+				],
+			)
+		]
+	)
+
+	result = await run_grip_edge_sweep(
+		tool=tool,
+		analysis=analysis,
+		wall_depths={(0, 0): 9.4, (0, 1): 9.4, (0, 2): 9.4},
+		side=StorageModuleSide.FRONT,
+		xy_offset=(-2.0, 0.5),
+		intercept_mm=-2.5,
+		slope_per_mm=0.0,
+		preferred_cells=set(),
+		excluded_cells=set(),
+		x_axis_limit_mm=950.0,
+		x_axis_lower_limit_mm=220.0,
+	)
+
+	assert [event for event in tool.events if event.startswith("move")] == ["move x=508"]
+	assert [(sample.shelf_idx, sample.cell_idx) for sample in result.samples] == [(0, 1)]

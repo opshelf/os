@@ -895,15 +895,15 @@ class LaserZStallSetting(BaseModel):
 @router.get(
     "/laser/z-stall",
     response_model=LaserZStallSetting,
-    summary="Read the z stall probe setting",
+    summary="Read the grip edge z setting",
     responses=response_docs(errors=(401,)),
 )
 async def get_laser_z_stall_setting() -> LaserZStallSetting:
-	"""Read the z stall probe setting.
+	"""Read the grip edge z setting.
 
-	Returns whether automatic calibration probes the shelf plate to derive each side's z
-	model. The setting belongs to the machine (`robot.grid.scan.z_stall_anchor_enabled`),
-	not to a run.
+	Returns whether automatic calibration sets each cell's z from where the gripper starts to
+	grip it. The setting belongs to the machine (`robot.grid.scan.z_stall_anchor_enabled`, named
+	for the contact probe it replaced), not to a run.
 	"""
 	return LaserZStallSetting(enabled=get_root_config().robot.grid.scan.z_stall_anchor_enabled is True)
 
@@ -912,15 +912,15 @@ async def get_laser_z_stall_setting() -> LaserZStallSetting:
     "/laser/z-stall",
     dependencies=[ROBOT_CONTROL],
     response_model=LaserZStallSetting,
-    summary="Save the z stall probe setting",
+    summary="Save the grip edge z setting",
     responses=response_docs(errors=(401, 403, 409)),
 )
 async def save_laser_z_stall_setting(request: LaserZStallSetting) -> LaserZStallSetting:
-	"""Save the z stall probe setting.
+	"""Save the grip edge z setting.
 
 	Persists `robot.grid.scan.z_stall_anchor_enabled`. When enabled, every later automatic
-	calibration that holds the bottom-left reference cell presses the tool against the shelf
-	plate to fit the z model. Returns `409` while automatic calibration runs. Does not move.
+	calibration that holds the bottom-left reference cell steps each cell's z until the gripper
+	grips it and sets the cell's z just past that edge. Returns `409` while automatic calibration runs. Does not move.
 	"""
 	await ensure_laser_auto_calibration_not_running()
 

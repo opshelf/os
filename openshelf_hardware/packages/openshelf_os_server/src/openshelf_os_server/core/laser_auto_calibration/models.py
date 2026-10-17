@@ -180,41 +180,6 @@ class LaserAutoCalibrationReferenceOffset(BaseModel):
     skipped: list[str] = Field(default_factory=list)
 
 
-class LaserAutoCalibrationZStallSample(BaseModel):
-    shelf_idx: int
-    cell_idx: int
-    probe_x_mm: float
-    probe_y_mm: float
-    wall_depth_mm: float
-    z_contact_mm: float
-    z_contact_repeat_mm: float | None
-    delta_mm: float
-
-
-class LaserAutoCalibrationZStallResult(BaseModel):
-    """A probed z model, and how it stood up to the hand-calibrated datum."""
-
-    side: StorageModuleSide
-    intercept_mm: float
-    slope_per_mm: float
-    slope_source: str = "probe"
-    fit_source: str
-    sample_count: int
-    x_span_mm: float
-    stage_extension_mm: float
-    z_place_mm: float
-    manual_intercept_mm: float | None = None
-    manual_agreement_mm: float | None = None
-    manual_agreement_tolerance_mm: float
-    manual_captured_stage_mm: float | None = None
-    manual_capture_unstamped: int = 0
-    applied: bool = False
-    persisted: bool = False
-    samples: list[LaserAutoCalibrationZStallSample] = Field(default_factory=list)
-    skipped: list[str] = Field(default_factory=list)
-    dropped_repeats: list[str] = Field(default_factory=list)
-
-
 class LaserAutoCalibrationScope(BaseModel):
     mode: Literal["all", "both", "side", "shelf", "cell"] = "all"
     side: StorageModuleSide | None = None
@@ -260,7 +225,6 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
     angle_results: list[LaserAutoCalibrationAngleResult] = Field(default_factory=list)
     reference_offset_results: list[LaserAutoCalibrationReferenceOffset] = Field(default_factory=list)
-    z_stall_results: list[LaserAutoCalibrationZStallResult] = Field(default_factory=list)
     stage_detail: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     error_detail: LaserAutoCalibrationError | None = None
@@ -594,8 +558,6 @@ __all__ = [
     "LaserAutoCalibrationAngleResult",
     "LaserAutoCalibrationReferenceOffsetSample",
     "LaserAutoCalibrationReferenceOffset",
-    "LaserAutoCalibrationZStallSample",
-    "LaserAutoCalibrationZStallResult",
     "LaserAutoCalibrationScope",
     "LaserAutoCalibrationSnapshot",
     "_SideState",
