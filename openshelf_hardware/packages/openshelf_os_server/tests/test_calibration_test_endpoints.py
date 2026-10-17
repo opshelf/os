@@ -103,3 +103,31 @@ async def test_tests_reject_cells_that_are_not_testable(client, endpoint: str, c
 	assert worker._robot.io_place.await_count == 0
 
 	assert grid.front_module[0].cells[0].status == cell_status
+
+
+@pytest.mark.asyncio
+async def test_cycle_test_retracts_before_the_io_cycle_rotates(client) -> None:
+	"""io_place/io_pick rotate before they retract, so the cycle has to retract up front."""
+	grid = build_grid(is_occupied=True)
+	worker = build_worker(grid)
+	worker._robot._io = SimpleNamespace(
+		ensure_door_homed=AsyncMock(),
+		open_door=AsyncMock(),
+		close_door=AsyncMock(),
+		home_door_after_cycle=AsyncMock(),
+	)
+	worker._robot.io_place.side_effect = None
+	worker._robot.io_pick.side_effect = None
+
+	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
+		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
+			with patch('openshelf_os_server.routers.calibration._retract_tool_for_move', AsyncMock()) as retract:
+				response = await client.post(
+					'/api/calibration/test/cycle',
+					json={'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 0},
+				)
+
+	assert response.status_code == 200
+	retract.assert_awaited_once()
+	assert worker._robot.io_place.await_count == 1
+	assert worker._robot.io_pick.await_count == 1

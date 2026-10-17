@@ -132,6 +132,13 @@ def _multi_item_position():
 @pytest.mark.anyio
 async def test_iobox_multi_item_test_stops_when_no_tray_is_gripped(monkeypatch) -> None:
 	worker, operations = _mock_multi_item_worker(GripState(0xF1, 0, 0, 0))
+	retract_call_count = 0
+
+	async def did_retract(*args, **kwargs):
+		nonlocal retract_call_count
+		retract_call_count += 1
+
+	worker._robot._tool.retract = AsyncMock(side_effect=did_retract)
 	monkeypatch.setattr(calibration, "_iobox_current", _multi_item_position())
 	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
 	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
@@ -142,4 +149,6 @@ async def test_iobox_multi_item_test_stops_when_no_tray_is_gripped(monkeypatch) 
 
 	assert raised.value.status_code == 409
 	assert raised.value.detail["needs_home"] is True
-	worker._robot._tool.retract.assert_not_awaited()
+	# Only the safety retract the route runs before it rotates; the transfer itself has to
+	# stop at the failed tray grip without retracting onto the tray.
+	assert retract_call_count == 1

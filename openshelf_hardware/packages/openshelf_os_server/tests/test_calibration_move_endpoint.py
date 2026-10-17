@@ -5,6 +5,8 @@ import pytest
 from httpx import AsyncClient
 from openshelf_os.exceptions import MotorError, MovementError
 
+from openshelf_os_server.routers import calibration
+
 
 def _mock_worker_for_move(stage_position: float = 0.0):
 	order: list[str] = []
@@ -125,6 +127,7 @@ def _mock_worker_for_rotation() -> tuple[MagicMock, MagicMock]:
 	tool._mr.clear_alarm = AsyncMock()
 	tool._mr.move_to_position = AsyncMock()
 	tool.is_rotation_at_position = AsyncMock(return_value=False)
+	tool.retract = AsyncMock()
 	tool.ensure_safe_rotation_x_position = AsyncMock(return_value=5.0)
 	tool.ensure_safe_rotation_stage_extension = AsyncMock()
 	tool.restore_safe_rotation_x_position = AsyncMock()
@@ -169,3 +172,74 @@ async def test_rotate_to_angle_clearance_blocked_returns_409(client: AsyncClient
 	assert "z_axis=162.470mm exceeds maximum 5.000mm" in detail["message"]
 	assert "needs_home" not in detail
 	worker.set_needs_home.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_rotate_to_angle_retracts_an_extended_tool_before_rotating(client: AsyncClient) -> None:
+	worker, tool = _mock_worker_for_rotation()
+	order: list[str] = []
+	tool.retract = AsyncMock(side_effect=lambda: order.append("retract"))
+	tool.ensure_safe_rotation_x_position = AsyncMock(
+		side_effect=lambda: order.append("x") or 5.0
+	)
+	tool.ensure_safe_rotation_stage_extension = AsyncMock(side_effect=lambda: order.append("clearance"))
+	tool._mr.move_to_position = AsyncMock(side_effect=lambda angle: order.append("rotate"))
+
+	with patch("openshelf_os_server.routers.calibration.get_robot_worker", return_value=worker):
+		with patch("openshelf_os_server.routers.calibration.ensure_laser_auto_calibration_not_running", new=AsyncMock()):
+			response = await client.post("/api/calibration/rotation/rotate?angle=42")
+
+	assert response.status_code == 200
+	assert order == ["retract", "x", "clearance", "rotate"]
+
+
+@pytest.mark.anyio
+async def test_iobox_move_retracts_an_extended_tool_before_rotating() -> None:
+	"""A jogged-away Z has to retract first: the rotation guard rejects the whole move otherwise."""
+	order: list[str] = []
+
+	async def did_retract(*args, **kwargs):
+		order.append("retract")
+
+	async def did_rotate(*args, **kwargs):
+		order.append("rotate")
+
+	async def did_move(*args, **kwargs):
+		order.append("move")
+
+	tool = MagicMock()
+	tool.retract = AsyncMock(side_effect=did_retract)
+	tool.rotate_to_position = AsyncMock(side_effect=did_rotate)
+	tool.move = AsyncMock(side_effect=did_move)
+
+	io = MagicMock()
+	io.open_door = AsyncMock()
+
+	worker = MagicMock()
+	worker.needs_home.return_value = False
+	worker.needs_home_axes.return_value = []
+	worker.needs_home_reason.return_value = None
+	worker._robot = MagicMock()
+	worker._robot._tool = tool
+	worker._robot._io = io
+
+	with patch("openshelf_os_server.routers.calibration.get_robot_worker", return_value=worker):
+		with patch("openshelf_os_server.routers.calibration.ensure_laser_auto_calibration_not_running", new=AsyncMock()):
+			with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", new=AsyncMock()):
+				with patch.object(calibration, "_iobox_current", None):
+					with patch.object(calibration, "_load_iobox_calibration") as load:
+						load.return_value = calibration.IOBoxPositionResponse(
+							pickup_low_x=100.0,
+							pickup_low_y=200.0,
+							pickup_high_x=110.0,
+							pickup_high_y=210.0,
+							z_extension=10.0,
+							stage_extension=20.0,
+							multi_item_x=120.0,
+							multi_item_y=220.0,
+							multi_item_z_extension=30.0,
+							multi_item_stage_extension=40.0,
+						)
+						await calibration.move_to_iobox_position("low")
+
+	assert order == ["retract", "rotate", "move"]

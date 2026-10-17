@@ -484,6 +484,45 @@ async def _clear_motors_for_move(
 		await _clear_motor_alarm(tool._mr)
 
 
+async def _retract_tool_for_move(
+	tool,
+	worker,
+	*,
+	blocked_message: Optional[str] = None,
+) -> None:
+	"""Bring Z and stage back to their retract positions before a manual move.
+
+	Rotation only clears the gantry while both tool axes are retracted (the rotation
+	clearance guard rejects anything past ROTATION_Z_MAX_EXTENSION_MM /
+	ROTATION_STAGE_MAX_EXTENSION_MM). Routes that rotate have to retract explicitly first:
+	`tool.move()` does retract, but only as part of a gantry move, so it runs after a
+	rotation that already blocked, and its fixed 5 mm threshold is looser than the rotation
+	guard for a machine configured with a smaller `ROTATION_Z_MAX_EXTENSION_MM`.
+
+	Retracting with an item gripped is the same thing `test_gripper` already does, so this
+	helps rather than hurts an aborted pick/place; an aborted IO transfer needs homing
+	before it continues either way.
+
+	A motor fault during the retract means the axes lost their position, so it goes through
+	`_raise_motor_error` like every other move in this module: 409 plus `needs_home`.
+
+	`blocked_message` reports a retract that finished with the tool still past the rotation
+	clearance limits as blocked (409, no `needs_home`) instead of as a motor fault, the same
+	way the rotation route already reports clearance failures.
+	"""
+	try:
+		await tool.retract()
+	except MovementError as e:
+		if blocked_message is None:
+			raise
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail=_build_error_detail(f"{blocked_message}: {str(e)}", code="rotation_blocked"),
+		) from e
+	except (MotorError, HardwareMotorError, ToolError) as e:
+		await _raise_motor_error(worker, f"Failed to retract: {str(e)}", e)
+
+
 async def _raise_motor_error(
 	worker,
 	message: str,
@@ -1342,6 +1381,11 @@ async def _perform_cycle_test(worker, location: StorageModuleCellLocation) -> No
 	async with manual_motion_guard("calibration_test_cycle", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			# An aborted cycle test can leave the tool extended; io_place/io_pick rotate before
+			# they retract, so the rotation clearance guard would reject the whole cycle. A tray
+			# left gripped from an aborted run comes in with the retract, which is what every
+			# other recovery path in this file already does.
+			await _retract_tool_for_move(tool, worker)
 
 			await robot.io_place(coordinate)
 			grid.clear_item(location)
@@ -2045,6 +2089,7 @@ async def move_to_iobox_position(position: IOBoxPositionName) -> IOBoxPositionRe
 	async with manual_motion_guard("calibration_iobox_move", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			await _retract_tool_for_move(tool, worker)
 			await tool.rotate_to_position("front")
 		except (MotorError, HardwareMotorError) as e:
 			await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=["rotate"])
@@ -2179,6 +2224,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 	async with manual_motion_guard("calibration_iobox_test", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			await _retract_tool_for_move(tool, worker)
 			await tool.rotate_to_position("front")
 		except (MotorError, HardwareMotorError) as e:
 			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
@@ -2268,6 +2314,7 @@ async def test_iobox_multi_item_cycle():
 	async with manual_motion_guard("calibration_iobox_multi_item_test", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			await _retract_tool_for_move(tool, worker)
 			await tool.rotate_to_position("front")
 		except (MotorError, HardwareMotorError) as e:
 			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
@@ -2432,6 +2479,9 @@ async def rotate_to_angle(angle: float):
 			await _clear_motors_for_move(tool, gantry=True, stage=True, rotation=True)
 			if await tool.is_rotation_at_position(clamped_angle):
 				return {"success": True}
+			# A rotation is only safe once both tool axes are retracted; retract instead of
+			# rejecting a rotation that starts from an extended tool.
+			await _retract_tool_for_move(tool, worker, blocked_message="Rotation blocked")
 			original_x = await tool.ensure_safe_rotation_x_position()
 			try:
 				await tool.ensure_safe_rotation_stage_extension()
