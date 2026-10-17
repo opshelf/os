@@ -1281,6 +1281,100 @@ async def test_gripper(
 
 
 
+GRIP_PROBE_MAX_POINTS = 24
+GRIP_PROBE_MAX_DEVIATION_MM = 5.0
+
+
+class GripProbeRequest(TestRequest):
+	z_offsets: list[float] = Field(min_length=1, max_length=GRIP_PROBE_MAX_POINTS)
+
+
+class GripProbePoint(BaseModel):
+	z_offset: float
+	gripped: bool
+	object: str
+	position: int
+	current: int
+	state: str
+
+
+@router.post(
+    "/grip-probe",
+    dependencies=[ROBOT_CONTROL],
+    response_model=list[GripProbePoint],
+    summary="Read the gripper's object detection across z offsets at a cell",
+    responses=response_docs(errors=(400, 401, 403, 409, 503)),
+)
+@serialize_calibration_state
+async def grip_probe(request: GripProbeRequest) -> list[GripProbePoint]:
+	"""Read the gripper's object detection across z offsets at a cell.
+
+	Engineering diagnostic for finding a cell's working z window. At each z the tool extends
+	empty as a pick does, splays the fingers and records what the gripper reports, then closes
+	the fingers before retracting, so a tray is never withdrawn or dragged. Each z must lie
+	within 5mm of the cell's stored z. Moves hardware; does not save calibration.
+	"""
+	await ensure_laser_auto_calibration_not_running()
+
+	worker = await get_robot_worker_or_503()
+
+	_ensure_ready(worker)
+
+	location = _build_test_location(request)
+	grid = worker._robot._grid
+
+	await _ensure_cell_is_testable(grid, location)
+
+	try:
+		coordinate = _build_coordinate_for_location(grid, location)
+	except (IndexError, ValueError, Exception) as exc:
+		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+	far = [z for z in request.z_offsets if abs(float(z) - float(coordinate.z_offset)) > GRIP_PROBE_MAX_DEVIATION_MM]
+
+	if far:
+		raise HTTPException(
+			status_code=status.HTTP_400_BAD_REQUEST,
+			detail=f"z offsets {far} are more than {GRIP_PROBE_MAX_DEVIATION_MM:.0f}mm from the cell's {coordinate.z_offset:.2f}",
+		)
+
+	tool = worker._robot._tool
+	target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
+	points: list[GripProbePoint] = []
+
+	async with manual_motion_guard("calibration_grip_probe", worker=worker):
+		try:
+			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			await tool.retract()
+			await tool._gs.safe_open()
+			await tool.move(coordinate)
+			await tool.rotate_to_position(target_position)
+
+			for z_offset in request.z_offsets:
+				probe = AxisCoordinate(x=coordinate.x, y=coordinate.y, s=coordinate.s, z_offset=float(z_offset))
+				await tool.extend_empty(probe)
+				try:
+					state = await tool._gs.open()
+				finally:
+					# Release before any retract: splayed fingers would drag the tray out with the tool.
+					await tool._gs.close()
+				await tool.retract_empty()
+				points.append(
+					GripProbePoint(
+						z_offset=float(z_offset),
+						gripped=bool(state.gripped),
+						object=state.obj.name,
+						position=int(state.position),
+						current=int(state.current),
+						state=str(state),
+					)
+				)
+		except (MotorError, HardwareMotorError, ToolError) as e:
+			await _raise_motor_error(worker, f"Grip probe failed after {len(points)} points: {str(e)}", e)
+
+	return points
+
+
 @router.post(
     "/test/cycle",
     dependencies=[ROBOT_CONTROL],
