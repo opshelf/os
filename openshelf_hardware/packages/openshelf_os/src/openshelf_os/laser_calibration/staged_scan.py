@@ -900,6 +900,7 @@ def apply_wall_depth_z_offsets(
 	z_delta_mm: float,
 	z_delta_slope_per_mm: float = 0.0,
 	detected_cell_key_map: dict[tuple[int, int], tuple[int, int]] | None = None,
+	shelf_intercepts: list[tuple[float, float]] | None = None,
 	) -> None:
 	metadata_file = Path(metadata_path)
 
@@ -956,7 +957,12 @@ def apply_wall_depth_z_offsets(
 				missing_cells.append(f"{output_key[0]}:{output_key[1]}")
 				continue
 
-			cell_delta_mm = float(z_delta_mm) + float(z_delta_slope_per_mm) * float(cell.calibration_point.x)
+			cell_intercept_mm = z_intercept_for_y(
+				intercept_mm=float(z_delta_mm),
+				shelf_intercepts=shelf_intercepts,
+				y_mm=float(cell.calibration_point.y),
+			)
+			cell_delta_mm = cell_intercept_mm + float(z_delta_slope_per_mm) * float(cell.calibration_point.x)
 			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + cell_delta_mm
 			updated_cell_count += 1
 
@@ -969,8 +975,8 @@ def apply_wall_depth_z_offsets(
 
 	print_status(
 		f"z_offset_inference=applied intercept_mm={float(z_delta_mm):.3f} "
-		f"slope_per_mm={float(z_delta_slope_per_mm):.5f} updated_cells={updated_cell_count} "
-		f"preserved_cells={preserved_cell_count}"
+		f"slope_per_mm={float(z_delta_slope_per_mm):.5f} shelf_intercepts={len(shelf_intercepts or [])} "
+		f"updated_cells={updated_cell_count} preserved_cells={preserved_cell_count}"
 	)
 
 
@@ -1203,6 +1209,7 @@ def apply_single_shelf_analysis(
 	target_shelf_idx: int,
 	z_delta_override_mm: float | None = None,
 	z_delta_slope_per_mm: float = 0.0,
+	shelf_intercepts: list[tuple[float, float]] | None = None,
 	) -> None:
 	if len(analysis.shelves) == 0:
 		raise ValueError("No tray openings detected from scan")
@@ -1304,6 +1311,7 @@ def apply_single_shelf_analysis(
 			metadata_path=str(analysis.metadata_path),
 			z_delta_mm=z_delta_override_mm,
 			z_delta_slope_per_mm=z_delta_slope_per_mm,
+			shelf_intercepts=shelf_intercepts,
 			**z_apply_kwargs,
 		)
 	else:

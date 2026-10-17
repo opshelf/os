@@ -44,6 +44,9 @@ Z_OFFSET_MODEL_PARAM_TOLERANCE_MM = 0.2
 # Z stall anchor probe: drive z down until the gripper pin stalls against the tray.
 Z_STALL_PROBE_START_MM = 5.0
 Z_STALL_PROBE_FAST_APPROACH_MM = 130.0
+# How far short of the laser-predicted contact a predicted approach stops, at place speed, before
+# creeping. Shelves have differed from the trusted intercept by up to ~2mm (lb4a-3, 2026-10-17).
+Z_STALL_PROBE_APPROACH_MARGIN_MM = 6.0
 Z_STALL_PROBE_TARGET_MM = 180.0
 Z_STALL_PROBE_STEP_MM = 0.5
 Z_STALL_PROBE_RPM = 20

@@ -199,6 +199,7 @@ async def probe_z_until_stall(
 	fast_approach_rpm: int | None,
 	auto_retract: bool = True,
 	should_abort: Callable[[], bool] | None = None,
+	retract_rpm: int | None = None,
 ) -> tuple[bool, float, str, int | None]:
 	"""Creep the Z/gripper axis (``tool._mg``) toward a wall until it gently stalls.
 
@@ -231,7 +232,7 @@ async def probe_z_until_stall(
 			await tool._mg.clear_alarm()
 
 			if auto_retract is True:
-				await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm)
+				await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm if retract_rpm is None else retract_rpm)
 
 			# A fault during the RAPID approach is an obstruction, not a wall: the fast
 			# segment stops short of any wall by design, so nothing should be in the way.
@@ -272,7 +273,7 @@ async def probe_z_until_stall(
 				await tool._mg.clear_alarm()
 
 				if auto_retract is True:
-					await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm)
+					await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm if retract_rpm is None else retract_rpm)
 
 				return True, float(z_position_mm), 'alarm', int(alarm_code)
 
@@ -288,7 +289,7 @@ async def probe_z_until_stall(
 				await tool._mg.clear_alarm()
 
 				if auto_retract is True:
-					await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm)
+					await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm if retract_rpm is None else retract_rpm)
 
 				return True, float(z_position_mm), 'no_progress', alarm_code
 
@@ -299,13 +300,13 @@ async def probe_z_until_stall(
 				await tool._mg.clear_alarm()
 
 				if auto_retract is True:
-					await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm)
+					await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm if retract_rpm is None else retract_rpm)
 
 				return False, float(z_position_mm), 'timeout', alarm_code
 
 	z_position_mm = await tool._mg.get_position()
 
 	if auto_retract is True:
-		await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm)
+		await tool._mg.move_to_position(retract_z_mm, rpm=probe_rpm if retract_rpm is None else retract_rpm)
 
 	return False, float(z_position_mm), 'limit', None

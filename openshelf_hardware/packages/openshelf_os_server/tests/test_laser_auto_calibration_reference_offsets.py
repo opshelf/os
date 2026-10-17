@@ -421,33 +421,90 @@ def _build_z_worker(*, grid: StorageGrid | None = None) -> SimpleNamespace:
 	return SimpleNamespace(_robot=robot)
 
 
+def _per_shelf_probe(*, datum_delta_mm: float, upper_delta_mm: float) -> "laser_module.ZStallResult":
+	def sample(shelf_idx: int, probe_y_mm: float, delta_mm: float) -> ZStallSample:
+		return ZStallSample(
+			shelf_idx=shelf_idx,
+			cell_idx=0,
+			probe_x_mm=DETECTED_TOOL_X_MM + 20.0,
+			probe_y_mm=probe_y_mm,
+			wall_depth_mm=MANUAL_WALL_DEPTH_MM,
+			z_contact_mm=168.0,
+			z_contact_repeat_mm=168.1,
+			delta_mm=delta_mm,
+			reason="alarm",
+		)
+
+	return ZStallResult(
+		side=StorageModuleSide.FRONT,
+		intercept_mm=datum_delta_mm,
+		slope_per_mm=0.0,
+		fit_source="constant",
+		stage_extension_mm=47.0,
+		z_place_mm=160.5,
+		rotation_center_deg=183.0,
+		samples=[
+			sample(0, MANUAL_Y_MM, datum_delta_mm),
+			sample(SECOND_SHELF_IDX, SECOND_SHELF_MANUAL_Y_MM, upper_delta_mm),
+		],
+	)
+
+
+async def _resolve_probed(manager, scan_config, probed):
+	config = _build_root_config(scan_config)
+
+	with patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config):
+		with patch.object(laser_module, "run_z_stall_anchor", AsyncMock(return_value=probed)):
+			return await manager._resolve_z_delta_model(
+				_build_z_worker(),
+				StorageModuleSide.FRONT,
+				_build_analysis(include_second_shelf=True),
+				scan_config,
+				source_grid=_build_source_grid(),
+				manual_reference=_build_manual_reference(captured_stage_mm=47.0),
+			)
+
+
 @pytest.mark.asyncio
-async def test_z_stall_refuses_a_probe_the_datum_does_not_corroborate() -> None:
+async def test_z_stall_gives_every_shelf_its_own_intercept_zeroed_on_the_datum() -> None:
+	"""lb4a-3: the upper shelves met the gripper ~1.8mm earlier than the floor datum, unseen by the laser."""
 	manager = LaserAutoCalibrationManager()
 	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
 	scan_config.z_stall_anchor_enabled = True
-	config = _build_root_config(scan_config)
-	worker = _build_z_worker()
-	probed = _build_z_stall_result(intercept_mm=MANUAL_INTERCEPT_MM - 4.0)
+	scan_config.z_stall_probe_x_shift_mm = 20.0
+	# The probe reads 0.3mm deep everywhere; the datum's own probe takes that out of every shelf.
+	probed = _per_shelf_probe(datum_delta_mm=MANUAL_INTERCEPT_MM - 0.3, upper_delta_mm=MANUAL_INTERCEPT_MM - 2.1)
 
-	with patch(
-		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
-		return_value=config,
-	):
-		with patch.object(laser_module, "run_z_stall_anchor", AsyncMock(return_value=probed)):
-			with pytest.raises(ValueError, match="shallower than the"):
-				await manager._resolve_z_delta_model(
-					worker,
-					StorageModuleSide.FRONT,
-					_build_analysis(),
-					scan_config,
-					source_grid=_build_source_grid(),
-					manual_reference=_build_manual_reference(),
-				)
+	intercept_mm, _, shelf_intercepts = await _resolve_probed(manager, scan_config, probed)
 
-	# Nothing was written, and the failed fit is still visible in the snapshot.
+	assert intercept_mm == pytest.approx(MANUAL_INTERCEPT_MM)
+	assert sorted(shelf_intercepts) == [
+		(pytest.approx(MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM)),
+		(pytest.approx(SECOND_SHELF_MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM - 1.8)),
+	]
+	installed = scan_config.front_wall_depth_to_gripper_z_model
+	assert [(entry.y_mm, entry.intercept_mm) for entry in installed.shelf_intercepts] == [
+		(pytest.approx(MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM)),
+		(pytest.approx(SECOND_SHELF_MANUAL_Y_MM), pytest.approx(MANUAL_INTERCEPT_MM - 1.8)),
+	]
+	assert laser_module.z_intercept_for_y(
+		intercept_mm=intercept_mm, shelf_intercepts=shelf_intercepts, y_mm=SECOND_SHELF_MANUAL_Y_MM + 3.0
+	) == pytest.approx(MANUAL_INTERCEPT_MM - 1.8)
+
+
+@pytest.mark.asyncio
+async def test_z_stall_refuses_a_probe_that_disagrees_with_the_datum_it_was_pressed_beside() -> None:
+	manager = LaserAutoCalibrationManager()
+	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
+	scan_config.z_stall_anchor_enabled = True
+	scan_config.z_stall_probe_x_shift_mm = 20.0
+	probed = _per_shelf_probe(datum_delta_mm=MANUAL_INTERCEPT_MM - 1.6, upper_delta_mm=MANUAL_INTERCEPT_MM - 1.6)
+
+	with pytest.raises(ValueError, match="probe beside the hand-calibrated datum implies an intercept 1.60mm"):
+		await _resolve_probed(manager, scan_config, probed)
+
+	# Nothing was installed, and the measurement still reached the operator.
 	assert scan_config.front_wall_depth_to_gripper_z_model is None
-	assert len(manager._snapshot.z_stall_results) == 1
 	assert manager._snapshot.z_stall_results[0].persisted is False
 
 
@@ -544,46 +601,3 @@ def test_start_refuses_a_datum_rescan_whose_stamp_cannot_be_carried(scope, z_sta
 				manager._validate_z_offset_sources(scope, worker)
 		else:
 			manager._validate_z_offset_sources(scope, worker)
-
-
-@pytest.mark.asyncio
-async def test_z_stall_refuses_a_probed_slope_the_datum_cannot_corroborate() -> None:
-	"""Intercepts that agree are not enough: the datum speaks for the model that is installed.
-
-	The datum intercept carries the configured slope, so a probe-fitted tilt that differs from it
-	tilts the installed model away from the datum cell by `(S_probe - S_cfg) * x`. Here both
-	intercepts are identical and the model still misses the datum by 0.005 * MANUAL_X_MM.
-	"""
-	manager = LaserAutoCalibrationManager()
-	scan_config = _build_scan_config(xy_offset=CONFIGURED_OFFSET)
-	scan_config.z_stall_anchor_enabled = True
-	scan_config.front_wall_depth_to_gripper_z_model = SimpleNamespace(
-		intercept_mm=MANUAL_INTERCEPT_MM,
-		x_slope_mm_per_mm=0.0,
-		reference_stage_mm=47.0,
-		reference_z_place_mm=160.5,
-	)
-	config = _build_root_config(scan_config)
-	worker = _build_z_worker()
-	probed = _build_z_stall_result(intercept_mm=MANUAL_INTERCEPT_MM, slope_per_mm=0.005, x_span_mm=500.0)
-
-	with patch(
-		"openshelf_os_server.core.laser_auto_calibration.get_root_config",
-		return_value=config,
-	):
-		with patch.object(laser_module, "run_z_stall_anchor", AsyncMock(return_value=probed)):
-			with pytest.raises(ValueError, match="tolerance"):
-				await manager._resolve_z_delta_model(
-					worker,
-					StorageModuleSide.FRONT,
-					_build_analysis(),
-					scan_config,
-					source_grid=_build_source_grid(),
-					manual_reference=_build_manual_reference(),
-				)
-
-	published = manager._snapshot.z_stall_results[0]
-
-	assert published.manual_agreement_mm == pytest.approx(0.005 * MANUAL_X_MM)
-	assert published.applied is False
-	assert published.persisted is False

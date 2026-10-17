@@ -210,6 +210,17 @@ def _require_stage_carry(
 		)
 
 
+def stamped_datum_y_mm(result: ReferenceOffsetResult | None) -> float:
+	"""Grab y of the stamped hand-calibrated cells (their median), where the datum intercept applies."""
+	ys = [
+		float(sample.manual_y_mm)
+		for sample in ([] if result is None else result.samples)
+		if sample.derived_intercept_mm is not None and sample.z_captured_stage_mm is not None
+	]
+
+	return float(median(ys)) if ys else 0.0
+
+
 def stamped_datum_intercept_mm(result: ReferenceOffsetResult | None) -> float | None:
 	"""The z intercept the hand-calibrated cells imply at the live stage, or None without one.
 
