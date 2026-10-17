@@ -50,10 +50,12 @@ REFERENCE_MATCH_WINDOW_MM = 25.0
 # the derivation refuses rather than averaging a bad datum into every cell.
 REFERENCE_MAX_SPREAD_MM = 1.5
 
-# How far a stamped z may be carried to the live stage extension. Covers extension-recalibration
-# drift of a few mm, far below the retract position (~3mm) a z jogged with the stage pulled back
-# was captured at, which would put the derived intercept tens of millimetres off.
-REFERENCE_Z_MAX_STAGE_CARRY_MM = 5.0
+# How far a stamped z may be carried to the live stage extension. The carry is exact for the
+# sub-millimetre drift an extension recalibration causes. A larger gap means the stamp no longer
+# describes the z that works: lb4a-3's datum kept a 47.875mm stamp after the shelf extension moved
+# to 46mm and its z was re-validated there, and carrying it put every derived cell 1.9mm too deep.
+# Refused, the operator re-saves the datum's z at the current extension instead.
+REFERENCE_Z_MAX_STAGE_CARRY_MM = 1.0
 
 # The bottom-left opening of each side is where the reference frame is anchored: an operator
 # jogs the gripper onto that one cell by hand and every derived value is measured from it, so a
@@ -201,7 +203,7 @@ def _require_stage_carry(
 		raise ValueError(
 			f"reference z: the {side.value} reference cell {shelf_idx}:{cell_idx} "
 			f"had its z saved at stage extension {captured_stage_mm:.2f}mm, but the live stage "
-			f"extension is {live_stage_mm:.2f}mm (more than {REFERENCE_Z_MAX_STAGE_CARRY_MM:.0f}mm "
+			f"extension is {live_stage_mm:.2f}mm (more than {REFERENCE_Z_MAX_STAGE_CARRY_MM:.1f}mm "
 			"apart, so it cannot be carried); in cell calibration extend the stage to the shelf "
 			"extension, jog that cell's z onto the tray (the stage is recorded only when the z "
 			"changes) and save it"
