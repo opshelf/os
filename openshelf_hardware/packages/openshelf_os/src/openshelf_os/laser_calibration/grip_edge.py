@@ -27,7 +27,8 @@ GRIP_EDGE_SEARCH_ABOVE_MM = 1.0
 GRIP_EDGE_COARSE_STEP_MM = 1.0
 GRIP_EDGE_FINE_STEP_MM = 0.25
 # Just past the edge is the flat of the hook that seats the tray; further in, the hook only pushes.
-GRIP_EDGE_TARGET_MARGIN_MM = 1.0
+# lb4a-3 F0:0 (edge 5.5): 6.5 picked but less cleanly than 7.0.
+GRIP_EDGE_TARGET_MARGIN_MM = 1.5
 
 
 @dataclass
