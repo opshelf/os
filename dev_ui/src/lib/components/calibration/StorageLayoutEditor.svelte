@@ -1,3 +1,11 @@
+<script lang="ts" module>
+	// Module scope so a remounted editor never re-toasts a queue outcome already reported.
+	let finalizedTestQueueJobId: string | null = null;
+	// A followed queue whose outcome is not yet reported (cleared on report), so a remounted
+	// editor can report the outcome or interruption of a queue it followed before unmounting.
+	let lastFollowedTestQueueJobId: string | null = null;
+</script>
+
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
@@ -57,9 +65,18 @@
 	// /calibration/test/queue) so a frozen or throttled background tab cannot stall it;
 	// this component only observes progress events and toasts the outcome. store/retrieve
 	// still walk the selection client-side, one durable command per cell.
-	let testRunning = $state<boolean>(false);
-	let testAborting = $state<boolean>(false);
-	let activeTestQueueJobId = $state<string | null>(null);
+	// Each fact has one kind of writer; busy/abort state is derived, never assigned, so a
+	// followed queue and a local store/retrieve walk cannot clobber each other.
+	let followedQueueJobId = $state<string | null>(null);
+	let isStartingTestQueue = $state<boolean>(false);
+	let clientWalkRunning = $state<boolean>(false);
+	let queueAborting = $state<boolean>(false);
+	let walkAborting = $state<boolean>(false);
+	const testRunning = $derived(followedQueueJobId !== null || isStartingTestQueue || clientWalkRunning);
+	const testAborting = $derived(
+		((followedQueueJobId !== null || isStartingTestQueue) && queueAborting) ||
+			(clientWalkRunning && walkAborting)
+	);
 	let isMovingToCell = $state<boolean>(false);
 
 	const selectedSide = $derived.by(
@@ -1091,6 +1108,11 @@
 		}
 		const stream = createReconnectingEventSource({
 			path: '/robot/events',
+			// A reconnect resumes at the live tip, so re-read the snapshot to catch a
+			// terminal state published during the gap.
+			onOpen: () => {
+				void syncTestQueue();
+			},
 			onMessage: (event) => {
 				try {
 					const data = JSON.parse(event.data);
@@ -1239,18 +1261,57 @@
 		mode: 'quick' | 'cycle',
 		queue: Array<{ shelf: number; cell: Cell }>
 	): Promise<void> {
+		// Busy before the POST so a second click cannot issue a second start.
+		isStartingTestQueue = true;
+		queueAborting = false;
 		try {
 			const snapshot = await startCalibrationTestQueue(
 				selectedSide,
 				mode,
 				queue.map((target) => ({ shelf_idx: target.shelf, cell_idx: target.cell.cell_idx }))
 			);
-			activeTestQueueJobId = snapshot.job_id;
-			testRunning = true;
-			testAborting = false;
+			// The terminal event can land before the POST resolves (first cell fails fast).
+			if (snapshot.job_id !== null && snapshot.job_id === finalizedTestQueueJobId) {
+				isStartingTestQueue = false;
+				queueAborting = false;
+				return;
+			}
+			followedQueueJobId = snapshot.job_id;
+			lastFollowedTestQueueJobId = snapshot.job_id;
+			isStartingTestQueue = false;
+			if (snapshot.state !== 'running') {
+				didReceiveTestQueueEvent(snapshot);
+			} else if (queueAborting) {
+				// Abort was clicked while the start POST was in flight.
+				requestTestQueueAbort();
+			}
 		} catch (err) {
+			isStartingTestQueue = false;
+			queueAborting = false;
 			postToast('error', err instanceof Error ? err.message : 'failed to start test queue');
+			void syncTestQueue();
 		}
+	}
+
+	// Adopt a queue started from another tab, before a reload, or while unmounted; an
+	// in-flight start keeps its remembered abort and adopts its own job from the POST.
+	function adoptRunningTestQueue(jobId: string | null): void {
+		if (jobId === null || jobId === followedQueueJobId || isStartingTestQueue) {
+			return;
+		}
+		if (
+			followedQueueJobId !== null ||
+			(lastFollowedTestQueueJobId !== null && lastFollowedTestQueueJobId !== jobId)
+		) {
+			// The server runs one queue at a time: the followed one (possibly before a remount)
+			// ended unseen; its outcome is unknown.
+			followedQueueJobId = null;
+			queueAborting = false;
+			postToast('error', 'test queue interrupted - api or server restarted');
+		}
+		followedQueueJobId = jobId;
+		lastFollowedTestQueueJobId = jobId;
+		queueAborting = false;
 	}
 
 	function didReceiveTestQueueEvent(payload: unknown): void {
@@ -1260,44 +1321,90 @@
 		const event = payload as Record<string, unknown>;
 		const state = event.state;
 		const jobId = typeof event.job_id === 'string' ? event.job_id : null;
-		if (state === 'running') {
-			// Adopt a queue started from another tab or before a reload.
-			if (activeTestQueueJobId === null) {
-				activeTestQueueJobId = jobId;
-				testRunning = true;
-				testAborting = false;
+		if (jobId !== null && jobId === finalizedTestQueueJobId) {
+			// Finalized (and toasted) by another instance, e.g. an unmounted one's in-flight sync.
+			if (jobId === followedQueueJobId) {
+				followedQueueJobId = null;
+				queueAborting = false;
 			}
+			if (jobId === lastFollowedTestQueueJobId) {
+				lastFollowedTestQueueJobId = null;
+			}
+			return;
+		}
+		if (state === 'running') {
+			adoptRunningTestQueue(jobId);
 			return;
 		}
 		if (state !== 'completed' && state !== 'failed' && state !== 'cancelled') {
 			return;
 		}
-		if (activeTestQueueJobId !== null && jobId !== null && jobId !== activeTestQueueJobId) {
+		if (followedQueueJobId !== null && jobId !== null && jobId !== followedQueueJobId) {
 			return;
 		}
 		if (state === 'failed') {
 			const failed = event.failed as Record<string, unknown> | undefined;
-			const label = failed ? `${sideInitialLetter}:${failed.shelf_idx}:${failed.cell_idx}` : 'test';
+			const side =
+				event.side === 'front_module' || event.side === 'back_module'
+					? sideInitialFor(event.side, vocabulary)
+					: sideInitialLetter;
+			const label = failed ? `${side}:${failed.shelf_idx}:${failed.cell_idx}` : 'test';
 			const reason = typeof event.error === 'string' ? `: ${event.error}` : '';
 			postToast('error', `failed at ${label}${reason}`);
 		} else {
 			postToast('status', state === 'cancelled' ? 'test aborted' : 'all tests passed');
 		}
-		activeTestQueueJobId = null;
-		testRunning = false;
-		testAborting = false;
+		finalizedTestQueueJobId = jobId;
+		if (jobId === lastFollowedTestQueueJobId) {
+			lastFollowedTestQueueJobId = null;
+		}
+		followedQueueJobId = null;
+		queueAborting = false;
 	}
 
 	async function syncTestQueue(): Promise<void> {
 		try {
 			const snapshot = await getCalibrationTestQueue();
-			if (snapshot.state === 'running' && activeTestQueueJobId === null) {
-				// Adopt a queue that survived this tab being frozen, reloaded, or reopened.
-				activeTestQueueJobId = snapshot.job_id;
-				testRunning = true;
+			if (
+				followedQueueJobId === null &&
+				lastFollowedTestQueueJobId !== null &&
+				snapshot.job_id !== lastFollowedTestQueueJobId
+			) {
+				// A queue followed before unmounting is gone unreported (server restart or superseded).
+				lastFollowedTestQueueJobId = null;
+				postToast('error', 'test queue interrupted - api or server restarted');
 			}
+			if (snapshot.state === 'running') {
+				if (snapshot.job_id !== finalizedTestQueueJobId) {
+					adoptRunningTestQueue(snapshot.job_id);
+				}
+				return;
+			}
+			if (followedQueueJobId === null) {
+				// A queue followed before unmounting ended while no editor was listening.
+				if (
+					snapshot.job_id !== null &&
+					snapshot.job_id === lastFollowedTestQueueJobId &&
+					snapshot.job_id !== finalizedTestQueueJobId
+				) {
+					didReceiveTestQueueEvent(snapshot);
+				}
+				return;
+			}
+			if (snapshot.job_id === followedQueueJobId) {
+				// The followed queue ended while the stream was down.
+				didReceiveTestQueueEvent(snapshot);
+				return;
+			}
+			// The followed queue is gone (server restart or superseded); its outcome is unknown.
+			if (followedQueueJobId === lastFollowedTestQueueJobId) {
+				lastFollowedTestQueueJobId = null;
+			}
+			followedQueueJobId = null;
+			queueAborting = false;
+			postToast('error', 'test queue interrupted - api or server restarted');
 		} catch {
-			// A failed read only hides the running indicator until the next event or reopen.
+			// A failed read only delays catching up until the next reconnect or reopen.
 		}
 	}
 
@@ -1314,11 +1421,11 @@
 			await didStartServerTestQueue(mode, queue);
 			return;
 		}
-		testRunning = true;
-		testAborting = false;
+		walkAborting = false;
+		clientWalkRunning = true;
 		try {
 			for (const target of queue) {
-				if (testAborting) {
+				if (walkAborting) {
 					break;
 				}
 				const cellLabel = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
@@ -1329,24 +1436,32 @@
 				}
 			}
 			// One summary toast per walk: a failure returned above with its own toast.
-			postToast('status', testAborting ? 'test aborted' : 'all tests passed');
+			postToast('status', walkAborting ? 'test aborted' : 'all tests passed');
 		} finally {
-			testRunning = false;
+			clientWalkRunning = false;
+			walkAborting = false;
 		}
 	}
 
 	function didAbortTest(): void {
-		if (testRunning === false) {
-			return;
+		if (followedQueueJobId !== null) {
+			queueAborting = true;
+			requestTestQueueAbort();
+		} else if (isStartingTestQueue) {
+			// didStartServerTestQueue issues the abort once the POST resolves.
+			queueAborting = true;
+		} else if (clientWalkRunning) {
+			walkAborting = true;
 		}
-		if (activeTestQueueJobId !== null) {
-			testAborting = true;
-			abortCalibrationTestQueue().catch((err) => {
-				postToast('error', err instanceof Error ? err.message : 'failed to abort test queue');
-			});
-			return;
-		}
-		testAborting = true;
+	}
+
+	function requestTestQueueAbort(): void {
+		abortCalibrationTestQueue().catch((err) => {
+			postToast('error', err instanceof Error ? err.message : 'failed to abort test queue');
+			// A 409 usually means the queue already ended; reconcile with the server.
+			queueAborting = false;
+			void syncTestQueue();
+		});
 	}
 
 	// Gantry jog to the selected cell's calibrated x/y (z untouched). Hardware only:
