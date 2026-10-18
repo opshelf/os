@@ -52,7 +52,9 @@ def is_service_process() -> bool:
 def should_enable_sentry(mode: OperatingMode | None = None) -> bool:
     current_mode = mode if mode is not None else get_operating_mode()
 
-    return has_production_traits(current_mode) and current_mode != OperatingMode.mock
+    # Demo devices run real hardware but their errors are not customer incidents;
+    # keep them in local logs. Mock devices do not run hardware at all.
+    return current_mode == OperatingMode.production
 
 
 def has_production_traits(mode: OperatingMode | None = None) -> bool:

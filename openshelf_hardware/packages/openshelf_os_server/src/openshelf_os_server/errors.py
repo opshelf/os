@@ -182,7 +182,14 @@ def _make_mapped_handler(status_code: int, code: str):
 		# These mapped types never reach the 500 fallback, so the server-side
 		# diagnostic they logged before the mapping has to be emitted here.
 		# Client-input and normal-lookup outcomes (422/404) stay unlogged.
-		if code in {"hardware_io", "timeout", "conflict"}:
+		# A conflict is a handled client outcome: keep it out of Sentry, whose
+		# LoggingIntegration turns every ERROR log into an issue event.
+		if code == "conflict":
+			logger.warning(
+				f"{status_code} {code}: {message} "
+				f"(correlation_id={request_correlation_id(request)})",
+			)
+		elif code in {"hardware_io", "timeout"}:
 			logger.error(
 				f"{status_code} {code}: {message} "
 				f"(correlation_id={request_correlation_id(request)})",
