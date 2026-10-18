@@ -71,12 +71,12 @@ def test_migrates_in_place_with_backup_then_noop(tmp_path, v4_config):
     path, raw = _write(tmp_path, "config.json", v4_config)
     changed, changes, backup = apply.migrate_config_file(path)
     assert changed is True
-    assert len(changes) > 1 and changes[-1] == "schema_version: 5 -> 6"
+    assert len(changes) > 1 and changes[-1] == "schema_version: 6 -> 7"
     assert any("front_shelf_scout_x_mm" in c for c in changes)
     assert backup == path.with_name("config.json.schema-v4.bak")
     assert backup.read_bytes() == raw
     migrated = json.loads(path.read_bytes())
-    assert migrated["schema_version"] == 6
+    assert migrated["schema_version"] == 7
     assert "front_shelf_scout_x_mm" in migrated["robot"]["grid"]["scan"]
     assert migrated["storage"]["bins"][0]["home_location"]["side"] == "front_module"
 
@@ -123,7 +123,7 @@ def test_failed_temp_write_leaves_no_backup_and_retries_cleanly(tmp_path, v4_con
     assert changed is True
     assert backup == path.with_name("config.json.schema-v4.bak")
     assert backup.read_bytes() == raw
-    assert json.loads(path.read_bytes())["schema_version"] == 6
+    assert json.loads(path.read_bytes())["schema_version"] == 7
 
 
 def test_failed_backup_write_leaves_no_backup_and_retries_cleanly(tmp_path, v4_config, monkeypatch):
@@ -149,4 +149,4 @@ def test_failed_backup_write_leaves_no_backup_and_retries_cleanly(tmp_path, v4_c
     assert changed is True
     assert backup == path.with_name("config.json.schema-v4.bak")
     assert backup.read_bytes() == raw
-    assert json.loads(path.read_bytes())["schema_version"] == 6
+    assert json.loads(path.read_bytes())["schema_version"] == 7
