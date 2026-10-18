@@ -7,7 +7,7 @@ from openshelf_os.common import RootConfig
 
 MINIMAL_CONFIG_DICT = {
     "name": "test",
-    "schema_version": 6,
+    "schema_version": 7,
     "version": "0.1.0",
     "robot": {
         "tool": {

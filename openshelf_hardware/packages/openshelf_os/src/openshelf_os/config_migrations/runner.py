@@ -12,6 +12,7 @@ from openshelf_os.config_migrations import (
     v004_promote_scan_constants,
     v005_module_side_names,
     v006_multi_item_io_pose,
+    v007_remove_z_stall_probe_keys,
 )
 
 Migration = Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]
@@ -22,6 +23,7 @@ MIGRATIONS: dict[int, Migration] = {
     4: v004_promote_scan_constants.migrate,
     5: v005_module_side_names.migrate,
     6: v006_multi_item_io_pose.migrate,
+    7: v007_remove_z_stall_probe_keys.migrate,
 }
 
 
