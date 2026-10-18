@@ -145,3 +145,28 @@ async def test_pending_admin_user_retry_rejects_a_second_regular_user(
         "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
     )
     assert owner_login.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_pending_admin_user_email_conflict_returns_typed_409(
+    unauthenticated_client: AsyncClient, fresh_device: None
+) -> None:
+    # fresh_device hides the seeded admin as a system user, so the regular-user
+    # check passes and the INSERT hits the unique email constraint. That account
+    # must not be taken over, and the conflict must not leak the raw sqlite error.
+    resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "admin@opshelf.com", "pin": "9876"},
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == {
+        "message": "Administrator account is already created",
+        "code": "conflict",
+    }
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).filter(User.email == "admin@opshelf.com"))
+        admin = result.scalar_one()
+    settings = get_settings()
+    auth_service = AuthService(settings.auth.jwt_secret or "", settings.auth.jwt_algorithm)
+    assert not auth_service.verify_pin("9876", admin.pin_hash)

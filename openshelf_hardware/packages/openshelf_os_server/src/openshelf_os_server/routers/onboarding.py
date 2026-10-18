@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -77,6 +78,22 @@ async def _list_regular_users(db: AsyncSession) -> list[User]:
 		.order_by(User.id)
 	)
 	return list(result.scalars().all())
+
+
+async def _take_over_admin(
+	db: AsyncSession,
+	existing_user: User,
+	request: AdminUserCreate,
+	auth_service: AuthService
+) -> UserResponse:
+	existing_user.pin_hash = str(auth_service.hash_pin(request.pin))
+	existing_user.first_name = request.first_name
+	existing_user.last_name = request.last_name
+	existing_user.is_active = True
+	await db.commit()
+	await db.refresh(existing_user)
+	logger.info("Onboarding admin PIN reset for %s", existing_user.email)
+	return _build_user_response(existing_user)
 
 
 def _onboarding_state_path() -> Path:
@@ -266,14 +283,7 @@ async def create_admin_user(
 			# example because the client was reloaded before it posted /complete. Take
 			# over the interrupted setup instead of stranding the device on a 409 the
 			# wizard cannot get past.
-			existing_user.pin_hash = str(auth_service.hash_pin(request.pin))
-			existing_user.first_name = request.first_name
-			existing_user.last_name = request.last_name
-			existing_user.is_active = True
-			await db.commit()
-			await db.refresh(existing_user)
-			logger.info("Onboarding admin PIN reset for %s", existing_user.email)
-			return _build_user_response(existing_user)
+			return await _take_over_admin(db, existing_user, request, auth_service)
 
 		user = User(
 			email=request.email,
@@ -284,8 +294,27 @@ async def create_admin_user(
 			is_active=True
 		)
 
+		admin_role_id = admin_role.id
 		db.add(user)
-		await db.commit()
+		try:
+			await db.commit()
+		except IntegrityError:
+			# The email is already taken despite the check above (another process, or a
+			# system user the regular-user listing skips). Take over only the same
+			# interrupted admin; anything else is the same conflict as above.
+			await db.rollback()
+			conflict_result = await db.execute(
+				select(User)
+				.options(selectinload(User.role), selectinload(User.access_level))
+				.filter(User.email == request.email)
+			)
+			conflicting_user = conflict_result.scalar_one_or_none()
+			if conflicting_user is None or conflicting_user.is_system or conflicting_user.role_id != admin_role_id:
+				raise HTTPException(
+					status_code=status.HTTP_409_CONFLICT,
+					detail="Administrator account is already created"
+				) from None
+			return await _take_over_admin(db, conflicting_user, request, auth_service)
 		await db.refresh(user)
 
 		user_result = await db.execute(
