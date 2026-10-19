@@ -1221,6 +1221,12 @@ class BinStorageService:
             select(StorageBinItem).where(StorageBinItem.bin_id == tray.id)
         ):
             positions[str(member.item_id)] = member.compartment
+        # An item just taken out stays listed, in case it went back in, but is not presumed inside.
+        taken_out = (
+            latest.item_id
+            if latest and latest.operation == "retrieve" and latest.state == "completed"
+            else None
+        )
         workflow = StorageBinWorkflow(
             id=str(uuid4()),
             operation="return",
@@ -1232,7 +1238,7 @@ class BinStorageService:
             resolution={
                 "candidate_item_ids": [int(i) for i in positions],
                 "candidate_compartments": positions,
-                "confirmed_item_ids": [int(i) for i in positions],
+                "confirmed_item_ids": [int(i) for i in positions if int(i) != taken_out],
             },
         )
         self.session.add(workflow)

@@ -615,3 +615,19 @@ async def test_failed_tray_store_keeps_tray_intent_and_item_stays_deletable():
         await db.refresh(w)
         assert w.item_id is None
         assert w.resolution["deleted_item"]["barcode"] == "123456788009"
+
+
+@pytest.mark.anyio
+async def test_scanned_return_after_a_retrieval_does_not_presume_the_taken_item_inside():
+    """Returning a tray by scan after taking an item must not put that item back by default."""
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        taken = await service.begin("retrieve", items[0], None)
+        await service.transition(taken, "awaiting_operator")
+        await service.close(taken)
+
+        returned = await service.begin_return(trays[0].barcode)
+        contents = {c["id"]: c["confirmed"] for c in (await service.serialize_workflow(returned))["contents"]}
+
+        assert contents == {items[0].id: False, items[1].id: True}
