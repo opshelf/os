@@ -5,6 +5,11 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from openshelf_os.exceptions import (
+    GRIP_DROPPED_CODE,
+    GRIP_IO_BOX_FAILED_CODE,
+    GRIP_PICK_FAILED_CODE,
+)
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.robot.commands import StoreItemCommand
 from openshelf_os_server.core import bin_storage
@@ -467,7 +472,13 @@ def _motion_failure(workflow, command, code):
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     "code,is_recovered",
-    [("execution_error", True), ("command_interrupted", True), ("execution_failed", False)],
+    [
+        ("execution_error", True),
+        ("command_interrupted", True),
+        ("execution_failed", False),
+        (GRIP_DROPPED_CODE, True),
+        (GRIP_IO_BOX_FAILED_CODE, True),
+    ],
 )
 async def test_crash_reset_returns_only_crash_interrupted_trays_home(code, is_recovered):
     async with AsyncSessionLocal() as db:
@@ -489,6 +500,25 @@ async def test_crash_reset_returns_only_crash_interrupted_trays_home(code, is_re
         assert trays[0].status == ("at_home" if is_recovered else "outside")
         assert await service.has_unfinished_motion() is (is_recovered is False)
         # The delivery never reached the operator, so the item is still in the tray.
+        assert (await service.item_bin(items[0].id)).id == trays[0].id
+
+
+@pytest.mark.anyio
+async def test_a_pick_that_never_lifted_the_tray_leaves_no_unfinished_motion():
+    """A failed grip check at the shelf cancels the motion with the tray still at home."""
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        w = await service.begin("retrieve", items[0], None)
+        await service.handle_robot_result(
+            _motion_failure(w, "retrieve_item", GRIP_PICK_FAILED_CODE), FakeWorker()
+        )
+
+        assert w.state == "cancelled"
+        await db.refresh(trays[0])
+        assert trays[0].status == "at_home"
+        assert await service.crash_interrupted_workflows() == []
+        assert await service.has_unfinished_motion() is False
         assert (await service.item_bin(items[0].id)).id == trays[0].id
 
 

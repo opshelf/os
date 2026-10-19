@@ -47,6 +47,7 @@ class WorkerStatus(BaseModel):
     error_queue: List[WorkerError] = Field(default_factory=list)
     is_crashed: bool = False
     crash_reason: Optional[str] = None
+    crash_code: Optional[str] = None
     crash_context: Optional[dict[str, Any]] = None
     is_emergency_stopped: bool = False
     is_emergency_stop_active: bool = False

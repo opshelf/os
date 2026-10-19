@@ -31,6 +31,19 @@ def _record_home_order(tool: Tool) -> list[str]:
 
 
 @pytest.mark.asyncio
+async def test_tool_only_home_leaves_the_gantry_where_it_is():
+    """A reset after a gripper feedback fault re-zeroes the tool without moving the gantry."""
+    tool = _make_tool()
+    tool._mr = AsyncMock()
+    tool._emit_init = lambda *args: None
+    events = _record_home_order(tool)
+
+    await tool.home(axes=["z_axis", "stage", "rotate"])
+
+    assert events == ["z_axis", "stage", "rotate"]
+
+
+@pytest.mark.asyncio
 async def test_isolated_home_keeps_the_provisional_x_home_when_rotate_fails():
     """With the tool angle still unknown a second X home could false-home on the same upright."""
     tool = _make_tool()

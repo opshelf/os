@@ -1,5 +1,12 @@
 """OpenShelf OS Exception Classes"""
 
+# Failure codes shared by the worker event payload, the crash status the operator UI reads, and
+# the tray workflow recovery rules. Each one tells the operator where to look for the tray.
+GRIP_PICK_FAILED_CODE = "grip_pick_failed"
+GRIP_DROPPED_CODE = "grip_dropped"
+GRIP_IO_BOX_FAILED_CODE = "grip_io_box_failed"
+
+
 class OpenshelfError(Exception):
     """Base exception for all OpenShelf OS errors."""
     pass
@@ -23,6 +30,20 @@ class ToolError(OpenshelfError):
 class GripperError(ToolError):
     """Exception raised for gripper-related errors."""
     pass
+
+
+class GripVerificationError(GripperError):
+    """Gripper object feedback did not confirm the expected object during a pick or return.
+
+    The gantry never loses position on this fault, so only the tool motors need homing, plus
+    the IO box door when the tray was in the IO box.
+    failure_code says where the tray was last held, which decides whether the command can be
+    cancelled with inventory untouched and what the operator is asked to confirm.
+    """
+
+    def __init__(self, message: str, *, failure_code: str = GRIP_DROPPED_CODE) -> None:
+        super().__init__(message)
+        self.failure_code = failure_code
 
 class MovementError(ToolError):
     """Exception raised for movement-related errors."""

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, call
 import pytest
 from hardware.servo import GripState
 
+from openshelf_os.exceptions import GRIP_IO_BOX_FAILED_CODE
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.exceptions import GripperError
 from openshelf_os.robot.core import Robot
@@ -46,7 +47,9 @@ async def test_return_tray_requires_grip_before_and_after_retract(grip_obj, retr
     robot, ops = build_robot()
     robot._tool._gs.open.return_value = GripState(grip_obj, 0, 0, 0)
     robot._tool._gs.read_state.return_value = GripState(retract_obj, 0, 0, 0)
-    with pytest.raises(GripperError, match=match):
+    with pytest.raises(GripperError, match=match) as raised:
         await robot.return_tray(AxisCoordinate(10, 20))
+    # The tray is in the IO box here, so the door has to home with the tool.
+    assert raised.value.failure_code == GRIP_IO_BOX_FAILED_CODE
     assert call.close_door() not in ops.mock_calls
     robot._tool.place.assert_not_awaited()

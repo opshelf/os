@@ -37,7 +37,14 @@ from openshelf_os.barcode_service import (
     BarcodeService,
     describe_missing_scanner,
 )
-from openshelf_os.exceptions import MotorError, MovementError, ToolError
+from openshelf_os.exceptions import (
+    GRIP_IO_BOX_FAILED_CODE,
+    GripVerificationError,
+    MotorError,
+    MovementError,
+    ToolError,
+)
+from openshelf_os.tool import TOOL_MOTION_AXES
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +242,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     transformed["is_crashed"] = payload.get("is_crashed", False)
     transformed["crash_reason"] = payload.get("crash_reason")
+    transformed["crash_code"] = payload.get("crash_code")
     transformed["crash_context"] = payload.get("crash_context")
     transformed["is_emergency_stopped"] = payload.get("is_emergency_stopped", False)
     transformed["is_emergency_stop_active"] = payload.get("is_emergency_stop_active", False)
@@ -335,6 +343,7 @@ class RobotWorker:
         self._logger = logging.getLogger(__name__).getChild("worker.guard")
         self._is_crashed: bool = False
         self._crash_reason: Optional[str] = None
+        self._crash_code: Optional[str] = None
         self._crash_context: Optional[dict[str, Any]] = None
         self._is_emergency_stopped: bool = False
         self._emergency_stop_reason: Optional[str] = None
@@ -978,17 +987,32 @@ class RobotWorker:
         except ValueError:
             return
 
-    def clear_crash_state(self) -> None:
+    def clear_crash_state(self, homed_axes: Optional[list[str]] = None) -> None:
+        """Clear the crash state.
+
+        homed_axes limits the needs-home clear to the axes that were actually re-homed, so a
+        tool-only reset cannot clear an un-homed gantry flagged by an earlier power cycle.
+        """
         self._is_crashed = False
         self._crash_reason = None
+        self._crash_code = None
         self._crash_context = None
         if self._safety_motion_blocked is False and self._is_emergency_stopped is False:
             self._robot.release_motion_safety()
-        self.clear_needs_home()
+        if homed_axes is None:
+            self.clear_needs_home()
+        else:
+            self.clear_needs_home_axes(homed_axes)
 
-    def set_crash_state(self, reason: str, context: Optional[dict[str, Any]] = None) -> None:
+    def set_crash_state(
+        self,
+        reason: str,
+        context: Optional[dict[str, Any]] = None,
+        code: Optional[str] = None,
+    ) -> None:
         self._is_crashed = True
         self._crash_reason = reason
+        self._crash_code = code
         self._crash_context = context
 
     def clear_emergency_stop_state(self) -> None:
@@ -1044,13 +1068,36 @@ class RobotWorker:
 
         return None
 
+    def _grip_fault_axes(self, err: GripVerificationError) -> list[str]:
+        """Motors a gripper feedback fault invalidates: the tool, plus the door on an IO box fault.
+
+        A multi-item tray fault leaves the tool in the IO box with the door mid-cycle, so the
+        door homes right after the tool.
+        """
+        if err.failure_code == GRIP_IO_BOX_FAILED_CODE:
+            return [*TOOL_MOTION_AXES, "door"]
+        return list(TOOL_MOTION_AXES)
+
     def set_needs_home(self, reason: str, axes: Optional[list[str]] = None) -> None:
         if axes is None:
             axes = self._infer_needs_home_axes(reason)
+
+        # A wider requirement invalidates the crash code of the fault that set it: a grip code
+        # tells the operator to reset the tool alone, which is wrong once a stop, a power cycle or
+        # a motor fault added axes. The grip path stamps its code after calling this.
+        self._crash_code = None
+
+        was_unattributable = self._needs_home_unknown
         if axes:
             self._needs_home_axes.update(axes)
         else:
             self._needs_home_unknown = True
+
+        if was_unattributable is True and axes:
+            # An unattributable requirement owns the reason: a debug motor home clears the whole
+            # requirement when its reason names the motor it just homed.
+            return
+
         self._needs_home_reason = reason
 
     async def emergency_stop(self, reason: str) -> None:
@@ -1366,8 +1413,9 @@ class RobotWorker:
                 isinstance(command, (HomeCommand, InitializeCommand))
                 and isinstance(result, RobotCommandSuccessful)
             ):
+                homed_axes = command.axes if isinstance(command, HomeCommand) else None
                 if self._is_crashed:
-                    self.clear_crash_state()
+                    self.clear_crash_state(homed_axes)
                     logging.info("Crash state cleared after successful %s", command.command)
 
                 if self._is_emergency_stopped:
@@ -1378,9 +1426,11 @@ class RobotWorker:
                         logging.info("Emergency stop state cleared after successful %s", command.command)
 
                 if self.needs_home() and isinstance(command, HomeCommand):
-                    self.clear_needs_home()
+                    if command.axes is not None:
+                        self.clear_needs_home_axes(list(command.axes))
+                    else:
+                        self.clear_needs_home()
                     logging.info("Needs-home flag cleared after successful homing")
-
             if isinstance(result, RobotCommandSuccessful):
                 payload = result.model_dump(mode="json")
                 payload["command_id"] = operation.command_id if operation is not None else None
@@ -1400,19 +1450,27 @@ class RobotWorker:
         except Exception as err:
             logging.warning("Command execution error: %s", err)
 
+            # Gripper feedback that did not confirm its object is a failed pick, not a broken
+            # machine: the gantry never lost position, so only the tool (plus the IO box door when
+            # the tray was in the IO box) has to home before the operator can resume.
+            is_grip_fault = isinstance(err, GripVerificationError)
+            is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
+            failure_code = err.failure_code if is_grip_fault else "execution_error"
+
             try:
                 await self._publish_command_failure(
                     command,
                     str(err),
                     operation,
-                    code="execution_error",
+                    code=failure_code,
                 )
             except Exception as publish_error:
                 logging.warning("Failed to publish command failure: %s", publish_error)
 
-            is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
-
-            if is_hardware_fault:
+            if is_grip_fault:
+                self.set_needs_home(str(err), axes=self._grip_fault_axes(err))
+                logging.warning("Gripper feedback fault - tool motors need homing: %s", err)
+            elif is_hardware_fault:
                 self.set_needs_home(str(err))
                 logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
 
@@ -1425,7 +1483,7 @@ class RobotWorker:
             stack_trace = traceback.format_exc()
             try:
                 error_context = await self._build_error_context(
-                    err, is_hardware_fault=is_hardware_fault
+                    err, is_hardware_fault=is_hardware_fault and not is_grip_fault
                 )
             except asyncio.CancelledError:
                 if is_hardware_fault:
@@ -1439,10 +1497,21 @@ class RobotWorker:
                 raise
 
             if is_hardware_fault:
-                self.set_crash_state(str(err), context=error_context)
+                self.set_crash_state(
+                    str(err),
+                    context=error_context,
+                    code=failure_code if is_grip_fault else None,
+                )
+
+            if is_grip_fault:
+                error_type = "GripVerification"
+            elif is_hardware_fault:
+                error_type = "HardwareFault"
+            else:
+                error_type = "CommandExecutionError"
 
             worker_error = WorkerError(
-                error_type="HardwareFault" if is_hardware_fault else "CommandExecutionError",
+                error_type=error_type,
                 message=str(err),
                 context=error_context,
                 stack_trace=stack_trace,
@@ -1603,6 +1672,7 @@ class RobotWorker:
             error_queue=list(self._error_queue),
             is_crashed=self._is_crashed,
             crash_reason=self._crash_reason,
+            crash_code=self._crash_code,
             crash_context=self._crash_context,
             is_emergency_stopped=self._is_emergency_stopped,
             is_emergency_stop_active=self._is_estop_active,

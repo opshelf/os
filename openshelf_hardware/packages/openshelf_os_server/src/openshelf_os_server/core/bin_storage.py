@@ -23,6 +23,11 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+from openshelf_os.exceptions import (
+    GRIP_DROPPED_CODE,
+    GRIP_IO_BOX_FAILED_CODE,
+    GRIP_PICK_FAILED_CODE,
+)
 from openshelf_os.robot.commands import DeliverTrayCommand, ReturnTrayCommand
 
 
@@ -63,8 +68,18 @@ TRAY_WALL_THICKNESS_MM = 5.0
 COMPARTMENT_LEEWAY_MM = 2.0
 
 # Robot failure codes that stop operation and open the crash dialog: a hardware fault raised
-# mid-motion, or an emergency stop interrupting the command. Plain command errors do not.
-CRASH_FAILURE_CODES = {"execution_error", "command_interrupted"}
+# mid-motion, an emergency stop interrupting the command, a tray lost between shelf and IO box,
+# or a tray left in the IO box by a failed grip check. Plain command errors do not.
+CRASH_FAILURE_CODES = {
+    "execution_error",
+    "command_interrupted",
+    GRIP_DROPPED_CODE,
+    GRIP_IO_BOX_FAILED_CODE,
+}
+
+# A pick whose grip check failed before anything was lifted: the tray never left its shelf, so
+# cancelling the command leaves inventory as it was and no tray needs operator recovery.
+TRAY_NEVER_LEFT_CODES = {GRIP_PICK_FAILED_CODE}
 
 logger = logging.getLogger(__name__)
 
@@ -944,6 +959,7 @@ class BinStorageService:
         *,
         code: Optional[str] = None,
         tray_moved: bool = True,
+        state: str = "failed",
     ) -> None:
         workflow.error = error
         if code is not None:
@@ -953,7 +969,7 @@ class BinStorageService:
             # Releasing the claim of a motion that never started leaves the tray on its shelf.
             tray.status = "outside" if tray_moved else "at_home"
             tray.gross_weight = None
-        await self.transition(workflow, "failed", error)
+        await self.transition(workflow, state, error)
 
     async def crash_interrupted_workflows(self) -> list[StorageBinWorkflow]:
         """Failed tray motions a crash or emergency stop interrupted, while their tray is still outside.
@@ -1461,11 +1477,14 @@ class BinStorageService:
         if payload.get("command") != expected:
             return False
         if payload.get("message") != "success":
-            await self.fail(
-                workflow,
-                str(payload.get("error") or "Tray motion failed"),
-                code=payload.get("code"),
-            )
+            code = payload.get("code")
+            error = str(payload.get("error") or "Tray motion failed")
+            if code in TRAY_NEVER_LEFT_CODES:
+                # Nothing was lifted, so the command is cancelled: the tray stays home and the
+                # workflow leaves no unfinished motion behind.
+                await self.fail(workflow, error, code=code, tray_moved=False, state="cancelled")
+            else:
+                await self.fail(workflow, error, code=code)
         elif workflow.state == "retrieving_bin":
             await self.transition(workflow, "awaiting_operator")
         else:

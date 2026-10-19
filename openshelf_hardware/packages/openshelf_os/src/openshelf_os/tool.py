@@ -6,7 +6,7 @@ import time
 import openshelf_os.common as c
 
 from enum import Enum
-from typing import Optional, Literal, List, Any, Callable
+from typing import Optional, Literal, List, Any, Callable, Sequence
 from openshelf_os.common import Motor as MotorConfig
 from hardware.controller import SharedModbusController as Controller
 from hardware.laser import LaserSensor
@@ -15,8 +15,8 @@ from hardware.servo import GripState, Servo
 from openshelf_os.common import load_config_file
 from openshelf_os.exceptions import (
     MotorError, ConfigError,
-    GripperError, MovementError,
-    MotorWaitTimeoutError
+    GripperError, GripVerificationError, MovementError, MotorWaitTimeoutError,
+    GRIP_DROPPED_CODE, GRIP_PICK_FAILED_CODE
 )
 
 
@@ -34,6 +34,9 @@ DEFAULT_Z_RETRACT_TARGET_MM = 1.0
 DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM = 5.0
 DEFAULT_ROTATION_Z_MAX_EXTENSION_MM = 5.0
 MAX_PICK_LIFT_MM = 30.0
+# The tool's own axes. A gripper feedback fault leaves the gantry position valid, so a reset
+# after one homes these, plus the IO box door when the tray was in the IO box.
+TOOL_MOTION_AXES: tuple[str, ...] = ("z_axis", "stage", "rotate")
 Y_STARTUP_HOME_CLEARANCE_MM = 10.0
 Y_STARTUP_HOME_PEAK_CURRENT = 30
 
@@ -43,16 +46,30 @@ class RotationHomeOrientation(Enum):
     BACK_MODULE = "back_module"
 
 
-def require_grip(state: GripState, phase: str, *, is_enabled: bool = True) -> None:
+def require_grip(
+    state: GripState,
+    phase: str,
+    *,
+    is_enabled: bool = True,
+    failure_code: str = GRIP_DROPPED_CODE,
+) -> None:
     """Raise unless the gripper reports object contact with no drop.
 
     A machine with gripper.object_detection_enabled false passes is_enabled=False and
-    skips the check.
+    skips the check. failure_code says where the tray was last held, so a pick that never
+    lifted can be cancelled without changing inventory.
     """
     if is_enabled is False:
         return
     if not state.gripped:
-        raise GripperError(f"No grip on {phase}: {state}")
+        raise GripVerificationError(f"No grip on {phase}: {state}", failure_code=failure_code)
+
+
+def rewrap_gripper_fault(error: Exception, message: str) -> Exception:
+    """Re-raise a gripper fault with context, keeping grip feedback apart from servo faults."""
+    if isinstance(error, GripVerificationError):
+        return GripVerificationError(f"{message}: {error}", failure_code=error.failure_code)
+    return GripperError(f"{message}: {error}")
 
 
 def _create_motor_if_enabled(
@@ -452,7 +469,12 @@ class Tool:
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
             await self.extend_empty(coordinate)
-            require_grip(await self._gs.open(), "grip", is_enabled=self.is_grip_detection_enabled)
+            require_grip(
+                await self._gs.open(),
+                "grip",
+                is_enabled=self.is_grip_detection_enabled,
+                failure_code=GRIP_PICK_FAILED_CODE,
+            )
             await self.retract()
             require_grip(await self._gs.read_state(), "retract", is_enabled=self.is_grip_detection_enabled)
 
@@ -460,7 +482,7 @@ class Tool:
             await self._handle_fault(e)
             if isinstance(e, MovementError):
                 raise
-            raise GripperError(f"Pick operation failed: {str(e)}") from e
+            raise rewrap_gripper_fault(e, "Pick operation failed") from e
 
     async def pick_lift_place(
         self,
@@ -481,7 +503,12 @@ class Tool:
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
             await self.extend_empty(coordinate)
-            require_grip(await self._gs.open(), "grip", is_enabled=self.is_grip_detection_enabled)
+            require_grip(
+                await self._gs.open(),
+                "grip",
+                is_enabled=self.is_grip_detection_enabled,
+                failure_code=GRIP_PICK_FAILED_CODE,
+            )
             original_stage_mm = await self._ms.get_position()
             await self._ms.move_to_position(0.0)
             await self._my.move_to_position(coordinate.y + lift_mm)
@@ -495,7 +522,7 @@ class Tool:
             await self._handle_fault(e)
             if isinstance(e, MovementError):
                 raise
-            raise GripperError(f"Pick lift/place operation failed: {str(e)}") from e
+            raise rewrap_gripper_fault(e, "Pick lift/place operation failed") from e
 
     async def place(self, coordinate: c.AxisCoordinate):
         try:
@@ -1531,43 +1558,50 @@ class Tool:
         isolate: bool = False,
         failed_config_motors: Optional[List[Motor]] = None,
         y_pre_home_clearance_mm: Optional[float] = None,
+        axes: Optional[Sequence[str]] = None,
     ) -> None:
         failed_config_motors = failed_config_motors or []
         failed_home_motors: List[Motor] = []
+
+        def should_home(axis: str) -> bool:
+            return axes is None or axis in axes
 
         # X homes twice around rotate. The first home only gives the rotate clearance move real
         # coordinates (after a power loss the drive reads 0 wherever the carriage stands), and
         # with the tool at an unknown angle it can stop on a gantry upright short of the hard
         # stop. The second runs with the tool straight and sets the zero every later move uses.
-        for motor in (self._mg, self._ms, self._mx):
+        for motor, axis in ((self._mg, "z_axis"), (self._ms, "stage"), (self._mx, "x_axis")):
+            if motor is None or should_home(axis) is False:
+                continue
             if isolate is True:
-                if await self._home_step_isolated(motor, failed_config_motors) is False and motor is not None:
+                if await self._home_step_isolated(motor, failed_config_motors) is False:
                     failed_home_motors.append(motor)
-            elif motor is not None:
+            else:
                 await motor.home()
 
         did_home_rotate = False
 
-        if isolate is True:
-            did_home_rotate = await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
-        elif self._mr is not None:
-            await self._home_rotate_sequence()
-            did_home_rotate = True
+        if should_home("rotate"):
+            if isolate is True:
+                did_home_rotate = await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
+            elif self._mr is not None:
+                await self._home_rotate_sequence()
+                did_home_rotate = True
 
-        if did_home_rotate is True and self._mx is not None:
+        if did_home_rotate is True and self._mx is not None and should_home("x_axis"):
             if isolate is True:
                 await self._home_step_isolated(self._mx, failed_config_motors)
             else:
                 await self._mx.home()
 
-        if isolate is True:
-            await self._home_step_isolated(
-                self._my,
-                failed_config_motors,
-                pre_home_clearance_mm=y_pre_home_clearance_mm,
-            )
-        elif self._my is not None:
-            if y_pre_home_clearance_mm is None:
+        if should_home("y_axis") and self._my is not None:
+            if isolate is True:
+                await self._home_step_isolated(
+                    self._my,
+                    failed_config_motors,
+                    pre_home_clearance_mm=y_pre_home_clearance_mm,
+                )
+            elif y_pre_home_clearance_mm is None:
                 await self._my.home()
             else:
                 await self._my.home(
@@ -1635,10 +1669,14 @@ class Tool:
         isolate: bool = False,
         failed_config_motors: Optional[List[Motor]] = None,
         y_pre_home_clearance_mm: Optional[float] = None,
+        axes: Optional[Sequence[str]] = None,
     ) -> None:
         if isolate is False:
             try:
-                await self._home_sequence(y_pre_home_clearance_mm=y_pre_home_clearance_mm)
+                await self._home_sequence(
+                    y_pre_home_clearance_mm=y_pre_home_clearance_mm,
+                    axes=axes,
+                )
             except Exception as e:
                 await self._handle_fault(e)
 

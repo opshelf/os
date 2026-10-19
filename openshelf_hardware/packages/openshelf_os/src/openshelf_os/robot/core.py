@@ -21,7 +21,9 @@ from openshelf_os.serial_ports import (
     MOTOR_PORT_CANDIDATES,
     SCALE_PORT_CANDIDATES,
 )
-from openshelf_os.exceptions import ConfigError as CabinetConfigError, GripperError, MotorError, MovementError, ToolError
+from openshelf_os.exceptions import (
+    ConfigError as CabinetConfigError, GRIP_IO_BOX_FAILED_CODE, MotorError, MovementError, ToolError
+)
 from openshelf_os.iobox import IOBox
 from openshelf_os.laser_calibration.scan import (
     ScanAnalysisResult, ScanBounds, analyze_scan_capture,
@@ -41,7 +43,7 @@ from openshelf_os.storage import (
     StorageGrid, Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation, CellStatus,
     StorageValidationError,
 )
-from openshelf_os.tool import Tool, require_grip
+from openshelf_os.tool import Tool, require_grip, rewrap_gripper_fault
 
 _GpioManager: Any
 try:
@@ -1201,20 +1203,24 @@ class Robot:
         await self._tool.clear_alarms()
 
     async def _set_tray_grip(self, *, engaged: bool) -> None:
-        """Route tray servo failures through the command hardware-fault interlock."""
+        """Route tray servo failures through the command hardware-fault interlock.
+
+        The tray sits in the IO box here, so a failed grip check leaves it there: the operator
+        has to clear the IO box, and the door has to home again with the tool.
+        """
         try:
             if engaged:
                 require_grip(
                     await self._tool._gs.open(),
                     "tray grip",
                     is_enabled=self._tool.is_grip_detection_enabled,
+                    failure_code=GRIP_IO_BOX_FAILED_CODE,
                 )
             else:
                 await self.release_gripper()
         except Exception as exc:
             action = "grip" if engaged else "release"
-            raise GripperError(f"Tray {action} failed: {exc}") from exc
-
+            raise rewrap_gripper_fault(exc, f"Tray {action} failed") from exc
     async def deliver_tray(self, coord: AxisCoordinate) -> None:
         """Leave the entire tray supported in the IO box, with the tool clear."""
         position = await self._tool.get_param("PICKUP_POSITION_MULTI_ITEM")
@@ -1266,9 +1272,10 @@ class Robot:
                 await self._tool._gs.read_state(),
                 "tray retract",
                 is_enabled=self._tool.is_grip_detection_enabled,
+                failure_code=GRIP_IO_BOX_FAILED_CODE,
             )
         except Exception as exc:
-            raise GripperError(f"Tray retract grip verification failed: {exc}") from exc
+            raise rewrap_gripper_fault(exc, "Tray retract grip verification failed") from exc
         self.set_operation_context(phase="return_tray.close_door")
         await self._io.close_door()
         self.set_operation_context(phase="return_tray.place_at_home", target_coordinate=coord)
@@ -1581,8 +1588,9 @@ class Robot:
                 await self.idle()
                 result = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, HomeCommand):
-                await self._tool.home()
-                await self._io.home_door()
+                await self._tool.home(axes=command.axes)
+                if command.axes is None or "door" in command.axes:
+                    await self._io.home_door()
                 result = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, MoveCommand):
                 self.set_operation_context(command=command_name, phase="move", target_coordinate=command.coordinate)
