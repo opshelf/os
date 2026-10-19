@@ -38,7 +38,7 @@ from openshelf_os_server.core.laser_auto_calibration import (
 	get_laser_auto_calibration_manager,
 )
 from openshelf_os_server.core.manual_motion import manual_motion_guard
-from openshelf_os_server.core.bin_storage import reserved_bin_locations
+from openshelf_os_server.core.bin_storage import is_reserved_bin_location, reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.errors import error_detail, internal_error_detail
 from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, require_permissions_for_stream
@@ -173,6 +173,15 @@ async def _ensure_cell_is_testable(
 			status_code=status.HTTP_400_BAD_REQUEST,
 			detail=str(exc),
 		) from exc
+
+	if cell.status == CellStatus.MAINTENANCE:
+		# Startup marks every registered tray home maintenance to keep automatic storage
+		# out; the tray in it is exactly what these tests exercise.
+		async with AsyncSessionLocal() as session:
+			if await is_reserved_bin_location(
+				(location.side.value, location.shelf_idx, location.cell_idx), session
+			):
+				return cell
 
 	if cell.status in UNTESTABLE_CELL_STATUSES:
 		raise HTTPException(

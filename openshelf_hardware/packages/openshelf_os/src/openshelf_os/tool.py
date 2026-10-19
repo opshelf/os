@@ -61,6 +61,10 @@ def require_grip(
     """
     if is_enabled is False:
         return
+    # Every reading, not only failures: tuning open_position needs the passing margins too.
+    logging.getLogger(__name__).info(
+        "grip_check", extra={"phase": phase, "gripped": state.gripped, "grip_state": str(state)}
+    )
     if not state.gripped:
         raise GripVerificationError(f"No grip on {phase}: {state}", failure_code=failure_code)
 

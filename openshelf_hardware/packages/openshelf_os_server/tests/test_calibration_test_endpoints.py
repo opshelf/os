@@ -106,6 +106,30 @@ async def test_tests_reject_cells_that_are_not_testable(client, endpoint: str, c
 
 
 @pytest.mark.asyncio
+async def test_tray_home_in_maintenance_stays_testable(client) -> None:
+	"""Startup marks tray homes maintenance; their tray must still be testable for grip tuning."""
+	grid = build_grid(is_occupied=False, cell_status=CellStatus.MAINTENANCE)
+	worker = build_worker(grid)
+	tray = SimpleNamespace(
+		barcode='0000000003',
+		home_location=SimpleNamespace(side='front_module', shelf_idx=0, cell_idx=0),
+	)
+	config = SimpleNamespace(storage=SimpleNamespace(bins=[tray]))
+
+	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
+		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
+			with patch('openshelf_os_server.core.bin_storage.get_root_config', return_value=config):
+				response = await client.post(
+					'/api/calibration/test',
+					json={'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 0},
+				)
+
+	assert response.status_code == 200
+	assert worker._robot._tool.pick.await_count == 1
+	assert worker._robot._tool.place.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_cycle_test_retracts_before_the_io_cycle_rotates(client) -> None:
 	"""io_place/io_pick rotate before they retract, so the cycle has to retract up front."""
 	grid = build_grid(is_occupied=True)
