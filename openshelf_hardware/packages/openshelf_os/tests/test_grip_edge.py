@@ -10,9 +10,10 @@ from openshelf_os.storage import StorageModuleSide
 class FakeGripTool:
 	"""Grips from `edge_mm` on, plus one stray grip a multi-item bin's divider can give."""
 
-	def __init__(self, edge_mm: float, stray_mm: float | None = None) -> None:
+	def __init__(self, edge_mm: float, stray_mm: float | None = None, end_mm: float = 99.0) -> None:
 		self.edge_mm = edge_mm
 		self.stray_mm = stray_mm
+		self.end_mm = end_mm
 		self.z_mm = 0.0
 		self.events: list[str] = []
 		self._gs = SimpleNamespace(open=self._open, close=self._close, safe_open=self._close)
@@ -23,7 +24,9 @@ class FakeGripTool:
 
 	async def _open(self):
 		self.events.append("open")
-		gripped = self.z_mm >= self.edge_mm or (self.stray_mm is not None and abs(self.z_mm - self.stray_mm) < 1e-6)
+		gripped = self.edge_mm <= self.z_mm < self.end_mm or (
+			self.stray_mm is not None and abs(self.z_mm - self.stray_mm) < 1e-6
+		)
 		return SimpleNamespace(gripped=gripped)
 
 	async def _close(self):
@@ -155,3 +158,48 @@ async def test_grip_edge_sweep_stops_at_a_refused_datum_before_moving_on() -> No
 
 	assert checked == [None]
 	assert [event for event in tool.events if event.startswith("move")] == ["move x=200"]
+
+
+def _one_cell_analysis():
+	cell = SimpleNamespace(shelf_idx=2, cell_idx=0, center_x_mm=500.0, tool_x_mm=500.0, tool_y_mm=640.0)
+	return SimpleNamespace(shelves=[SimpleNamespace(shelf_idx=2, center_y_mm=640.0, cells=[cell])])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+	("end_mm", "target_mm", "deepest_probe_mm"),
+	[
+		# lb4a-3 F:3:0: grips from 5.25 to ~9.9, so z sits mid-window instead of 1.5mm past the edge.
+		(9.9, 7.25, 10.25),
+		# A narrow window still keeps the least margin past the edge.
+		(7.6, 6.75, 8.25),
+		# A window with no deep end in reach is capped, one probe past the search length.
+		(99.0, 8.25, 11.25),
+	],
+)
+async def test_grip_target_sits_mid_window(end_mm, target_mm, deepest_probe_mm) -> None:
+	tool = FakeGripTool(edge_mm=5.2, end_mm=end_mm)
+	z_seen: list[float] = []
+	original = tool.extend_empty
+
+	async def record(coordinate) -> None:
+		z_seen.append(float(coordinate.z_offset))
+		await original(coordinate)
+
+	tool.extend_empty = record
+
+	result = await run_grip_edge_sweep(
+		tool=tool,
+		analysis=_one_cell_analysis(),
+		wall_depths={(2, 0): 10.0},
+		side=StorageModuleSide.FRONT,
+		xy_offset=None,
+		intercept_mm=-4.0,
+		slope_per_mm=0.0,
+		preferred_cells=set(),
+		excluded_cells=set(),
+	)
+
+	assert result.samples[0].edge_z_mm == pytest.approx(5.25)
+	assert result.samples[0].target_z_mm == pytest.approx(target_mm)
+	assert max(z_seen) == pytest.approx(deepest_probe_mm)

@@ -4,9 +4,13 @@ The laser measures every tray face, but where the gripper's hook-shaped fingers 
 shifts per shelf by several millimetres (lb4a-3: -1.2 to -3.9mm against the wall depth), which no
 single intercept fits. The gripper's own object detection shows it directly: too shallow and the
 fingers splay without catching anything, and from the edge on they grip - deeper still reports a
-grip while the hook drives the tray back, so the edge is the only sharp boundary there is. Each
-probe point extends empty, splays the fingers, reads the result and closes them again before
-retracting, so a tray is never withdrawn.
+grip while the hook drives the tray back. Each probe point extends empty, splays the fingers,
+reads the result and closes them again before retracting, so a tray is never withdrawn.
+
+The grip also has a deep end: further in, the fingers jam far short of their open target, which the
+drive still reports as contact but `GripState.gripped` rejects. A cell's z goes to the middle of the
+window between the two ends, since a tray a person seated sits up to ~1.5mm off where the robot left
+it (lb4a-3, 2026-10-19: a hand-placed tray failed its first pick 1.25mm past the shallow end).
 """
 
 from __future__ import annotations
@@ -27,8 +31,15 @@ GRIP_EDGE_SEARCH_ABOVE_MM = 1.0
 GRIP_EDGE_COARSE_STEP_MM = 1.0
 GRIP_EDGE_FINE_STEP_MM = 0.25
 # Just past the edge is the flat of the hook that seats the tray; further in, the hook only pushes.
-# lb4a-3 F0:0 (edge 5.5): 6.5 picked but less cleanly than 7.0.
+# lb4a-3 F0:0 (edge 5.5): 6.5 picked but less cleanly than 7.0. This is the least a target sits past
+# the edge, and what the datum's hand-set z is checked against.
 GRIP_EDGE_TARGET_MARGIN_MM = 1.5
+# lb4a-3 windows ran 4.5-5.5mm past the edge on every cell (2026-10-19); the deep end is sought at
+# most this far in, one probe past the last grip, so the hook pushes no tray further than that.
+GRIP_WINDOW_SEARCH_MM = 6.0
+GRIP_WINDOW_STEP_MM = 1.0
+# A target never sits deeper than this past the edge, however wide the window looks.
+GRIP_EDGE_TARGET_MAX_MARGIN_MM = 3.0
 # Cells on one shelf differ (lb4a-3 F:3 by 1.25mm), so every cell is measured; after a shelf's first
 # edge the search starts this far short of that edge instead of short of the laser's prediction.
 GRIP_EDGE_SHELF_SEARCH_BELOW_MM = 2.0
@@ -45,6 +56,7 @@ class GripEdgeSample:
 	wall_depth_mm: float
 	edge_z_mm: float
 	target_z_mm: float
+	window_end_z_mm: float | None = None
 
 
 @dataclass
@@ -125,6 +137,39 @@ async def find_grip_edge(
 	return first_grip_mm
 
 
+async def find_last_grip(
+	tool: Any,
+	*,
+	coordinate: Any,
+	edge_mm: float,
+	label: str,
+	should_abort: Callable[[], bool] | None = None,
+) -> float | None:
+	"""The deepest z past edge_mm that still grips before the first miss, or None when every step up
+	to GRIP_WINDOW_SEARCH_MM grips."""
+	last_grip_mm = float(edge_mm)
+	z_mm = last_grip_mm + GRIP_WINDOW_STEP_MM
+
+	while z_mm <= float(edge_mm) + GRIP_WINDOW_SEARCH_MM + 1e-6:
+		raise_if_cancelled(should_abort)
+		gripped = bool((await probe_grip_at(tool, coordinate, z_mm)).gripped)
+		print_status(f"grip_edge={label} z_mm={z_mm:.2f} gripped={gripped} window=true")
+
+		if gripped is False:
+			return last_grip_mm
+
+		last_grip_mm = z_mm
+		z_mm += GRIP_WINDOW_STEP_MM
+
+	return None
+
+
+def grip_target_mm(edge_mm: float, last_grip_mm: float | None) -> float:
+	"""The middle of the grip window, kept between the least and most margin past the edge."""
+	margin_mm = GRIP_EDGE_TARGET_MAX_MARGIN_MM if last_grip_mm is None else (last_grip_mm - edge_mm) / 2.0
+	return edge_mm + min(GRIP_EDGE_TARGET_MAX_MARGIN_MM, max(GRIP_EDGE_TARGET_MARGIN_MM, margin_mm))
+
+
 async def run_grip_edge_sweep(
 	*,
 	tool: Any,
@@ -181,8 +226,8 @@ async def run_grip_edge_sweep(
 				abs(cells.index(cell) - middle),
 			),
 		)
-		# The shelf's own intercept once one cell has shown it: the laser's prediction misses it by
-		# up to ~4mm, a neighbouring tray by ~1mm.
+		# The shelf's own edge intercept once one cell has shown it: the laser's prediction misses it
+		# by up to ~4mm, a neighbouring tray by ~1mm.
 		shelf_intercept_mm: float | None = None
 		misses = 0
 
@@ -207,7 +252,7 @@ async def run_grip_edge_sweep(
 				edge_mm = await find_grip_edge(
 					tool,
 					coordinate=coordinate,
-					start_z_mm=shelf_z_mm - GRIP_EDGE_TARGET_MARGIN_MM - GRIP_EDGE_SHELF_SEARCH_BELOW_MM,
+					start_z_mm=shelf_z_mm - GRIP_EDGE_SHELF_SEARCH_BELOW_MM,
 					max_z_mm=laser_z_mm + GRIP_EDGE_SEARCH_ABOVE_MM,
 					label=f"{key[0]}:{key[1]}",
 					should_abort=should_abort,
@@ -237,8 +282,15 @@ async def run_grip_edge_sweep(
 				)
 			)
 
+			# The datum is checked before the window probes push in any deeper than its edge search.
 			if check_preferred is not None and key in preferred_cells:
 				check_preferred(sample)
+
+			if sample is not None:
+				sample.window_end_z_mm = await find_last_grip(
+					tool, coordinate=coordinate, edge_mm=sample.edge_z_mm, label=f"{key[0]}:{key[1]}", should_abort=should_abort
+				)
+				sample.target_z_mm = grip_target_mm(sample.edge_z_mm, sample.window_end_z_mm)
 
 			if sample is None:
 				misses += 1
@@ -247,10 +299,11 @@ async def run_grip_edge_sweep(
 				continue
 
 			result.samples.append(sample)
-			shelf_intercept_mm = sample.target_z_mm - wall_mm - float(slope_per_mm) * grab_x_mm
+			shelf_intercept_mm = sample.edge_z_mm - wall_mm - float(slope_per_mm) * grab_x_mm
+			last_grip = "none" if sample.window_end_z_mm is None else f"{sample.window_end_z_mm:.2f}"
 			print_status(
-				f"grip_edge=sample cell={key[0]}:{key[1]} wall_mm={wall_mm:.3f} edge_z_mm={edge_mm:.2f} "
-				f"target_z_mm={sample.target_z_mm:.2f}"
+				f"grip_edge=sample cell={key[0]}:{key[1]} wall_mm={wall_mm:.3f} edge_z_mm={sample.edge_z_mm:.2f} "
+				f"last_grip_z_mm={last_grip} target_z_mm={sample.target_z_mm:.2f}"
 			)
 
 	return result

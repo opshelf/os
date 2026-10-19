@@ -240,7 +240,8 @@ class ApplyRunnerMixin:
         The laser sees each tray face, but where the hook-shaped fingers catch the hole shifts per
         shelf (lb4a-3: 1.2-3.9mm against the wall) and by up to 1.25mm between trays on one shelf,
         so one intercept cannot place every cell. Each cell's edge is found with the gripper's
-        object detection (`run_grip_edge_sweep`) and its z is set just past it; each shelf's stored
+        object detection (`run_grip_edge_sweep`) and its z is set mid-way to where the grip gives out
+        deeper in; the datum check compares edge + GRIP_EDGE_TARGET_MARGIN_MM; each shelf's stored
         intercept is its deepest cell's, since the hook tolerates overshoot but not falling short,
         and places what was not measured (single-shelf rescans). The datum's own edge is checked against its hand-set z, which
         refuses the run when they disagree by more than z_stall_manual_agreement_mm. A shelf where
