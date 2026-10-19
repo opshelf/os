@@ -181,99 +181,13 @@ def create_staged_scan_recorder(
 	return recorder
 
 
-def load_staged_scan_recorder(run_dir: Path) -> StagedScanRecorder:
-	return StagedScanRecorder(
-		run_id=run_dir.name,
-		run_dir=run_dir,
-		coarse_depth_path=run_dir / "coarse_depth.npy",
-		metadata_path=run_dir / "metadata.json",
-		run_parameters_path=run_dir / "run_parameters.json",
-		progress_path=run_dir / "progress.json",
-		log_path=run_dir / "scan.log",
-	)
-
 
 # Run directories saved before the front/back cutover recorded the module side as
 # left_module/right_module; map those historical values at read time (in memory only,
 # the saved metadata is not rewritten).
-HISTORICAL_SIDE_NAMES = {"left_module": "front_module", "right_module": "back_module"}
-
-
-def normalize_saved_side(saved_side: str) -> str:
-	return HISTORICAL_SIDE_NAMES.get(saved_side, saved_side)
-
-
-def find_latest_incomplete_run(scans_dir: str) -> StagedScanRecorder:
-	run_dirs: list[Path] = []
-
-	for path in Path(scans_dir).iterdir():
-		try:
-			if path.is_dir() is False:
-				continue
-
-			if (path / "run_parameters.json").exists() is False:
-				continue
-		except PermissionError:
-			continue
-
-		run_dirs.append(path)
-
-	run_dirs = sorted(
-		run_dirs,
-		key=lambda current_path: current_path.stat().st_mtime,
-		reverse=True,
-	)
-
-	for run_dir in run_dirs:
-		recorder = load_staged_scan_recorder(run_dir)
-
-		if recorder.metadata_path.exists() is False:
-			return recorder
-
-		metadata = load_json_file(recorder.metadata_path)
-
-		if metadata.get("status") != "completed":
-			return recorder
-
-	raise FileNotFoundError(f"No incomplete staged scan found in {scans_dir}")
-
-
-def load_continue_scan_context(
-	scans_dir: str,
-) -> tuple[StagedScanRecorder, StorageModuleSide, ScanBounds, float, int, int, int, int]:
-	recorder = find_latest_incomplete_run(scans_dir)
-	run_parameters_document = load_json_file(recorder.run_parameters_path)
-	run_parameters = run_parameters_document["run_parameters"]
-	resolved_parameters = run_parameters["resolved"]
-	side = StorageModuleSide(normalize_saved_side(run_parameters["module"]))
-	bounds = ScanBounds.model_validate(resolved_parameters["bounds"])
-	step_mm = float(resolved_parameters["fine_step_mm"])
-	settle_ms = int(resolved_parameters["settle_ms"])
-	samples_per_point = int(resolved_parameters["samples_per_point"])
-	coarse_settle_ms = int(
-		resolved_parameters.get("coarse_settle_ms", get_coarse_settle_ms(settle_ms))
-	)
-	coarse_samples_per_point = int(
-		resolved_parameters.get(
-			"coarse_samples_per_point",
-			get_coarse_samples_per_point(samples_per_point),
-		)
-	)
-
-	return (
-		recorder,
-		side,
-		bounds,
-		step_mm,
-		settle_ms,
-		samples_per_point,
-		coarse_settle_ms,
-		coarse_samples_per_point,
-	)
-
 
 def load_json_file(path: Path | str) -> dict[str, Any]:
-	# Run metadata carries its path as a str (ScanCaptureResult.metadata_path), so accepting both
+	# Run metadata carries its path as a str (ScanAnalysisResult.metadata_path), so accepting both
 	# here is what keeps the read-back of a saved run from failing on the caller's type.
 	return json.loads(Path(path).read_text(encoding="utf-8"))
 
@@ -458,39 +372,3 @@ def persist_scan_started_at(
 	)
 
 
-def load_depth_rows_from_npy(
-	npy_path: Path,
-	*,
-	expected_row_count: int,
-	expected_column_count: int,
-) -> list[list[float | None]]:
-	depth_array = np.load(npy_path)
-
-	if depth_array.ndim != 2:
-		raise ValueError("--npy must point to a 2D array")
-
-	row_count, column_count = depth_array.shape
-
-	if row_count != expected_row_count or column_count != expected_column_count:
-		raise ValueError(
-			"--npy shape does not match scan bounds "
-			f"(expected {expected_row_count}x{expected_column_count}, got {row_count}x{column_count})"
-		)
-
-	depth_rows: list[list[float | None]] = []
-
-	for row in depth_array:
-		depth_row: list[float | None] = []
-
-		for value in row:
-			float_value = float(value)
-
-			if bool(np.isfinite(float_value)) is True:
-				depth_row.append(float_value)
-				continue
-
-			depth_row.append(None)
-
-		depth_rows.append(depth_row)
-
-	return depth_rows

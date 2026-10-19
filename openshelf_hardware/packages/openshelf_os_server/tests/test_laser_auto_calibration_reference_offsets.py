@@ -354,7 +354,6 @@ def _build_manual_reference(
 		samples=[sample],
 		intercept_mm=intercept_mm,
 		z_captured_stage_mm=captured_stage_mm,
-		z_captured_stage_samples=0 if captured_stage_mm is None else 1,
 		z_stage_extension_mm=captured_stage_mm,
 	)
 

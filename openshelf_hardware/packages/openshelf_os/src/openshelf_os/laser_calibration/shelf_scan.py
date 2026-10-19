@@ -774,19 +774,6 @@ def build_single_cell_rescan_bounds(
 	)
 
 
-def is_point_in_bounds(
-	*,
-	bounds: ScanBounds,
-	x_mm: float,
-	y_mm: float,
-) -> bool:
-	if x_mm < bounds.x_min or x_mm > bounds.x_max:
-		return False
-
-	if y_mm < bounds.y_min or y_mm > bounds.y_max:
-		return False
-
-	return True
 
 def create_empty_grid_scan(
 	*,
@@ -857,27 +844,6 @@ def estimate_wall_depth_from_line(
 
 	return float(np.median(positive_values))
 
-
-def build_line_run_segment(
-	*,
-	positions: list[float],
-	start_idx: int,
-	end_idx: int,
-	step_mm: float,
-) -> LineGapSegment:
-	start_position_mm = float(positions[start_idx])
-	end_position_mm = float(positions[end_idx])
-	start_mm = min(start_position_mm, end_position_mm) - (step_mm / 2.0)
-	end_mm = max(start_position_mm, end_position_mm) + (step_mm / 2.0)
-
-	return LineGapSegment(
-		start_idx=start_idx,
-		end_idx=end_idx,
-		start_mm=start_mm,
-		end_mm=end_mm,
-		width_mm=float(end_mm - start_mm),
-		center_mm=float((start_mm + end_mm) / 2.0),
-	)
 
 
 async def sample_scan_point(

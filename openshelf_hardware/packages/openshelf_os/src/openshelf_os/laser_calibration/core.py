@@ -25,10 +25,8 @@ from openshelf_os.laser_calibration.scan import (
 	ScanAnalysisResult,
 	ScanDetectedCell,
 	ScanDetectedShelf,
-	analyze_scan_capture,
 	build_axis_positions,
 	build_shelves_from_scan,  # noqa: F401 - re-exported for server consumption
-	create_scan_capture,
 )
 import openshelf_os.common as common_module
 import openshelf_os.robot.core as robot_module
@@ -37,7 +35,6 @@ from openshelf_os.storage import StorageGrid, StorageModuleSide
 from openshelf_os.laser_calibration.shelf_scout import (
 	GAP_DEPTH_THRESHOLD_MM,
 	BACK_MODULE_SHELF_SCOUT_X_MM,
-	SHELF_BRIM_MIN_HEIGHT_MM,
 	SHELF_EDGE_CONFIRMATION_COUNT,
 	SHELF_EDGE_TOP_MARGIN_MM,
 	SHELF_MIN_SPACING_MM,
