@@ -1418,7 +1418,9 @@ class Robot:
                 await self.io_pick(coord.to_axis_coordinate())
             self._logger.info("Store: io_pick completed")
             self.set_operation_context(phase="store.grid_update_commit")
-            self._grid.store_item(location, item)
+            # A tray home is a reservation, not inventory: its members are the items, and a
+            # cell item here would list the tray itself as one.
+            self._grid.store_item(location, None if tray else item)
             self._logger.info("Store: command successful for %s at %s", resolved_item_name, location)
             return RobotCommandSuccessful(command=command_name, location=location, barcode=resolved_barcode, weight=weight)
         except (MotorError, MovementError, ToolError) as err:

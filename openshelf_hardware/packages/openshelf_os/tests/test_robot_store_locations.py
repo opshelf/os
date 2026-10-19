@@ -106,3 +106,17 @@ async def test_non_demo_store_rejects_too_small_explicit_location() -> None:
     assert isinstance(result, RobotCommandError)
     assert result.error == "Item does not fit the requested storage cell"
     robot.io_pick.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tray_return_keeps_the_tray_out_of_the_cell_inventory() -> None:
+    """A returned tray must not show up as an inventory item at its home cell."""
+    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
+    grid = build_grid(status=CellStatus.MAINTENANCE)
+    robot = build_store_robot(grid, reserved_locations={("front_module", 0, 0)})
+    robot.return_tray = AsyncMock()
+
+    await robot.store(item_payload("0000000003", location), tray=True)
+
+    robot.return_tray.assert_awaited_once()
+    assert grid.get_cell(location).item is None
