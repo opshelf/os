@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -24,28 +23,11 @@ class ShelfSurfaceEdge:
 SampleDepth = Callable[..., Awaitable[float | None]]
 
 
-def depth_to_label(depth_mm: float | None) -> str:
-	if depth_mm is None:
-		return 'none'
-
-	return f'{depth_mm:.2f}'
-
-
 def is_positive_depth(depth_mm: float | None) -> bool:
 	if depth_mm is None:
 		return False
 
 	return depth_mm > GAP_DEPTH_THRESHOLD_MM
-
-
-def raise_if_cancelled(should_abort: Callable[[], bool] | None = None) -> None:
-	if should_abort is not None and should_abort() is True:
-		raise asyncio.CancelledError()
-
-	current_task = asyncio.current_task()
-
-	if current_task is not None and current_task.cancelling() > 0:
-		raise asyncio.CancelledError()
 
 
 def build_shelf_scout_x_positions(

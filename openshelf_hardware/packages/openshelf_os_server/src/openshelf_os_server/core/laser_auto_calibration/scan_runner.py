@@ -69,9 +69,8 @@ class ScanRunnerMixin:
         scan_config = scan_config_override or config.robot.grid.scan
         base_settle_ms = int(laser_module.get_laser_sample_settle_ms())
         base_samples_per_point = int(laser_module.get_laser_samples_per_point())
-        # Fine and coarse scans both honor the shared settling and sample count. Reducing
-        # either pass to one read defeats the median filter and lets a transient laser reading
-        # erase a narrow wall or move a detected edge by one scan step.
+        # Settling and sample count apply only to standstill probes that fill bins a flying
+        # pass left empty; flown bins ignore them.
         settle_ms = int(laser_module.get_fine_settle_ms(base_settle_ms))
         samples_per_point = int(laser_module.get_fine_samples_per_point(base_samples_per_point))
         coarse_settle_ms = int(laser_module.get_coarse_settle_ms(base_settle_ms))

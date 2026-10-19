@@ -4,8 +4,6 @@ from __future__ import annotations
 from openshelf_os.laser_calibration.defaults import (
 	EXPECTED_HOLE_HEIGHT_MM,
 	EXPECTED_HOLE_WIDTH_MM,
-	HOLE_HEIGHT_TOLERANCE_MM,
-	HOLE_WIDTH_TOLERANCE_MM,
 	MIN_HORIZONTAL_WALL_COVERAGE_MM,
 	MIN_VERTICAL_WALL_COVERAGE_MM,
 	WALL_DEPTH_TOLERANCE_MM,
@@ -918,33 +916,6 @@ def find_detected_cell_for_candidate(
 		matched_distance_mm = distance_mm
 
 	return matched_cell
-
-
-def resolve_target_cell(
-	*,
-	grid: StorageGrid,
-	side: StorageModuleSide,
-	target: SingleCellRescanTarget,
-) -> Any:
-	target_shelf = resolve_target_shelf(
-		grid=grid,
-		side=side,
-		shelf_idx=target.shelf_idx,
-	)
-
-	try:
-		target_cell = target_shelf.get_cell(target.cell_idx)
-	except IndexError as exc:
-		raise ValueError(
-			f"Cell {target.cell_idx} does not exist on {side.value} shelf {target.shelf_idx}"
-		) from exc
-
-	if target_cell.calibration_point is None:
-		raise ValueError(
-			f"Cell {target.shelf_idx}:{target.cell_idx} has no calibration point"
-		)
-
-	return target_cell
 
 
 def resolve_target_shelf(

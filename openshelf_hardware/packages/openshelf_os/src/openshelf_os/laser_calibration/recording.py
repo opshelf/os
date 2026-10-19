@@ -181,11 +181,6 @@ def create_staged_scan_recorder(
 	return recorder
 
 
-
-# Run directories saved before the front/back cutover recorded the module side as
-# left_module/right_module; map those historical values at read time (in memory only,
-# the saved metadata is not rewritten).
-
 def load_json_file(path: Path | str) -> dict[str, Any]:
 	# Run metadata carries its path as a str (ScanAnalysisResult.metadata_path), so accepting both
 	# here is what keeps the read-back of a saved run from failing on the caller's type.
