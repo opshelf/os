@@ -1140,8 +1140,11 @@
 	}
 
 	function didReceiveScannedLabel(barcode: string): void {
-		if (overlayOpen && selectedSingle !== null && trayEnabled) {
+		if (busy === false && overlayOpen && selectedSingle !== null) {
+			trayEnabled = true;
 			trayBarcode = barcode;
+			trayRows = '2';
+			trayCols = '2';
 		}
 	}
 
