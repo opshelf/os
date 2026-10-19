@@ -220,7 +220,7 @@ npm run build
 
 ## config schema migrations
 
-`schema_version` is a top-level positive integer in the config files, independent of the application's `version` string. a missing `schema_version` means **1** (the pre-versioning provisioning schema); the current schema is **7** (`config.schema.CURRENT_SCHEMA_VERSION`). the server auto-migrates the active config file on startup (with an exclusive `.schema-v<N>.bak` rollback backup) and refuses a newer schema before parsing nested config models; device scripts and other offline entry points require the manual command instead. do not fix a startup error by changing only `schema_version`: the old field names would then lose their meaning.
+`schema_version` is a top-level positive integer in the config files, independent of the application's `version` string. a missing `schema_version` means **1** (the pre-versioning provisioning schema); the current schema is **8** (`config.schema.CURRENT_SCHEMA_VERSION`). the server auto-migrates the active config file on startup (with an exclusive `.schema-v<N>.bak` rollback backup) and refuses a newer schema before parsing nested config models; device scripts and other offline entry points require the manual command instead. do not fix a startup error by changing only `schema_version`: the old field names would then lose their meaning.
 
 ### applying a migration
 

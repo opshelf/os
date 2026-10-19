@@ -164,8 +164,6 @@ async def run_staged_scan(
 						tool,
 						bounds=bounds,
 						candidates=candidates,
-						settle_ms=coarse_settle_ms,
-						samples_per_point=coarse_samples_per_point,
 						scan_config=scan_config,
 						coarse_scan=coarse_scan,
 						should_abort=should_abort,
@@ -684,8 +682,6 @@ async def estimate_seeded_candidate_wall_depths(
 	*,
 	bounds: ScanBounds,
 	candidates: list[GapCandidateRegion],
-	settle_ms: int,
-	samples_per_point: int,
 	scan_config: Any,
 	coarse_scan: GridScanResult,
 	should_abort: Callable[[], bool] | None = None,
@@ -707,32 +703,21 @@ async def estimate_seeded_candidate_wall_depths(
 		scan_y_mm = float((candidate.y_min + candidate.y_max) / 2.0)
 		progress_label = f"seeded_wall_depth_{candidate_idx}"
 
-		if get_coarse_scan_style(scan_config) == COARSE_SCAN_STYLE_FLYING:
-			depth_values, seeded_flying_line = await scan_line_positions_flying(
-				tool,
-				axis="x",
-				positions=x_positions,
-				fixed_mm=scan_y_mm,
-				rpm=get_coarse_scan_rpm(scan_config),
-				progress_label=progress_label,
-				should_abort=should_abort,
-				bin_mode=get_coarse_scan_bin_mode(scan_config),
-				capture_latency_s=get_flying_capture_latency_s(scan_config),
-			)
+		depth_values, seeded_flying_line = await scan_line_positions_flying(
+			tool,
+			axis="x",
+			positions=x_positions,
+			fixed_mm=scan_y_mm,
+			rpm=get_coarse_scan_rpm(scan_config),
+			progress_label=progress_label,
+			should_abort=should_abort,
+			bin_mode=get_coarse_scan_bin_mode(scan_config),
+			capture_latency_s=get_flying_capture_latency_s(scan_config),
+		)
 
-			if on_flying_line is not None:
-				on_flying_line(f"{progress_label}_flying", seeded_flying_line)
-		else:
-			depth_values = await scan_line_positions(
-				tool,
-				axis="x",
-				positions=x_positions,
-				fixed_mm=scan_y_mm,
-				settle_ms=settle_ms,
-				samples_per_point=samples_per_point,
-				progress_label=progress_label,
-				should_abort=should_abort,
-			)
+		if on_flying_line is not None:
+			on_flying_line(f"{progress_label}_flying", seeded_flying_line)
+
 		merge_line_scan_into_sparse_scan(
 			coarse_scan,
 			axis="x",

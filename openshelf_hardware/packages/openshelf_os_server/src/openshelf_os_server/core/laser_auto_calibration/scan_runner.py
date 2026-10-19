@@ -14,7 +14,7 @@ def _clamp_bounds_to_axis_travel(bounds: ScanBounds, tool: Any) -> ScanBounds:
 
     The motor clamps such a target to its limit, so every grid position beyond it is probed at
     the limit and recorded as if it were further out, and a flying pass leaves those bins empty
-    for a slow stepped resample of the same spot.
+    for a slow standstill resample of the same spot.
     """
     limits: dict[str, tuple[float, float]] = {}
 

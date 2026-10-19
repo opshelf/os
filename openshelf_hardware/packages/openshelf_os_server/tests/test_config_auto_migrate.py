@@ -77,10 +77,10 @@ def config_file(tmp_path, v4_config, monkeypatch):
 def test_get_root_config_auto_migrates_v4_and_backs_up(config_file):
     path, raw = config_file
     config = settings.get_root_config()
-    assert config.schema_version == 7
+    assert config.schema_version == 8
     assert path.with_name("config.json.schema-v4.bak").read_bytes() == raw
     on_disk = json.loads(path.read_bytes())
-    assert on_disk["schema_version"] == 7
+    assert on_disk["schema_version"] == 8
     assert on_disk["robot"]["tool"]["parameters"]["PICKUP_POSITION_MULTI_ITEM"] == [0, 0]
     assert "front_shelf_scout_x_mm" in on_disk["robot"]["grid"]["scan"]
     assert on_disk["storage"]["bins"][0]["home_location"]["side"] == "front_module"
@@ -97,12 +97,12 @@ def test_existing_backup_confails_startup_and_leaves_file_untouched(config_file,
 def test_future_version_fails_startup_without_touching_file(config_file, monkeypatch):
     path, raw = config_file
     future = json.loads(raw)
-    future["schema_version"] = 8
+    future["schema_version"] = 9
     path.write_bytes(json.dumps(future).encode())
     with pytest.raises(ConfigError, match="newer than supported"):
         settings.get_root_config()
-    assert json.loads(path.read_bytes())["schema_version"] == 8
-    assert not path.with_name("config.json.schema-v8.bak").exists()
+    assert json.loads(path.read_bytes())["schema_version"] == 9
+    assert not path.with_name("config.json.schema-v9.bak").exists()
 
 
 def test_failed_validation_fails_startup_and_leaves_file_untouched(config_file):

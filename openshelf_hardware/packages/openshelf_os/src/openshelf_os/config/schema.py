@@ -2,7 +2,7 @@
 
 from typing import Any
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 MIGRATION_COMMAND = (
     "cd openshelf_hardware && uv run --no-sync python ../scripts/migrate_config.py data --write"
 )

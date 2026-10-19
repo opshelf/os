@@ -9,7 +9,6 @@ SHELF_SCOUT_X_OFFSETS_MM = [0.0]
 BACK_MODULE_SHELF_SCOUT_X_MM = 0.0
 SHELF_EDGE_CONFIRMATION_COUNT = 3
 SHELF_BRIM_MIN_HEIGHT_MM = 8.0
-SHELF_BRIM_MAX_HEIGHT_MM = 13.0
 SHELF_BRIM_HEIGHT_MM = 14.0
 SHELF_MIN_SPACING_MM = 40.0
 SHELF_EDGE_TOP_MARGIN_MM = 5.0
@@ -24,7 +23,6 @@ class ShelfSurfaceEdge:
 
 
 SampleDepth = Callable[..., Awaitable[float | None]]
-StatusPrinter = Callable[[str], None]
 
 
 def depth_to_label(depth_mm: float | None) -> str:
@@ -267,98 +265,3 @@ def build_shelf_edge_stop_predicate(
 		grid_step_mm=grid_step_mm,
 	)
 
-
-async def scan_shelf_scout_line(
-	tool: Any,
-	*,
-	x_mm: float,
-	y_positions: list[float],
-	settle_ms: int,
-	samples_per_point: int,
-	progress_label: str,
-	sample_depth: SampleDepth,
-	print_status: StatusPrinter | None = None,
-	stop_after_first_edge: bool = False,
-	progress_every: int = 25,
-	post_edge_skip_mm: float = SHELF_SCOUT_POST_EDGE_SKIP_MM,
-	brim_max_height_mm: float = SHELF_BRIM_MAX_HEIGHT_MM,
-	should_abort: Callable[[], bool] | None = None,
-) -> tuple[list[float | None], list[ShelfSurfaceEdge]]:
-	if len(y_positions) == 0:
-		return [], []
-
-	raise_if_cancelled(should_abort)
-	await tool._mx.move_to_position_no_wait(x_mm)
-	await tool._my.move_to_position_no_wait(y_positions[0])
-	await tool.gantry_wait(should_abort=should_abort)
-
-	depth_values: list[float | None] = [None for _ in y_positions]
-	detected_edges: list[ShelfSurfaceEdge] = []
-	position_idx = 0
-	sampled_count = 0
-	run_start_idx: int | None = None
-	run_end_idx: int | None = None
-
-	while position_idx < len(y_positions):
-		raise_if_cancelled(should_abort)
-		y_mm = y_positions[position_idx]
-
-		if position_idx > 0:
-			await tool._my.move_to_position_no_wait(y_mm)
-			await tool.gantry_wait(should_abort=should_abort)
-
-		raise_if_cancelled(should_abort)
-		depth_mm = await sample_depth(
-			tool,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-		)
-		depth_values[position_idx] = depth_mm
-		sampled_count += 1
-
-		if print_status is not None:
-			if sampled_count % progress_every == 0 or position_idx + 1 == len(y_positions):
-				print_status(
-					f'{progress_label}={sampled_count}/{len(y_positions)} '
-					f'x={x_mm:.2f} '
-					f'y={y_mm:.2f} '
-					f'depth={depth_to_label(depth_mm)}'
-				)
-
-		if is_positive_depth(depth_mm) is True:
-			if run_start_idx is None:
-				run_start_idx = position_idx
-
-			run_end_idx = position_idx
-			position_idx += 1
-			continue
-
-		if run_start_idx is None or run_end_idx is None:
-			position_idx += 1
-			continue
-
-		edge = build_shelf_edge_for_transition(
-			x_mm=x_mm,
-			transition_y_mm=y_mm,
-			positive_run_length=run_end_idx - run_start_idx + 1,
-		)
-		if edge is not None:
-			detected_edges.append(edge)
-
-			if stop_after_first_edge is True:
-				return depth_values, detected_edges
-
-			skip_target_y_mm = y_mm - post_edge_skip_mm
-
-			while position_idx < len(y_positions) and y_positions[position_idx] > skip_target_y_mm:
-				position_idx += 1
-
-			run_start_idx = None
-			run_end_idx = None
-			continue
-
-		run_start_idx = None
-		run_end_idx = None
-		position_idx += 1
-
-	return depth_values, detected_edges

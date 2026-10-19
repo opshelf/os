@@ -4,7 +4,6 @@ from openshelf_os.laser_calibration import shelf_scout as shared_shelf_scout
 
 GAP_DEPTH_THRESHOLD_MM = shared_shelf_scout.GAP_DEPTH_THRESHOLD_MM
 BACK_MODULE_SHELF_SCOUT_X_MM = shared_shelf_scout.BACK_MODULE_SHELF_SCOUT_X_MM
-SHELF_BRIM_MAX_HEIGHT_MM = shared_shelf_scout.SHELF_BRIM_MAX_HEIGHT_MM
 SHELF_BRIM_MIN_HEIGHT_MM = shared_shelf_scout.SHELF_BRIM_MIN_HEIGHT_MM
 SHELF_EDGE_CONFIRMATION_COUNT = shared_shelf_scout.SHELF_EDGE_CONFIRMATION_COUNT
 SHELF_EDGE_TOP_MARGIN_MM = shared_shelf_scout.SHELF_EDGE_TOP_MARGIN_MM

@@ -15,11 +15,9 @@ from typing import Any, Awaitable, Callable, Iterator, Optional
 from hardware.exceptions import CommunicationError, MotorError
 
 from .core import (
-	COARSE_SCAN_STYLE_FLYING,
 	LineGapSegment,
 	depth_to_label,
 	get_fine_scan_feed_mm_s,
-	get_fine_scan_style,
 	get_flying_capture_latency_s,
 	print_status,
 	raise_if_cancelled,
@@ -204,8 +202,8 @@ def find_depth_threshold_crossings(
 	"""Interpolate every threshold crossing in acquisition order.
 
 	Fine-scan edges are a threshold crossing between a wall reading and a hole reading; the
-	samples either side of it bracket the edge to well under one sample spacing, which is the
-	resolution the stepped scan spends a settle and a move per point to reach.
+	samples either side of it bracket the edge to well under one sample spacing, a resolution a
+	point-by-point scan would spend a settle and a move per point to reach.
 	"""
 	crossings: list[FlyingDepthCrossing] = []
 
@@ -346,7 +344,7 @@ class FlyingScanLine:
 	dropped_slow_reads: int = 0
 	# Latency each depth_position_mm was corrected with, so a replay can undo or redo it.
 	capture_latency_s: Optional[float] = None
-	# Bins filled by a stepped probe after the pass. They update the grid values but are not
+	# Bins filled by a standstill probe after the pass. They update the grid values but are not
 	# samples of the pass, so they stay out of `samples` and are logged with their own source.
 	resamples: list[FlyingScanResample] = field(default_factory=list)
 	# Rebinned from an earlier pass over the same line instead of flown; its samples are that
@@ -437,15 +435,14 @@ def bin_samples_to_positions(
 	max_distance_mm: Optional[float] = None,
 	mode: str = FLYING_SCAN_BIN_NEAREST,
 ) -> list[Optional[float]]:
-	"""Snap moving samples onto the uniform grid the stepped scan would have probed.
+	"""Snap moving samples onto the uniform scan grid.
 
 	`nearest` keeps the single sample closest to each grid position, which is the closest
-	analogue of a stepped probe and the default for comparing a flying run against a stepped
-	one. `median` summarizes every sample that falls in a grid cell, for noisy sensors, but
-	pools a whole step and blurs edges. `median3` takes the median of the three samples nearest
-	the grid position, which matches the stepped scan's three-read median without widening the
-	window; a cell with fewer than three samples keeps its nearest one, because the median of two
-	readings straddling an edge is a depth neither side has.
+	analogue of a standstill probe and the default. `median` summarizes every sample that falls
+	in a grid cell, for noisy sensors, but pools a whole step and blurs edges. `median3` takes the
+	median of the three samples nearest the grid position, without widening the window; a cell
+	with fewer than three samples keeps its nearest one, because the median of two readings
+	straddling an edge is a depth neither side has.
 	"""
 	if len(positions) == 0:
 		return []
@@ -1365,24 +1362,17 @@ async def prefetch_line_depth_values(
 	fixed_mm: float,
 	progress_label: str,
 	should_abort: Optional[Callable[[], bool]] = None,
-) -> Optional[tuple[list[Optional[float]], FlyingScanLine]]:
-	"""Fly a line when the fine scan is configured for it; None means the caller must step it.
+) -> tuple[list[Optional[float]], FlyingScanLine]:
+	"""Fly a fine line and return its binned grid values.
 
-	The caller replays its own decision walk over the returned grid values, so its adaptive
-	order, progress output, retries and persisted grid stay identical to the stepped scan.
+	The caller replays its own decision walk over the returned grid values, probing the bins
+	the pass left empty, so its adaptive order, progress output and persisted grid are kept.
 	"""
-	if get_fine_scan_style(scan_config) != COARSE_SCAN_STYLE_FLYING:
-		return None
-
 	scan_motor = getattr(tool, "_mx" if axis == "x" else "_my", None)
-
-	if scan_motor is None:
-		return None
-
 	rpm = resolve_axis_rpm_for_feed(scan_motor, get_fine_scan_feed_mm_s(scan_config))
 
 	if rpm is None:
-		return None
+		raise ValueError(f"cannot fly the {axis} axis: its motor mm per revolution is unknown")
 
 	max_distance_mm = grid_step_mm(positions) if len(positions) > 1 else None
 	reusable_line = _find_reusable_line(axis, positions, fixed_mm)
@@ -1532,9 +1522,9 @@ async def resolve_shelf_edges_from_line(
 
 	An empty bin holds no measurement, and the detector would otherwise read it as a gap that
 	closes the positive run, inventing an edge whose post-edge skip can hide a real shelf. Only
-	bins the stepped walk would read are probed, so skipped positions and the unflown tail of an
+	bins the edge walk would read are probed, so skipped positions and the unflown tail of an
 	early-stopped pass stay empty. Probed depths are written back into `depth_values`; a probe
-	that still reads nothing counts as a measured non-positive depth, as in the stepped scan.
+	that still reads nothing counts as a measured non-positive depth.
 	"""
 	resampled_indices: set[int] = set()
 
