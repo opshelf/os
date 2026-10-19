@@ -8,8 +8,6 @@ logger = logging.getLogger(__name__)
 
 PENDING = "pending"
 CONNECTING = "connecting"
-CONFIGURING = "configuring"
-HOMING = "homing"
 READY = "ready"
 FAILED = "failed"
 

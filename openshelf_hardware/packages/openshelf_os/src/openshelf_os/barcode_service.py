@@ -97,7 +97,6 @@ class BarcodeService:
         self.prefer_vid_pid = prefer_vid_pid
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=queue_maxsize)
         self._transport = None
-        self._protocol = None
         self._runner_task: asyncio.Task | None = None
         self._stop_evt = asyncio.Event()
         self._connected_evt = asyncio.Event()
@@ -186,7 +185,7 @@ class BarcodeService:
                     baudrate=self.baudrate,
                 )
 
-                self._transport, self._protocol = await coro
+                self._transport = (await coro)[0]
                 backoff = 0.5
                 self._connected_evt.set()
 

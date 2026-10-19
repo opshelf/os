@@ -145,13 +145,3 @@ def mm_to_rev(mm: float, mpr: float) -> float:
         return float(mm / mpr)
     except (ValueError, TypeError) as e:
         raise ValueError(f"Failed to convert {mm}mm at {mpr}mm/rev: {str(e)}") from e
-
-def rpm_to_mms(rpm: float, mpr: float) -> float:
-    if not isinstance(rpm, (int, float)) or not isinstance(mpr, (int, float)):
-        raise ValueError("RPM and mpr must be numbers")
-        
-    try:
-        mm_per_min = rpm * mpr
-        return mm_per_min / 60.0
-    except (ValueError, TypeError) as e:
-        raise ValueError(f"Failed to convert {rpm}RPM at {mpr}mm/rev: {str(e)}") from e

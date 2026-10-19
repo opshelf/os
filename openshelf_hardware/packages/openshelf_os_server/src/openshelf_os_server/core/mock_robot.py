@@ -663,7 +663,3 @@ def get_mock_robot_runtime() -> MockRobotRuntime:
 	if mock_robot_runtime is None:
 		raise ValueError("Mock robot runtime is not initialized")
 	return mock_robot_runtime
-
-
-def serialize_mock_command(row: MockRobotCommand) -> dict[str, Any]:
-	return _command_response(row)

@@ -290,7 +290,7 @@ class RobotWorker:
         command_lifecycle_callback: CommandLifecycleCallback | None = None,
     ):
         if RobotWorker._instance is not None:
-            raise RuntimeError("RobotWorker is a singleton. Use `get_instance()` to access it.")
+            raise RuntimeError("RobotWorker is a singleton.")
 
         self._robot = robot
         self._crash_artifact_provider = crash_artifact_provider
@@ -635,12 +635,6 @@ class RobotWorker:
             except Exception as err:
                 logging.warning("Failed to refresh robot status payload: %s", err)
         return self._latest_status_payload
-
-    @classmethod
-    async def get_instance(cls, robot: Robot) -> "RobotWorker":
-        if cls._instance is None:
-            cls._instance = cls(robot)
-        return cls._instance
 
     def _add_error(self, error: WorkerError) -> None:
         if len(self._error_queue) >= 100:

@@ -115,36 +115,6 @@ def filter_shelf_edges(
 	return filtered_edges
 
 
-def detect_shelf_edges_from_line(
-	*,
-	x_mm: float,
-	y_positions: list[float],
-	depth_values: list[float | None],
-	brim_height_mm: float = SHELF_BRIM_HEIGHT_MM,
-	min_positive_run_length: int = SHELF_EDGE_CONFIRMATION_COUNT,
-	post_edge_skip_mm: float = 0.0,
-	stop_after_first_edge: bool = False,
-) -> list[ShelfSurfaceEdge]:
-	"""Find shelf top edges in a complete line, with the stepped scanner's rules.
-
-	The run of positive-depth samples has to confirm the edge before it is accepted, and a
-	confirmed edge discards everything within `post_edge_skip_mm` after it, so a flying pass
-	reproduces what the stepped pass would have probed (the stepped pass skips those positions
-	rather than sampling them).
-	"""
-	detected_edges, _ = walk_shelf_edges_from_line(
-		x_mm=x_mm,
-		y_positions=y_positions,
-		depth_values=depth_values,
-		brim_height_mm=brim_height_mm,
-		min_positive_run_length=min_positive_run_length,
-		post_edge_skip_mm=post_edge_skip_mm,
-		stop_after_first_edge=stop_after_first_edge,
-	)
-
-	return detected_edges
-
-
 def walk_shelf_edges_from_line(
 	*,
 	x_mm: float,
@@ -156,7 +126,7 @@ def walk_shelf_edges_from_line(
 	stop_after_first_edge: bool = False,
 	is_unobserved: Callable[[int], bool] | None = None,
 ) -> tuple[list[ShelfSurfaceEdge], int | None]:
-	"""Walk the line like detect_shelf_edges_from_line, pausing on unobserved positions.
+	"""Walk a shelf scan line, pausing on unobserved positions.
 
 	Returns the edges found so far and the index of the first position the walk would read
 	that `is_unobserved` rejects, or None once the walk completes. Positions the post-edge skip
@@ -234,7 +204,7 @@ def sample_scan_position_mm(sample: Any) -> float:
 
 
 class ShelfEdgeStopPredicate:
-	"""Streaming twin of the confirmation rule in detect_shelf_edges_from_line.
+	"""Streaming twin of the confirmation rule in walk_shelf_edges_from_line.
 
 	Returns True on the first sample that closes a positive run spanning at least
 	`min_positive_run_length * grid_step_mm` of travel, so a moving pass can stop at the edge

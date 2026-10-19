@@ -434,21 +434,6 @@ class Motor():
                 raise MotorError(f"Failed to get parameter {register}: {str(e)}") from e
             raise
 
-    async def _read_status(self) -> MotorStatus:
-        try:
-            status_val = await self._controller.read_holding_registers(
-                self._motor_id,
-                0x0000
-            )
-            if status_val is None:
-                return MotorStatus.ERROR
-            try:
-                return MotorStatus(int(status_val))
-            except Exception:
-                return MotorStatus.ERROR
-        except Exception:
-            return MotorStatus.ERROR
-
     # ------------------------------------------------------------------ #
     #  State accessors
     # ------------------------------------------------------------------ #
@@ -1676,16 +1661,6 @@ class Motor():
             self._hard_stopped = True
 
         await self._stop_and_clear_motion()
-
-    async def _raise_if_move_cancelled(
-        self,
-        should_abort: Callable[[], bool] | None,
-        *,
-        homing: bool = False,
-    ) -> None:
-        if self._is_move_cancelled(should_abort) is True:
-            await self._cancel_motion(homing=homing)
-            raise asyncio.CancelledError()
 
     async def _read_motion_snapshot(self) -> MotionSnapshot:
         status_reg = getattr(self._params, "status_reg", 0x1003)

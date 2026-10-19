@@ -70,7 +70,6 @@ class IOBox:
                  gpio=None,
                  ):
 
-        self._scalecontroller = scalecontroller
         self._motorcontroller = motorcontroller
         self._status = IOBoxStatus.IDLE
         self._params = params
@@ -87,10 +86,7 @@ class IOBox:
         self._scale = Scale(scalecontroller) if self._scale_enabled is True else None
         self._scale_bus_ready = True
         self._scale_ready = False
-        self._printer = None
-        self._curtain_sensors: list[CurtainSensor] = []
         self._curtain_monitors: list[CurtainMonitor] = []
-        self._curtain_input_states: dict[str, bool] = {}
         self._curtain_state: Optional[bool] = None
         self._curtain_listener = None
         self._door_open: Optional[bool] = None
@@ -219,7 +215,6 @@ class IOBox:
                 poll_interval=poll_interval,
                 on_change=self._handle_curtain_change,
             )
-            self._curtain_sensors = [curtain_sensor]
             self._curtain_monitors = [curtain_monitor]
             await curtain_monitor.start()
 
@@ -734,7 +729,6 @@ class IOBox:
                 errors.append(f"Curtain monitor stop failed: {str(e)}")
 
         self._curtain_monitors = []
-        self._curtain_sensors = []
 
         if errors:
             self._status = IOBoxStatus.ERROR
