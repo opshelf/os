@@ -10,6 +10,7 @@
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/state';
+	import { generateRandomBarcode } from '$lib/barcode';
 	import {
 		getStorageGrid,
 		addShelf,
@@ -1935,7 +1936,15 @@
 						</label>
 						<button
 							type="button"
-							class="tray-print-button"
+							class="tray-barcode-button"
+							onclick={() => (trayBarcode = generateRandomBarcode())}
+							disabled={busy === true}
+						>
+							random
+						</button>
+						<button
+							type="button"
+							class="tray-barcode-button"
 							onclick={() => void didPrintTrayLabel()}
 							disabled={trayBarcode.trim() === '' || busy === true || isPrintingTrayLabel === true}
 						>
@@ -2235,10 +2244,10 @@
 	}
 
 	.editor-group-1 {
-		grid-template-columns: 1fr auto;
+		grid-template-columns: 1fr auto auto;
 	}
 
-	.tray-print-button {
+	.tray-barcode-button {
 		align-self: end;
 	}
 
@@ -2319,12 +2328,12 @@
 	}
 
 	.editor-group-tests button,
-	.tray-print-button {
+	.tray-barcode-button {
 		height: 2.5em;
 	}
 
 	.editor-group-tests button:disabled,
-	.tray-print-button:disabled {
+	.tray-barcode-button:disabled {
 		opacity: 0.4;
 		cursor: not-allowed;
 	}

@@ -7,6 +7,7 @@
 		sendScannerScan,
 		type ScannerStatus
 	} from '$lib';
+	import { generateRandomBarcode } from '$lib/barcode';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -59,30 +60,6 @@
 		} finally {
 			isSending = false;
 		}
-	}
-
-	function generateRandomBarcode(): string {
-		const digits: number[] = [];
-
-		for (let i = 0; i < 11; i++) {
-			digits.push(Math.floor(Math.random() * 10));
-		}
-
-		let oddSum = 0;
-		let evenSum = 0;
-
-		for (let i = 0; i < 11; i++) {
-			if (i % 2 === 0) {
-				oddSum += digits[i];
-			} else {
-				evenSum += digits[i];
-			}
-		}
-
-		const checkDigit = (10 - ((oddSum * 3 + evenSum) % 10)) % 10;
-		digits.push(checkDigit);
-
-		return digits.join('');
 	}
 
 	function didClickGenerate(): void {
