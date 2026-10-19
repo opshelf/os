@@ -35,12 +35,3 @@ docs/
 
 # Agent instruction files and local agent settings.
 .pi/*
-!.pi/settings.json
-CLAUDE.md
-.claude/
-
-# Editor settings stay local.
-.vscode/
-
-# Amp orb portal registrations.
-.amp/portals/*
