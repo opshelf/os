@@ -102,6 +102,7 @@ async def scan_shelf_scout_line(
 		should_abort=should_abort,
 		bin_mode=get_coarse_scan_bin_mode(scan_config),
 		progress_every=progress_every,
+		progress_printer=print_status,
 		capture_latency_s=get_flying_capture_latency_s(scan_config),
 		stop_after_first_edge=stop_after_first_edge,
 		stop_when=stop_when,
