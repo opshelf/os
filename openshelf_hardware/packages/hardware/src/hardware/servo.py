@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 FAULT_COMM_LOSS = 1 << 2
 # A new command can report the previous move's gOBJ until the drive picks it up.
 STALE_OBJ_WINDOW_S = 0.15
+# Splayed against a tray or container wall the fingers stop 8-13 counts short of the open target
+# (lb4a-3, 2026-10-19). The drive also reports INNER with the fingers 80+ counts short, caught on a
+# lip or the floor of the opening with nothing held, so a contact further out than this is no grip.
+GRIP_POSITION_MARGIN = 0x30
 
 
 class GripObject(IntEnum):
@@ -32,6 +36,7 @@ class GripState:
     fault: int
     position: int
     current: int
+    open_position: Optional[int] = None
 
     @property
     def obj(self) -> GripObject:
@@ -43,7 +48,9 @@ class GripState:
 
     @property
     def gripped(self) -> bool:
-        return self.obj in (GripObject.INNER, GripObject.OUTER) and not self.dropped
+        if self.obj not in (GripObject.INNER, GripObject.OUTER) or self.dropped:
+            return False
+        return self.open_position is None or self.position <= self.open_position + GRIP_POSITION_MARGIN
 
     def __str__(self) -> str:
         return (f"obj={self.obj.name} drop={int(self.dropped)} pos=0x{self.position:02X} "
@@ -138,7 +145,9 @@ class Servo:
     async def read_state(self) -> GripState:
         """Read status, fault, position and current in one transaction."""
         r = await self._controller.read_holding_register_block(self._motor_id, self._status_reg, 3)
-        return GripState(r[0] & 0xFF, r[1] & 0xFF, (r[1] >> 8) & 0xFF, (r[2] >> 8) & 0xFF)
+        return GripState(
+            r[0] & 0xFF, r[1] & 0xFF, (r[1] >> 8) & 0xFF, (r[2] >> 8) & 0xFF, self._open_position
+        )
 
     async def wait_for_servo(self, timeout: float = 5.0) -> GripState:
         """Poll until gOBJ reports a result; raise on drive faults."""

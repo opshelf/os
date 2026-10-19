@@ -7,8 +7,9 @@ from hardware.servo import GripState
 
 from openshelf_os.exceptions import GRIP_IO_BOX_FAILED_CODE
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.exceptions import GripperError
+from openshelf_os.exceptions import GripperError, GripVerificationError
 from openshelf_os.robot.core import Robot
+from openshelf_os.tool import require_grip
 
 
 def build_robot():
@@ -53,3 +54,14 @@ async def test_return_tray_requires_grip_before_and_after_retract(grip_obj, retr
     assert raised.value.failure_code == GRIP_IO_BOX_FAILED_CODE
     assert call.close_door() not in ops.mock_calls
     robot._tool.place.assert_not_awaited()
+
+
+@pytest.mark.parametrize(('position', 'is_held'), [(0x18, True), (0x99, False)])
+def test_grip_check_rejects_contact_far_short_of_the_open_target(position, is_held):
+    """lb4a-3 reads INNER at 0x18 on a tray wall and also at 0x99 with the fingers caught on nothing."""
+    state = GripState(0x71, 0, position, 0x80, open_position=0x10)
+    if is_held:
+        require_grip(state, 'grip')
+    else:
+        with pytest.raises(GripVerificationError, match='No grip on grip'):
+            require_grip(state, 'grip')
