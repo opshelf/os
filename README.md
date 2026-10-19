@@ -22,7 +22,6 @@ the backend persists runtime data in `openshelf_hardware/data` (including local 
 - `docker-compose.dev.yml`: development overrides (hot reload for api/ui source)
 - `docker-compose.hardware.yml`: usb/device passthrough for hardware-connected machines
 - `scripts/start`, `scripts/stop`: preferred lifecycle commands
-- `scripts/laser.py`, `scripts/y_*_diagnostic.py` (+ `scripts/run_y_*.sh` wrappers): hardware debugging helpers
 
 ## development setup
 
@@ -161,7 +160,7 @@ every database gets the system user `developer@opshelf.com` (admin role, hidden 
 - production and demo: the value of `DEVELOPER_PIN` in the api environment (the checkout `.env`, next to `JWT_SECRET`); without one the user is locked with a random pin, and a device still carrying `1111` from an older release is moved off it at startup
 - `DEVELOPER_PIN` overrides the pin in every mode
 
-the dev ui never asks for the pin: behind the relay it signs in with the pin from the `opshelf_developer_pin` cookie the relay sets, and on a development or mock device reached directly it needs no sign-in. `scripts/y_first_home_diagnostic.py` reads the pin from `OPENSHELF_DIAGNOSTIC_PIN` or prompts.
+the dev ui never asks for the pin: behind the relay it signs in with the pin from the `opshelf_developer_pin` cookie the relay sets, and on a development or mock device reached directly it needs no sign-in.
 
 ### relay service authentication
 
@@ -182,7 +181,7 @@ docker compose -f docker-compose.yml logs -f api
 docker compose -f docker-compose.yml logs -f dev_ui
 ```
 
-in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers. the overlay does not mount `scripts/` or the test directories, so a one-off hardware container needs its own `-v` for the scripts (see [hardware scripts](#hardware-scripts)).
+in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers. the overlay does not mount `scripts/` or the test directories, so a one-off container that needs a script needs its own `-v` for the scripts (see the `migrate_config.py` docker example above).
 
 dependency changes, dockerfile changes, or mode switches across the development/non-development boundary need a rebuild on laptops:
 
@@ -289,17 +288,6 @@ git pull
 source-only changes are picked up by the bind mounts immediately; `--pull` fetches the prebuilt images matching the checkout. when the change touches dependencies, publish a release and pull it on the device, or rebuild on the device with `./scripts/start --mode development --hardware --build`.
 
 if the worktree is dirty, stop and reconcile it before pulling.
-
-## hardware scripts
-
-run hardware scripts from a hardware-enabled development environment. for device-side laser work, stop the long-running api first so serial ports are not locked, then restart it afterward.
-
-example one-off laser command on a development pi:
-
-```bash
-cd /opt/opshelf/repos/openshelf_os
-docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro api -lc 'cd /app/openshelf_hardware && uv run python /app/scripts/laser.py --config /app/openshelf_hardware/data/config.development.json'
-```
 
 ### Chemical name lookup
 
