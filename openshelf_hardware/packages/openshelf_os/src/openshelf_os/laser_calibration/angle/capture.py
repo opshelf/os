@@ -6,8 +6,6 @@ from typing import Any, Callable
 import openshelf_os.laser_calibration.angle as angle_module
 from openshelf_os.laser_calibration.shelf_scout import filter_shelf_edges as filter_shared_shelf_edges
 from .constants import (
-	FRONT_MODULE_ROTATION_CENTER_DEG,
-	BACK_MODULE_ROTATION_CENTER_DEG,
 	ROTATION_SAFE_X_MM,
 	SHELF_SCOUT_STEP_MM,
 )
@@ -81,12 +79,6 @@ def build_shelf_scout_debug_document(
 		'lines': lines,
 	}
 
-
-def get_default_rotation_center_deg(side_name: str) -> float:
-	if side_name == 'back':
-		return BACK_MODULE_ROTATION_CENTER_DEG
-
-	return FRONT_MODULE_ROTATION_CENTER_DEG
 
 
 def resolve_rotation_center_deg(side_name: str, parameters: Any) -> float:

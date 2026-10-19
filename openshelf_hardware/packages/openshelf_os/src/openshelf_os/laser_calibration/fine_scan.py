@@ -38,25 +38,18 @@ async def probe_line_from_center(
 	should_abort: Callable[[], bool] | None = None,
 	should_infer_far_edge: bool = False,
 	should_infer_near_edge: bool = False,
-	scan_config: Any = None,
+	scan_config: Any,
 	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 ) -> Optional[LineGapSegment]:
-	prefetched_depth_values: Optional[list[Optional[float]]] = None
-	flying_line: Any = None
-
-	if scan_config is not None:
-		prefetched = await prefetch_line_depth_values(
-			tool,
-			scan_config=scan_config,
-			axis=axis,
-			positions=positions,
-			fixed_mm=fixed_mm,
-			progress_label=f"{progress_prefix}_flying",
-			should_abort=should_abort,
-		)
-
-		if prefetched is not None:
-			prefetched_depth_values, flying_line = prefetched
+	prefetched_depth_values, flying_line = await prefetch_line_depth_values(
+		tool,
+		scan_config=scan_config,
+		axis=axis,
+		positions=positions,
+		fixed_mm=fixed_mm,
+		progress_label=f"{progress_prefix}_flying",
+		should_abort=should_abort,
+	)
 
 	try:
 		return await _walk_line_from_center(
@@ -82,7 +75,7 @@ async def probe_line_from_center(
 	finally:
 		# Report the line once the walk has probed the bins the pass left empty, so the sample
 		# log carries those resamples; a cancelled walk still reports what it measured.
-		if flying_line is not None and on_flying_line is not None:
+		if on_flying_line is not None:
 			on_flying_line(f"{progress_prefix}_flying", flying_line)
 
 
@@ -104,13 +97,10 @@ async def _walk_line_from_center(
 	should_abort: Callable[[], bool] | None,
 	should_infer_far_edge: bool,
 	should_infer_near_edge: bool,
-	prefetched_depth_values: Optional[list[Optional[float]]],
+	prefetched_depth_values: list[Optional[float]],
 	flying_line: Any,
 ) -> Optional[LineGapSegment]:
 	def didRefineSegment(segment: LineGapSegment) -> LineGapSegment:
-		if flying_line is None or prefetched_depth_values is None:
-			return segment
-
 		return refine_segment_edges_from_samples(
 			segment=segment,
 			positions=positions,
@@ -139,7 +129,12 @@ async def _walk_line_from_center(
 			x_mm = fixed_mm
 			y_mm = position_mm
 
-		if prefetched_depth_values is None:
+		depth_mm = prefetched_depth_values[position_idx]
+
+		# A sparse flying pass leaves grid positions with no sample, and the decision
+		# walk reads an empty bin as wall, which truncates the hole and shifts its
+		# centre. Probe the position directly and keep the value for edge refinement.
+		if depth_mm is None:
 			depth_mm = await sample_scan_point(
 				tool,
 				x_mm=x_mm,
@@ -148,27 +143,12 @@ async def _walk_line_from_center(
 				samples_per_point=samples_per_point,
 				should_abort=should_abort,
 			)
-		else:
-			depth_mm = prefetched_depth_values[position_idx]
-
-			# A sparse flying pass leaves grid positions with no sample, and the decision
-			# walk reads an empty bin as wall, which truncates the hole and shifts its
-			# centre. Probe the position directly and keep the value for edge refinement.
-			if depth_mm is None:
-				depth_mm = await sample_scan_point(
-					tool,
-					x_mm=x_mm,
-					y_mm=y_mm,
-					settle_ms=settle_ms,
-					samples_per_point=samples_per_point,
-					should_abort=should_abort,
-				)
-				prefetched_depth_values[position_idx] = depth_mm
-				flying_line.record_resample(position_mm, depth_mm)
-				print_status(
-					f"{progress_prefix}=resampled idx={position_idx} "
-					f"x={x_mm:.2f} y={y_mm:.2f} depth={depth_to_label(depth_mm)}"
-				)
+			prefetched_depth_values[position_idx] = depth_mm
+			flying_line.record_resample(position_mm, depth_mm)
+			print_status(
+				f"{progress_prefix}=resampled idx={position_idx} "
+				f"x={x_mm:.2f} y={y_mm:.2f} depth={depth_to_label(depth_mm)}"
+			)
 
 		set_scan_point(
 			base_scan,
@@ -377,7 +357,7 @@ async def refine_horizontal_segment(
 	expected_span_mm: float,
 	progress_prefix: str,
 	should_abort: Callable[[], bool] | None = None,
-	scan_config: Any = None,
+	scan_config: Any,
 	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 	) -> Optional[LineGapSegment]:
 	refined_x_min_mm = max(
@@ -472,7 +452,7 @@ async def refine_horizontal_segment_across_rows(
 	width_tolerance_mm: float,
 	progress_prefix: str,
 	should_abort: Callable[[], bool] | None = None,
-	scan_config: Any = None,
+	scan_config: Any,
 	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 	) -> Optional[LineGapSegment]:
 	row_offsets_mm = [0.0, -2.0, 2.0, -4.0, 4.0]
@@ -789,76 +769,11 @@ async def _capture_cross_scan(
 	y_positions = fine_scan.y_positions
 	candidate_center_x_mm = float((candidate.x_min + candidate.x_max) / 2.0)
 	candidate_center_y_mm = float((candidate.y_min + candidate.y_max) / 2.0)
-	probe_offset_mm = min(
-		EXPECTED_HOLE_HEIGHT_MM / 4.0,
-		FINE_SCAN_MARGIN_Y_MM,
-	)
-	horizontal_probe_targets = [
-		candidate_center_y_mm,
-		candidate_center_y_mm - probe_offset_mm,
-		candidate_center_y_mm + probe_offset_mm,
-	]
-	horizontal_probe_indices: list[int] = []
-
-	for target_y_mm in horizontal_probe_targets:
-		raise_if_cancelled(should_abort)
-		row_idx = find_nearest_position_index(y_positions, target_y_mm)
-
-		if row_idx in horizontal_probe_indices:
-			continue
-
-		horizontal_probe_indices.append(row_idx)
-
-	horizontal_segment: Optional[LineGapSegment] = None
-	# A flying coarse sweep already measured this opening along its row, and the horizontal probes
-	# only have to land the vertical probe inside a ~27mm hole, so the coarse centre seeds it. The
-	# final horizontal pass still has to confirm the hole, so no width or centre comes from coarse.
-	is_seeded_from_coarse = get_fine_scan_style(scan_config) == COARSE_SCAN_STYLE_FLYING
-
-	if is_seeded_from_coarse is True:
-		horizontal_segment = LineGapSegment(
-			start_idx=find_nearest_position_index(x_positions, float(candidate.x_min)),
-			end_idx=find_nearest_position_index(x_positions, float(candidate.x_max)),
-			start_mm=float(candidate.x_min),
-			end_mm=float(candidate.x_max),
-			width_mm=float(candidate.x_max - candidate.x_min),
-			center_mm=candidate_center_x_mm,
-		)
-		print_status(f"{progress_prefix}_h=seeded_from_coarse center_mm={candidate_center_x_mm:.2f}")
-		horizontal_probe_indices = []
-
-	for probe_idx, row_idx in enumerate(horizontal_probe_indices, start=1):
-		raise_if_cancelled(should_abort)
-		y_mm = y_positions[row_idx]
-		center_x_idx = find_nearest_position_index(x_positions, candidate_center_x_mm)
-		horizontal_segment = await probe_line_from_center(
-			tool,
-			base_scan=fine_scan,
-			axis="x",
-			positions=x_positions,
-			fixed_mm=y_mm,
-			center_idx=center_x_idx,
-			step_mm=step_mm,
-			progress_prefix=f"{progress_prefix}_h{probe_idx}",
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			wall_depth_mm=wall_depth_mm,
-			expected_span_mm=EXPECTED_HOLE_WIDTH_MM,
-			on_update=on_update,
-			should_abort=should_abort,
-			scan_config=scan_config,
-			on_flying_line=on_flying_line,
-		)
-
-		if horizontal_segment is None:
-			continue
-		break
-
-	if horizontal_segment is None:
-		return fine_scan, []
-
-	x_center_mm = horizontal_segment.center_mm
-	vertical_probe_x_mm = x_positions[find_nearest_position_index(x_positions, x_center_mm)]
+	# The flying coarse sweep already measured this opening along its row, and the vertical probe
+	# only has to land inside a ~27mm hole, so the coarse centre places it. The final horizontal
+	# pass still has to confirm the hole, so no width or centre comes from coarse.
+	print_status(f"{progress_prefix}_h=seeded_from_coarse center_mm={candidate_center_x_mm:.2f}")
+	vertical_probe_x_mm = x_positions[find_nearest_position_index(x_positions, candidate_center_x_mm)]
 	vertical_center_idx = find_nearest_position_index(y_positions, candidate_center_y_mm)
 	vertical_seed_idx = await find_hole_interior_idx_from_seed(
 		tool,
@@ -914,7 +829,7 @@ async def _capture_cross_scan(
 		axis="x",
 		positions=x_positions,
 		fixed_mm=refined_horizontal_y_mm,
-		center_idx=find_nearest_position_index(x_positions, horizontal_segment.center_mm),
+		center_idx=find_nearest_position_index(x_positions, candidate_center_x_mm),
 		step_mm=step_mm,
 		progress_prefix=f"{progress_prefix}_h_final",
 		settle_ms=settle_ms,
@@ -927,11 +842,10 @@ async def _capture_cross_scan(
 		on_flying_line=on_flying_line,
 	)
 
-	if refined_horizontal_segment is not None:
-		horizontal_segment = refined_horizontal_segment
-	elif is_seeded_from_coarse is True:
+	if refined_horizontal_segment is None:
 		return fine_scan, []
 
+	horizontal_segment = refined_horizontal_segment
 	precision_horizontal_segment = await refine_horizontal_segment_across_rows(
 		tool,
 		segment=horizontal_segment,

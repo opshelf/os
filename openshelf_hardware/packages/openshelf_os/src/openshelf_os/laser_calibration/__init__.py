@@ -26,7 +26,6 @@ _PATCH_TARGET_NAMES = (
     "persist_scan_started_at",
     "set_y_brake_for_scan_motion",
     "capture_cross_scan",
-    "scan_line_positions",
     "scan_line_positions_flying",
     "scan_shelf_scout_line_flying",
     "build_shelves_from_scan",

@@ -20,10 +20,14 @@ from openshelf_os.config_migrations.v005_module_side_names import (
 from openshelf_os.config_migrations.v007_remove_z_stall_probe_keys import (
     REMOVED_SCAN_KEYS as Z_STALL_PROBE_SCAN_KEYS,
 )
+from openshelf_os.config_migrations.v008_remove_scan_style_keys import (
+    REMOVED_SCAN_KEYS as SCAN_STYLE_KEYS,
+)
 
 # Keys removed by any schema step; a current-schema config must not carry them.
 REJECTED_SCAN_KEYS = (
-    *REMOVED_SCAN_KEYS, *UNUSED_SCAN_KEYS, *PROMOTED_SCAN_KEYS, *SIDE_SCAN_KEY_RENAMES, *Z_STALL_PROBE_SCAN_KEYS
+    *REMOVED_SCAN_KEYS, *UNUSED_SCAN_KEYS, *PROMOTED_SCAN_KEYS, *SIDE_SCAN_KEY_RENAMES, *Z_STALL_PROBE_SCAN_KEYS,
+    *SCAN_STYLE_KEYS,
 )
 
 
@@ -81,10 +85,8 @@ class LaserScanConfig(BaseModel):
 
     laser_offset_x_mm: Optional[float] = None
     laser_offset_y_mm: Optional[float] = None
-    # Coarse scan motion. `stepped` stops and settles at every grid point; `flying` drives the
-    # axis at a constant feed and bins samples taken along the way onto the same grid. Flying is
-    # a POC: keep it unset until a run on the machine has been compared against a stepped one.
-    coarse_scan_style: Literal["stepped", "flying"] = "stepped"
+    # Scans drive the axis at a constant feed and bin the samples taken along the way onto the
+    # scan grid; bins the pass leaves empty are probed at a standstill.
     coarse_scan_rpm: Optional[int] = Field(default=None, gt=0)
     coarse_scan_bin_mode: Literal["nearest", "median", "median3"] = "nearest"
     # Fly alternate hole-sweep lines in opposite directions instead of returning to x_min before
@@ -97,10 +99,7 @@ class LaserScanConfig(BaseModel):
     shelf_hole_probe_y_offsets_mm: Optional[List[float]] = None
     fine_cell_scan_y_margin_mm: Optional[float] = Field(default=None, gt=0)
     fine_scan_step_mm: float = Field(1.0, gt=0)
-    # Fine probes are the final measurement, so flying stays opt-in until a machine's capture
-    # latency and edge response have been measured. Feed is mm/s and converted per axis, because
-    # the same rpm is a different speed on x and y.
-    fine_scan_style: Literal["stepped", "flying"] = "stepped"
+    # Feed is mm/s and converted per axis, because the same rpm is a different speed on x and y.
     fine_scan_feed_mm_s: float = Field(40.0, gt=0)
     # Laser-to-encoder read delay that flying passes correct each depth by (feed x latency).
     # Unset falls back to `defaults.FLYING_CAPTURE_LATENCY_MS`, which was fit on one machine;
@@ -109,7 +108,6 @@ class LaserScanConfig(BaseModel):
     front_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     back_shelf_scout_x_mm: Optional[float] = Field(default=None, ge=0)
     shelf_scout_post_edge_skip_mm: float = Field(40.0, ge=0)
-    shelf_brim_max_height_mm: float = Field(13.0, gt=0)
 
     front_gripper_xy_correction_mm: Optional[LaserScanXYOffsetConfig] = None
     back_gripper_xy_correction_mm: Optional[LaserScanXYOffsetConfig] = None

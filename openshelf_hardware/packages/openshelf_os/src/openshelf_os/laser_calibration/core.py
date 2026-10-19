@@ -25,10 +25,8 @@ from openshelf_os.laser_calibration.scan import (
 	ScanAnalysisResult,
 	ScanDetectedCell,
 	ScanDetectedShelf,
-	analyze_scan_capture,
 	build_axis_positions,
 	build_shelves_from_scan,  # noqa: F401 - re-exported for server consumption
-	create_scan_capture,
 )
 import openshelf_os.common as common_module
 import openshelf_os.robot.core as robot_module
@@ -37,8 +35,6 @@ from openshelf_os.storage import StorageGrid, StorageModuleSide
 from openshelf_os.laser_calibration.shelf_scout import (
 	GAP_DEPTH_THRESHOLD_MM,
 	BACK_MODULE_SHELF_SCOUT_X_MM,
-	SHELF_BRIM_MAX_HEIGHT_MM,
-	SHELF_BRIM_MIN_HEIGHT_MM,
 	SHELF_EDGE_CONFIRMATION_COUNT,
 	SHELF_EDGE_TOP_MARGIN_MM,
 	SHELF_MIN_SPACING_MM,
@@ -51,8 +47,6 @@ from openshelf_os.laser_calibration.shelf_scout import (
 LASER_SCAN_STAGE_EXTENSION_MM = 13.0
 LASER_SCAN_Z_OFFSET_MM = 10.0
 COARSE_SCAN_STEP_MM = 4.0
-COARSE_SCAN_STYLE_STEPPED = "stepped"
-COARSE_SCAN_STYLE_FLYING = "flying"
 COARSE_SCAN_BIN_NEAREST = "nearest"
 COARSE_SCAN_BIN_MEDIAN = "median"
 COARSE_SCAN_BIN_MEDIAN3 = "median3"
@@ -415,29 +409,6 @@ def get_shelf_scout_post_edge_skip_mm(scan_config: Any) -> float:
 	return validated_skip_mm
 
 
-def _get_scan_style(scan_config: Any, parameter_name: str) -> str:
-	configured_style = getattr(scan_config, parameter_name, None)
-
-	if configured_style is None:
-		return COARSE_SCAN_STYLE_STEPPED
-
-	if configured_style not in (COARSE_SCAN_STYLE_STEPPED, COARSE_SCAN_STYLE_FLYING):
-		raise ValueError(
-			f"robot.grid.scan.{parameter_name} must be "
-			f"'{COARSE_SCAN_STYLE_STEPPED}' or '{COARSE_SCAN_STYLE_FLYING}'"
-		)
-
-	return str(configured_style)
-
-
-def get_coarse_scan_style(scan_config: Any) -> str:
-	return _get_scan_style(scan_config, "coarse_scan_style")
-
-
-def get_fine_scan_style(scan_config: Any) -> str:
-	return _get_scan_style(scan_config, "fine_scan_style")
-
-
 def get_fine_scan_feed_mm_s(scan_config: Any) -> float:
 	configured_feed = getattr(scan_config, "fine_scan_feed_mm_s", None)
 
@@ -507,23 +478,6 @@ def get_coarse_scan_bin_mode(scan_config: Any) -> str:
 
 def get_coarse_scan_alternate_direction(scan_config: Any) -> bool:
 	return getattr(scan_config, "coarse_scan_alternate_direction", None) is True
-
-
-def get_shelf_brim_max_height_mm(scan_config: Any) -> float:
-	configured_max_height_mm = getattr(scan_config, "shelf_brim_max_height_mm", None)
-
-	if configured_max_height_mm is None:
-		return SHELF_BRIM_MAX_HEIGHT_MM
-
-	validated_max_height_mm = validate_finite_value(
-		configured_max_height_mm,
-		"robot.grid.scan.shelf_brim_max_height_mm",
-	)
-
-	if validated_max_height_mm <= 0.0:
-		raise ValueError("robot.grid.scan.shelf_brim_max_height_mm must be greater than zero")
-
-	return validated_max_height_mm
 
 
 def get_fine_cell_scan_y_margin_mm(scan_config: Any) -> float:

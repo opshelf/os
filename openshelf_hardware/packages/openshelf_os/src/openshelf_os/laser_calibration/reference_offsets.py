@@ -92,7 +92,6 @@ class ReferenceOffsetResult:
 	configured_offset_x_mm: float | None = None
 	configured_offset_y_mm: float | None = None
 	z_captured_stage_mm: float | None = None
-	z_captured_stage_samples: int = 0
 	# The stage extension every stamped sample's intercept was carried to; None when no live stage
 	# was given, in which case the intercepts are as captured.
 	z_stage_extension_mm: float | None = None
@@ -101,15 +100,6 @@ class ReferenceOffsetResult:
 	@property
 	def sample_count(self) -> int:
 		return len(self.samples)
-
-	@property
-	def z_capture_conditions_missing(self) -> int:
-		"""Samples saved before the capture stage was recorded: their z cannot be carried to the live stage."""
-		return self.sample_count - self.z_captured_stage_samples
-
-	@property
-	def used_configured_offset(self) -> bool:
-		return self.configured_offset_x_mm is not None and self.configured_offset_y_mm is not None
 
 
 def check_datum_stage_carry(result: ReferenceOffsetResult | None) -> None:
@@ -578,7 +568,6 @@ def derive_reference_offsets(
 		configured_offset_x_mm=configured_offset_x_mm,
 		configured_offset_y_mm=configured_offset_y_mm,
 		z_captured_stage_mm=None if len(captured_stages) == 0 else float(median(captured_stages)),
-		z_captured_stage_samples=len(captured_stages),
 		z_stage_extension_mm=None if stage_extension_mm is None else float(stage_extension_mm),
 		skipped=skipped,
 	)
