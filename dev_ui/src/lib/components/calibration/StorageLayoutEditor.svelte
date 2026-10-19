@@ -22,6 +22,7 @@
 		updateTrayLayout,
 		assignTray,
 		unassignTray,
+		printPrinterLabel,
 		startCalibrationTestQueue,
 		getCalibrationTestQueue,
 		abortCalibrationTestQueue,
@@ -531,6 +532,7 @@
 	let trayBarcode = $state<string>('');
 	let trayRows = $state<string>('');
 	let trayCols = $state<string>('');
+	let isPrintingTrayLabel = $state<boolean>(false);
 
 	function trayDirty(): boolean {
 		const current = currentTray;
@@ -565,6 +567,26 @@
 			return false;
 		}
 		return true;
+	}
+
+	async function didPrintTrayLabel(): Promise<void> {
+		// Belt and braces: POST /print has no idempotency key.
+		if (isPrintingTrayLabel === true) {
+			return;
+		}
+		isPrintingTrayLabel = true;
+		try {
+			const result = await printPrinterLabel(trayBarcode.trim());
+			if (result.printed === false) {
+				postToast('error', 'printer is disabled; label was not printed');
+			} else {
+				postToast('status', `printed ${result.barcode}`);
+			}
+		} catch (err) {
+			postToast('error', err instanceof Error ? err.message : 'failed to print label');
+		} finally {
+			isPrintingTrayLabel = false;
+		}
 	}
 
 	function blankEditorValues(): Record<EditorField, string> {
@@ -1909,8 +1931,16 @@
 								maxlength="255"
 								bind:value={trayBarcode}
 								disabled={busy === true}
-						/>
+							/>
 						</label>
+						<button
+							type="button"
+							class="tray-print-button"
+							onclick={() => void didPrintTrayLabel()}
+							disabled={trayBarcode.trim() === '' || busy === true || isPrintingTrayLabel === true}
+						>
+							print label
+						</button>
 					</div>
 					<div class="editor-group editor-group-2">
 						<label class="editor-col">
@@ -2205,7 +2235,11 @@
 	}
 
 	.editor-group-1 {
-		grid-template-columns: 1fr;
+		grid-template-columns: 1fr auto;
+	}
+
+	.tray-print-button {
+		align-self: end;
 	}
 
 	.editor-col {
@@ -2281,11 +2315,16 @@
 
 	.editor-group-tests button {
 		width: 100%;
-		height: 2.5em;
 		margin-top: 0;
 	}
 
-	.editor-group-tests button:disabled {
+	.editor-group-tests button,
+	.tray-print-button {
+		height: 2.5em;
+	}
+
+	.editor-group-tests button:disabled,
+	.tray-print-button:disabled {
 		opacity: 0.4;
 		cursor: not-allowed;
 	}
