@@ -7,7 +7,9 @@
 		{#each $toasts as toast (toast.id)}
 			{#if toast.actions !== undefined && toast.actions.length > 0}
 				<div class="toast {toast.kind} with-actions" role="status">
-					<div>{toast.message}</div>
+					<button type="button" class="toast-body" onclick={() => dismissToast(toast.id)}>
+						{toast.message}
+					</button>
 					<div class="toast-actions">
 						{#each toast.actions as action (action.label)}
 							<button
@@ -62,8 +64,21 @@
 		white-space: normal;
 	}
 
-	.toast.with-actions > :first-child {
+	.toast-body {
+		width: 100%;
+		margin: 0;
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: inherit;
+		text-align: left;
+		box-shadow: none;
 		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+
+	.toast-body:active {
+		transform: none;
 	}
 
 	.toast-actions button {
