@@ -62,10 +62,19 @@ ACTIVE_STATES = {"retrieving_bin", "awaiting_operator", "returning_bin"}
 # ordinary return workflow.
 BATCH_OPERATION = "batch_store"
 
-# A tray's inner dimensions span its outer walls; the walls and every divider between
-# compartments share one thickness, and each compartment keeps some leeway for placement.
-TRAY_WALL_THICKNESS_MM = 5.0
-COMPARTMENT_LEEWAY_MM = 2.0
+# Item metadata naming where the item is kept. A tray store records "bin" before any motion,
+# so a later store of the same item, after a failed delivery or a retrieval, returns it to a
+# tray instead of claiming a whole cell.
+STORAGE_MODE_METADATA_KEY = "storage_mode"
+
+
+def _remember_bin_storage(item: Item) -> None:
+    item.item_metadata = {**(item.item_metadata or {}), STORAGE_MODE_METADATA_KEY: "bin"}
+
+
+# A tray's inner dimensions are its usable inside, between the outer walls; only the dividers
+# between compartments take space from it.
+TRAY_DIVIDER_THICKNESS_MM = 2.0
 
 # Robot failure codes that stop operation and open the crash dialog: a hardware fault raised
 # mid-motion, an emergency stop interrupting the command, a tray lost between shelf and IO box,
@@ -506,14 +515,20 @@ class BinStorageService:
             for workflow in workflows
         )
 
-    async def item_has_workflow_history(self, item_id: int) -> bool:
-        """Whether an item is referenced by a durable bin workflow record."""
-        workflow = (
-            await self.session.execute(
-                select(StorageBinWorkflow.id).where(StorageBinWorkflow.item_id == item_id).limit(1)
+    async def detach_item_history(self, item: Item) -> None:
+        """Keep finished workflows of an item being deleted, naming it by a snapshot instead."""
+        workflows = (
+            await self.session.scalars(
+                select(StorageBinWorkflow).where(StorageBinWorkflow.item_id == item.id)
             )
-        ).scalar_one_or_none()
-        return workflow is not None
+        ).all()
+        for workflow in workflows:
+            workflow.resolution = {
+                **(workflow.resolution or {}),
+                "deleted_item": {"id": item.id, "barcode": item.barcode, "name": item.name},
+            }
+            workflow.item_id = None
+        await self.session.flush()
 
     @staticmethod
     def _dimensions(
@@ -535,8 +550,7 @@ class BinStorageService:
 
     @staticmethod
     def _compartment_span(inside: float, count: int) -> float:
-        walls = (count + 1) * TRAY_WALL_THICKNESS_MM
-        return max(0.0, (inside - walls) / count - COMPARTMENT_LEEWAY_MM)
+        return max(0.0, (inside - (count - 1) * TRAY_DIVIDER_THICKNESS_MM) / count)
 
     @classmethod
     def _compartment_dimensions(cls, bin_row: StorageBin) -> dict[str, float]:
@@ -1088,6 +1102,8 @@ class BinStorageService:
         if error:
             await self.session.rollback()
             raise BinWorkflowConflict(error)
+        if operation == "store":
+            _remember_bin_storage(item)
         self.session.add(workflow)
         await self.session.commit()
         return workflow
@@ -1408,6 +1424,7 @@ class BinStorageService:
         assert tray is not None
         compartment = await self._free_compartment(tray)
         self.session.add(StorageBinItem(bin_id=tray.id, item_id=item.id, compartment=compartment))
+        _remember_bin_storage(item)
         item.enrollment_weight_pending = False
         item.enrollment_storage_completed = True
         resolution = dict(workflow.resolution or {})

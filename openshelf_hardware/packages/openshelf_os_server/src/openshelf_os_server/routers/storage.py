@@ -262,7 +262,7 @@ class BinResponse(BaseModel):
         default=None, description="Equal-sized compartment rows and columns; null for an undivided bin.",
     )
     compartment_dimensions: StorageBinDimensionsSettings | None = Field(
-        default=None, description="Compartment dimensions in millimeters: the inner width and length less the outer walls and dividers, split evenly by columns and rows, less placement leeway, and the full inner height; null for an undivided bin.",
+        default=None, description="Compartment dimensions in millimeters: the inner width and length less the 2 mm dividers, split evenly by columns and rows, and the full inner height; null for an undivided bin.",
     )
     item_count: int
     used_volume: float = Field(description="Occupied volume in cubic millimeters")
@@ -1289,8 +1289,9 @@ async def delete_item(
     """Delete an inventory record.
 
     Takes the barcode in the request body. Deletes the item and its database location
-    records; it does not physically retrieve it. Bin membership and retained workflow
-    history block deletion. Use this low-level endpoint only after reconciling physical
+    records; it does not physically retrieve it. Bin membership and an unfinished tray
+    interaction block deletion; finished tray interactions keep the item's barcode and
+    name in their record. Use this low-level endpoint only after reconciling physical
     occupancy. A missing record returns `404`.
     """
     storage_service = StorageService(session)
@@ -1300,11 +1301,13 @@ async def delete_item(
     bin_service = BinStorageService(session)
     if existing is not None and await bin_service.item_bin(existing.id) is not None:
         raise HTTPException(status_code=409, detail="Retrieve the item before deleting it")
-    if existing is not None and await bin_service.item_has_workflow_history(existing.id):
+    if existing is not None and await bin_service.item_has_active_workflow(existing.id):
         raise HTTPException(
             status_code=409,
-            detail="Item cannot be deleted because storage bin workflow history is retained",
+            detail="Finish the tray interaction for this item before deleting it",
         )
+    if existing is not None:
+        await bin_service.detach_item_history(existing)
 
     deleted = await storage_service.delete_item(barcode)
 

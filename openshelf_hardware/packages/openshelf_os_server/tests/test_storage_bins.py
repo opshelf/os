@@ -586,3 +586,32 @@ async def _checked_out_tray(service, items, trays):
     await service.transition(checkout, "awaiting_operator")
     await service.close(checkout)
     return trays[0]
+
+
+@pytest.mark.anyio
+async def test_failed_tray_store_keeps_tray_intent_and_item_stays_deletable():
+    """A failed tray store must not make its item undeletable; the workflow record stays."""
+    async with AsyncSessionLocal() as db:
+        await setup_trays(db)
+        item = await StorageService(db).create_item(
+            "123456788009", "Loose item", {"width": 10, "length": 10, "height": 10}
+        )
+        service = BinStorageService(db)
+        w = await service.begin("store", item, None)
+        request = storage_router.BarcodeRequest(barcode=item.barcode)
+
+        with pytest.raises(HTTPException) as active:
+            await storage_router.delete_item(request, session=db)
+        assert active.value.status_code == 409
+
+        await service.handle_robot_result(
+            _motion_failure(w, "retrieve_item", GRIP_PICK_FAILED_CODE), FakeWorker()
+        )
+        # The next store of this item goes back to a tray instead of a whole cell.
+        assert item.item_metadata["storage_mode"] == "bin"
+        await storage_router.delete_item(request, session=db)
+
+        assert await StorageService(db).get_item("123456788009") is None
+        await db.refresh(w)
+        assert w.item_id is None
+        assert w.resolution["deleted_item"]["barcode"] == "123456788009"

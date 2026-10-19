@@ -64,7 +64,7 @@ async def test_slots_persist_across_sessions_and_reuse_first_vacancy(configured)
         assert stored.compartment == 2
         payload = await service.serialize_workflow(stored)
         assert payload["bin"]["compartment_layout"] == {"rows": 2, "columns": 4}
-        assert payload["bin"]["compartment_dimensions"] == {"width": 41.75, "length": 70.5, "height": 100}
+        assert payload["bin"]["compartment_dimensions"] == {"width": 48.5, "length": 79.0, "height": 100}
         assert {entry["id"]: entry["compartment"] for entry in payload["bin"]["items"]} == {first_id: 1, second_id: 2}
         first = await StorageService(db).get_item("123456789001")
         retrieve = await service.begin("retrieve", first, None)
