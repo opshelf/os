@@ -9,9 +9,6 @@
 		id: string;
 		type: string;
 		online: boolean;
-		running: boolean;
-		consumers: number;
-		has_frame: boolean;
 	};
 
 	type CamerasResponse = {
@@ -55,6 +52,19 @@
 		selectedCameraId !== '' && isCameraOnline === true
 			? buildAuthenticatedUrl(`/camera/${selectedCameraId}`)
 			: '';
+	// Which transport is actually feeding the visible picture: the raw
+	// H.264 NALU/WebCodecs path, or the MJPEG decode-worker fallback
+	// (also the only path for cameras that do not offer H.264, e.g. H.265).
+	$: codecLabel =
+		selectedCamera === null
+			? ''
+			: selectedCamera.online === false
+				? 'offline'
+				: streamError === true
+					? 'error'
+					: h264Ready === true
+						? 'h264'
+						: 'mjpeg';
 	$: if (browser === true && selectedCameraId !== '' && deviceId !== '') {
 		loadCameraPreferences(selectedCameraId, deviceId);
 	}
@@ -568,16 +578,8 @@
 					</tr>
 					{#if selectedCamera !== null}
 						<tr>
-							<td>type</td>
-							<td>{selectedCamera.type}</td>
-						</tr>
-						<tr>
-							<td>status</td>
-							<td>{selectedCamera.online === true ? 'online' : 'offline'}</td>
-						</tr>
-						<tr>
-							<td>consumers</td>
-							<td>{selectedCamera.consumers}</td>
+							<td>codec</td>
+							<td>{codecLabel}</td>
 						</tr>
 					{/if}
 				{/if}
@@ -594,7 +596,7 @@
 			class="flip-button"
 			class:active={isImageFlipped}
 			on:click={didToggleImageFlip}
-			aria-pressed={isImageFlipped}>↕︎</button
+			aria-pressed={isImageFlipped}>FLIP</button
 		>
 		<button
 			type="button"
@@ -652,16 +654,11 @@
 		align-items: center;
 	}
 
-	.flip-button {
-		min-width: 1.5em;
-	}
-
-	.button-row button.active {
-		font-weight: 700;
-	}
-
+	/* The "on" state is the sunken look: drop the shadow and translate by the
+	   shadow offset. No font-weight change, so an active button keeps its width
+	   and does not push the following button to the right. */
+	.flip-button.active,
 	.draw-button.active {
-		background-color: #e6e6e6;
 		box-shadow: none;
 		transform: translate3d(4px, 4px, 0px);
 	}
