@@ -370,5 +370,3 @@ def persist_scan_started_at(
 		json.dumps(metadata_document, indent="\t"),
 		encoding="utf-8",
 	)
-
-

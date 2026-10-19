@@ -263,4 +263,3 @@ def build_shelf_edge_stop_predicate(
 		min_positive_run_length=min_positive_run_length,
 		grid_step_mm=grid_step_mm,
 	)
-

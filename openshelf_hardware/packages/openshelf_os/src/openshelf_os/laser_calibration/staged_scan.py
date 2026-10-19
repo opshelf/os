@@ -1243,6 +1243,3 @@ def apply_single_shelf_analysis(
 		filename=grid.filename if grid.filename != "" else str(grid_path),
 	)
 	storage_grid.save()
-
-
-
