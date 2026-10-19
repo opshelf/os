@@ -134,19 +134,6 @@ class GpioManager:
 
             self.input(name)
 
-    def set_fake_input(self, name: str, value: bool, *, raw: bool = False) -> None:
-        spec = self._require_pin(name)
-
-        if self._fake is False:
-            raise GpioConfigError("set_fake_input is only available on fake GPIO managers")
-
-        backend = self._backend_for(spec)
-
-        if not isinstance(backend, FakeGpioBackend):
-            raise GpioConfigError("GPIO manager is not using the fake backend")
-
-        backend.set_raw(spec, value if raw is True else spec.to_raw(value))
-
     def close(self) -> None:
         if self._closed is True:
             return

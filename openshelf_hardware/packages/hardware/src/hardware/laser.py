@@ -125,16 +125,3 @@ class LaserSensor:
         )
 
         return distance_mm
-
-    async def read_distance_mm_or_none(self) -> Optional[float]:
-        try:
-            return await self.read_distance_mm()
-
-        except Exception:
-            logger.warning(
-                "Laser distance read failed",
-                extra={"unit_id": self.device_id},
-                exc_info=True,
-            )
-
-            return None

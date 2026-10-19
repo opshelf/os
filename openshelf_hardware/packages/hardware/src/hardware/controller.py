@@ -2,7 +2,7 @@ import asyncio
 import logging
 import pymodbus
 
-from typing import Any, Awaitable, Callable, List, Optional, Sequence, TypeVar
+from typing import Any, Awaitable, Callable, Optional, Sequence, TypeVar
 from pymodbus.client import AsyncModbusSerialClient
 from pymodbus.exceptions import ModbusException, ModbusIOException
 
@@ -368,40 +368,5 @@ class SharedModbusController:
                 write_operation,
                 attempts=2,
                 failure_message="Modbus write failed after reconnect",
-                unexpected_message=f"Unexpected error writing to unit {unit_id}",
-            )
-
-    async def write_multiple_registers(
-        self,
-        unit_id: int,
-        address: int,
-        values: List[int]
-    ) -> None:
-        self._require_connected()
-
-        if not values:
-            raise ValueError("Values list cannot be empty")
-
-        async def write_operation(client: AsyncModbusSerialClient) -> None:
-            result = await client.write_registers(
-                address=address,
-                values=values,
-                device_id=int(unit_id)
-            )
-
-            self._validate_modbus_response(
-                result,
-                no_response_message=(
-                    f"No response from unit {unit_id} while writing "
-                    f"{len(values)} values starting at register {address}"
-                ),
-                error_message=f"Write error to unit {unit_id}, registers {address}-{address+len(values)-1}",
-            )
-
-        async with self.lock:
-            await self._run_with_reconnect_retry(
-                write_operation,
-                attempts=2,
-                failure_message="Modbus multi-write failed after reconnect",
                 unexpected_message=f"Unexpected error writing to unit {unit_id}",
             )

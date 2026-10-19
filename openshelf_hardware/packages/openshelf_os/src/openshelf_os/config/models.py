@@ -174,12 +174,6 @@ class Motors(RootModel[List[Motor]]):
                 return m
         raise KeyError(f"Motor with name '{name}' not found")
 
-    def by_id(self, motor_id: int) -> Motor:
-        for m in self.root:
-            if m.motor_id == motor_id:
-                return m
-        raise KeyError(f"Motor with id '{motor_id}' not found")
-
 
 class PoeCamera(BaseModel):
     url: str = ""

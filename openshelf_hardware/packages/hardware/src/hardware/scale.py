@@ -20,8 +20,6 @@ class WeightReading(NamedTuple):
 
 class Scale:
     REG_WEIGHT_HI = 0
-    REG_WEIGHT_LO = 1
-    REG_DECIMALS = 2
     REG_STATUS = 3
     REG_TARE = 4
     REG_FULL_SCALE_HI = 25

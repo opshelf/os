@@ -25,10 +25,6 @@ from openshelf_os.exceptions import (
     ConfigError as CabinetConfigError, GRIP_IO_BOX_FAILED_CODE, MotorError, MovementError, ToolError
 )
 from openshelf_os.iobox import IOBox
-from openshelf_os.laser_calibration.scan import (
-    ScanAnalysisResult, ScanBounds, analyze_scan_capture,
-    build_axis_positions, build_shelves_from_scan, create_scan_capture,
-)
 from openshelf_os.operating_mode import should_enable_demo_features
 from openshelf_os.robot.commands import (
     RobotCommands, StopCommand, InitializeCommand, IdleCommand, HomeCommand,
@@ -1682,107 +1678,6 @@ class Robot:
 
     async def get_laser_distance(self) -> float:
         return await self._require_laser().read_distance_mm()
-
-    async def scan_storage(
-        self,
-        *,
-        side: StorageModuleSide | str,
-        bounds: ScanBounds,
-        step_mm: float,
-        settle_ms: int,
-        samples_per_point: int,
-        laser_offset_x_mm: float,
-        laser_offset_y_mm: float,
-        wall_depth_tolerance_mm: float = 2.0,
-        expected_hole_width_mm: float = 26.0,
-        expected_hole_height_mm: float = 30.0,
-        hole_width_tolerance_mm: float = 10.0,
-        hole_height_tolerance_mm: float = 10.0,
-        min_vertical_wall_coverage_mm: float = 10.0,
-        min_horizontal_wall_coverage_mm: float = 30.0,
-        scans_dir: str = "data/scans",
-        apply: bool = True,
-        stage_extension_mm: Optional[float] = None,
-        z_extension_mm: Optional[float] = None,
-        progress_callback: Optional[Any] = None,
-    ) -> ScanAnalysisResult:
-        if isinstance(side, str):
-            side = StorageModuleSide(side)
-
-        side_number = 0 if side == StorageModuleSide.FRONT else 1
-
-        if stage_extension_mm is None:
-            stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.FRONT else "STAGE_EXTENSION_SHELF_BACK"
-            stage_value = await self._tool.get_param(stage_param)
-            if stage_value is not None:
-                stage_extension_mm = float(stage_value)
-
-        x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
-        y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
-
-        depth_rows = await self._tool.capture_laser_scan(
-            side=side_number,
-            x_positions=x_positions,
-            y_positions=y_positions,
-            settle_ms=settle_ms,
-            samples_per_point=samples_per_point,
-            stage_extension_mm=stage_extension_mm,
-            z_extension_mm=z_extension_mm,
-            progress_callback=progress_callback,
-        )
-
-        capture = create_scan_capture(
-            side=side,
-            bounds=bounds,
-            step_mm=step_mm,
-            settle_ms=settle_ms,
-            samples_per_point=samples_per_point,
-            laser_offset_x_mm=laser_offset_x_mm,
-            laser_offset_y_mm=laser_offset_y_mm,
-            wall_depth_tolerance_mm=wall_depth_tolerance_mm,
-            expected_hole_width_mm=expected_hole_width_mm,
-            expected_hole_height_mm=expected_hole_height_mm,
-            hole_width_tolerance_mm=hole_width_tolerance_mm,
-            hole_height_tolerance_mm=hole_height_tolerance_mm,
-            min_vertical_wall_coverage_mm=min_vertical_wall_coverage_mm,
-            min_horizontal_wall_coverage_mm=min_horizontal_wall_coverage_mm,
-            depth_rows=depth_rows,
-        )
-
-        analysis = analyze_scan_capture(capture, base_dir=scans_dir)
-
-        if apply is False:
-            return analysis
-
-        if len(analysis.shelves) == 0:
-            raise ValueError("No tray openings detected from scan")
-
-        existing_shelves = None if self._grid is None else self._grid.get_side(side)
-        scanned_shelves = build_shelves_from_scan(
-            side=side,
-            analysis=analysis,
-            existing_shelves=existing_shelves,
-        )
-
-        current_front = [] if self._grid is None else self._grid.front_module
-        current_back = [] if self._grid is None else self._grid.back_module
-
-        if side == StorageModuleSide.FRONT:
-            front_module = scanned_shelves
-            back_module = current_back
-        else:
-            front_module = current_front
-            back_module = scanned_shelves
-
-        storage_grid = StorageGrid(
-            front_module=front_module,
-            back_module=back_module,
-            filename=self._grid_path,
-        )
-        storage_grid.save()
-        self._grid = storage_grid
-
-        return analysis
 
     # ------------------------------------------------------------------ #
     #  Motor diagnostics

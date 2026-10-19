@@ -126,24 +126,6 @@ def _encode_nalu_frames(access_units: list[bytes]) -> bytes:
 	return bytes(out)
 
 
-def _decode_nalu_frames(data: bytes) -> list[bytes]:
-	units: list[bytes] = []
-	offset = 0
-
-	while offset + 4 <= len(data):
-		length = struct.unpack_from(">I", data, offset)[0]
-		offset += 4
-		if length == 0 or offset + length > len(data):
-			raise ValueError("malformed NALU frame message")
-		units.append(bytes(data[offset:offset + length]))
-		offset += length
-
-	if offset != len(data):
-		raise ValueError("trailing bytes in NALU frame message")
-
-	return units
-
-
 def _split_annexb_nalus(data: bytes) -> list[bytes]:
 	"""Split an Annex-B byte string into NAL units, start codes stripped.
 
@@ -887,13 +869,6 @@ class ToolCameraStreamManager:
 		self.nalu_stop_event = None
 		self.nalu_queue = None
 
-	def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
-		return _prepare_tool_camera_frame(frame, self.max_frame_width)
-
-	def _get_frames_to_skip(self, cap: cv2.VideoCapture) -> int:
-		source_fps = cap.get(cv2.CAP_PROP_FPS)
-		return _get_tool_camera_frames_to_skip(source_fps, self.target_fps)
-
 	def _drain_nalu_queue(self) -> list[bytes]:
 		"""Move queued items into the rings; returns this tick's view AUs."""
 		tick_aus: list[bytes] = []
@@ -1181,17 +1156,8 @@ class ToolCameraStreamManager:
 			return self.latest_frame
 
 
-camera_manager: Optional[CameraStreamManager] = None
 tool_camera_manager: Optional[ToolCameraStreamManager] = None
 overhead_camera_manager: Optional[ToolCameraStreamManager] = None
-
-
-async def init_camera_manager(camera: RawCamera) -> None:
-	global camera_manager, camera_registry
-
-	camera_manager = CameraStreamManager(camera=camera)
-	camera_registry["io"] = camera_manager
-	logger.info("io_camera_registered")
 
 
 async def init_sizer_camera_manager(camera: RawCamera) -> None:
