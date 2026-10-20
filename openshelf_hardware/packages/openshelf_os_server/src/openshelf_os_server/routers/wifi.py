@@ -304,7 +304,7 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 		raise api_error(
 			status.HTTP_502_BAD_GATEWAY,
 			"wifi_connect_failed",
-			"The robot could not connect to that network. Try again.",
+			"",
 		)
 	# Nothing to fall back on: the cabinet is unreachable and the body must
 	# say so. The message stays empty so the code's own sentence is what the

@@ -480,7 +480,7 @@ def _tray_config_error(exc: ValueError) -> HTTPException:
     return api_error(
         409,
         "tray_config_conflict",
-        "The tray settings conflict with stored items. Check the tray barcode and settings.",
+        "",
     )
 
 
@@ -1813,7 +1813,7 @@ def _validate_grid_cell_update(payload: GridCellUpdate) -> None:
         try:
             CellStatus(payload.status)
         except ValueError:
-            raise api_error(400, "cell_status_invalid", "That shelf status is not valid.")
+            raise api_error(400, "cell_status_invalid", "")
 
     if payload.dimensions is not None:
         _validate_grid_dimensions(payload.dimensions)

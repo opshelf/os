@@ -112,7 +112,7 @@ async def get_cabinet_status(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "cabinet_status_failed",
-            "The cabinet status could not be read. Try again.",
+            "",
         ) from exc
 
 
@@ -139,7 +139,7 @@ async def control_cabinet_release(
             raise api_error(
                 status.HTTP_409_CONFLICT,
                 "cabinet_not_configured",
-                "This cabinet cannot open its doors.",
+                "",
             )
 
         async with manual_motion_guard(
@@ -163,5 +163,5 @@ async def control_cabinet_release(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "cabinet_release_control_failed",
-            "The cabinet did not release. Try again.",
+            "",
         ) from exc

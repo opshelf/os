@@ -130,7 +130,7 @@ async def test_wifi_connect_failure_is_neutral_code_when_previous_connection_res
 	assert response.status_code == 502
 	detail = response.json()["detail"]
 	assert detail["code"] == "wifi_connect_failed"
-	assert detail["message"] == "The robot could not connect to that network. Try again."
+	assert detail["message"] == "The machine could not connect to that network. Try again."
 	assert "TestNet" not in response.text and "authentication failed" not in response.text
 
 
