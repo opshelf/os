@@ -8,7 +8,9 @@ from sqlalchemy import delete, select, update
 from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.database.models import AuditLog, Role, User
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.routers import onboarding
+from openshelf_os_server.errors import CODE_MESSAGES
+from openshelf_os_server.routers import onboarding, wifi
+from openshelf_os_server.routers.wifi import _NmcliResult
 from openshelf_os_server.settings import get_settings
 
 
@@ -97,6 +99,73 @@ async def test_wifi_endpoints_rejected_when_provisioned(
         "/api/onboarding/wifi/connect", json={"ssid": "Test", "password": "secret"}
     )
     assert connect_resp.status_code == 403
+
+
+def _fake_nmcli(monkeypatch: pytest.MonkeyPatch, previous_connection: str | None, restore_fails: bool = False) -> None:
+	"""Replace the nmcli subprocess with a scripted failure of the connect."""
+
+	async def fake(*args: str) -> _NmcliResult:
+		if args == ("-t", "-f", "NAME,DEVICE", "connection", "show", "--active"):
+			return _NmcliResult(0, f"{previous_connection}:wlan0\n" if previous_connection else "", "")
+		if args == ("-t", "-f", "ACTIVE,SSID,SIGNAL", "dev", "wifi"):
+			return _NmcliResult(0, "", "")
+		if args == ("-w", "30", "connection", "up", wifi.PENDING_NAME):
+			return _NmcliResult(1, "", "authentication failed")
+		if previous_connection is not None and args == ("-w", "30", "connection", "up", previous_connection):
+			return _NmcliResult(1, "", "restore failed") if restore_fails else _NmcliResult(0, "", "")
+		return _NmcliResult(0, "", "")
+
+	monkeypatch.setattr(wifi, "_run_nmcli", fake)
+
+
+@pytest.mark.anyio
+async def test_wifi_connect_failure_is_neutral_code_when_previous_connection_restored(
+	client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	# A failed connect that rolls back to the previous connection keeps the
+	# neutral sentence: the cabinet is still reachable.
+	_fake_nmcli(monkeypatch, "OldConn")
+	response = await client.post("/api/wifi/connect", json={"ssid": "TestNet", "password": "secret"})
+	assert response.status_code == 502
+	detail = response.json()["detail"]
+	assert detail["code"] == "wifi_connect_failed"
+	assert detail["message"] == "The cabinet could not connect to that network. Try again."
+	assert "TestNet" not in response.text and "authentication failed" not in response.text
+
+
+@pytest.mark.anyio
+async def test_wifi_connect_failure_is_offline_code_when_nothing_to_restore(
+	client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	# With no previous connection, the failed connect leaves the cabinet
+	# unreachable; the body must say so instead of the neutral sentence.
+	_fake_nmcli(monkeypatch, None)
+	response = await client.post("/api/wifi/connect", json={"ssid": "TestNet", "password": "secret"})
+	assert response.status_code == 502
+	detail = response.json()["detail"]
+	assert detail["code"] == "wifi_connect_failed_offline"
+	assert detail["message"] == CODE_MESSAGES["wifi_connect_failed_offline"]
+	assert "may now be offline" in detail["message"]
+	assert "TestNet" not in response.text and "authentication failed" not in response.text
+
+
+@pytest.mark.anyio
+async def test_wifi_connect_failure_is_offline_code_when_restore_fails(
+	client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	# A failed connect whose rollback to the previous connection also fails
+	# leaves the cabinet unreachable, like the nothing-to-restore case.
+	_fake_nmcli(monkeypatch, "OldConn", restore_fails=True)
+	response = await client.post("/api/wifi/connect", json={"ssid": "TestNet", "password": "secret"})
+	assert response.status_code == 502
+	detail = response.json()["detail"]
+	assert detail["code"] == "wifi_connect_failed_offline"
+	assert detail["message"] == CODE_MESSAGES["wifi_connect_failed_offline"]
+	assert "may now be offline" in detail["message"]
+	assert "TestNet" not in response.text and "restore failed" not in response.text
 
 
 @pytest.mark.anyio

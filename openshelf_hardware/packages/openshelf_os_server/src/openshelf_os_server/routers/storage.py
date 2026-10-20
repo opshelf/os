@@ -496,7 +496,7 @@ def _grid_update_error(exc: Exception) -> HTTPException:
 
 def _grid_location_error(exc: IndexError) -> HTTPException:
     logging.info("Storage grid location not found: %s", exc)
-    return api_error(404, "cell_not_found", "That shelf spot does not exist.")
+    return api_error(404, "cell_not_found", "")
 
 
 # ---------------------------------------------------------------------------
@@ -1383,10 +1383,10 @@ async def add_item_location(
         )
     except CellOccupiedError as exc:
         logging.info("Item location rejected: %s", exc)
-        raise api_error(409, "cell_unavailable", "That shelf spot is not available.") from exc
+        raise api_error(409, "cell_unavailable", "") from exc
     except (ValidationError, ValueError) as exc:
         logging.info("Item location rejected: %s", exc)
-        raise api_error(422, "invalid_location", "That shelf spot is not valid.") from exc
+        raise api_error(422, "invalid_location", "") from exc
 
     if not storage_location:
         raise HTTPException(status_code=400, detail="Failed to add location")

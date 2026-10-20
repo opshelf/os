@@ -204,7 +204,12 @@ async def _bring_up_pending(ssid: str, password: str) -> _NmcliResult:
 	return await _run_nmcli("-w", NMCLI_WAIT_SECONDS, "connection", "up", PENDING_NAME)
 
 
-async def _rollback(previous_connection: str | None) -> None:
+async def _rollback(previous_connection: str | None) -> bool:
+	"""Delete the pending connection and restore the previous one.
+
+	Returns True only when the previous connection was restored, i.e. the
+	cabinet is back on its previous network.
+	"""
 	await _run_nmcli("connection", "delete", PENDING_NAME)
 	if previous_connection is not None and previous_connection != PENDING_NAME:
 		restore = await _run_nmcli("-w", NMCLI_WAIT_SECONDS, "connection", "up", previous_connection)
@@ -214,6 +219,8 @@ async def _rollback(previous_connection: str | None) -> None:
 			restored=restore.ok,
 			error=restore.stderr.strip(),
 		)
+		return restore.ok
+	return False
 
 
 @router.get(
@@ -284,18 +291,28 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 		logger.info("wifi_connect_succeeded", ssid=ssid)
 		return WifiConnectResponse(success=True, ssid=ssid, message=f"connected to {ssid}")
 
-	await _rollback(previous_connection)
+	restored = await _rollback(previous_connection)
 	detail = result.stderr.strip() or "connection did not activate"
 	logger.warning(
 		"wifi_connect_failed",
 		ssid=ssid,
 		error=detail,
 		rolled_back_to=previous_connection,
+		restored=restored,
 	)
+	if restored:
+		raise api_error(
+			status.HTTP_502_BAD_GATEWAY,
+			"wifi_connect_failed",
+			"The cabinet could not connect to that network. Try again.",
+		)
+	# Nothing to fall back on: the cabinet is unreachable and the body must
+	# say so. The message stays empty so the code's own sentence is what the
+	# operator sees.
 	raise api_error(
 		status.HTTP_502_BAD_GATEWAY,
-		"wifi_connect_failed",
-		"The cabinet could not connect to that network. Check the password and try again.",
+		"wifi_connect_failed_offline",
+		"",
 	)
 
 

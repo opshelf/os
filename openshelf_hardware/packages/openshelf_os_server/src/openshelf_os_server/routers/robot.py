@@ -200,8 +200,8 @@ def _raise_scale_config_error(exc: ConfigError) -> NoReturn:
     logging.warning("Scale configuration error: %s", exc)
     raise api_error(
         status.HTTP_503_SERVICE_UNAVAILABLE,
-        "scale_not_enabled",
-        "The scale is not available on this cabinet.",
+        "scale_config_failed",
+        "",
     ) from exc
 
 
@@ -566,7 +566,7 @@ def _parse_requested_store_location(item_data: dict[str, Any]) -> StorageModuleC
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=error_detail("That shelf spot is not valid.", "invalid_location"),
+            detail=error_detail("", "invalid_location"),
         ) from None
 
 
@@ -600,7 +600,7 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
         )
     if cell.status != CellStatus.AVAILABLE:
         logging.info("Requested storage cell is %s", cell.status.value)
-        raise api_error(status.HTTP_409_CONFLICT, "cell_unavailable", "That shelf spot is not available.")
+        raise api_error(status.HTTP_409_CONFLICT, "cell_unavailable", "")
 
     dimensions = item_data.get("dimensions")
     if not isinstance(dimensions, dict):
@@ -702,7 +702,7 @@ async def _validate_mock_retrieve(
         or not 0 <= shelf_idx < MOCK_SHELVES_PER_SIDE
         or not 0 <= cell_idx < MOCK_CELLS_PER_SHELF
     ):
-        raise api_error(status.HTTP_400_BAD_REQUEST, "invalid_location", "That shelf spot is not valid.")
+        raise api_error(status.HTTP_400_BAD_REQUEST, "invalid_location", "")
 
     item = (
         await db.execute(
@@ -831,7 +831,7 @@ async def robot_commands(
             except MockQueueFullError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=error_detail("The cabinet is busy. Wait for the current move to finish.", "queue_full"),
+                    detail=error_detail("", "queue_full"),
                     headers={"Retry-After": "1"},
                 ) from exc
             except ValueError as exc:
@@ -839,7 +839,7 @@ async def robot_commands(
                 raise api_error(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "request_invalid",
-                    "That request could not be sent. Reload and try again.",
+                    "That command is not valid for the cabinet right now. Check the shelf spot and try again.",
                 ) from exc
         return CommandAcceptedResponse.model_validate(
             {"message": "success", "command_id": row.command_id, "status": row.status}
@@ -1006,7 +1006,7 @@ async def robot_commands(
         cell_idx = location_data.get("cell_idx")
 
         if side is None or shelf_idx is None or cell_idx is None:
-            raise api_error(status.HTTP_400_BAD_REQUEST, "invalid_location", "That shelf spot is not valid.")
+            raise api_error(status.HTTP_400_BAD_REQUEST, "invalid_location", "")
 
         result = await db.execute(
             select(Item)
@@ -1050,7 +1050,7 @@ async def robot_commands(
         except CommandQueueFullError as exc:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=error_detail("The cabinet is busy. Wait for the current move to finish.", "queue_full"),
+                detail=error_detail("", "queue_full"),
                 headers={"Retry-After": "1"},
             ) from exc
         except ValueError as exc:
@@ -1058,7 +1058,7 @@ async def robot_commands(
             raise api_error(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "request_invalid",
-                "That request could not be sent. Reload and try again.",
+                "That command is not valid for the cabinet right now. Check the shelf spot and try again.",
             ) from exc
         if was_replay is False:
             await enqueue_persisted(worker, command, row)

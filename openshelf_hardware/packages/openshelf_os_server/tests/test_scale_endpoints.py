@@ -2,7 +2,10 @@ from types import SimpleNamespace
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
+from openshelf_os.config.exceptions import ConfigError
+from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.robot.commands import RetrieveItemCommand, StoreItemCommand
+from openshelf_os_server.errors import CODE_MESSAGES
 from openshelf_os_server.routers import robot as robot_router
 
 
@@ -24,6 +27,31 @@ def _mock_worker():
 
 
 @pytest.mark.anyio
+async def test_scale_endpoint_distinguishes_disabled_scale_from_broken_config() -> None:
+	"""The feature-off state and a real config failure must not share a code."""
+	worker = _mock_worker()
+	worker.get_scale_data.side_effect = ConfigError("Scale is not enabled")
+
+	with patch("openshelf_os_server.routers.robot.get_operating_mode", return_value=OperatingMode.production):
+		with pytest.raises(HTTPException) as disabled:
+			await robot_router.get_scale_reading(worker=worker)
+
+	assert disabled.value.status_code == 404
+	assert disabled.value.detail["code"] == "scale_not_enabled"
+
+	worker.get_scale_data.side_effect = ConfigError("Z_EXT_SCALE not configured")
+
+	with patch("openshelf_os_server.routers.robot.get_operating_mode", return_value=OperatingMode.production):
+		with pytest.raises(HTTPException) as broken:
+			await robot_router.get_scale_reading(worker=worker)
+
+	assert broken.value.status_code == 503
+	assert broken.value.detail == {
+		"message": CODE_MESSAGES["scale_config_failed"],
+		"code": "scale_config_failed",
+	}
+
+
 @pytest.mark.anyio
 async def test_retrieve_command_uses_cached_occupied_scale_status() -> None:
 	worker = _mock_worker()
