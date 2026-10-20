@@ -57,6 +57,7 @@ from openshelf_os.storage import (
 	StorageModuleSide,
 )
 from openshelf_os_server.core.storage_module import StorageModuleSideDto, side_to_s
+from openshelf_os_server.errors import api_error
 from openshelf_os_server.settings import clear_config_cache, get_operating_mode, get_root_config, save_root_config
 
 router = APIRouter(tags=["storage"])
@@ -474,6 +475,30 @@ def monitor_performance(func: Callable) -> Callable:
     return wrapper
 
 
+def _tray_config_error(exc: ValueError) -> HTTPException:
+    logging.warning("Storage bin config sync rejected: %s", exc)
+    return api_error(
+        409,
+        "tray_config_conflict",
+        "The tray settings conflict with stored items. Check the tray barcode and settings.",
+    )
+
+
+def _grid_load_error(exc: Exception) -> HTTPException:
+    logging.error("Storage grid load failed: %s", exc)
+    return api_error(500, "grid_load_failed", "The shelf layout could not be read. Try again.")
+
+
+def _grid_update_error(exc: Exception) -> HTTPException:
+    logging.error("Storage grid update failed: %s", exc)
+    return api_error(500, "grid_update_failed", "The shelf layout could not be saved. Try again.")
+
+
+def _grid_location_error(exc: IndexError) -> HTTPException:
+    logging.info("Storage grid location not found: %s", exc)
+    return api_error(404, "cell_not_found", "That shelf spot does not exist.")
+
+
 # ---------------------------------------------------------------------------
 # Item endpoints
 # ---------------------------------------------------------------------------
@@ -497,7 +522,7 @@ async def get_bins(session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
     try:
         await service.sync_config()
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise _tray_config_error(exc) from exc
     return {"bins": await service.list_bins()}
 
 
@@ -589,7 +614,7 @@ async def update_tray_layout(
     try:
         await BinStorageService(session).sync_config()
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise _tray_config_error(exc) from exc
 
     return {"success": True}
 
@@ -624,10 +649,7 @@ async def assign_tray(
     try:
         grid = _get_robot_grid()
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load storage grid: {exc}",
-        ) from exc
+        raise _grid_load_error(exc) from exc
 
     cell = grid.get_cell_if_present(
         StorageModuleCellLocation(side=side, shelf_idx=shelf_idx, cell_idx=cell_idx)
@@ -718,7 +740,7 @@ async def assign_tray(
     try:
         await BinStorageService(session).sync_config()
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise _tray_config_error(exc) from exc
 
     return {"success": True}
 
@@ -793,7 +815,7 @@ async def unassign_tray(
     try:
         await BinStorageService(session).sync_config()
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise _tray_config_error(exc) from exc
 
     return {"success": True}
 
@@ -835,7 +857,7 @@ async def create_bin_workflow(
     try:
         await service.sync_config()
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise _tray_config_error(exc) from exc
     item = await storage.get_item(request.barcode)
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -1360,9 +1382,11 @@ async def add_item_location(
             cell_idx=location.cell_idx,
         )
     except CellOccupiedError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        logging.info("Item location rejected: %s", exc)
+        raise api_error(409, "cell_unavailable", "That shelf spot is not available.") from exc
     except (ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        logging.info("Item location rejected: %s", exc)
+        raise api_error(422, "invalid_location", "That shelf spot is not valid.") from exc
 
     if not storage_location:
         raise HTTPException(status_code=400, detail="Failed to add location")
@@ -1532,10 +1556,7 @@ async def get_storage_grid() -> Dict[str, Any]:
     try:
         grid = _get_robot_grid()
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load storage grid: {exc}",
-        ) from exc
+        raise _grid_load_error(exc) from exc
 
     return grid.model_dump()
 
@@ -1560,10 +1581,7 @@ async def add_grid_shelf(
         grid.add_shelf(side)
         return {"success": True}
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to add shelf: {exc}",
-        ) from exc
+        raise _grid_update_error(exc) from exc
 
 
 @router.delete(
@@ -1615,12 +1633,9 @@ async def delete_shelf(
         grid.remove_shelf(side, shelf_idx)
         return {"success": True}
     except IndexError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise _grid_location_error(exc)
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete shelf: {exc}",
-        ) from exc
+        raise _grid_update_error(exc) from exc
 
 
 @router.post(
@@ -1643,12 +1658,9 @@ async def add_grid_cell(
         grid.add_cell(side, shelf_idx)
         return {"success": True}
     except IndexError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise _grid_location_error(exc)
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to add cell: {exc}",
-        ) from exc
+        raise _grid_update_error(exc) from exc
 
 
 @router.delete(
@@ -1699,12 +1711,9 @@ async def delete_cell(
         grid.remove_cell(side, shelf_idx, cell_idx)
         return {"success": True}
     except IndexError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise _grid_location_error(exc)
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete cell: {exc}",
-        ) from exc
+        raise _grid_update_error(exc) from exc
 
 
 @router.put(
@@ -1728,12 +1737,9 @@ async def update_grid_cell(
         grid = _get_robot_grid()
         cell = grid.get_cell(StorageModuleCellLocation(side=side, shelf_idx=shelf_idx, cell_idx=cell_idx))
     except IndexError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise _grid_location_error(exc)
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load storage grid: {exc}",
-        ) from exc
+        raise _grid_load_error(exc) from exc
 
     _validate_grid_cell_update(payload)
     _apply_grid_cell_update(cell, payload, side)
@@ -1744,16 +1750,9 @@ async def update_grid_cell(
 
 
 def _validate_grid_dimensions(dims: DimensionsPayload) -> None:
-    for field, value in (
-        ("width", dims.width),
-        ("height", dims.height),
-        ("length", dims.length),
-    ):
+    for value in (dims.width, dims.height, dims.length):
         if not value > 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Dimension {field} must be greater than zero",
-            )
+            raise api_error(400, "dimension_invalid", "Enter a size greater than zero.")
 
 
 def _validate_grid_cell_update(payload: GridCellUpdate) -> None:
@@ -1764,17 +1763,14 @@ def _validate_grid_cell_update(payload: GridCellUpdate) -> None:
     ) != (payload.z_offset is None):
         raise HTTPException(
             status_code=400,
-            detail="x, y, and z_offset must be provided together",
+            detail="Enter the X, Y and Z offset values together.",
         )
 
     if payload.status is not None:
         try:
             CellStatus(payload.status)
         except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid status: {payload.status}. Must be one of: available, occupied, maintenance, disabled",
-            )
+            raise api_error(400, "cell_status_invalid", "That shelf status is not valid.")
 
     if payload.dimensions is not None:
         _validate_grid_dimensions(payload.dimensions)
@@ -1823,10 +1819,7 @@ async def update_grid_cells(
     try:
         grid = _get_robot_grid()
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load storage grid: {exc}",
-        ) from exc
+        raise _grid_load_error(exc) from exc
 
     if len(payload.cells) == 0:
         raise HTTPException(status_code=400, detail="No cells to update")
@@ -1839,7 +1832,7 @@ async def update_grid_cells(
                 StorageModuleCellLocation(side=side, shelf_idx=item.shelf_idx, cell_idx=item.cell_idx)
             )
         except IndexError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
+            raise _grid_location_error(exc)
         _validate_grid_cell_update(item)
         resolved.append((cell, item))
 

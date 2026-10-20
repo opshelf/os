@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncGenerator, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -31,6 +31,7 @@ from openshelf_os_server.core.camera import (
 from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.database.models import User
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.errors import api_error
 from openshelf_os_server.settings import get_settings
 from .auth_deps import get_current_user, get_current_user_for_stream
 
@@ -184,17 +185,21 @@ async def stream_camera(
 	manager = get_camera_manager_by_id(camera_id)
 
 	if manager is None:
-		raise HTTPException(
-			status_code=status.HTTP_404_NOT_FOUND,
-			detail=f"Camera '{camera_id}' not found",
+		logger.info("camera_not_found", camera_id=camera_id)
+		raise api_error(
+			status.HTTP_404_NOT_FOUND,
+			"camera_not_found",
+			"That camera is not set up on this cabinet.",
 		)
 
 	try:
 		await start_camera_stream_by_id(camera_id)
 	except ValueError as e:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail=str(e),
+		logger.warning("camera_stream_start_failed", camera_id=camera_id, error=str(e))
+		raise api_error(
+			status.HTTP_503_SERVICE_UNAVAILABLE,
+			"camera_unavailable",
+			"That camera is not delivering frames.",
 		)
 
 	try:
@@ -210,9 +215,10 @@ async def stream_camera(
 			camera_id=camera_id,
 			timeout_s=manager.first_frame_timeout,
 		)
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail=f"Camera '{camera_id}' is not delivering frames",
+		raise api_error(
+			status.HTTP_503_SERVICE_UNAVAILABLE,
+			"camera_unavailable",
+			"That camera is not delivering frames.",
 		)
 
 	async def stream_with_cleanup() -> AsyncGenerator[bytes, None]:

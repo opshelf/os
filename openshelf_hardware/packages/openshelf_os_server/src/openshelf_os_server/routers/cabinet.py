@@ -11,6 +11,7 @@ from openshelf_os.robot.worker import RobotWorker
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.robot import get_robot_worker
+from openshelf_os_server.errors import api_error
 from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 from openshelf_os_server.settings import get_settings
 
@@ -108,9 +109,10 @@ async def get_cabinet_status(
         raise
     except Exception as exc:
         logging.error("Cabinet status read failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"message": f"Cabinet status failed: {exc}", "code": "cabinet_status_failed"},
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "cabinet_status_failed",
+            "The cabinet status could not be read. Try again.",
         ) from exc
 
 
@@ -134,12 +136,10 @@ async def control_cabinet_release(
         await ensure_laser_auto_calibration_not_running()
         cabinet = worker._robot._cabinet
         if cabinet.is_configured() is False:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "message": "Cabinet GPIO is not configured on this device",
-                    "code": "cabinet_not_configured",
-                },
+            raise api_error(
+                status.HTTP_409_CONFLICT,
+                "cabinet_not_configured",
+                "This cabinet cannot open its doors.",
             )
 
         async with manual_motion_guard(
@@ -159,11 +159,9 @@ async def control_cabinet_release(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Cabinet release control failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "message": f"Cabinet release {action} failed: {exc}",
-                "code": "cabinet_release_control_failed",
-            },
+        logging.error("Cabinet release %s failed: %s", action, exc)
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "cabinet_release_control_failed",
+            "The cabinet did not release. Try again.",
         ) from exc

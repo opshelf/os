@@ -79,7 +79,7 @@ from openshelf_os_server.core.bin_storage import (
     validate_direct_store_reservation,
 )
 from openshelf_os_server.routers.common import SuccessResponse
-from openshelf_os_server.errors import error_detail
+from openshelf_os_server.errors import api_error, error_detail
 from openshelf_os_server.settings import get_settings, get_operating_mode
 from openshelf_os_server.database.session import get_db
 from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation, StorageBinItem, User
@@ -197,9 +197,11 @@ def _raise_scale_config_error(exc: ConfigError) -> NoReturn:
     if _is_scale_not_enabled(exc):
         raise _scale_not_enabled_exception() from exc
 
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail=str(exc) or "Scale is not enabled or configured",
+    logging.warning("Scale configuration error: %s", exc)
+    raise api_error(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "scale_not_enabled",
+        "The scale is not available on this cabinet.",
     ) from exc
 
 
@@ -458,7 +460,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
     item_data = command.item or {}
     barcode = item_data.get("barcode")
     if not isinstance(barcode, str) or barcode.strip() == "" or len(barcode) > BARCODE_MAX_LENGTH:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="item.barcode is required")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Enter the item barcode.")
 
     _parse_requested_store_location(item_data)
     await _validate_direct_store_reservation(item_data, db)
@@ -564,7 +566,7 @@ def _parse_requested_store_location(item_data: dict[str, Any]) -> StorageModuleC
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=error_detail("location requires side, shelf_idx and cell_idx", "invalid_location"),
+            detail=error_detail("That shelf spot is not valid.", "invalid_location"),
         ) from None
 
 
@@ -597,10 +599,8 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
             detail=error_detail("Requested storage cell does not exist", "cell_not_found"),
         )
     if cell.status != CellStatus.AVAILABLE:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail(f"Requested storage cell is {cell.status.value}", "cell_unavailable"),
-        )
+        logging.info("Requested storage cell is %s", cell.status.value)
+        raise api_error(status.HTTP_409_CONFLICT, "cell_unavailable", "That shelf spot is not available.")
 
     dimensions = item_data.get("dimensions")
     if not isinstance(dimensions, dict):
@@ -702,10 +702,7 @@ async def _validate_mock_retrieve(
         or not 0 <= shelf_idx < MOCK_SHELVES_PER_SIDE
         or not 0 <= cell_idx < MOCK_CELLS_PER_SHELF
     ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid location: side, shelf_idx and cell_idx are required",
-        )
+        raise api_error(status.HTTP_400_BAD_REQUEST, "invalid_location", "That shelf spot is not valid.")
 
     item = (
         await db.execute(
@@ -719,10 +716,8 @@ async def _validate_mock_retrieve(
         )
     ).scalar_one_or_none()
     if item is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No item found at location (side: {side}, shelf: {shelf_idx}, cell: {cell_idx})",
-        )
+        logging.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
+        raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that shelf spot.")
     if can_user_retrieve_item(current_user, item) is False:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -796,16 +791,17 @@ async def robot_commands(
         if not isinstance(command, (StoreItemCommand, RetrieveItemCommand)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Mock mode supports only store_item and retrieve_item",
+                detail="Only store and retrieve are available in mock mode.",
             )
         runtime = get_mock_robot_runtime()
         payload = submission_payload
         try:
             replay = await runtime.replay(payload, request_id)
         except MockRequestConflictError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="request_id was already used with a different payload",
+            raise api_error(
+                status.HTTP_409_CONFLICT,
+                "request_replay",
+                "That request was already sent. Reload and try again.",
             ) from exc
         if replay is not None:
             return CommandAcceptedResponse.model_validate(
@@ -825,20 +821,26 @@ async def robot_commands(
                     correlation_id=correlation_id_var.get(),
                 )
             except MockRequestConflictError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="request_id was already used with a different payload",
+                raise api_error(
+                    status.HTTP_409_CONFLICT,
+                    "request_replay",
+                    "That request was already sent. Reload and try again.",
                 ) from exc
             except CommandTargetInFlightError as exc:
                 raise _target_in_flight_error() from exc
             except MockQueueFullError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Mock robot command queue is full",
+                    detail=error_detail("The cabinet is busy. Wait for the current move to finish.", "queue_full"),
                     headers={"Retry-After": "1"},
                 ) from exc
             except ValueError as exc:
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+                logging.info("Mock robot command rejected: %s", exc)
+                raise api_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "request_invalid",
+                    "That request could not be sent. Reload and try again.",
+                ) from exc
         return CommandAcceptedResponse.model_validate(
             {"message": "success", "command_id": row.command_id, "status": row.status}
         )
@@ -846,9 +848,10 @@ async def robot_commands(
     try:
         replay = await replay_robot_command(submission_payload, request_id)
     except CommandRequestConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="request_id was already used with a different payload",
+        raise api_error(
+            status.HTTP_409_CONFLICT,
+            "request_replay",
+            "That request was already sent. Reload and try again.",
         ) from exc
     if replay is not None:
         return CommandAcceptedResponse(
@@ -876,7 +879,7 @@ async def robot_commands(
         ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="item.barcode is required for container mass enrollment",
+                detail="Enter the item barcode before entering container weights.",
             )
         _parse_requested_store_location(item_data)
         await _validate_direct_store_reservation(item_data, db)
@@ -982,7 +985,7 @@ async def robot_commands(
                     if scale_status.occupied is True:
                         raise HTTPException(
                             status_code=status.HTTP_409_CONFLICT,
-                            detail="Please remove the item from the IO box before retrieving another",
+                            detail="Remove the item from the IO box before retrieving another.",
                         )
                 else:
                     scale_data = await worker.get_scale_data()
@@ -990,7 +993,7 @@ async def robot_commands(
                     if weight > 5.0:
                         raise HTTPException(
                             status_code=status.HTTP_409_CONFLICT,
-                            detail="Please remove the item from the IO box before retrieving another",
+                            detail="Remove the item from the IO box before retrieving another.",
                         )
             except HTTPException:
                 raise
@@ -1003,10 +1006,7 @@ async def robot_commands(
         cell_idx = location_data.get("cell_idx")
 
         if side is None or shelf_idx is None or cell_idx is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid location: side, shelf_idx and cell_idx are required",
-            )
+            raise api_error(status.HTTP_400_BAD_REQUEST, "invalid_location", "That shelf spot is not valid.")
 
         result = await db.execute(
             select(Item)
@@ -1020,10 +1020,8 @@ async def robot_commands(
         item = result.scalar_one_or_none()
 
         if item is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No item found at location (side: {side}, shelf: {shelf_idx}, cell: {cell_idx})",
-            )
+            logging.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
+            raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that shelf spot.")
 
         if can_user_retrieve_item(current_user, item) is False:
             raise HTTPException(
@@ -1042,22 +1040,25 @@ async def robot_commands(
                 enrollment_item=enrollment_item,
             )
         except CommandRequestConflictError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="request_id was already used with a different payload",
+            raise api_error(
+                status.HTTP_409_CONFLICT,
+                "request_replay",
+                "That request was already sent. Reload and try again.",
             ) from exc
         except CommandTargetInFlightError as exc:
             raise _target_in_flight_error() from exc
         except CommandQueueFullError as exc:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Robot command queue is full",
+                detail=error_detail("The cabinet is busy. Wait for the current move to finish.", "queue_full"),
                 headers={"Retry-After": "1"},
             ) from exc
         except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=str(exc),
+            logging.info("Robot command rejected: %s", exc)
+            raise api_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "request_invalid",
+                "That request could not be sent. Reload and try again.",
             ) from exc
         if was_replay is False:
             await enqueue_persisted(worker, command, row)
@@ -1317,7 +1318,7 @@ async def emit_scanner_scan_event(
         logging.error("Failed to publish label_scanned event: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Failed to publish label_scanned event",
+            detail="The label scan could not be sent. Try again.",
         ) from exc
     return SuccessResponse()
 
@@ -1387,9 +1388,10 @@ async def get_scale_reading(
             raise _scale_not_enabled_exception() from exc
 
         logging.error("Failed to read scale: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to read scale: {exc}",
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "scale_read_failed",
+            "Could not read the scale. Try again.",
         ) from exc
 
 
@@ -1416,9 +1418,10 @@ async def get_scale_calibration_status(
             raise _scale_not_enabled_exception() from exc
 
         logging.error("Failed to read scale calibration status: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to read scale calibration status: {exc}",
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "scale_read_failed",
+            "Could not read the scale. Try again.",
         ) from exc
 
 
@@ -1445,9 +1448,10 @@ async def get_scale_calibration_params(
             raise _scale_not_enabled_exception() from exc
 
         logging.error("Failed to read scale calibration params: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to read scale calibration params: {exc}",
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "scale_read_failed",
+            "Could not read the scale. Try again.",
         ) from exc
 
 
@@ -1485,9 +1489,10 @@ async def set_scale_calibration_params(
             raise _scale_not_enabled_exception() from exc
 
         logging.error("Failed to set scale calibration params: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to set scale calibration params: {exc}",
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "scale_settings_failed",
+            "The scale settings could not be saved. Try again.",
         ) from exc
 
 
@@ -1518,9 +1523,10 @@ async def calibrate_scale_zero(
             raise _scale_not_enabled_exception() from exc
 
         logging.error("Failed to calibrate scale zero: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to calibrate scale zero: {exc}",
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "scale_calibration_failed",
+            "The scale could not be calibrated. Try again.",
         ) from exc
 
 
@@ -1551,9 +1557,10 @@ async def calibrate_scale_weight(
             raise _scale_not_enabled_exception() from exc
 
         logging.error("Failed to calibrate scale weight: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to calibrate scale weight: {exc}",
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "scale_calibration_failed",
+            "The scale could not be calibrated. Try again.",
         ) from exc
 
 
@@ -1585,9 +1592,10 @@ async def scale_tare(
             raise _scale_not_enabled_exception() from exc
 
         logging.error("Failed to tare scale: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to tare scale: {exc}",
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "scale_tare_failed",
+            "The scale could not be zeroed. Try again.",
         ) from exc
 
 
@@ -1636,9 +1644,11 @@ async def simulate_motor_crash(
     success = await worker.simulate_motor_crash(motor_name)
 
     if success is False:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Motor '{motor_name}' not found",
+        logging.info("Motor %s not found", motor_name)
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            "motor_not_configured",
+            "That motor is not configured on this cabinet.",
         )
 
     return {"success": True, "motor": motor_name}
@@ -1663,9 +1673,11 @@ async def clear_motor_alarm(
     motor = worker._robot._get_motor_by_name(motor_name)
 
     if motor is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Motor '{motor_name}' not found",
+        logging.info("Motor %s not found", motor_name)
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            "motor_not_configured",
+            "That motor is not configured on this cabinet.",
         )
 
     try:
@@ -1685,9 +1697,10 @@ async def clear_motor_alarm(
         raise
     except Exception as exc:
         logging.error("Motor alarm clear failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=error_detail(f"Motor alarm clear failed: {exc}", "motor_alarm_clear_failed"),
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "motor_alarm_clear_failed",
+            "The cabinet alarm could not be cleared. Try again.",
         ) from exc
 
 
@@ -1719,15 +1732,17 @@ async def home_motor(
         if motor_name != "y_axis":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Skipping the pre-home approach is only supported for y_axis diagnostics",
+                detail="Skipping the pre-home approach is only supported for the Y axis.",
             )
 
     motor = worker._robot._get_motor_by_name(motor_name)
 
     if motor is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Motor '{motor_name}' not found",
+        logging.info("Motor %s not found", motor_name)
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            "motor_not_configured",
+            "That motor is not configured on this cabinet.",
         )
 
     try:
@@ -1761,9 +1776,10 @@ async def home_motor(
         raise
     except Exception as exc:
         logging.error("Motor home failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=error_detail(f"Motor home failed: {exc}", "motor_home_failed"),
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "motor_home_failed",
+            "The cabinet could not be reset. Try again.",
         ) from exc
 
 
@@ -1824,9 +1840,11 @@ async def power_cycle_rail(
     steps does not block the cycle.
     """
     if rail not in POWER_RAILS:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Power rail '{rail}' not found",
+        logging.info("Power rail %s not found", rail)
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            "power_rail_not_configured",
+            "That power rail is not configured on this cabinet.",
         )
 
     try:
@@ -1845,9 +1863,10 @@ async def power_cycle_rail(
         raise
     except Exception as exc:
         logging.error("Power cycle failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=error_detail(f"Power cycle failed: {exc}", "power_cycle_failed"),
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "power_cycle_failed",
+            "The cabinet could not power cycle that part. Try again.",
         ) from exc
 
 
@@ -1934,9 +1953,11 @@ async def move_motor(
     motor = worker._robot._get_motor_by_name(motor_name)
 
     if motor is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Motor '{motor_name}' not found",
+        logging.info("Motor %s not found", motor_name)
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            "motor_not_configured",
+            "That motor is not configured on this cabinet.",
         )
 
     try:
@@ -1958,9 +1979,10 @@ async def move_motor(
         raise
     except Exception as exc:
         logging.warning("Motor move failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=error_detail(f"Motor move failed: {exc}", "motor_move_failed"),
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "motor_move_failed",
+            "The cabinet could not move. Try again.",
         ) from exc
 
 
@@ -1994,10 +2016,11 @@ async def control_door(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Door control failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=error_detail(f"Door {action} failed: {exc}", "door_control_failed"),
+        logging.error("Door %s failed: %s", action, exc)
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "door_control_failed",
+            "The cabinet door did not move. Try again.",
         ) from exc
 
 

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from openshelf_os_server.core.logging_config import get_logger
+from openshelf_os_server.errors import api_error
 from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 
 logger = get_logger(__name__)
@@ -78,9 +79,11 @@ async def _run_nmcli(*args: str) -> _NmcliResult:
 			env=env,
 		)
 	except FileNotFoundError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail="nmcli not available in container",
+		logger.error("wifi_nmcli_missing", error=str(exc))
+		raise api_error(
+			status.HTTP_500_INTERNAL_SERVER_ERROR,
+			"wifi_unavailable",
+			"Network settings are not available on this cabinet.",
 		) from exc
 
 	try:
@@ -233,9 +236,11 @@ async def scan_networks() -> WifiNetworkList:
 	await _run_nmcli("dev", "wifi", "rescan")
 	result = await _run_nmcli("-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list")
 	if not result.ok:
-		raise HTTPException(
-			status_code=status.HTTP_502_BAD_GATEWAY,
-			detail=f"failed to list networks: {result.stderr.strip()}",
+		logger.warning("wifi_list_failed", error=result.stderr.strip())
+		raise api_error(
+			status.HTTP_502_BAD_GATEWAY,
+			"wifi_list_failed",
+			"The network list could not be read. Try again.",
 		)
 
 	strongest: dict[str, WifiNetwork] = {}
@@ -265,7 +270,7 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 	ssid = requested_ssid.strip()
 
 	if ssid == "":
-		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ssid is required")
+		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose a network to connect to.")
 	previous_connection = await _active_connection_name()
 	logger.info("wifi_connect_requested", ssid=ssid, previous=previous_connection)
 
@@ -287,10 +292,10 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 		error=detail,
 		rolled_back_to=previous_connection,
 	)
-	restored = f"; restored {previous_connection}" if previous_connection else ""
-	raise HTTPException(
-		status_code=status.HTTP_502_BAD_GATEWAY,
-		detail=f"failed to connect to {ssid}: {detail}{restored}",
+	raise api_error(
+		status.HTTP_502_BAD_GATEWAY,
+		"wifi_connect_failed",
+		"The cabinet could not connect to that network. Check the password and try again.",
 	)
 
 

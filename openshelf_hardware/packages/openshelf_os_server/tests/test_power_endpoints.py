@@ -84,7 +84,7 @@ async def test_power_cycle_reconfigure_failure_is_503_and_marks_axes_for_homing(
 
 	assert response.status_code == 503
 	assert response.json()["detail"]["code"] == "power_cycle_failed"
-	assert "x_axis" in response.json()["detail"]["message"]
+	assert response.json()["detail"]["message"] == "The cabinet could not power cycle that part. Try again."
 	mock_worker.set_needs_home.assert_called_once_with(
 		"power cycle: pwr_out0", ["x_axis", "y_axis", "z_axis", "stage", "rotate"]
 	)

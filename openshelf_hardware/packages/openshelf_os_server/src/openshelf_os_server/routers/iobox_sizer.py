@@ -2,6 +2,7 @@ from __future__ import annotations
 from openshelf_os_server.documentation import response_docs, stream_docs
 
 import asyncio
+import logging
 from typing import Any
 
 import cv2
@@ -56,6 +57,7 @@ class SizerBlankFrameResponse(BaseModel):
 
 
 router = APIRouter(tags=["iobox-sizer"])
+logger = logging.getLogger(__name__)
 
 
 class TofBlankCalibrationRequest(BaseModel):
@@ -63,7 +65,12 @@ class TofBlankCalibrationRequest(BaseModel):
 
 
 def _unavailable_error(exc: Exception) -> HTTPException:
-	return api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "iobox_sizer_unavailable", str(exc))
+	logger.warning("IO box sizer unavailable: %s", exc)
+	return api_error(
+		status.HTTP_503_SERVICE_UNAVAILABLE,
+		"iobox_sizer_unavailable",
+		"The IO box measure tool is not available. Try again.",
+	)
 
 
 @router.get(
@@ -208,9 +215,10 @@ async def frame_endpoint() -> Response:
 
 	success, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 	if success is False:
-		raise HTTPException(
-			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail={"message": "failed to encode frame", "code": "frame_encode_failed"},
+		raise api_error(
+			status.HTTP_500_INTERNAL_SERVER_ERROR,
+			"frame_encode_failed",
+			"The IO box camera image could not be read. Try again.",
 		)
 
 	return Response(content=buffer.tobytes(), media_type="image/jpeg")

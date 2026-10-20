@@ -31,6 +31,7 @@ from openshelf_os_server.core.mock_robot import get_mock_robot_runtime
 from openshelf_os_server.database.models import ImportJob, User
 from openshelf_os_server.database.session import get_db
 from openshelf_os_server.documentation import response_docs
+from openshelf_os_server.errors import api_error
 from openshelf_os_server.routers.auth_deps import (
     require_permissions,
     require_relay_or_admin,
@@ -397,11 +398,16 @@ async def start_import_tray(
                             await bins.start_retrieval(workflow, worker)
                         except Exception as exc:
                             await bins.fail(workflow, str(exc), tray_moved=False)
-                            raise HTTPException(status_code=503, detail=f"Could not fetch the tray: {exc}") from exc
+                            logger.warning("Tray fetch failed: %s", exc)
+                            raise api_error(503, "tray_fetch_failed", "The tray could not be fetched. Try again.") from exc
                 if workflow is not None:
                     await bins.publish_workflow(worker, workflow)
         except BinWorkflowConflict as exc:
-            raise HTTPException(status_code=409, detail={"code": "robot_busy", "message": str(exc)}) from exc
+            logger.info("Tray workflow conflict: %s", exc)
+            # The conflict text is a written instruction for the operator (place the
+            # tray, remove the item from the IO box), so it is the message; the code
+            # covers a client that cannot match the sentence.
+            raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
         except ImportJobError as exc:
             raise _http(exc) from exc
         return await _result(service, job)
@@ -485,11 +491,16 @@ async def return_import_tray(
                             await bins.enqueue_return(returning, worker)
                         except Exception as exc:
                             await service.fail_tray_return(returning, str(exc))
-                            raise HTTPException(status_code=503, detail=f"Could not return the tray: {exc}") from exc
+                            logger.warning("Tray return failed: %s", exc)
+                            raise api_error(503, "tray_return_failed", "The tray could not be returned. Try again.") from exc
                 if returning is not None:
                     await bins.publish_workflow(worker, returning)
         except BinWorkflowConflict as exc:
-            raise HTTPException(status_code=409, detail={"code": "robot_busy", "message": str(exc)}) from exc
+            logger.info("Tray workflow conflict: %s", exc)
+            # The conflict text is a written instruction for the operator (place the
+            # tray, remove the item from the IO box), so it is the message; the code
+            # covers a client that cannot match the sentence.
+            raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
         except ImportJobError as exc:
             raise _http(exc) from exc
         return await _result(service, job)
