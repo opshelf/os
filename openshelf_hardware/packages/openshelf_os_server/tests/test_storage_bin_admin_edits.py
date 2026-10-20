@@ -403,6 +403,74 @@ async def test_admin_edited_member_does_not_block_the_bins_return():
         assert returned.state == "completed"
 
 
+async def test_admin_resized_members_do_not_block_an_item_put_back():
+    async with AsyncSessionLocal() as db:
+        items = await _setup_members(db, "900000000345", 3, access_level_id=1)
+        bin_row = await db.scalar(select(StorageBin).where(StorageBin.barcode == "900000000345"))
+        service = bin_storage.BinStorageService(db)
+        taken_out = await service.begin("retrieve", items[2], None)
+        await service.transition(taken_out, "awaiting_operator")
+        await service.close(taken_out)
+
+        # While the bin is out an admin resizes the members it still holds past its capacity.
+        # The item taken out goes back in, so only it is checked against the bin.
+        for member in items[:2]:
+            await storage_router.update_item(
+                storage_router.ItemUpdateRequest(
+                    barcode=member.barcode,
+                    dimensions={"width": 200, "height": 100, "length": 100},
+                ),
+                session=db,
+                current_user=_user("admin"),
+            )
+        member_ids = (
+            await db.execute(
+                select(StorageBinItem.item_id).where(StorageBinItem.bin_id == bin_row.id)
+            )
+        ).scalars().all()
+        members = [await db.get(Item, member_id) for member_id in member_ids]
+        member_volume = sum(
+            member.dimensions["width"]
+            * member.dimensions["height"]
+            * member.dimensions["length"]
+            for member in members
+        )
+        assert member_volume > 2_000_000
+
+        returned = await service.begin_return("900000000345")
+        assert await service.prepare_return(returned, [*member_ids, items[2].id]) is True
+        await service.complete_return(returned)
+
+        await db.refresh(bin_row)
+        assert bin_row.status == "at_home"
+        assert returned.state == "completed"
+        assert (
+            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == items[2].id))
+        ).scalars().all() != []
+
+
+async def test_an_item_put_back_must_match_the_members_access_level():
+    async with AsyncSessionLocal() as db:
+        await _ensure_level(db, 2)
+        items = await _setup_members(db, "900000000346", 3, access_level_id=1)
+        service = bin_storage.BinStorageService(db)
+        taken_out = await service.begin("retrieve", items[2], None)
+        await service.transition(taken_out, "awaiting_operator")
+        await service.close(taken_out)
+        await storage_router.update_item(
+            storage_router.ItemUpdateRequest(barcode=items[2].barcode, access_level_id=2),
+            session=db,
+            current_user=_user("admin"),
+        )
+        await db.refresh(items[2])
+        assert items[2].access_level_id == 2
+
+        returned = await service.begin_return("900000000346")
+        with pytest.raises(bin_storage.BinWorkflowConflict) as refused:
+            await service.prepare_return(returned, [item.id for item in items])
+        assert str(refused.value) == "The confirmed items have different access levels."
+
+
 async def test_bin_retrieve_names_the_items_the_user_cannot_access(monkeypatch):
     _mock_mode(monkeypatch)
     async with AsyncSessionLocal() as db:

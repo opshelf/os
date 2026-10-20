@@ -742,13 +742,39 @@ class BinStorageService:
         )
 
     @classmethod
-    def _contents_have_volume(cls, items: Sequence[Item], bin_row: StorageBin) -> bool:
-        capacity = cls._volume(bin_row.inner_dimensions)
-        item_volumes = [cls._volume(item.dimensions) for item in items]
-        if capacity is None or any(volume is None for volume in item_volumes):
-            return False
-        return sum(volume for volume in item_volumes if volume is not None) <= capacity
+    def _joining_items_have_volume(
+        cls, joining: Sequence[Item], members: Sequence[Item], bin_row: StorageBin
+    ) -> bool:
+        """Check the items joining now against the room the current members leave.
 
+        Members are measured, never refused: an admin may have resized one past the
+        capacity while the bin was out, and that must not keep the bin outside. When
+        no room is left to account for, the joining items pass on volume.
+        """
+        capacity = cls._volume(bin_row.inner_dimensions)
+        joining_volumes = [cls._volume(item.dimensions) for item in joining]
+        if capacity is None or any(volume is None for volume in joining_volumes):
+            return False
+        member_volumes = [cls._volume(member.dimensions) for member in members]
+        if any(volume is None for volume in member_volumes):
+            return True
+        remaining = capacity - sum(volume for volume in member_volumes if volume is not None)
+        if remaining <= 0:
+            return True
+        return sum(volume for volume in joining_volumes if volume is not None) <= remaining
+
+    @staticmethod
+    def _joining_items_share_a_level(joining: Sequence[Item], members: Sequence[Item]) -> bool:
+        """Require the items joining now to match the bin's one access level.
+
+        Members are taken as they are: an admin edit may have left them inconsistent,
+        which must not block the return, while the joining items still must agree.
+        """
+        joining_levels = {item.access_level_id for item in joining}
+        if len(joining_levels) > 1:
+            return False
+        member_levels = {member.access_level_id for member in members}
+        return len(member_levels) != 1 or joining_levels == member_levels
     async def allocate_bin(self, item: Item) -> tuple[Optional[StorageBin], Optional[str]]:
         """Choose a home bin that takes the item, or report why none can.
 
@@ -914,20 +940,21 @@ class BinStorageService:
         # Current members are accepted as they are: an admin may have resized or
         # re-leveled one while the bin was out, and re-checking it would strand
         # the bin outside. Only items that join now are validated against the bin.
-        members = set(
-            (
-                await self.session.scalars(
-                    select(StorageBinItem.item_id).where(StorageBinItem.bin_id == bin_row.id)
-                )
-            ).all()
-        )
-        if any(item.id not in members and not self._fits(item, bin_row) for item in items):
+        members = (
+            await self.session.scalars(
+                select(Item)
+                .join(StorageBinItem, StorageBinItem.item_id == Item.id)
+                .where(StorageBinItem.bin_id == bin_row.id)
+            )
+        ).all()
+        member_ids = {member.id for member in members}
+        joining = [item for item in items if item.id not in member_ids]
+        if any(not self._fits(item, bin_row) for item in joining):
             return "One of the confirmed items does not fit this bin."
-        joining = [item for item in items if item.id not in members]
         if joining:
-            if not self._contents_have_volume(items, bin_row):
+            if not self._joining_items_have_volume(joining, members, bin_row):
                 return "The confirmed items need more space than this bin has."
-            if len({item.access_level_id for item in items}) > 1:
+            if not self._joining_items_share_a_level(joining, members):
                 return "The confirmed items have different access levels."
         direct_item = (
             await self.session.execute(
