@@ -955,12 +955,15 @@ class BinStorageService:
         ).all()
         member_ids = {member.id for member in members}
         joining = [item for item in items if item.id not in member_ids]
+        # Unconfirmed members leave on completion, so they do not count for the
+        # items joining now; only the members that stay hold room and one level.
+        staying = [member for member in members if member.id in confirmed_ids]
         if any(not self._fits(item, bin_row) for item in joining):
             return "One of the confirmed items does not fit this bin."
         if joining:
-            if not self._joining_items_have_volume(joining, members, bin_row):
+            if not self._joining_items_have_volume(joining, staying, bin_row):
                 return "The confirmed items need more space than this bin has."
-            if not self._joining_items_share_a_level(joining, members):
+            if not self._joining_items_share_a_level(joining, staying):
                 return "The confirmed items have different access levels."
         direct_item = (
             await self.session.execute(

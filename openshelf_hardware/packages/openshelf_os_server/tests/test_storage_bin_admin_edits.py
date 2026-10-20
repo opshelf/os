@@ -558,6 +558,92 @@ async def test_admin_resized_members_do_not_block_an_item_put_back():
         ).scalars().all() != []
 
 
+async def test_a_member_left_out_of_the_return_does_not_hold_room_for_an_item_put_back():
+    async with AsyncSessionLocal() as db:
+        items = await _setup_members(db, "900000000347", 3, access_level_id=1)
+        bin_row = await db.scalar(select(StorageBin).where(StorageBin.barcode == "900000000347"))
+        service = bin_storage.BinStorageService(db)
+        taken_out = await service.begin("retrieve", items[2], None)
+        await service.transition(taken_out, "awaiting_operator")
+        await service.close(taken_out)
+
+        # An admin resizes one member while the bin is out. The member the operator
+        # leaves unchecked on the return is on its way out, so only the resized
+        # member and the item going back in may share the bin's capacity.
+        await storage_router.update_item(
+            storage_router.ItemUpdateRequest(
+                barcode=items[0].barcode,
+                dimensions={"width": 120, "height": 100, "length": 100},
+            ),
+            session=db,
+            current_user=_user("admin"),
+        )
+        await db.refresh(items[0])
+        resized_volume = (
+            items[0].dimensions["width"]
+            * items[0].dimensions["height"]
+            * items[0].dimensions["length"]
+        )
+        departing_volume = (
+            items[1].dimensions["width"]
+            * items[1].dimensions["height"]
+            * items[1].dimensions["length"]
+        )
+        joining_volume = (
+            items[2].dimensions["width"]
+            * items[2].dimensions["height"]
+            * items[2].dimensions["length"]
+        )
+        assert resized_volume + joining_volume <= 2_000_000
+        assert resized_volume + departing_volume + joining_volume > 2_000_000
+
+        returned = await service.begin_return("900000000347")
+        assert await service.prepare_return(returned, [items[0].id, items[2].id]) is True
+        await service.complete_return(returned)
+
+        await db.refresh(bin_row)
+        assert bin_row.status == "at_home"
+        assert set(
+            (
+                await db.execute(
+                    select(StorageBinItem.item_id).where(StorageBinItem.bin_id == bin_row.id)
+                )
+            ).scalars()
+        ) == {items[0].id, items[2].id}
+
+
+async def test_a_member_left_out_of_the_return_does_not_set_the_bins_access_level():
+    async with AsyncSessionLocal() as db:
+        await _ensure_level(db, 2)
+        items = await _setup_members(db, "900000000348", 3, access_level_id=1)
+        service = bin_storage.BinStorageService(db)
+        taken_out = await service.begin("retrieve", items[2], None)
+        await service.transition(taken_out, "awaiting_operator")
+        await service.close(taken_out)
+
+        # The member the operator leaves unchecked was re-leveled while the bin was
+        # out, and the item going back in matches it. The member that stays is level 1,
+        # so the return must still be refused.
+        await storage_router.update_item(
+            storage_router.ItemUpdateRequest(barcode=items[1].barcode, access_level_id=2),
+            session=db,
+            current_user=_user("admin"),
+        )
+        await storage_router.update_item(
+            storage_router.ItemUpdateRequest(barcode=items[2].barcode, access_level_id=2),
+            session=db,
+            current_user=_user("admin"),
+        )
+        await db.refresh(items[1])
+        await db.refresh(items[2])
+        assert items[1].access_level_id == items[2].access_level_id == 2
+
+        returned = await service.begin_return("900000000348")
+        with pytest.raises(bin_storage.BinWorkflowConflict) as refused:
+            await service.prepare_return(returned, [items[0].id, items[2].id])
+        assert str(refused.value) == "The confirmed items have different access levels."
+
+
 async def test_an_item_put_back_must_match_the_members_access_level():
     async with AsyncSessionLocal() as db:
         await _ensure_level(db, 2)
