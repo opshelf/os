@@ -516,7 +516,9 @@ class BinStorageService:
         location = _location_from_payload(payload.get("location"))
         return location is not None and await is_reserved_bin_location(location, self.session)
 
-    async def item_has_active_workflow(self, item_id: int) -> bool:
+    async def item_has_active_workflow(
+        self, item_id: int, *, exclude_bin_id: Optional[int] = None
+    ) -> bool:
         """Whether an unfinished bin interaction covers this item.
 
         A bin that is out for any interaction has fixed contents, so its members count too:
@@ -525,6 +527,10 @@ class BinStorageService:
         as unfinished too: its recovery confirms the bin home with whatever members are left,
         so a delete before that strands the deleted item inside a compartment a later store
         hands to another item.
+
+        exclude_bin_id is the bin the caller has just claimed: the claim moves it outside
+        before this check, which would otherwise make the bin's settled members look like an
+        unfinished interaction.
         """
         workflows = (
             (
@@ -549,7 +555,10 @@ class BinStorageService:
         ):
             return True
         unfinished_bin_ids = {workflow.bin_id for workflow in workflows}
-        unfinished_bin_ids |= await self._bins_with_unfinished_motion()
+        motion_bin_ids = await self._bins_with_unfinished_motion()
+        if exclude_bin_id is not None:
+            motion_bin_ids.discard(exclude_bin_id)
+        unfinished_bin_ids |= motion_bin_ids
         if not unfinished_bin_ids:
             return False
         return (
@@ -1192,7 +1201,7 @@ class BinStorageService:
         if cast(CursorResult, claimed).rowcount != 1:
             await self.session.rollback()
             raise BinWorkflowConflict("This bin is outside the machine.")
-        if await self.item_has_active_workflow(item.id):
+        if await self.item_has_active_workflow(item.id, exclude_bin_id=tray.id):
             # One interaction per item, not a lock on the item: an open interaction stops a
             # second one from starting, while edits and commands stay available.
             await self.session.rollback()

@@ -1196,7 +1196,7 @@ class Robot:
             if engaged:
                 require_grip(
                     await self._tool._gs.open(),
-                    "tray grip",
+                    "bin grip",
                     is_enabled=self._tool.is_grip_detection_enabled,
                     failure_code=GRIP_IO_BOX_FAILED_CODE,
                 )
@@ -1204,7 +1204,7 @@ class Robot:
                 await self.release_gripper()
         except Exception as exc:
             action = "grip" if engaged else "release"
-            raise rewrap_gripper_fault(exc, f"Tray {action} failed") from exc
+            raise rewrap_gripper_fault(exc, f"Bin {action} failed") from exc
     async def deliver_tray(self, coord: AxisCoordinate) -> None:
         """Leave the entire tray supported in the IO box, with the tool clear."""
         position = await self._tool.get_param("PICKUP_POSITION_MULTI_ITEM")
@@ -1254,12 +1254,12 @@ class Robot:
         try:
             require_grip(
                 await self._tool._gs.read_state(),
-                "tray retract",
+                "bin retract",
                 is_enabled=self._tool.is_grip_detection_enabled,
                 failure_code=GRIP_IO_BOX_FAILED_CODE,
             )
         except Exception as exc:
-            raise rewrap_gripper_fault(exc, "Tray retract grip verification failed") from exc
+            raise rewrap_gripper_fault(exc, "Bin retract grip verification failed") from exc
         self.set_operation_context(phase="return_tray.close_door")
         await self._io.close_door()
         self.set_operation_context(phase="return_tray.place_at_home", target_coordinate=coord)

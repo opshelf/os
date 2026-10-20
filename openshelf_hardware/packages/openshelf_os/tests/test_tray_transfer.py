@@ -41,8 +41,8 @@ def build_robot():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(('grip_obj', 'retract_obj', 'match'), [
-    (0xF1, 0x71, 'Tray grip failed: No grip on tray grip'),
-    (0x71, 0xF1, 'No grip on tray retract'),
+    (0xF1, 0x71, 'Bin grip failed: No grip on bin grip'),
+    (0x71, 0xF1, 'No grip on bin retract'),
 ])
 async def test_return_tray_requires_grip_before_and_after_retract(grip_obj, retract_obj, match):
     robot, ops = build_robot()

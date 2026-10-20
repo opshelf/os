@@ -232,6 +232,20 @@ async def test_an_admin_can_delete_a_member_once_crash_recovery_put_the_bin_home
         assert await service.begin("retrieve", items[2], None) is not None
 
 
+async def test_a_failed_interaction_that_left_the_bin_home_does_not_block_the_next_retrieve():
+    # An enqueue failure fails the interaction with tray_moved=False, so the bin stays home
+    # and settled. Claiming it for the next interaction moves it outside, which must not make
+    # the bin's own members look like an unfinished interaction.
+    async with AsyncSessionLocal() as db:
+        [member] = await _setup_members(db, "900000000362", 1, access_level_id=1)
+        service = bin_storage.BinStorageService(db)
+        failed = await service.begin("retrieve", member, None)
+        await service.fail(failed, "enqueue failed", tray_moved=False)
+        assert await service.has_unfinished_motion() is False
+
+        assert await service.begin("retrieve", member, None) is not None
+
+
 async def test_admin_edits_a_bin_member_while_the_bin_is_outside():
     async with AsyncSessionLocal() as db:
         await _ensure_level(db, 2)
