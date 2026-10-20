@@ -355,7 +355,7 @@
 		try {
 			if (isMultiItem === true) {
 				await testIOBoxMultiItemCycle();
-				message = 'multi-item tray cycle test completed';
+				message = 'multi-item bin cycle test completed';
 			} else {
 				await testIOBoxSequence(true);
 				message = 'io box test sequence with gripper completed';

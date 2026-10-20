@@ -1901,12 +1901,12 @@
 						bind:checked={trayEnabled}
 						disabled={busy === true}
 				/>
-					<span>multi-item tray</span>
+					<span>multi-item bin</span>
 				</label>
 				{#if trayEnabled}
 					<div class="editor-group editor-group-1">
 						<label class="editor-col">
-							<span>tray barcode</span>
+							<span>bin barcode</span>
 							<input
 								type="text"
 								maxlength="255"
