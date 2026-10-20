@@ -618,6 +618,29 @@ async def test_failed_tray_store_keeps_tray_intent_and_item_stays_deletable():
 
 
 @pytest.mark.anyio
+async def test_deleted_tray_item_is_not_presumed_back_in_its_tray():
+    """A deleted item's id, possibly reused by a new item, must not be confirmed on return."""
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        taken = await service.begin("retrieve", items[2], None)
+        await service.transition(taken, "awaiting_operator")
+        await service.close(taken)
+        deleted_id = items[2].id
+        await storage_router.delete_item(
+            storage_router.BarcodeRequest(barcode=items[2].barcode), session=db
+        )
+        await StorageService(db).create_item(
+            "123456788016", "New item", {"width": 10, "length": 10, "height": 10}
+        )
+
+        returned = await service.begin_return(trays[1].barcode)
+
+        assert deleted_id not in returned.resolution["candidate_item_ids"]
+        assert deleted_id not in returned.resolution["confirmed_item_ids"]
+
+
+@pytest.mark.anyio
 async def test_scanned_return_after_a_retrieval_does_not_presume_the_taken_item_inside():
     """Returning a tray by scan after taking an item must not put that item back by default."""
     async with AsyncSessionLocal() as db:
@@ -631,3 +654,93 @@ async def test_scanned_return_after_a_retrieval_does_not_presume_the_taken_item_
         contents = {c["id"]: c["confirmed"] for c in (await service.serialize_workflow(returned))["contents"]}
 
         assert contents == {items[0].id: False, items[1].id: True}
+
+
+@pytest.mark.anyio
+async def test_scanned_return_during_a_store_keeps_the_placed_item():
+    """Scanning the tray instead of confirming a store must still offer the item placed in it."""
+    async with AsyncSessionLocal() as db:
+        await setup_trays(db)
+        target = await StorageService(db).create_item(
+            "123456788097", "New", {"width": 10, "length": 10, "height": 10}
+        )
+        service = BinStorageService(db)
+        store = await service.begin("store", target, None)
+        await service.transition(store, "awaiting_operator")
+        tray = await db.get(StorageBin, store.bin_id)
+
+        returned = await service.begin_return(tray.barcode)
+
+        assert target.id in returned.resolution["candidate_item_ids"]
+        assert target.id in returned.resolution["confirmed_item_ids"]
+
+
+@pytest.mark.anyio
+async def test_scanned_return_confirms_a_retrieved_item_put_back_by_a_later_return():
+    """An item returned into its tray after a retrieve is a member again and must stay confirmed."""
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        taken = await service.begin("retrieve", items[0], None)
+        await service.transition(taken, "awaiting_operator")
+        await service.close(taken)
+        put_back = await service.begin_return(trays[0].barcode)
+        await service.prepare_return(put_back, [items[0].id, items[1].id])
+        await service.complete_return(put_back)
+        trays[0].status = "outside"
+        await db.commit()
+
+        returned = await service.begin_return(trays[0].barcode)
+
+        assert items[0].id in returned.resolution["confirmed_item_ids"]
+
+
+@pytest.mark.anyio
+async def test_import_return_after_a_settled_retrieval_does_not_restore_the_taken_item():
+    """A retrieve already settled by a return must not re-add its item to a later import's return."""
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        taken = await service.begin("retrieve", items[0], None)
+        await service.transition(taken, "awaiting_operator")
+        await service.close(taken)
+        settled = await service.begin_return(trays[0].barcode)
+        await service.prepare_return(settled, settled.resolution["confirmed_item_ids"])
+        await service.complete_return(settled)
+        imported = await StorageService(db).create_item(
+            "123456788009", "Imported", {"width": 10, "length": 10, "height": 10}
+        )
+        batch = await service.begin_batch(trays[0], None, "job-1")
+        await service.transition(batch, "awaiting_operator")
+        assert await service.place_in_batch(batch, imported) == 1
+        await service.close_batch(batch)
+
+        returned = await service.begin_return(trays[0].barcode)
+        candidates = returned.resolution["candidate_item_ids"]
+
+        assert items[0].id not in candidates
+        assert await service.prepare_return(returned, candidates)
+
+
+@pytest.mark.anyio
+async def test_import_return_after_a_recovered_retrieval_does_not_restore_the_taken_item():
+    """A batch starts from a home tray, so an earlier unsettled retrieve must not seed its return."""
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        taken = await service.begin("retrieve", items[0], None)
+        await service.transition(taken, "awaiting_operator")
+        await service.close(taken)
+        trays[0].status = "at_home"
+        await db.commit()
+        imported = await StorageService(db).create_item(
+            "123456788023", "Imported", {"width": 10, "length": 10, "height": 10}
+        )
+        batch = await service.begin_batch(trays[0], None, "job-x")
+        await service.transition(batch, "awaiting_operator")
+        await service.place_in_batch(batch, imported)
+        await service.close_batch(batch)
+
+        returned = await service.begin_return(trays[0].barcode)
+
+        assert items[0].id not in returned.resolution["candidate_item_ids"]

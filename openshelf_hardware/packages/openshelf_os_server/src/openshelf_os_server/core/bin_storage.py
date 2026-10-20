@@ -17,7 +17,7 @@ from uuid import uuid4
 
 
 from sqlalchemy.engine import CursorResult
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -517,17 +517,28 @@ class BinStorageService:
 
     async def detach_item_history(self, item: Item) -> None:
         """Keep finished workflows of an item being deleted, naming it by a snapshot instead."""
-        workflows = (
-            await self.session.scalars(
-                select(StorageBinWorkflow).where(StorageBinWorkflow.item_id == item.id)
-            )
-        ).all()
-        for workflow in workflows:
-            workflow.resolution = {
-                **(workflow.resolution or {}),
-                "deleted_item": {"id": item.id, "barcode": item.barcode, "name": item.name},
-            }
-            workflow.item_id = None
+        # Tray returns rebuild contents from candidate lists, and SQLite reuses the freed id.
+        key = str(item.id)
+        for workflow in (await self.session.scalars(select(StorageBinWorkflow))).all():
+            resolution = dict(workflow.resolution or {})
+            positions = resolution.get("candidate_compartments")
+            if isinstance(positions, dict) and key in positions:
+                resolution["candidate_compartments"] = {
+                    k: v for k, v in positions.items() if k != key
+                }
+            for field in ("candidate_item_ids", "confirmed_item_ids"):
+                ids = resolution.get(field)
+                if isinstance(ids, list) and item.id in ids:
+                    resolution[field] = [i for i in ids if i != item.id]
+            if workflow.item_id == item.id:
+                resolution["deleted_item"] = {
+                    "id": item.id,
+                    "barcode": item.barcode,
+                    "name": item.name,
+                }
+                workflow.item_id = None
+            if resolution != (workflow.resolution or {}):
+                workflow.resolution = resolution
         await self.session.flush()
 
     @staticmethod
@@ -1212,19 +1223,51 @@ class BinStorageService:
             .order_by(StorageBinWorkflow.created_at.desc())
             .limit(1)
         )
+        # A failed pick moved nothing, and a later completed return already settled the
+        # contents; seeding from either would re-add items that are no longer inside. An
+        # instruction cancelled by this scan still seeds: its item may be in the tray.
+        # A later batch also supersedes it: a batch only starts from home, where membership is authoritative.
+        if latest is not None and (
+            (
+                latest.state == "cancelled"
+                and (latest.resolution or {}).get("failure_code") in TRAY_NEVER_LEFT_CODES
+            )
+            or await self.session.scalar(
+                select(StorageBinWorkflow.id)
+                .where(
+                    StorageBinWorkflow.bin_id == tray.id,
+                    or_(
+                        and_(
+                            StorageBinWorkflow.operation == "return",
+                            StorageBinWorkflow.state == "completed",
+                        ),
+                        StorageBinWorkflow.operation == BATCH_OPERATION,
+                    ),
+                    StorageBinWorkflow.created_at > latest.created_at,
+                )
+                .limit(1)
+            )
+        ):
+            latest = None
         positions = (
             dict((latest.resolution or {}).get("candidate_compartments", {})) if latest else {}
         )
         if latest and latest.item_id and not positions:
             positions[str(latest.item_id)] = latest.compartment
+        member_ids = set()
         for member in await self.session.scalars(
             select(StorageBinItem).where(StorageBinItem.bin_id == tray.id)
         ):
             positions[str(member.item_id)] = member.compartment
+            member_ids.add(member.item_id)
         # An item just taken out stays listed, in case it went back in, but is not presumed inside.
+        # A later return or import that put it back made it a member again.
         taken_out = (
             latest.item_id
-            if latest and latest.operation == "retrieve" and latest.state == "completed"
+            if latest
+            and latest.operation == "retrieve"
+            and latest.state == "completed"
+            and latest.item_id not in member_ids
             else None
         )
         workflow = StorageBinWorkflow(

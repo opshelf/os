@@ -974,7 +974,7 @@ async def _tray_workflow(session: AsyncSession, workflow_id: str) -> StorageBinW
 @router.post("/bin-workflows/returns", responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422)), dependencies=[Depends(require_permissions("storage:write"))])
 async def begin_tray_return(request: TrayBarcode, session: AsyncSession = Depends(get_db),
                             current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
-    """Resolve a tray barcode and open contents selection without moving hardware. All known contents are selected by default, including the checkout target. An already stored tray returns 409."""
+    """Resolve a tray barcode and open contents selection without moving hardware. Known contents are selected by default; an item just taken out is listed but unselected. An already stored tray returns 409."""
     service = BinStorageService(session)
     try:
         workflow = await service.begin_return(request.barcode, current_user.id)
