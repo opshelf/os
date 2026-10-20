@@ -157,6 +157,81 @@ async def test_bin_store_says_an_unmeasured_item_needs_its_size(monkeypatch):
         assert (await db.execute(select(StorageBinWorkflow))).scalars().all() == []
 
 
+async def _crash_interrupted_return(db, barcode: str) -> tuple[bin_storage.BinStorageService, StorageBin, list]:
+    """Leave the bin outside with a failed return, as a crash during the return does.
+
+    One member was taken out and left out; the other two went back in and were confirmed
+    before the return crashed, so the operator still has to settle the bin in the crash dialog.
+    """
+    items = await _setup_members(db, barcode, 3, access_level_id=1)
+    service = bin_storage.BinStorageService(db)
+    taken = await service.begin("retrieve", items[0], None)
+    await service.transition(taken, "awaiting_operator")
+    await service.close(taken)
+    returned = await service.begin_return(barcode)
+    assert await service.prepare_return(returned, [items[1].id, items[2].id]) is True
+    await service.handle_robot_result(
+        {
+            "request_id": returned.id,
+            "command": "store_item",
+            "message": "failed",
+            "error": "Motor stalled",
+            "code": "command_interrupted",
+        },
+        FakeRuntime(),
+    )
+    assert returned.state == "failed"
+    row = await db.scalar(select(StorageBin).where(StorageBin.barcode == barcode))
+    assert row.status == "outside"
+    return service, row, items
+
+
+async def test_a_crash_interrupted_bin_blocks_an_admin_delete_of_its_members():
+    # The bin is still outside waiting for the operator in the crash dialog, so its contents
+    # are not settled: recovery would confirm it home without the deleted member and a later
+    # store would hand that member's compartment to another item.
+    async with AsyncSessionLocal() as db:
+        service, _, items = await _crash_interrupted_return(db, "900000000360")
+        assert await service.has_unfinished_motion() is True
+
+        with pytest.raises(HTTPException) as blocked:
+            await storage_router.delete_item(
+                storage_router.BarcodeRequest(barcode=items[1].barcode),
+                session=db,
+                current_user=_user("admin"),
+            )
+
+        assert blocked.value.status_code == 409
+        assert blocked.value.detail["code"] == "bin_workflow_conflict"
+        assert await db.get(Item, items[1].id) is not None
+        assert (
+            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == items[1].id))
+        ).scalars().all() != []
+
+
+async def test_an_admin_can_delete_a_member_once_crash_recovery_put_the_bin_home():
+    async with AsyncSessionLocal() as db:
+        service, row, items = await _crash_interrupted_return(db, "900000000361")
+        [(_, error)] = await service.recover_crash_interrupted()
+        assert error is None
+        await db.refresh(row)
+        assert row.status == "at_home"
+        assert await service.item_has_active_workflow(items[1].id) is False
+
+        await storage_router.delete_item(
+            storage_router.BarcodeRequest(barcode=items[1].barcode),
+            session=db,
+            current_user=_user("admin"),
+        )
+
+        assert await db.get(Item, items[1].id) is None
+        assert (
+            await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == items[1].id))
+        ).scalars().all() == []
+        # The recovered failure settled the bin, so it must not block a new interaction either.
+        assert await service.begin("retrieve", items[2], None) is not None
+
+
 async def test_admin_edits_a_bin_member_while_the_bin_is_outside():
     async with AsyncSessionLocal() as db:
         await _ensure_level(db, 2)

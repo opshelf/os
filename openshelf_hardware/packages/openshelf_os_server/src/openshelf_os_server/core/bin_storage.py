@@ -521,7 +521,10 @@ class BinStorageService:
 
         A bin that is out for any interaction has fixed contents, so its members count too:
         a deleted member frees a compartment that a running import then fills while the
-        deleted item is still physically inside it.
+        deleted item is still physically inside it. A crash-interrupted interaction counts
+        as unfinished too: its recovery confirms the bin home with whatever members are left,
+        so a delete before that strands the deleted item inside a compartment a later store
+        hands to another item.
         """
         workflows = (
             (
@@ -545,15 +548,16 @@ class BinStorageService:
             for workflow in workflows
         ):
             return True
-        active_bin_ids = {workflow.bin_id for workflow in workflows}
-        if not active_bin_ids:
+        unfinished_bin_ids = {workflow.bin_id for workflow in workflows}
+        unfinished_bin_ids |= await self._bins_with_unfinished_motion()
+        if not unfinished_bin_ids:
             return False
         return (
             await self.session.scalar(
                 select(StorageBinItem.id)
                 .where(
                     StorageBinItem.item_id == item_id,
-                    StorageBinItem.bin_id.in_(active_bin_ids),
+                    StorageBinItem.bin_id.in_(unfinished_bin_ids),
                 )
                 .limit(1)
             )
@@ -1677,8 +1681,14 @@ class BinStorageService:
         await worker.publish_event({"kind": "tray_scanned", "payload": code})
         return True
 
-    async def has_unfinished_motion(self) -> bool:
-        # An ordinary outside tray is fine; an interrupted transfer is not a safe auto-home.
+    async def _bins_with_unfinished_motion(self) -> set[int]:
+        """Bins whose latest interaction is unfinished: still outside and not settled.
+
+        An ordinary outside tray is fine; one that is still moving, or whose motion failed
+        and the operator has not confirmed on its shelf yet, is not. A crash-interrupted
+        interaction `recover_crash_interrupted` already resolved counts as finished.
+        """
+        unfinished: set[int] = set()
         trays = (
             await self.session.scalars(select(StorageBin).where(StorageBin.status == "outside"))
         ).all()
@@ -1689,6 +1699,14 @@ class BinStorageService:
                 .order_by(StorageBinWorkflow.created_at.desc())
                 .limit(1)
             )
-            if latest and latest.state in {"retrieving_bin", "returning_bin", "failed"}:
-                return True
-        return False
+            if latest is None:
+                continue
+            if latest.state in {"retrieving_bin", "returning_bin"} or (
+                latest.state == "failed" and not (latest.resolution or {}).get("crash_recovered")
+            ):
+                unfinished.add(tray.id)
+        return unfinished
+
+    async def has_unfinished_motion(self) -> bool:
+        # An ordinary outside tray is fine; an interrupted transfer is not a safe auto-home.
+        return bool(await self._bins_with_unfinished_motion())
