@@ -178,9 +178,8 @@ def _require_stage_carry(
 			f"reference z: the {side.value} reference cell {shelf_idx}:{cell_idx} "
 			f"had its z saved at stage extension {captured_stage_mm:.2f}mm, but the live stage "
 			f"extension is {live_stage_mm:.2f}mm (more than {REFERENCE_Z_MAX_STAGE_CARRY_MM:.1f}mm "
-			"apart, so it cannot be carried); in cell calibration extend the stage to the shelf "
-			"extension, jog that cell's z onto the tray (the stage is recorded only when the z "
-			"changes) and save it"
+			"apart, so it cannot be carried); re-check that cell's z in cell calibration and save it "
+			"(the shelf extension is recorded only when the z changes)"
 		)
 
 

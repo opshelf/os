@@ -179,3 +179,24 @@ async def test_cycle_test_retracts_before_the_io_cycle_rotates(client) -> None:
 	retract.assert_awaited_once()
 	assert worker._robot.io_place.await_count == 1
 	assert worker._robot.io_pick.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_saving_a_typed_z_stamps_the_shelf_stage_extension(client) -> None:
+	"""A z typed on the cell page is saved with the stage retracted; stamping that live position
+	put the datum 43mm from the shelf extension and made auto calibration refuse it (lb4a-3)."""
+	grid = build_grid(is_occupied=False)
+	worker = build_worker(grid)
+	worker._robot._tool._ms = SimpleNamespace(get_position=AsyncMock(return_value=3.06))
+	worker._robot._tool.get_param = AsyncMock(side_effect=lambda name: {'STAGE_EXTENSION_SHELF_FRONT': 46.0}[name])
+
+	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
+		response = await client.post(
+			'/api/calibration/save',
+			json={'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 0, 'x': 123.0, 'y': 456.0, 'z_offset': 8.5},
+		)
+
+	assert response.status_code == 200
+	point = grid.front_module[0].cells[0].calibration_point
+	assert point.z_offset == 8.5
+	assert point.z_captured_at_stage_mm == 46.0
