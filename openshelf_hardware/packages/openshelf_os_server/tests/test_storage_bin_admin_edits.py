@@ -269,6 +269,68 @@ async def test_an_item_placed_by_a_running_import_blocks_an_admin_delete():
         assert await db.get(Item, placed.id) is not None
 
 
+async def test_a_pre_existing_member_blocks_an_admin_delete_while_an_import_fills_the_bin():
+    # Freeing its compartment would hand the next placed unit the slot the deleted item
+    # still physically occupies.
+    async with AsyncSessionLocal() as db:
+        await _ensure_level(db, 1)
+        storage = StorageService(db)
+        member = await storage.create_item(
+            "123456789350", "Member", {"width": 50, "height": 50, "length": 50},
+            access_level_id=1,
+        )
+        tray = StorageBin(
+            barcode="900000000350",
+            side="front_module",
+            shelf_idx=0,
+            cell_idx=0,
+            inner_dimensions={"width": 200, "height": 100, "length": 100},
+            compartment_layout={"rows": 1, "columns": 3},
+            max_items=3,
+            status="at_home",
+            active=True,
+        )
+        db.add(tray)
+        await db.flush()
+        db.add(StorageBinItem(bin_id=tray.id, item_id=member.id, compartment=1))
+        await db.commit()
+
+        service = bin_storage.BinStorageService(db)
+        workflow = await service.begin_batch(tray, None, "import-1")
+        await service.transition(workflow, "awaiting_operator")
+        first = await storage.create_item(
+            "123456789351", "First", {"width": 50, "height": 50, "length": 50},
+            access_level_id=1,
+        )
+        assert await service.place_in_batch(workflow, first) == 2
+
+        with pytest.raises(HTTPException) as blocked:
+            await storage_router.delete_item(
+                storage_router.BarcodeRequest(barcode=member.barcode),
+                session=db,
+                current_user=_user("admin"),
+            )
+
+        assert blocked.value.status_code == 409
+        assert blocked.value.detail["code"] == "bin_workflow_conflict"
+        assert await db.get(Item, member.id) is not None
+
+        second = await storage.create_item(
+            "123456789352", "Second", {"width": 50, "height": 50, "length": 50},
+            access_level_id=1,
+        )
+        assert await service.place_in_batch(workflow, second) == 3
+        assert dict(
+            (
+                await db.execute(
+                    select(StorageBinItem.item_id, StorageBinItem.compartment).where(
+                        StorageBinItem.bin_id == tray.id
+                    )
+                )
+            ).all()
+        ) == {member.id: 1, first.id: 2, second.id: 3}
+
+
 async def test_admin_edited_member_does_not_block_the_bins_return():
     async with AsyncSessionLocal() as db:
         storage = StorageService(db)

@@ -517,13 +517,22 @@ class BinStorageService:
         return location is not None and await is_reserved_bin_location(location, self.session)
 
     async def item_has_active_workflow(self, item_id: int) -> bool:
-        """Whether an unfinished take, place, return, or import fill names this item."""
+        """Whether an unfinished bin interaction covers this item.
+
+        A bin that is out for any interaction has fixed contents, so its members count too:
+        a deleted member frees a compartment that a running import then fills while the
+        deleted item is still physically inside it.
+        """
         workflows = (
-            await self.session.execute(
-                select(StorageBinWorkflow).where(StorageBinWorkflow.state.in_(ACTIVE_STATES))
+            (
+                await self.session.execute(
+                    select(StorageBinWorkflow).where(StorageBinWorkflow.state.in_(ACTIVE_STATES))
+                )
             )
-        ).scalars()
-        return any(
+            .scalars()
+            .all()
+        )
+        if any(
             workflow.item_id == item_id
             or (
                 workflow.operation == "return"
@@ -534,7 +543,21 @@ class BinStorageService:
                 and item_id in set((workflow.resolution or {}).get("placed_item_ids", []))
             )
             for workflow in workflows
-        )
+        ):
+            return True
+        active_bin_ids = {workflow.bin_id for workflow in workflows}
+        if not active_bin_ids:
+            return False
+        return (
+            await self.session.scalar(
+                select(StorageBinItem.id)
+                .where(
+                    StorageBinItem.item_id == item_id,
+                    StorageBinItem.bin_id.in_(active_bin_ids),
+                )
+                .limit(1)
+            )
+        ) is not None
 
     async def detach_item_history(self, item: Item) -> None:
         """Keep finished workflows of an item being deleted, naming it by a snapshot instead."""
