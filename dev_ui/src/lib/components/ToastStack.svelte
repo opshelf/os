@@ -60,8 +60,10 @@
 		margin-top: 1em;
 	}
 
+	/* a div, so it lacks the shadow plain toasts get as buttons */
 	.toast.with-actions {
 		white-space: normal;
+		box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.25);
 	}
 
 	.toast-body {
