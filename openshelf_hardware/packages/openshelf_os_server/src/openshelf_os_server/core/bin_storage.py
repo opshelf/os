@@ -517,7 +517,7 @@ class BinStorageService:
         return location is not None and await is_reserved_bin_location(location, self.session)
 
     async def item_has_active_workflow(self, item_id: int) -> bool:
-        """Whether an unfinished take, place, or return interaction names this item."""
+        """Whether an unfinished take, place, return, or import fill names this item."""
         workflows = (
             await self.session.execute(
                 select(StorageBinWorkflow).where(StorageBinWorkflow.state.in_(ACTIVE_STATES))
@@ -528,6 +528,10 @@ class BinStorageService:
             or (
                 workflow.operation == "return"
                 and item_id in set((workflow.resolution or {}).get("candidate_item_ids", []))
+            )
+            or (
+                workflow.operation == BATCH_OPERATION
+                and item_id in set((workflow.resolution or {}).get("placed_item_ids", []))
             )
             for workflow in workflows
         )

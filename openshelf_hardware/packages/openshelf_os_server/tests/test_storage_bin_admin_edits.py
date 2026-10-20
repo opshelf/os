@@ -298,6 +298,33 @@ async def test_an_unfinished_bin_task_blocks_even_an_admin_delete():
         )
 
 
+async def test_an_item_placed_by_a_running_import_blocks_an_admin_delete():
+    # Deleting it would free a compartment the next import placement reuses while the item
+    # is still physically in it.
+    async with AsyncSessionLocal() as db:
+        await _setup_members(db, "900000000340", 0, access_level_id=1)
+        tray = await db.scalar(select(StorageBin).where(StorageBin.barcode == "900000000340"))
+        placed = await StorageService(db).create_item(
+            "123456789341", "Imported", {"width": 50, "height": 50, "length": 50},
+            access_level_id=1,
+        )
+        service = bin_storage.BinStorageService(db)
+        workflow = await service.begin_batch(tray, None, "import-1")
+        await service.transition(workflow, "awaiting_operator")
+        await service.place_in_batch(workflow, placed)
+
+        with pytest.raises(HTTPException) as blocked:
+            await storage_router.delete_item(
+                storage_router.BarcodeRequest(barcode=placed.barcode),
+                session=db,
+                current_user=_user("admin"),
+            )
+
+        assert blocked.value.status_code == 409
+        assert blocked.value.detail["code"] == "bin_workflow_conflict"
+        assert await db.get(Item, placed.id) is not None
+
+
 async def test_admin_edited_member_does_not_block_the_bins_return():
     async with AsyncSessionLocal() as db:
         storage = StorageService(db)
