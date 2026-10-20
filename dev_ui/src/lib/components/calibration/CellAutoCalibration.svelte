@@ -759,7 +759,7 @@
 				</tr>
 				<tr>
 					<td colspan="3">
-						<label class="all-toggle" title="machine setting: set each cell's z from where the gripper starts to grip it">
+						<label class="all-toggle">
 							<input
 								type="checkbox"
 								checked={isZStallEnabled}
