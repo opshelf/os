@@ -105,9 +105,75 @@ DEFAULT_STATUS_CODES: dict[int, str] = {
 }
 
 
+# Text shown when a message arrived empty, was a bare code word, or turned out
+# to be server-side detail with nothing operator-usable left in it.
+CODE_MESSAGES: dict[str, str] = {
+	"bad_request": "The cabinet did not accept that request.",
+	"bad_gateway": "The cabinet did not answer. Try again.",
+	"conflict": "That action does not fit what the cabinet is doing right now.",
+	"config_error": "The cabinet settings are not valid.",
+	"db_error": "The cabinet could not save the change. Try again.",
+	"error": "The cabinet could not complete the action.",
+	"forbidden": "You do not have permission to do that.",
+	"hardware_io": "A part of the cabinet did not respond.",
+	"internal_error": "The cabinet could not complete the action.",
+	"method_not_allowed": "That request is not supported.",
+	"not_found": "That entry is no longer there.",
+	"queue_full": "The cabinet is busy. Wait for the current move to finish.",
+	"service_unavailable": "The cabinet is not ready. Try again in a moment.",
+	"timeout": "The cabinet took too long to respond. Try again.",
+	"unauthorized": "Please sign in again.",
+	"validation_failed": "Some details are not valid.",
+}
+
+GENERIC_ERROR_MESSAGE = CODE_MESSAGES["error"]
+
+# Text that is never worth showing: a traceback, a formatted statement, or a
+# stack frame. The server log and Sentry keep the real detail.
+_TECHNICAL_MARKERS = ("Traceback (most recent call last)", "[SQL:", "\tat ", '.py", line ')
+
+# Absolute paths on the device. Matched on a fixed list of roots so ordinary
+# copy ("3/4 inch") is left alone.
+_SERVER_PATH = re.compile(
+	r"['\"]?/(?:dev|app|etc|var|srv|home|mnt|opt|usr|proc|sys|run|tmp|Users)(?:/[\w.@+-]+)*/?['\"]?"
+)
+
+# A leading identifier-like token, e.g. "Z_EXTENSION_PLACE not configured" or
+# "shelf_idx must be non-negative". Left as is rather than sentence-cased.
+_IDENTIFIER_START = re.compile(r"^(?:[A-Z_]{2,}_|[a-z][a-z0-9]*_)")
+
+
+def normalize_operator_message(message: str, code: str) -> str:
+	"""Return one sentence-case operator sentence for a client-visible message.
+
+	Messages reach here from routes, mapped exceptions and 500 handlers, so the
+	input ranges from hand-written copy to a driver exception. Client text is
+	always a sentence; the technical detail stays in the log, tied to the client
+	by the correlation id.
+	"""
+	fallback = CODE_MESSAGES.get(code, GENERIC_ERROR_MESSAGE)
+	text = " ".join((message or "").split("\n")[0].split())
+	if text.lower() in CODE_MESSAGES:
+		# A route that had nothing to say sent its own code as the message.
+		return CODE_MESSAGES[text.lower()]
+	if text == "" or text.lower() in {"error", "exception", "failed"}:
+		return fallback
+	if any(marker in text for marker in _TECHNICAL_MARKERS):
+		return fallback
+	if _SERVER_PATH.search(text) is not None:
+		text = _SERVER_PATH.sub("", text).strip(" :,-;'\"")
+		if len(text) < 4 or text in {"(", "()"}:
+			return fallback
+	if text[0].islower() and _IDENTIFIER_START.match(text) is None:
+		text = text[0].upper() + text[1:]
+	if not text.endswith((".", "?", "!")):
+		text = f"{text}."
+	return text
+
+
 def error_detail(message: str, code: str, **extra: Any) -> dict[str, Any]:
 	"""Build the structured error body: ``{"message": ..., "code": ...}``."""
-	detail: dict[str, Any] = {"message": message, "code": code}
+	detail: dict[str, Any] = {"message": normalize_operator_message(message, code), "code": code}
 	detail.update(extra)
 	return detail
 
@@ -118,9 +184,20 @@ def api_error(status_code: int, code: str, message: str, **extra: Any) -> HTTPEx
 
 
 def standardize_http_detail(exc: StarletteHTTPException) -> Any:
-	"""Wrap string details into the structured form; dict/list pass through."""
+	"""Wrap string details into the structured form; dict/list pass through.
+
+	A dict detail keeps its own keys but always ends up with a usable ``message``
+	and ``code``, because both the kiosk and the developer UI show them as they
+	arrive.
+	"""
 	if isinstance(exc.detail, str):
 		return error_detail(exc.detail, DEFAULT_STATUS_CODES.get(exc.status_code, "error"))
+	if isinstance(exc.detail, dict):
+		detail = dict(exc.detail)
+		code = str(detail.get("code") or DEFAULT_STATUS_CODES.get(exc.status_code, "error"))
+		detail["code"] = code
+		detail["message"] = normalize_operator_message(str(detail.get("message") or ""), code)
+		return detail
 	return exc.detail
 
 
@@ -154,26 +231,20 @@ MAPPED_HEADERS: dict[str, dict[str, str]] = {"chemical_unavailable": {"Retry-Aft
 
 
 def _clean_message(exc: BaseException) -> str:
-	# SQLAlchemy DBAPIError messages carry a formatted [SQL: ...] tail. Prefer
-	# the original database exception; for manually constructed errors strip the
-	# "(module.Class) " prefix from the first line.
+	# SQLAlchemy DBAPIError messages carry a formatted [SQL: ...] tail and the
+	# database text names tables and columns, so the client gets the conflict
+	# sentence and the log keeps the original exception.
 	if isinstance(exc, IntegrityError):
-		orig = getattr(exc, "orig", None)
-		message = str(orig) if orig is not None else ""
-		if not message:
-			first_line = str(exc).splitlines()[0] if str(exc) else ""
-			message = re.sub(r"^\(\S+\) ", "", first_line)
-		return message or "conflict"
+		return CODE_MESSAGES["conflict"]
 	# OSError str() prefixes the errno, e.g. "[Errno 5] short write to printer",
-	# and appends the offending path, e.g. "...: '/dev/usb/lp0'". The path is a
-	# server-side detail, so a filename-bearing OSError surfaces only strerror.
+	# and appends the offending path, e.g. "...: '/dev/usb/lp0'". strerror is the
+	# readable part; the path is a server-side detail.
 	if isinstance(exc, OSError):
 		if getattr(exc, "filename", None) is not None:
-			# strerror is None for raw-errno constructions like OSError(28, None, path).
-			return exc.strerror or "hardware_io"
+			return exc.strerror or CODE_MESSAGES["hardware_io"]
 		message = re.sub(r"^\[Errno \d+\] ", "", str(exc))
-		return message or "error"
-	return str(exc) or "error"
+		return message or CODE_MESSAGES["hardware_io"]
+	return str(exc) or CODE_MESSAGES["error"]
 
 
 def _make_mapped_handler(status_code: int, code: str):

@@ -20,6 +20,10 @@
 - Keep one representative case per distinct failure mechanism. Add parameter variants only when they exercise different critical outcomes; avoid exhaustive value matrices, duplicate happy paths, and tests that mirror implementation steps.
 - When changing tests, remove superseded cases and newly unused fixtures, helpers, and test-only dependencies. Run the relevant retained tests, including the shuffled backend run required above, and report failures accurately.
 
+## API errors
+- Every error body is `{"detail": {"message", "code"}}`: raise `api_error(status, code, message)` from `errors.py` so the body always carries a stable `code`, and never put exception text, enum values, ids, config keys, paths or stderr in the message — `errors.py` normalizes the body into one sentence-case operator sentence and scrubs server-side detail, and the fix is to log the exception (`logger.warning(..., exc_info=exc)`) instead of forwarding it.
+- Both client surfaces show `detail.message` verbatim: the kiosk maps `code` and exact sentences in `../ui/src/lib/operator-message.ts`, and `dev_ui/` toasts it, so new copy needs a matching kiosk entry (prefer a `code`, which survives wording changes) and copy stays sentence case with a terminal period, no "please", no raw identifiers.
+
 ## Dev UI
 - Report errors through the toast system (`postToast('error', …)` from `$lib/toasts`), not inline error text in pages, dialogs, or components.
 - Keep a button's label unchanged while its action is busy or queued — only disable it; do not swap in "homing…"/"queued"-style titles.

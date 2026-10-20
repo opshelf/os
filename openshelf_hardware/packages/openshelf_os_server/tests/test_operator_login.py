@@ -104,7 +104,7 @@ async def test_ambiguous_name_and_unknown_identity_fail_generically(
             json={"identifier": identifier, "pin": "4321"},
         )
         assert response.status_code == 401
-        assert response.json()["detail"]["message"] == "Invalid credentials"
+        assert response.json()["detail"]["message"] == "Invalid credentials."
         assert response.headers["Retry-After"] == "1"
 
 
@@ -137,7 +137,7 @@ async def test_scan_token_failures_are_generic(
             json={"scan_token": token, "pin": "4321"},
         )
         assert response.status_code == 401
-        assert response.json()["detail"]["message"] == "Invalid credentials"
+        assert response.json()["detail"]["message"] == "Invalid credentials."
 
 
 @pytest.mark.anyio

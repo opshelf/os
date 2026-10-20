@@ -122,7 +122,7 @@ async def test_viewer_cannot_drive_the_robot(
     response = await _request(tokens["viewer"], method, path, body)
 
     assert response.status_code == 403, response.text
-    assert response.json()["detail"]["message"] == "Missing required permission: robot:control"
+    assert response.json()["detail"]["message"] == "Missing required permission: robot:control."
 
 
 @pytest.mark.anyio
@@ -135,4 +135,4 @@ async def test_store_of_a_new_item_needs_storage_write(tokens: dict[str, str]) -
     response = await _request(tokens["controller"], "POST", "/api/robot/commands", body)
 
     assert response.status_code == 403, response.text
-    assert response.json()["detail"]["message"] == "Missing required permission: storage:write"
+    assert response.json()["detail"]["message"] == "Missing required permission: storage:write."

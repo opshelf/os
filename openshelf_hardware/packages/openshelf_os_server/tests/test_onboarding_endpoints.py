@@ -160,7 +160,7 @@ async def test_pending_admin_user_email_conflict_returns_typed_409(
     )
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"] == {
-        "message": "Administrator account is already created",
+        "message": "Administrator account is already created.",
         "code": "conflict",
     }
 
