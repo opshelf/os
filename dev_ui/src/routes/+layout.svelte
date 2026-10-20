@@ -190,7 +190,7 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href="/favicon.svg" />
+	<link rel="icon" href="/favicon.png" type="image/png" sizes="32x32" />
 	<title>Dev UI • Openshelf</title>
 </svelte:head>
 
