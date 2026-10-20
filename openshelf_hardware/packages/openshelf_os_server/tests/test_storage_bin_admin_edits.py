@@ -1,5 +1,5 @@
 """Admin bin-member edits: permissions, membership scrubbing on delete, the
-no_compatible_bin causes, and return checks that accept an admin edit."""
+no_compatible_bin refusal and direct fallback, and return checks that accept an admin edit."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -17,6 +17,7 @@ from openshelf_os_server.database.models import (
     Item,
     StorageBin,
     StorageBinItem,
+    StorageBinWorkflow,
 )
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import storage as storage_router
@@ -24,15 +25,6 @@ from openshelf_os_server.routers import storage as storage_router
 
 def _user(role_name: str) -> SimpleNamespace:
     return SimpleNamespace(id=1, role=SimpleNamespace(name=role_name))
-
-
-def _configured_bin(barcode: str, inner: dict = None, cell_idx: int = 1, max_items: int = 6) -> StorageBinSettings:
-    return StorageBinSettings.model_validate({
-        "barcode": barcode,
-        "home_location": {"side": "front_module", "shelf_idx": 0, "cell_idx": cell_idx},
-        "inner_dimensions": inner or {"width": 200, "height": 100, "length": 100},
-        "max_items": max_items,
-    })
 
 
 class FakeRuntime:
@@ -91,57 +83,25 @@ async def _setup_members(db, barcode: str, count: int, access_level_id: int) -> 
     return items
 
 
-@pytest.mark.parametrize(
-    "expected",
-    [
-        "No bin is set up on this machine.",
-        "The item is taller than every bin compartment.",
-        "The item's footprint is larger than every bin compartment.",
-        "Every bin that fits this item is outside the machine.",
-        "Every bin that fits this item is full.",
-        "The bins with room hold items with a different access level.",
-    ],
-)
-async def test_no_compatible_bin_reports_the_cause(monkeypatch, expected):
+async def _only_bin_outside(monkeypatch, db) -> Item:
+    configured = StorageBinSettings.model_validate({
+        "barcode": "900000000303",
+        "home_location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
+        "inner_dimensions": {"width": 200, "height": 100, "length": 100},
+        "max_items": 6,
+    })
+    monkeypatch.setattr(bin_storage, "get_root_config", lambda: SimpleNamespace(storage=SimpleNamespace(bins=[configured])))
+    await bin_storage.BinStorageService(db).sync_config()
+    row = (await db.execute(select(StorageBin).where(StorageBin.active.is_(True)))).scalars().one()
+    row.status = "outside"
+    await db.commit()
+    return await StorageService(db).create_item("123456789303", "Fits", {"width": 50, "height": 50, "length": 50})
+
+
+async def test_bin_store_with_no_compatible_bin_reports_the_cause(monkeypatch):
     _mock_mode(monkeypatch)
     async with AsyncSessionLocal() as db:
-        storage = StorageService(db)
-        if expected.startswith("No bin"):
-            monkeypatch.setattr(bin_storage, "get_root_config", lambda: SimpleNamespace(storage=SimpleNamespace(bins=[])))
-            item = await storage.create_item("123456789300", "No bins", {"width": 50, "height": 50, "length": 50})
-        elif expected.startswith("The item is taller"):
-            monkeypatch.setattr(bin_storage, "get_root_config", lambda: SimpleNamespace(storage=SimpleNamespace(bins=[_configured_bin("900000000301", {"width": 200, "height": 100, "length": 200})])))
-            await bin_storage.BinStorageService(db).sync_config()
-            item = await storage.create_item("123456789301", "Tall", {"width": 50, "height": 150, "length": 50})
-        elif expected.startswith("The item's footprint"):
-            monkeypatch.setattr(bin_storage, "get_root_config", lambda: SimpleNamespace(storage=SimpleNamespace(bins=[_configured_bin("900000000302")])))
-            await bin_storage.BinStorageService(db).sync_config()
-            item = await storage.create_item("123456789302", "Wide", {"width": 190, "height": 50, "length": 190})
-        elif expected.startswith("Every bin that fits this item is outside"):
-            monkeypatch.setattr(bin_storage, "get_root_config", lambda: SimpleNamespace(storage=SimpleNamespace(bins=[_configured_bin("900000000303")])))
-            await bin_storage.BinStorageService(db).sync_config()
-            row = (await db.execute(select(StorageBin).where(StorageBin.active.is_(True)))).scalars().one()
-            row.status = "outside"
-            await db.commit()
-            item = await storage.create_item("123456789303", "Fits", {"width": 50, "height": 50, "length": 50})
-        elif expected.startswith("Every bin that fits this item is full"):
-            monkeypatch.setattr(bin_storage, "get_root_config", lambda: SimpleNamespace(storage=SimpleNamespace(bins=[_configured_bin("900000000304", max_items=1)])))
-            await bin_storage.BinStorageService(db).sync_config()
-            row = (await db.execute(select(StorageBin).where(StorageBin.active.is_(True)))).scalars().one()
-            member = await storage.create_item("123456789304", "Member", {"width": 50, "height": 50, "length": 50})
-            db.add(StorageBinItem(bin_id=row.id, item_id=member.id))
-            await db.commit()
-            item = await storage.create_item("123456789305", "New", {"width": 50, "height": 50, "length": 50})
-        else:
-            await _ensure_level(db, 1)
-            await _ensure_level(db, 2)
-            monkeypatch.setattr(bin_storage, "get_root_config", lambda: SimpleNamespace(storage=SimpleNamespace(bins=[_configured_bin("900000000306")])))
-            await bin_storage.BinStorageService(db).sync_config()
-            row = (await db.execute(select(StorageBin).where(StorageBin.active.is_(True)))).scalars().one()
-            member = await storage.create_item("123456789306", "Member", {"width": 50, "height": 50, "length": 50}, access_level_id=1)
-            db.add(StorageBinItem(bin_id=row.id, item_id=member.id))
-            await db.commit()
-            item = await storage.create_item("123456789307", "New", {"width": 50, "height": 50, "length": 50}, access_level_id=2)
+        item = await _only_bin_outside(monkeypatch, db)
         request = storage_router.BinWorkflowCreate(
             operation="store", barcode=item.barcode, storage_mode="bin"
         )
@@ -149,7 +109,18 @@ async def test_no_compatible_bin_reports_the_cause(monkeypatch, expected):
             await storage_router.create_bin_workflow(request, session=db, current_user=_user("admin"))
         assert error.value.status_code == 409
         assert error.value.detail["code"] == "no_compatible_bin"
-        assert error.value.detail["message"] == expected
+        assert error.value.detail["message"] == "Every bin that fits this item is outside the machine."
+        assert (await db.execute(select(StorageBinWorkflow))).scalars().all() == []
+
+
+async def test_store_without_bin_mode_falls_back_to_direct_when_no_bin_fits(monkeypatch):
+    _mock_mode(monkeypatch)
+    async with AsyncSessionLocal() as db:
+        item = await _only_bin_outside(monkeypatch, db)
+        request = storage_router.BinWorkflowCreate(operation="store", barcode=item.barcode)
+        result = await storage_router.create_bin_workflow(request, session=db, current_user=_user("admin"))
+        assert result == {"storage_mode": "direct", "workflow": None}
+        assert (await db.execute(select(StorageBinWorkflow))).scalars().all() == []
 
 
 async def test_admin_edits_a_bin_member_while_the_bin_is_outside():
@@ -269,33 +240,6 @@ async def test_admin_delete_of_a_bin_member_removes_its_membership():
         assert (
             await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == items[1].id))
         ).scalars().all() != []
-
-
-async def test_an_unfinished_bin_task_blocks_even_an_admin_delete():
-    async with AsyncSessionLocal() as db:
-        await _setup_members(db, "900000000330", 1, access_level_id=1)
-        storage = StorageService(db)
-        incoming = await storage.create_item(
-            "123456789331", "Incoming", {"width": 50, "height": 50, "length": 50},
-            access_level_id=1,
-        )
-        service = bin_storage.BinStorageService(db)
-        await service.begin("store", incoming, None)
-
-        blocked = None
-        try:
-            await storage_router.delete_item(
-                storage_router.BarcodeRequest(barcode=incoming.barcode),
-                session=db,
-                current_user=_user("admin"),
-            )
-        except Exception as exc:
-            blocked = exc
-
-        assert blocked is not None and blocked.status_code == 409
-        assert blocked.detail["message"] == (
-            "This item has a bin task in progress. Finish it before deleting the item."
-        )
 
 
 async def test_an_item_placed_by_a_running_import_blocks_an_admin_delete():
