@@ -402,12 +402,12 @@ async def start_import_tray(
                             await bins.start_retrieval(workflow, worker)
                         except Exception as exc:
                             await bins.fail(workflow, str(exc), tray_moved=False)
-                            logger.warning("Bin fetch failed: %s", exc)
+                            logger.warning("Tray fetch failed: %s", exc)
                             raise api_error(503, "tray_fetch_failed", "The bin could not be fetched. Try again.") from exc
                 if workflow is not None:
                     await bins.publish_workflow(worker, workflow)
         except BinWorkflowConflict as exc:
-            logger.info("Bin workflow conflict: %s", exc)
+            logger.info("Tray workflow conflict: %s", exc)
             # The conflict text is a written instruction for the operator (place the
             # bin, remove the item from the IO box), so it is the message; the code
             # covers a client that cannot match the sentence.
@@ -495,12 +495,12 @@ async def return_import_tray(
                             await bins.enqueue_return(returning, worker)
                         except Exception as exc:
                             await service.fail_tray_return(returning, str(exc))
-                            logger.warning("Bin return failed: %s", exc)
+                            logger.warning("Tray return failed: %s", exc)
                             raise api_error(503, "tray_return_failed", "The bin could not be returned. Try again.") from exc
                 if returning is not None:
                     await bins.publish_workflow(worker, returning)
         except BinWorkflowConflict as exc:
-            logger.info("Bin workflow conflict: %s", exc)
+            logger.info("Tray workflow conflict: %s", exc)
             # The conflict text is a written instruction for the operator (place the
             # bin, remove the item from the IO box), so it is the message; the code
             # covers a client that cannot match the sentence.
