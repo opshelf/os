@@ -810,7 +810,12 @@ class BinStorageService:
             if self._fits(item, row):
                 fitting.append(row)
         if not fitting:
-            item_height = self._dimensions(item.dimensions, ("height",))
+            item_dimensions = self._dimensions(item.dimensions, ("width", "height", "length"))
+            if item_dimensions is None:
+                # A record without a usable size fits no bin, so the height and footprint
+                # causes below would be guesses about a size nobody measured.
+                return None, "The item needs its size measured before it can go in a bin."
+            item_height = item_dimensions[1]
             known_heights = [
                 dimension[0]
                 for dimension in (
@@ -819,11 +824,7 @@ class BinStorageService:
                 )
                 if dimension is not None
             ]
-            if (
-                item_height is not None
-                and known_heights
-                and all(item_height[0] > known for known in known_heights)
-            ):
+            if known_heights and all(item_height > known for known in known_heights):
                 return None, "The item is taller than every bin compartment."
             return None, "The item's footprint is larger than every bin compartment."
         if not any(row.status == "at_home" for row in fitting):

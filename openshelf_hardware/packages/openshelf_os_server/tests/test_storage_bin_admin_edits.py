@@ -83,7 +83,7 @@ async def _setup_members(db, barcode: str, count: int, access_level_id: int) -> 
     return items
 
 
-async def _only_bin_outside(monkeypatch, db) -> Item:
+async def _bin_outside(monkeypatch, db) -> StorageBin:
     configured = StorageBinSettings.model_validate({
         "barcode": "900000000303",
         "home_location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 1},
@@ -95,6 +95,11 @@ async def _only_bin_outside(monkeypatch, db) -> Item:
     row = (await db.execute(select(StorageBin).where(StorageBin.active.is_(True)))).scalars().one()
     row.status = "outside"
     await db.commit()
+    return row
+
+
+async def _only_bin_outside(monkeypatch, db) -> Item:
+    await _bin_outside(monkeypatch, db)
     return await StorageService(db).create_item("123456789303", "Fits", {"width": 50, "height": 50, "length": 50})
 
 
@@ -119,6 +124,35 @@ async def test_store_without_bin_mode_falls_back_to_direct_when_no_bin_fits(monk
         item = await _only_bin_outside(monkeypatch, db)
         request = storage_router.BinWorkflowCreate(operation="store", barcode=item.barcode)
         result = await storage_router.create_bin_workflow(request, session=db, current_user=_user("admin"))
+        assert result == {"storage_mode": "direct", "workflow": None}
+        assert (await db.execute(select(StorageBinWorkflow))).scalars().all() == []
+
+
+async def test_bin_store_says_an_unmeasured_item_needs_its_size(monkeypatch):
+    # A record without dimensions fits no bin, which must be reported as a missing size
+    # rather than a footprint too large for every compartment.
+    _mock_mode(monkeypatch)
+    async with AsyncSessionLocal() as db:
+        await _bin_outside(monkeypatch, db)
+        item = Item(barcode="123456789304", name="Unmeasured", dimensions=None)
+        db.add(item)
+        await db.commit()
+
+        request = storage_router.BinWorkflowCreate(
+            operation="store", barcode=item.barcode, storage_mode="bin"
+        )
+        with pytest.raises(HTTPException) as error:
+            await storage_router.create_bin_workflow(request, session=db, current_user=_user("admin"))
+        assert error.value.status_code == 409
+        assert error.value.detail["code"] == "no_compatible_bin"
+        assert error.value.detail["message"] == (
+            "The item needs its size measured before it can go in a bin."
+        )
+
+        fallback = storage_router.BinWorkflowCreate(operation="store", barcode=item.barcode)
+        result = await storage_router.create_bin_workflow(
+            fallback, session=db, current_user=_user("admin")
+        )
         assert result == {"storage_mode": "direct", "workflow": None}
         assert (await db.execute(select(StorageBinWorkflow))).scalars().all() == []
 
