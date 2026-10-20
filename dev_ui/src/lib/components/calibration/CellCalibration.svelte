@@ -416,10 +416,15 @@
 	}
 
 	// Saving from this page always marks the cell manual, so it is excluded
-	// from auto-calibration.
+	// from auto-calibration. Z is saved as typed, without moving there first.
 	async function didClickSaveAndTest(): Promise<void> {
 		if (currentPosition === null) {
 			error = 'no position to save';
+			return;
+		}
+
+		if (Number.isFinite(editZ) === false) {
+			error = 'z must be a number';
 			return;
 		}
 
@@ -435,7 +440,7 @@
 				selectedCell,
 				currentPosition.x,
 				currentPosition.y,
-				currentPosition.z_offset,
+				editZ,
 				undefined,
 				true
 			);
