@@ -1223,22 +1223,6 @@
 	// selection stays enabled: the queue skips its untestable cells.
 	const hasTestableSelection = $derived(selectedCells.some((entry) => isCellTestable(entry.cell)));
 
-	// The reason the testing buttons are inert is announced once per selection through the
-	// toast channel, which took over the overlay's inline message labels.
-	let didAnnounceUntestableSelection = false;
-
-	$effect(() => {
-		if (hasTestableSelection === true || overlayOpen === false) {
-			didAnnounceUntestableSelection = false;
-			return;
-		}
-
-		if (didAnnounceUntestableSelection === false) {
-			didAnnounceUntestableSelection = true;
-			postToast('status', 'no testable cells selected');
-		}
-	});
-
 	// The selected testable cells, one test each, in shelf/cell-ascending order
 	// (cycle_test.py walks cells one at a time).
 	function buildTestQueue(): Array<{ shelf: number; cell: Cell }> {
@@ -1439,10 +1423,6 @@
 			return;
 		}
 		const queue = buildTestQueue();
-		if (queue.length === 0) {
-			postToast('error', 'no testable cells selected');
-			return;
-		}
 		if (mode === 'quick' || mode === 'cycle') {
 			await didStartServerTestQueue(mode, queue);
 			return;
