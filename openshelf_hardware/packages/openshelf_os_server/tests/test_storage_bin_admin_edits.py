@@ -213,6 +213,30 @@ async def test_admin_edits_a_bin_member_while_the_bin_is_outside():
         }
 
 
+async def test_admin_cannot_resize_a_member_while_its_bin_returns():
+    async with AsyncSessionLocal() as db:
+        items = await _setup_members(db, "900000000315", 2, access_level_id=1)
+        service = bin_storage.BinStorageService(db)
+        moving = await service.begin("retrieve", items[1], None)
+        moving.state = "returning_bin"
+        await db.commit()
+
+        with pytest.raises(HTTPException) as error:
+            await storage_router.update_item(
+                storage_router.ItemUpdateRequest(
+                    barcode=items[0].barcode,
+                    dimensions={"width": 150, "height": 100, "length": 100},
+                ),
+                session=db,
+                current_user=_user("admin"),
+            )
+        assert error.value.status_code == 409
+        assert error.value.detail["code"] == "bin_workflow_conflict"
+        assert error.value.detail["message"] == "Wait for the bin to finish moving."
+        await db.refresh(items[0])
+        assert items[0].dimensions == {"width": 100, "height": 100, "length": 60}
+
+
 async def test_admin_delete_of_a_bin_member_removes_its_membership():
     async with AsyncSessionLocal() as db:
         items = await _setup_members(db, "900000000320", 2, access_level_id=1)

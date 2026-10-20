@@ -1204,8 +1204,9 @@ async def create_item(
     `net_weight`, even if one is null. See the storage group for mass persistence rules.
     Prefer `POST /api/storage/items/update` for partial edits to existing records. Reserved
     bin barcodes and, for a non-admin, size or access-level changes to a bin member
-    return `409`/`403`. A bin interaction holding the item does not
-    block the edit; conflicting state is rejected when that interaction completes.
+    return `409`/`403`, and such a change returns `409` while the robot moves the bin. Any
+    other bin interaction holding the item does not block the edit; conflicting state is
+    rejected when that interaction completes.
     """
     storage_service = StorageService(session)
 
@@ -1216,7 +1217,8 @@ async def create_item(
     dimensions = item.dimensions
     metadata = item.item_metadata or {}
     access_level_id = item.access_level_id
-    if existing is not None and await bin_service.item_bin(existing.id) is not None:
+    member_bin = await bin_service.item_bin(existing.id) if existing is not None else None
+    if member_bin is not None:
         provided_fields = item.model_fields_set
         dimensions_changed = (
             "dimensions" in provided_fields and item.dimensions != existing.dimensions
@@ -1231,6 +1233,8 @@ async def create_item(
                 "bin_item_edit_requires_admin",
                 "Only an admin can change the size or access level of an item in a bin.",
             )
+        if (dimensions_changed or access_changed) and await bin_service.bin_in_motion(member_bin.id):
+            raise api_error(409, "bin_workflow_conflict", "Wait for the bin to finish moving.")
         if "dimensions" not in provided_fields:
             dimensions = existing.dimensions
         if "item_metadata" not in provided_fields:
@@ -1278,7 +1282,7 @@ async def update_item(
     Changing tare alone preserves gross and recomputes net. Metadata replaces the object
     when provided. A size or access-level change to a bin member is admin-only
     (`403 bin_item_edit_requires_admin`) and may be applied while the bin is home or
-    outside. Returns `404` for an absent barcode. These edits do not move
+    outside, but not while the robot moves it (`409`). Returns `404` for an absent barcode. These edits do not move
     hardware.
     """
     storage_service = StorageService(session)
@@ -1286,7 +1290,8 @@ async def update_item(
 
     existing = await storage_service.get_item(barcode)
     bin_service = BinStorageService(session)
-    if existing is not None and await bin_service.item_bin(existing.id) is not None:
+    member_bin = await bin_service.item_bin(existing.id) if existing is not None else None
+    if member_bin is not None:
         dimensions_changed = item.dimensions is not None and item.dimensions != existing.dimensions
         access_changed = (
             "access_level_id" in item.model_fields_set
@@ -1298,6 +1303,8 @@ async def update_item(
                 "bin_item_edit_requires_admin",
                 "Only an admin can change the size or access level of an item in a bin.",
             )
+        if (dimensions_changed or access_changed) and await bin_service.bin_in_motion(member_bin.id):
+            raise api_error(409, "bin_workflow_conflict", "Wait for the bin to finish moving.")
 
     try:
         validate_mass(item.model_dump(exclude_unset=True), existing.tare_weight if existing else None)

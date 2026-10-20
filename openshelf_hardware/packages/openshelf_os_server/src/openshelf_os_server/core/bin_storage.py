@@ -455,6 +455,19 @@ class BinStorageService:
             )
         ).scalar_one_or_none()
 
+    async def bin_in_motion(self, bin_id: int) -> bool:
+        """Whether the robot is fetching or returning this bin, so its contents are fixed."""
+        return (
+            await self.session.scalar(
+                select(StorageBinWorkflow.id)
+                .where(
+                    StorageBinWorkflow.bin_id == bin_id,
+                    StorageBinWorkflow.state.in_(("retrieving_bin", "returning_bin")),
+                )
+                .limit(1)
+            )
+        ) is not None
+
     async def item_bin_payload(self, item_id: int) -> Optional[dict[str, Any]]:
         row = await self.item_bin(item_id)
         return await self.serialize_bin(row) if row else None
