@@ -1045,7 +1045,7 @@ class ImportJobService:
             if returning is not None and returning.state == "awaiting_operator":
                 await self.bins.transition(returning, "cancelled", str(exc))
             if workflow is not None and reopen:
-                await self.bins.transition(workflow, "awaiting_operator", "import tray return rejected")
+                await self.bins.transition(workflow, "awaiting_operator", "import bin return rejected")
             raise ImportJobError(409, "tray_return_rejected", str(exc)) from exc
         for unit in placed:
             unit.stage = "returning"

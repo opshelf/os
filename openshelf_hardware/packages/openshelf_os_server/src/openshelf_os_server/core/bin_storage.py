@@ -775,6 +775,7 @@ class BinStorageService:
             return False
         member_levels = {member.access_level_id for member in members}
         return len(member_levels) != 1 or joining_levels == member_levels
+
     async def allocate_bin(self, item: Item) -> tuple[Optional[StorageBin], Optional[str]]:
         """Choose a home bin that takes the item, or report why none can.
 
