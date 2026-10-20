@@ -582,6 +582,14 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
         # Lightweight worker doubles expose no grid; execution re-validates.
         return
 
+    if (location.side.value, location.shelf_idx, location.cell_idx) in getattr(
+        robot, "_reserved_cell_locations", set()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=error_detail("Requested storage cell is reserved", "cell_unavailable"),
+        )
+
     cell = grid.get_cell_if_present(location)
     if cell is None:
         raise HTTPException(
@@ -651,8 +659,8 @@ async def _validate_mock_store_location(
             detail=error_detail("Requested storage cell is occupied", "cell_unavailable"),
         )
 
-    # A live bin home is unavailable for explicit stores, matching the maintenance status
-    # production applies to reserved cells; automatic allocation avoids it instead.
+    # A live bin home is unavailable for explicit stores, as in production; automatic
+    # allocation avoids it instead.
     if await is_reserved_bin_location((side, shelf_idx, cell_idx), db):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

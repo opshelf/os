@@ -73,7 +73,7 @@ async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
 
         # A tray home is a usable target for the reservation guard in both modes: the tray's
         # return reports the occupied cell instead of the store being refused up front. The
-        # cell-level check below still refuses it, as production's maintenance status does.
+        # cell-level check below still refuses it, as production's reservation check does.
         with pytest.raises(HTTPException) as home_error:
             await robot_router._validate_mock_store(
                 StoreItemCommand(

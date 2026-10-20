@@ -112,7 +112,7 @@ async def test_non_demo_store_rejects_too_small_explicit_location() -> None:
 async def test_tray_return_keeps_the_tray_out_of_the_cell_inventory() -> None:
     """A returned tray must not show up as an inventory item at its home cell."""
     location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
-    grid = build_grid(status=CellStatus.MAINTENANCE)
+    grid = build_grid()
     robot = build_store_robot(grid, reserved_locations={("front_module", 0, 0)})
     robot.return_tray = AsyncMock()
 
@@ -120,3 +120,17 @@ async def test_tray_return_keeps_the_tray_out_of_the_cell_inventory() -> None:
 
     robot.return_tray.assert_awaited_once()
     assert grid.get_cell(location).item is None
+    assert grid.get_cell(location).status == CellStatus.AVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_ordinary_store_rejects_tray_home() -> None:
+    """A tray home looks available in the grid, but its tray is physically in the cell."""
+    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
+    robot = build_store_robot(build_grid(), reserved_locations={("front_module", 0, 0)})
+
+    result = await robot.store(item_payload("ordinary-item", location))
+
+    assert isinstance(result, RobotCommandError)
+    assert result.error == "Requested storage cell is reserved"
+    robot.io_pick.assert_not_awaited()

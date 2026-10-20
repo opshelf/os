@@ -5,7 +5,6 @@ from typing import Optional
 import sentry_sdk
 
 from openshelf_os import robot as r
-from openshelf_os.storage import CellStatus
 import openshelf_os.robot.worker as r_worker
 from openshelf_os.common import (
     ConfigError,
@@ -211,19 +210,7 @@ async def init_robot_worker() -> None:
             occupied = await storage_service.get_all_occupied_cells()
             occupied_tuples = [(side, shelf_idx, cell_idx) for side, shelf_idx, cell_idx, _ in occupied]
             robot.sync_occupied_cells(occupied_tuples)
-            reserved_locations = await reserved_bin_locations(session)
-            robot.set_reserved_cell_locations(reserved_locations)
-            for side, shelf_idx, cell_idx in reserved_locations:
-                try:
-                    robot.set_cell_status(side, shelf_idx, cell_idx, CellStatus.MAINTENANCE)
-                except (ValueError, IndexError) as exc:
-                    logger.warning(
-                        "reserved_bin_home_not_in_grid: side=%s shelf=%d cell=%d error=%s",
-                        side,
-                        shelf_idx,
-                        cell_idx,
-                        exc,
-                    )
+            robot.set_reserved_cell_locations(await reserved_bin_locations(session))
             logger.info("Synced %d occupied cells from database", len(occupied_tuples))
 
         worker = r_worker.RobotWorker(

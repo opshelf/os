@@ -922,18 +922,6 @@ class Robot:
                     side, shelf_idx, cell_idx, str(e)
                 )
 
-    def set_cell_status(self, side: str, shelf_idx: int, cell_idx: int, status: CellStatus) -> None:
-        """Apply a server-owned reservation without presenting it as physical inventory."""
-        if self._grid is None:
-            return
-        location = StorageModuleCellLocation(
-            side=StorageModuleSide(side), shelf_idx=shelf_idx, cell_idx=cell_idx
-        )
-        cell = self._grid.get_cell(location)
-        cell.status = status
-        if status != CellStatus.OCCUPIED:
-            cell.item = None
-
     def set_reserved_cell_locations(self, locations: Iterable[tuple[str, int, int]]) -> None:
         """Set server-owned homes that automatic storage allocation must avoid."""
         configured_locations: set[tuple[str, int, int]] = {
@@ -1357,10 +1345,14 @@ class Robot:
                 parsed_location.cell_idx,
             ) in reserved_locations
 
-            # Demo mode keeps its barcode-to-cell mapping for ordinary items. Reserved bin
-            # homes stay trusted explicit destinations for the bin workflow, and a tray
-            # return targets a workflow-chosen home rather than a client-requested cell, so
-            # the availability and fit checks apply only to ordinary explicit stores.
+            # A tray home holds its tray, so only that tray's return may target it; the cell's
+            # status does not mark it.
+            if is_reserved and not tray:
+                return RobotCommandError(command=command_name, error="Requested storage cell is reserved")
+
+            # Demo mode keeps its barcode-to-cell mapping for ordinary items. A tray return
+            # targets a workflow-chosen home rather than a client-requested cell, so the
+            # availability and fit checks apply only to ordinary explicit stores.
             if self._demo_cell_map is None or is_reserved:
                 if is_reserved is False and tray is False:
                     cell = self._grid.get_cell_if_present(parsed_location)
@@ -1418,9 +1410,10 @@ class Robot:
                 await self.io_pick(coord.to_axis_coordinate())
             self._logger.info("Store: io_pick completed")
             self.set_operation_context(phase="store.grid_update_commit")
-            # A tray home is a reservation, not inventory: its members are the items, and a
-            # cell item here would list the tray itself as one.
-            self._grid.store_item(location, None if tray else item)
+            # A tray home is a reservation, not inventory: its members are the items, so the
+            # tray's return leaves the home cell's status and item untouched.
+            if not tray:
+                self._grid.store_item(location, item)
             self._logger.info("Store: command successful for %s at %s", resolved_item_name, location)
             return RobotCommandSuccessful(command=command_name, location=location, barcode=resolved_barcode, weight=weight)
         except (MotorError, MovementError, ToolError) as err:

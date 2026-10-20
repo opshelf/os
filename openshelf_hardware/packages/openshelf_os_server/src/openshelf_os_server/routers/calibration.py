@@ -174,20 +174,23 @@ async def _ensure_cell_is_testable(
 			detail=str(exc),
 		) from exc
 
-	if allow_tray_home and cell.status == CellStatus.MAINTENANCE:
-		# Startup marks every registered tray home maintenance to keep automatic storage
-		# out; the tray in it is exactly what grip tests exercise.
-		async with AsyncSessionLocal() as session:
-			if await is_reserved_bin_location(
-				(location.side.value, location.shelf_idx, location.cell_idx), session
-			):
-				return cell
-
 	if cell.status in UNTESTABLE_CELL_STATUSES:
 		raise HTTPException(
 			status_code=status.HTTP_400_BAD_REQUEST,
 			detail=f"cell is {cell.status.value} and cannot be used for calibration tests",
 		)
+
+	if not allow_tray_home:
+		# Grip tests exercise the tray in its home; single-item transfers would record a fake
+		# item there.
+		async with AsyncSessionLocal() as session:
+			if await is_reserved_bin_location(
+				(location.side.value, location.shelf_idx, location.cell_idx), session
+			):
+				raise HTTPException(
+					status_code=status.HTTP_400_BAD_REQUEST,
+					detail="cell is a tray home and cannot be used for this calibration test",
+				)
 
 	return cell
 
