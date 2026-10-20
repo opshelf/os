@@ -130,6 +130,30 @@ async def test_tray_home_in_maintenance_stays_testable(client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_cycle_test_rejects_tray_home_in_maintenance(client) -> None:
+	"""The IO cycle is a single-item transfer and would write a fake item into the tray home."""
+	grid = build_grid(is_occupied=False, cell_status=CellStatus.MAINTENANCE)
+	worker = build_worker(grid)
+	tray = SimpleNamespace(
+		barcode='0000000003',
+		home_location=SimpleNamespace(side='front_module', shelf_idx=0, cell_idx=0),
+	)
+	config = SimpleNamespace(storage=SimpleNamespace(bins=[tray]))
+
+	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
+		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
+			with patch('openshelf_os_server.core.bin_storage.get_root_config', return_value=config):
+				response = await client.post(
+					'/api/calibration/test/cycle',
+					json={'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 0},
+				)
+
+	assert response.status_code == 400
+	assert worker._robot.io_place.await_count == 0
+	assert worker._robot.io_pick.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_cycle_test_retracts_before_the_io_cycle_rotates(client) -> None:
 	"""io_place/io_pick rotate before they retract, so the cycle has to retract up front."""
 	grid = build_grid(is_occupied=True)

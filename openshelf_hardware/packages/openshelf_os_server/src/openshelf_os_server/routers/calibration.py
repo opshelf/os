@@ -164,7 +164,7 @@ UNTESTABLE_CELL_STATUSES = (CellStatus.DISABLED, CellStatus.MAINTENANCE)
 
 
 async def _ensure_cell_is_testable(
-	grid, location: StorageModuleCellLocation
+	grid, location: StorageModuleCellLocation, *, allow_tray_home: bool = False
 ) -> Cell:
 	try:
 		cell = grid.get_cell(location)
@@ -174,9 +174,9 @@ async def _ensure_cell_is_testable(
 			detail=str(exc),
 		) from exc
 
-	if cell.status == CellStatus.MAINTENANCE:
+	if allow_tray_home and cell.status == CellStatus.MAINTENANCE:
 		# Startup marks every registered tray home maintenance to keep automatic storage
-		# out; the tray in it is exactly what these tests exercise.
+		# out; the tray in it is exactly what grip tests exercise.
 		async with AsyncSessionLocal() as session:
 			if await is_reserved_bin_location(
 				(location.side.value, location.shelf_idx, location.cell_idx), session
@@ -1301,7 +1301,7 @@ async def _perform_quick_test(
 
 	grid = worker._robot._grid
 
-	await _ensure_cell_is_testable(grid, location)
+	await _ensure_cell_is_testable(grid, location, allow_tray_home=True)
 
 	try:
 		coordinate = _build_coordinate_for_location(grid, location)
@@ -1383,7 +1383,7 @@ async def grip_probe(request: GripProbeRequest) -> list[GripProbePoint]:
 	location = _build_test_location(request)
 	grid = worker._robot._grid
 
-	await _ensure_cell_is_testable(grid, location)
+	await _ensure_cell_is_testable(grid, location, allow_tray_home=True)
 
 	try:
 		coordinate = _build_coordinate_for_location(grid, location)
