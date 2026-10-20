@@ -904,17 +904,7 @@ class BinStorageService:
         if joining:
             if not self._contents_have_volume(items, bin_row):
                 return "The confirmed items need more space than this bin has."
-            member_levels = {
-                item.access_level_id for item in items if item.id in members
-            }
-            if member_levels:
-                if any(
-                    item.access_level_id != level
-                    for item in joining
-                    for level in member_levels
-                ):
-                    return "The confirmed items have different access levels."
-            elif len({item.access_level_id for item in joining}) > 1:
+            if len({item.access_level_id for item in items}) > 1:
                 return "The confirmed items have different access levels."
         direct_item = (
             await self.session.execute(
