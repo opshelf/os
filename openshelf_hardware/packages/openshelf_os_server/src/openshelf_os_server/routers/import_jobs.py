@@ -361,10 +361,14 @@ async def start_import_tray(
 ) -> dict[str, Any]:
     """Fetch a tray for small units.
 
-    Picks the home tray that can take the most of the next group of small units (same
-    access level) and delivers it to the IO box. Requires an empty IO box and an idle,
-    homed robot. When no tray could ever take the group, its units are skipped, `notice`
-    says why, and no tray moves; a tray that is outside returns `409 trays_outside` instead.
+    Picks the home tray that takes the most of the next group of small units (same access
+    level) and delivers it to the IO box. A tray qualifies only when it has a free compartment
+    (or room under `max_items`) and a compartment takes the next unit's planned size, rotated
+    if that helps; the smallest such compartment wins a tie. The step offers only the units
+    that tray takes; the rest wait for a later tray. Requires an empty IO box and an idle,
+    homed robot. When no tray fits, only the units that fit no home tray with a free
+    compartment are skipped, `notice` gives the count, and no tray moves; a tray that is
+    outside returns `409 trays_outside` instead.
     """
     async with mutation_lock():
         service = ImportJobService(session)
@@ -430,10 +434,14 @@ async def place_import_unit_in_tray(
 ) -> dict[str, Any]:
     """Place a small unit in the tray.
 
-    Creates the item with the tray's compartment footprint and the measured height and
-    records it in the next free compartment, returned as `unit.compartment`. Print and
-    scan its label before calling. A unit taller than the compartment is skipped and
-    `notice` says why. A full tray returns `409 tray_full`; return it to continue with another tray.
+    Creates the item with the measured height and a footprint taken from its import row,
+    falling back per axis to the tray's compartment footprint where the row gives no width or
+    length, and records it in the next free compartment, returned as `unit.compartment`. Print
+    and scan its label before calling.
+    A unit whose planned size fits no compartment of this tray returns `409 unit_wrong_tray`
+    before any item is created; one measured taller than the compartment is skipped and
+    `notice` says why. A full tray returns `409 tray_full`; return it to continue with
+    another tray.
     """
     async with mutation_lock():
         service = ImportJobService(session)

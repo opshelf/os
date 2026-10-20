@@ -524,6 +524,16 @@ class ImportJobService:
             if unit.small and unit.access_level_id == first.access_level_id
         ]
 
+    def _fitting(self, tray: Optional[StorageBin], group: Sequence[ImportJobUnit]) -> list[ImportJobUnit]:
+        if tray is None:
+            return list(group)
+        return [unit for unit in group if self.bins.batch_fits(tray, unit.planned_dimensions)]
+
+    async def _batch_tray(self, group: Sequence[ImportJobUnit]) -> Optional[StorageBin]:
+        return await self.bins.allocate_batch_tray(
+            group[0].access_level_id, [unit.planned_dimensions for unit in group]
+        )
+
     async def next_step(self, job: ImportJob) -> Optional[dict[str, Any]]:
         """What the kiosk should show next, or None when it has nothing left to do."""
         if job.state not in OPEN_STATES:
@@ -540,6 +550,8 @@ class ImportJobService:
             if first is not None:
                 if first.small:
                     group = await self._small_group(job, first)
+                    # Show the items the tray to be fetched takes; the rest wait for another.
+                    group = self._fitting(await self._batch_tray(group), group)
                     return {
                         "kind": "tray",
                         "phase": "start",
@@ -575,6 +587,10 @@ class ImportJobService:
                     anchor = small[0]
                 if anchor is not None:
                     group = [unit for unit in small if unit.access_level_id == anchor.access_level_id]
+                    if phase != "failed":
+                        # Offer only the items the tray being delivered takes; the rest wait.
+                        tray_row = await self.session.get(StorageBin, workflow.bin_id)
+                        group = self._fitting(tray_row, group)
             # A failed delivery only matters while its items still wait for a tray.
             if phase != "failed" or group:
                 return {
@@ -873,9 +889,11 @@ class ImportJobService:
     # ------------------------------------------------------------- tray steps
 
     async def start_tray(self, job: ImportJob, user_id: Optional[int]) -> Optional[StorageBinWorkflow]:
-        """Claim a tray for the next group of small units, or skip the group when none fits.
+        """Claim a tray for the next group of small units, or skip the units no tray fits.
 
-        Returns the batch workflow in `retrieving_bin`; the caller starts its delivery.
+        Only units that fit no home tray with a free compartment are skipped; the rest stay
+        pending for a later tray. Returns the batch workflow in `retrieving_bin`; the caller
+        starts its delivery.
         """
         self._require_active(job)
         workflow = await self._tray_workflow(job)
@@ -888,7 +906,7 @@ class ImportJobService:
             raise ImportJobError(409, "not_current", "The next item is not a small item")
         group = await self._small_group(job, first)
         await self.bins.sync_config()
-        tray = await self.bins.allocate_batch_tray(first.access_level_id, len(group))
+        tray = await self._batch_tray(group)
         if tray is None:
             outside = await self.session.scalar(
                 select(StorageBin.id)
@@ -901,10 +919,21 @@ class ImportJobService:
                 raise ImportJobError(
                     409, "trays_outside", "A bin is outside the machine; return it, then fetch a bin again"
                 )
-            for unit in group:
+            # Only items no tray takes are skipped; the others get a tray of their own size.
+            open_trays = [row for row, _, _ in await self.bins.batch_trays(first.access_level_id)]
+            unplaceable = [first] + [
+                unit
+                for unit in group[1:]
+                if not any(self.bins.batch_fits(row, unit.planned_dimensions) for row in open_trays)
+            ]
+            for unit in unplaceable:
                 await self._skip(unit)
-            count = f"{len(group)} small item was" if len(group) == 1 else f"{len(group)} small items were"
-            self.notice = f"No bin has a free compartment for this access level, so {count} skipped."
+            count = (
+                f"{len(unplaceable)} small item was"
+                if len(unplaceable) == 1
+                else f"{len(unplaceable)} small items were"
+            )
+            self.notice = f"No bin with a free compartment fits, so {count} skipped."
             await self.session.commit()
             await self.settle(job)
             return None
@@ -950,6 +979,9 @@ class ImportJobService:
             await self.session.commit()
             await self.settle(job)
             return unit
+        footprint = {key: value for key, value in (unit.planned_dimensions or {}).items() if key != "height"}
+        if not self.bins.batch_fits(tray, footprint):
+            raise ImportJobError(409, "unit_wrong_tray", "This item does not fit this tray's compartments")
         maximum = self.bins.batch_max_height(tray)
         if measured_height > maximum:
             await self._skip(unit)
@@ -957,7 +989,7 @@ class ImportJobService:
             await self.session.commit()
             await self.settle(job)
             return unit
-        dimensions = self.bins.batch_item_dimensions(tray, measured_height)
+        dimensions = self.bins.batch_item_dimensions(tray, measured_height, unit.planned_dimensions)
         probe = Item(barcode=unit.barcode, name=unit.name, dimensions=dimensions, access_level_id=unit.access_level_id)
         error = await self.bins.batch_place_error(workflow, probe)
         if error == "This bin is full.":

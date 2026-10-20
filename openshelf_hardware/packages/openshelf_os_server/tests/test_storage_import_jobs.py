@@ -13,7 +13,7 @@ from openshelf_os.config.settings import StorageBinSettings
 from openshelf_os_server.core import bin_storage, mock_robot
 from openshelf_os_server.core import import_jobs as import_jobs_core
 from openshelf_os_server.core.bin_storage import BinStorageService
-from openshelf_os_server.core.import_jobs import ImportJobService, ImportRowInput, notify_command_result
+from openshelf_os_server.core.import_jobs import ImportJobError, ImportJobService, ImportRowInput, notify_command_result
 from openshelf_os_server.database.models import ImportJob, ImportJobUnit, RobotCommand, StorageBin, StorageBinItem, StorageBinWorkflow
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.main import _ensure_developer_user
@@ -24,11 +24,11 @@ RELAY_SERVICE_TOKEN = "os_service.test-relay-token-with-at-least-32-characters"
 DIMENSIONS = {"width": 50.0, "height": 60.0, "length": 70.0}
 
 
-def tray(cell=0, rows=1, columns=2):
+def tray(cell=0, rows=1, columns=2, height=100):
     return StorageBinSettings.model_validate({
         "barcode": f"90000000000{cell}",
         "home_location": {"side": "front_module", "shelf_idx": 0, "cell_idx": cell},
-        "inner_dimensions": {"width": 200, "length": 160, "height": 100},
+        "inner_dimensions": {"width": 200, "length": 160, "height": height},
         "compartment_layout": {"rows": rows, "columns": columns},
     })
 
@@ -251,3 +251,130 @@ async def test_a_tray_return_is_only_moved_once(mock_mode, trays):
         assert await service.begin_tray_return(job) is None
         await db.refresh(stale)
         assert stale.stage == "returning" and stale.request_id == first.id
+
+
+async def fill_and_return(service, bins, job, workflow):
+    if workflow.state == "retrieving_bin":
+        await bins.transition(workflow, "awaiting_operator")
+    step = await service.next_step(job)
+    names = [unit["name"] for unit in step["units"]]
+    for unit in step["units"]:
+        await service.place_in_tray(job, unit["id"], unit["planned_dimensions"]["height"])
+    returning = await service.begin_tray_return(job)
+    await bins.complete_return(returning)
+    await service.apply_tray_return(returning)
+    await service.settle(job)
+    return names
+
+
+@pytest.mark.anyio
+async def test_small_items_go_to_a_tray_their_footprint_fits(mock_mode, trays):
+    # The tester's file: two items for 2x4 compartments (48.5 x 79 mm), two for 1x2 (99 x 160 mm).
+    # The 1x2 is homed first: both trays take two of the group, so the tighter 2x4 must win.
+    trays[:] = [tray(0, rows=1, columns=2, height=160), tray(1, rows=2, columns=4, height=160)]
+    job_id = await create([
+        row("MT 3", small=True, height=90, length=40, width=40),
+        row("MT 4", small=True, height=90, length=37, width=37),
+        row("MT 5", small=True, height=130, length=65, width=65),
+        row("MT 6", small=True, height=150, length=74, width=74),
+    ])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        small_tray = await db.get(StorageBin, workflow.bin_id)
+        assert small_tray.compartment_layout == {"rows": 2, "columns": 4}
+        large = (await units(job_id))[2]
+        await bins.transition(workflow, "awaiting_operator")
+        with pytest.raises(ImportJobError) as refused:
+            await service.place_in_tray(job, large.id, 130)
+        assert refused.value.code == "unit_wrong_tray"
+        assert await fill_and_return(service, bins, job, workflow) == ["MT 3", "MT 4"]
+
+        assert [unit["name"] for unit in (await service.next_step(job))["units"]] == ["MT 5", "MT 6"]
+        workflow = await service.start_tray(job, None)
+        assert (await db.get(StorageBin, workflow.bin_id)).compartment_layout == {"rows": 1, "columns": 2}
+        assert await fill_and_return(service, bins, job, workflow) == ["MT 5", "MT 6"]
+        assert job.state == "completed"
+    stored = await units(job_id)
+    assert [unit.status for unit in stored] == ["loaded"] * 4
+    assert stored[3].dimensions == {"width": 74.0, "length": 74.0, "height": 150.0}
+
+
+@pytest.mark.anyio
+async def test_a_row_with_only_a_width_keeps_it_in_the_stored_item(mock_mode, trays):
+    # 1x2 compartments are 99 x 160 mm: a width-only row must keep its own width and fall back
+    # to the compartment's length, instead of taking the compartment's footprint for both.
+    trays[:] = [tray(0, rows=1, columns=2)]
+    job_id = await create([row("Narrow", small=True, width=90)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        await bins.transition(workflow, "awaiting_operator")
+        unit = (await units(job_id))[0]
+        await service.place_in_tray(job, unit.id, 90)
+        returning = await service.begin_tray_return(job)
+        await bins.complete_return(returning)
+        await service.apply_tray_return(returning)
+        await service.settle(job)
+    stored = (await units(job_id))[0]
+    assert stored.status == "loaded"
+    assert stored.dimensions == {"width": 90.0, "length": 160.0, "height": 90.0}
+
+
+@pytest.mark.anyio
+async def test_a_width_only_row_that_fits_no_compartment_is_skipped_not_offered(mock_mode, trays):
+    # 1x2 compartments are 99 x 160 mm. A 120 mm-wide row keeps its width and falls back to the
+    # compartment's own 160 mm length when stored, which fits neither orientation: offering it
+    # would print a label and then refuse the placement with tray_rejected.
+    trays[:] = [tray(0, rows=1, columns=2)]
+    job_id = await create([row("Oversize", small=True, width=120)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        job = await service.get(job_id)
+        assert await service.start_tray(job, None) is None
+        assert service.notice == "No tray with a free compartment fits, so 1 small item was skipped."
+    stored = (await units(job_id))[0]
+    assert stored.status == "skipped"
+
+
+@pytest.mark.anyio
+async def test_a_failed_delivery_stays_visible_when_no_pending_item_fits_the_tray(mock_mode, trays):
+    # 2x4 compartments are 48.5 x 79 mm under a 160 mm height, so only the tall unit fits them.
+    trays[:] = [tray(0, rows=2, columns=4, height=160), tray(1, rows=1, columns=2)]
+    job_id = await create([
+        row("Tall", small=True, height=120, length=40, width=40),
+        row("Wide", small=True, height=90, length=74, width=74),
+    ])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        assert (await db.get(StorageBin, workflow.bin_id)).compartment_layout == {"rows": 2, "columns": 4}
+        await bins.transition(workflow, "failed")
+        tall = (await units(job_id))[0]
+        await service.skip_unit(job, tall.id)
+        step = await service.next_step(job)
+        # The delivery failure still needs an operator decision: retry, or return the tray.
+        assert step["kind"] == "tray" and step["phase"] == "failed"
+        assert [unit["name"] for unit in step["units"]] == ["Wide"]
+
+
+@pytest.mark.anyio
+async def test_only_small_items_no_tray_fits_are_skipped(mock_mode, trays):
+    trays[:] = [tray(0, rows=2, columns=4)]
+    job_id = await create([
+        row("Too wide", small=True, length=90, width=90),
+        row("Vial", small=True, length=40, width=40),
+    ])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        job = await service.get(job_id)
+        assert await service.start_tray(job, None) is None
+        assert service.notice == "No tray with a free compartment fits, so 1 small item was skipped."
+        assert (await service.next_step(job))["units"][0]["name"] == "Vial"
+    assert [unit.status for unit in await units(job_id)] == ["skipped", "pending"]

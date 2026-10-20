@@ -1479,14 +1479,50 @@ class BinStorageService:
         await self.transition(workflow, "completed")
 
     async def allocate_batch_tray(
-        self, access_level_id: Optional[int], wanted: int
+        self,
+        access_level_id: Optional[int],
+        wanted: Sequence[Optional[dict[str, Any]]],
     ) -> Optional[StorageBin]:
-        """Choose a home tray that can take the most of `wanted` items of one access level.
+        """Choose a home tray that can take the most of the `wanted` items of one access level.
 
-        A tray qualifies when it has a free compartment (or room under `max_items` when it
-        is undivided) and every current member shares the access level. Among trays that
-        take equally many items, a partially filled one is preferred to keep trays full.
+        `wanted` holds each item's known dimensions; the first item must fit. A tray qualifies
+        when it has a free compartment (or room under `max_items` when it is undivided) and
+        every current member shares the access level. Among trays that take equally many
+        items, the one with the smallest compartment footprint wins so larger compartments stay
+        free for larger items, then a partially filled one is preferred to keep trays full.
         """
+        if not wanted:
+            return None
+        candidates: list[tuple[int, float, bool, str, int, int, StorageBin]] = []
+        for row, member_count, capacity in await self.batch_trays(access_level_id):
+            if not self.batch_fits(row, wanted[0]):
+                continue
+            # The score saturates at `capacity`, so counting stops there instead of scanning the
+            # whole group for every tray.
+            fitting = 0
+            for dimensions in wanted:
+                if fitting == capacity:
+                    break
+                if self.batch_fits(row, dimensions):
+                    fitting += 1
+            footprint = self._max_item_dimensions(row)
+            candidates.append(
+                (
+                    -min(capacity, fitting),
+                    footprint["width"] * footprint["length"],
+                    member_count == 0,
+                    row.side,
+                    row.shelf_idx,
+                    row.cell_idx,
+                    row,
+                )
+            )
+        if not candidates:
+            return None
+        return min(candidates, key=lambda entry: entry[:-1])[-1]
+
+    async def batch_trays(self, access_level_id: Optional[int]) -> list[tuple[StorageBin, int, int]]:
+        """Home trays with room for an item of the access level, as (tray, member count, capacity)."""
         bins = (
             await self.session.scalars(
                 select(StorageBin).where(
@@ -1494,7 +1530,7 @@ class BinStorageService:
                 )
             )
         ).all()
-        candidates: list[tuple[int, bool, str, int, int, StorageBin]] = []
+        trays: list[tuple[StorageBin, int, int]] = []
         for row in bins:
             members = (
                 await self.session.scalars(
@@ -1510,19 +1546,8 @@ class BinStorageService:
                 continue
             if capacity <= 0:
                 continue
-            candidates.append(
-                (
-                    -min(capacity, max(1, wanted)),
-                    len(members) == 0,
-                    row.side,
-                    row.shelf_idx,
-                    row.cell_idx,
-                    row,
-                )
-            )
-        if not candidates:
-            return None
-        return min(candidates, key=lambda entry: entry[:-1])[-1]
+            trays.append((row, len(members), capacity))
+        return trays
 
     @staticmethod
     def _batch_capacity(row: StorageBin, member_count: int) -> int:
@@ -1530,10 +1555,33 @@ class BinStorageService:
         slots = layout["rows"] * layout["columns"] if layout else row.max_items
         return max(0, min(slots, row.max_items) - member_count)
 
-    def batch_item_dimensions(self, row: StorageBin, height: float) -> dict[str, float]:
-        """Small import items take the tray's largest allowed footprint and a measured height."""
-        footprint = self._max_item_dimensions(row)
-        return {"width": footprint["width"], "length": footprint["length"], "height": height}
+    @classmethod
+    def _sized(
+        cls, defaults: dict[str, float], known: Optional[dict[str, Any]]
+    ) -> dict[str, float]:
+        """`defaults` with every key the item gives a usable dimension for replaced."""
+        sized = dict(defaults)
+        for key in sized:
+            value = cls._dimensions(known, (key,))
+            if value is not None:
+                sized[key] = value[0]
+        return sized
+
+    def batch_fits(self, row: StorageBin, dimensions: Optional[dict[str, Any]]) -> bool:
+        """Whether a small item fits one of the tray's compartments; unknown dimensions fit."""
+        # Probe with exactly what batch_item_dimensions will store, so an offered item is never
+        # refused at placement for fitting by one default and being stored with another.
+        probe = self._sized(
+            {**self._max_item_dimensions(row), "height": self.batch_max_height(row)}, dimensions
+        )
+        return self._fits(Item(dimensions=probe), row)
+
+    def batch_item_dimensions(
+        self, row: StorageBin, height: float, planned: Optional[dict[str, Any]] = None
+    ) -> dict[str, float]:
+        """A small item's footprint from the import file, else the tray's largest allowed one."""
+        sized = self._sized(self._max_item_dimensions(row), planned)
+        return {"width": sized["width"], "length": sized["length"], "height": height}
 
     def batch_max_height(self, row: StorageBin) -> float:
         return float(self._compartment_dimensions(row)["height"])
