@@ -87,7 +87,7 @@ async def test_relayout_refuses_nonempty_or_checked_out_tray(configured, occupie
         if occupied:
             await finish(service, workflow, True)
         configured[:] = [tray(columns=2, rows=4)]
-        with pytest.raises(ValueError, match="Empty and return"):
+        with pytest.raises(ValueError, match="Empty the bin and return"):
             await service.sync_config()
         await db.rollback()
         row = await db.scalar(select(StorageBin))

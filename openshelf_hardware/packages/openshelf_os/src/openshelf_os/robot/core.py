@@ -1591,7 +1591,7 @@ class Robot:
                 result = await self.store(command.item, tray=True)
             elif isinstance(command, DeliverTrayCommand):
                 if command.location is None:
-                    result = RobotCommandError(command=command_name, error="Tray home location required")
+                    result = RobotCommandError(command=command_name, error="The bin's cell is missing.")
                 else:
                     result = await self.retrieve_by_location(command.location, command.barcode, tray=True)
             elif isinstance(command, StoreItemCommand):

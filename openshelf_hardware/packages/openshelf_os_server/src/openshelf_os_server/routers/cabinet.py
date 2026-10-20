@@ -75,7 +75,7 @@ async def ensure_laser_auto_calibration_not_running() -> None:
 
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
-        detail="laser auto calibration is running",
+        detail="The robot is calibrating.",
     )
 
 

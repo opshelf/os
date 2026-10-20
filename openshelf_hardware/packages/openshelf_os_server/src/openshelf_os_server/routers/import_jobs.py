@@ -376,20 +376,24 @@ async def start_import_tray(
                 runtime = get_mock_robot_runtime()
                 async with robot_command_enqueue_guard():
                     if await runtime.has_active_commands():
-                        raise BinWorkflowConflict("Wait for the robot to finish storing")
+                        raise BinWorkflowConflict("The robot is busy with another task.")
                     workflow = await service.start_tray(job, current_user.id)
                     if workflow is not None:
-                        await bins.transition(workflow, "awaiting_operator", "mock tray delivered")
+                        await bins.transition(workflow, "awaiting_operator", "mock bin delivered")
                 if workflow is not None:
                     runtime.set_bin_io_box_occupied(True)
                     await runtime.publish_status()
             else:
                 worker = robot_core.robot_worker
                 if worker is None:
-                    raise HTTPException(status_code=503, detail="Robot worker is unavailable")
+                    raise api_error(503, "service_unavailable", "The robot is not running.")
                 async with robot_command_enqueue_guard():
                     if await is_io_box_occupied(worker):
-                        raise BinWorkflowConflict("Remove the item from the IO box before fetching a tray")
+                        raise api_error(
+                            409,
+                            "io_box_occupied",
+                            "The IO box is not empty. Take the item off the scale and wait for it to read empty.",
+                        )
                     ensure_worker_homed_for_bin_motion(worker)
                     await ensure_worker_queue_empty_for_bin_start(worker)
                     workflow = await service.start_tray(job, current_user.id)
@@ -398,14 +402,14 @@ async def start_import_tray(
                             await bins.start_retrieval(workflow, worker)
                         except Exception as exc:
                             await bins.fail(workflow, str(exc), tray_moved=False)
-                            logger.warning("Tray fetch failed: %s", exc)
-                            raise api_error(503, "tray_fetch_failed", "The tray could not be fetched. Try again.") from exc
+                            logger.warning("Bin fetch failed: %s", exc)
+                            raise api_error(503, "tray_fetch_failed", "The bin could not be fetched. Try again.") from exc
                 if workflow is not None:
                     await bins.publish_workflow(worker, workflow)
         except BinWorkflowConflict as exc:
-            logger.info("Tray workflow conflict: %s", exc)
+            logger.info("Bin workflow conflict: %s", exc)
             # The conflict text is a written instruction for the operator (place the
-            # tray, remove the item from the IO box), so it is the message; the code
+            # bin, remove the item from the IO box), so it is the message; the code
             # covers a client that cannot match the sentence.
             raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
         except ImportJobError as exc:
@@ -467,9 +471,9 @@ async def return_import_tray(
                 runtime = get_mock_robot_runtime()
                 async with robot_command_enqueue_guard():
                     if await runtime.has_active_commands():
-                        raise BinWorkflowConflict("Wait for the robot to finish storing")
+                        raise BinWorkflowConflict("The robot is busy with another task.")
                     if not runtime.is_bin_io_box_occupied():
-                        raise BinWorkflowConflict("Place the tray in the IO box before returning it")
+                        raise BinWorkflowConflict("Place the bin in the IO box before returning it.")
                     returning = await service.begin_tray_return(job)
                     if returning is not None:
                         await bins.complete_return(returning)
@@ -479,26 +483,26 @@ async def return_import_tray(
             else:
                 worker = robot_core.robot_worker
                 if worker is None:
-                    raise HTTPException(status_code=503, detail="Robot worker is unavailable")
+                    raise api_error(503, "service_unavailable", "The robot is not running.")
                 async with robot_command_enqueue_guard():
                     ensure_worker_homed_for_bin_motion(worker)
                     await ensure_worker_queue_empty_for_bin_start(worker)
                     if not await is_io_box_occupied(worker):
-                        raise BinWorkflowConflict("Place the tray in the IO box before returning it")
+                        raise BinWorkflowConflict("Place the bin in the IO box before returning it.")
                     returning = await service.begin_tray_return(job)
                     if returning is not None:
                         try:
                             await bins.enqueue_return(returning, worker)
                         except Exception as exc:
                             await service.fail_tray_return(returning, str(exc))
-                            logger.warning("Tray return failed: %s", exc)
-                            raise api_error(503, "tray_return_failed", "The tray could not be returned. Try again.") from exc
+                            logger.warning("Bin return failed: %s", exc)
+                            raise api_error(503, "tray_return_failed", "The bin could not be returned. Try again.") from exc
                 if returning is not None:
                     await bins.publish_workflow(worker, returning)
         except BinWorkflowConflict as exc:
-            logger.info("Tray workflow conflict: %s", exc)
+            logger.info("Bin workflow conflict: %s", exc)
             # The conflict text is a written instruction for the operator (place the
-            # tray, remove the item from the IO box), so it is the message; the code
+            # bin, remove the item from the IO box), so it is the message; the code
             # covers a client that cannot match the sentence.
             raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
         except ImportJobError as exc:

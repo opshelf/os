@@ -83,7 +83,7 @@ async def _run_nmcli(*args: str) -> _NmcliResult:
 		raise api_error(
 			status.HTTP_500_INTERNAL_SERVER_ERROR,
 			"wifi_unavailable",
-			"Network settings are not available on this cabinet.",
+			"Network settings are not available on this machine.",
 		) from exc
 
 	try:
@@ -304,7 +304,7 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 		raise api_error(
 			status.HTTP_502_BAD_GATEWAY,
 			"wifi_connect_failed",
-			"The cabinet could not connect to that network. Try again.",
+			"The robot could not connect to that network. Try again.",
 		)
 	# Nothing to fall back on: the cabinet is unreachable and the body must
 	# say so. The message stays empty so the code's own sentence is what the

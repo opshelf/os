@@ -99,7 +99,7 @@ async def ensure_laser_auto_calibration_not_running() -> None:
 
 	raise HTTPException(
 		status_code=status.HTTP_409_CONFLICT,
-		detail="laser auto calibration is running",
+		detail="The robot is calibrating.",
 	)
 
 
@@ -189,7 +189,7 @@ async def _ensure_cell_is_testable(
 			):
 				raise HTTPException(
 					status_code=status.HTTP_400_BAD_REQUEST,
-					detail="cell is a tray home and cannot be used for this calibration test",
+					detail="cell is a bin home and cannot be used for this calibration test",
 				)
 
 	return cell
@@ -1021,13 +1021,13 @@ async def stream_laser_auto_calibration(
 		if getattr(worker, "_current_command", None) is not None:
 			raise HTTPException(
 				status_code=status.HTTP_409_CONFLICT,
-				detail="Robot is busy processing another command",
+				detail="The robot is busy with another task.",
 			)
 
 		if getattr(worker, "_demo_cycling", False) is True:
 			raise HTTPException(
 				status_code=status.HTTP_409_CONFLICT,
-				detail="Demo cycle is already running",
+				detail="The robot is running the demo cycle.",
 			)
 
 		try:
@@ -1798,7 +1798,7 @@ async def save_calibration(request: SaveRequest):
 				side=request.side, shelf_idx=request.shelf_idx, cell_idx=request.cell_idx
 			))
 		except (IndexError, ValueError) as exc:
-			raise HTTPException(status_code=409, detail="Tray home cell is missing from storage") from exc
+			raise HTTPException(status_code=409, detail="Bin home cell is missing from storage") from exc
 
 	side_enum = request.side
 	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)

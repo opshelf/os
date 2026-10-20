@@ -292,7 +292,7 @@ async def test_robot_commands_are_blocked_while_laser_auto_calibration_is_runnin
             )
 
     assert exc_info.value.status_code == 409
-    assert exc_info.value.detail == "laser auto calibration is running"
+    assert exc_info.value.detail == "The robot is calibrating."
 
 
 def test_scan_bounds_are_clamped_to_the_axis_travel() -> None:

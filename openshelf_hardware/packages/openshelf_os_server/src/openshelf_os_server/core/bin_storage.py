@@ -100,19 +100,19 @@ class RobotEventPublisher(Protocol):
 async def ensure_worker_queue_empty_for_bin_start(worker: RobotWorker) -> None:
     """Reject a new bin retrieval while any unrelated robot work is active."""
     if get_manual_motion_operation() not in {None, "robot_command_enqueue"}:
-        raise BinWorkflowConflict("Robot is busy with manual motion")
+        raise BinWorkflowConflict("The robot is busy with a manual move.")
 
     worker_state = cast(dict[str, Any], getattr(worker, "__dict__", {}))
     if worker_state.get("_demo_cycling") is True:
-        raise BinWorkflowConflict("Demo cycle is already running")
+        raise BinWorkflowConflict("The robot is running the demo cycle.")
 
     # A laser session is scheduled before its background task has acquired the
     # manual-motion gate, so inspect its durable-in-process admission marker too.
     if await is_laser_auto_calibration_running():
-        raise BinWorkflowConflict("Laser auto calibration is running")
+        raise BinWorkflowConflict("The robot is calibrating.")
 
     if worker_state.get("_current_command") is not None:
-        raise BinWorkflowConflict("Robot is busy processing another command")
+        raise BinWorkflowConflict("The robot is busy with another task.")
 
     command_queue = worker_state.get("_command_queue")
     qsize = getattr(command_queue, "qsize", None)
@@ -120,7 +120,7 @@ async def ensure_worker_queue_empty_for_bin_start(worker: RobotWorker) -> None:
         try:
             qsize_fn = cast(Callable[[], int], qsize)
             if qsize_fn() > 0:
-                raise BinWorkflowConflict("Robot has queued commands")
+                raise BinWorkflowConflict("The robot has other tasks waiting.")
         except BinWorkflowConflict:
             raise
         except Exception:
@@ -142,7 +142,7 @@ def ensure_worker_homed_for_bin_motion(worker: RobotWorker) -> None:
     """Reject bin motion until an explicitly requested home has completed."""
     if worker.needs_home():
         reason = worker.needs_home_reason()
-        message = "Home required before continuing the storage bin workflow"
+        message = "The robot needs to be reset before the bin can move"
         if reason:
             message = f"{message}: {reason}"
         raise BinWorkflowConflict(message)
@@ -165,6 +165,10 @@ def _location(bin_row: StorageBin) -> dict[str, Any]:
 
 class BinWorkflowConflict(RuntimeError):
     pass
+
+
+class NoCompatibleBinError(BinWorkflowConflict):
+    """A bin store found no bin; the message is the operator-facing cause."""
 
 
 class DirectStoreReservationError(ValueError):
@@ -253,7 +257,7 @@ async def validate_direct_store_reservation(
             service = BinStorageService(session)
             if await service.item_bin(item_id) is not None:
                 raise DirectStoreReservationError(
-                    "Item is stored in a bin; use the storage bin workflow",
+                    "This item is in a bin.",
                     "reserved_tray_item",
                 )
 
@@ -276,7 +280,7 @@ class BinStorageService:
             ).scalar_one_or_none()
             if barcode_item is not None:
                 raise ValueError(
-                    f"Storage bin barcode {entry.barcode} is already assigned to an item"
+                    f"Bin barcode {entry.barcode} is already assigned to an item."
                 )
             direct_occupant = (
                 await self.session.execute(
@@ -347,7 +351,7 @@ class BinStorageService:
                     )
                     if row.status != "at_home" or await self._member_count(row.id) or unfinished:
                         raise ValueError(
-                            "Empty and return the tray before changing its compartment layout, dimensions or home cell"
+                            "Empty the bin and return it before changing its layout, size, or cell."
                         )
                 for key, value in values.items():
                     setattr(row, key, value)
@@ -616,7 +620,7 @@ class BinStorageService:
             if membership is not None and (
                 membership.bin_id != bin_row.id or membership.compartment != workflow.compartment
             ):
-                return "Item compartment no longer matches the workflow"
+                return "The item's compartment changed since this task started."
             selected = [workflow.compartment]
             others = (
                 (
@@ -636,9 +640,9 @@ class BinStorageService:
             not isinstance(number, int) or isinstance(number, bool) or number < 1 or number > count
             for number in selected
         ):
-            return "A tray item has no valid compartment assignment"
+            return "An item in this bin has no compartment."
         if len(selected) != len(set(selected)):
-            return "Two tray items cannot occupy the same compartment"
+            return "Two items in this bin are assigned to the same compartment."
         return None
 
     @classmethod
@@ -705,21 +709,27 @@ class BinStorageService:
             return False
         return sum(volume for volume in item_volumes if volume is not None) <= capacity
 
-    async def allocate_bin(self, item: Item) -> Optional[StorageBin]:
+    async def allocate_bin(self, item: Item) -> tuple[Optional[StorageBin], Optional[str]]:
+        """Choose a home bin that takes the item, or report why none can.
+
+        Returns the bin with None, or None with the operator-facing cause, so a
+        store can say which way no bin was available.
+        """
         bins = (
             (
                 await self.session.execute(
-                    select(StorageBin).where(
-                        StorageBin.active.is_(True), StorageBin.status == "at_home"
-                    )
+                    select(StorageBin).where(StorageBin.active.is_(True))
                 )
             )
             .scalars()
             .all()
         )
-        candidates: list[tuple[bool, float, str, int, int, StorageBin]] = []
+        if not bins:
+            return None, "No bin is set up on this machine."
+        members_by_bin: dict[int, list[Item]] = {}
+        fitting: list[StorageBin] = []
         for row in bins:
-            members = (
+            members = list(
                 (
                     await self.session.execute(
                         select(Item)
@@ -728,17 +738,47 @@ class BinStorageService:
                     )
                 )
                 .scalars()
-                .all()
             )
+            members_by_bin[int(row.id)] = members
+            if self._fits(item, row):
+                fitting.append(row)
+        if not fitting:
+            item_height = self._dimensions(item.dimensions, ("height",))
+            known_heights = [
+                dimension[0]
+                for dimension in (
+                    self._dimensions(self._compartment_dimensions(row), ("height",))
+                    for row in bins
+                )
+                if dimension is not None
+            ]
+            if (
+                item_height is not None
+                and known_heights
+                and all(item_height[0] > known for known in known_heights)
+            ):
+                return None, "The item is taller than every bin compartment."
+            return None, "The item's footprint is larger than every bin compartment."
+        if not any(row.status == "at_home" for row in fitting):
+            return None, "Every bin that fits this item is outside the machine."
+        roomy: list[tuple[StorageBin, list[Item]]] = []
+        for row in fitting:
+            if row.status != "at_home":
+                continue
+            members = members_by_bin[int(row.id)]
             if (
                 len(members) >= row.max_items
                 or (
                     row.compartment_layout is not None and await self._free_compartment(row) is None
                 )
-                or not self._fits(item, row)
                 or not self._has_volume_for(item, members, row)
             ):
                 continue
+            roomy.append((row, members))
+        if not roomy:
+            return None, "Every bin that fits this item is full."
+        candidates: list[tuple[bool, float, str, int, int, StorageBin]] = []
+        for row, members in roomy:
             if any(member.access_level_id != item.access_level_id for member in members):
                 continue
             capacity = self._volume(row.inner_dimensions)
@@ -762,8 +802,8 @@ class BinStorageService:
                 )
             )
         if not candidates:
-            return None
-        return min(candidates, key=lambda entry: entry[:-1])[-1]
+            return None, "The bins with room hold items with a different access level."
+        return min(candidates, key=lambda entry: entry[:-1])[-1], None
 
     async def _apply_return_contents(
         self, workflow: StorageBinWorkflow, bin_row: StorageBin
@@ -812,14 +852,14 @@ class BinStorageService:
             )
         ).scalar_one_or_none()
         if occupied_home is not None:
-            return "Tray home cell is occupied by an item"
+            return "The bin's cell has an item stored in it."
         compartment_error = await self._compartment_error(workflow, bin_row)
         if compartment_error:
             return compartment_error
         candidate_ids = set((workflow.resolution or {}).get("candidate_item_ids", []))
         confirmed_ids = set((workflow.resolution or {}).get("confirmed_item_ids", []))
         if not confirmed_ids.issubset(candidate_ids):
-            return "Confirmed bin contents include an unexpected item"
+            return "The confirmed items include one that was never in this bin."
         items = (
             (await self.session.execute(select(Item).where(Item.id.in_(confirmed_ids))))
             .scalars()
@@ -828,11 +868,12 @@ class BinStorageService:
             else []
         )
         if len(items) != len(confirmed_ids):
-            return "A confirmed bin item no longer exists"
+            return "One of the confirmed items was deleted."
         if len(items) > bin_row.max_items:
-            return "Storage bin has reached its item limit"
-        # A current member is already inside the tray; re-checking its fit would strand the
-        # tray outside once compartment sizing tightens after the item was stored.
+            return "This bin is full."
+        # Current members are accepted as they are: an admin may have resized or
+        # re-leveled one while the bin was out, and re-checking it would strand
+        # the bin outside. Only items that join now are validated against the bin.
         members = set(
             (
                 await self.session.scalars(
@@ -841,18 +882,30 @@ class BinStorageService:
             ).all()
         )
         if any(item.id not in members and not self._fits(item, bin_row) for item in items):
-            return "A confirmed item no longer fits the configured storage bin"
-        if not self._contents_have_volume(items, bin_row):
-            return "Confirmed bin contents exceed the configured storage capacity"
-        if len({item.access_level_id for item in items}) > 1:
-            return "Confirmed items do not share the same access level"
+            return "One of the confirmed items does not fit this bin."
+        joining = [item for item in items if item.id not in members]
+        if joining:
+            if not self._contents_have_volume(items, bin_row):
+                return "The confirmed items need more space than this bin has."
+            member_levels = {
+                item.access_level_id for item in items if item.id in members
+            }
+            if member_levels:
+                if any(
+                    item.access_level_id != level
+                    for item in joining
+                    for level in member_levels
+                ):
+                    return "The confirmed items have different access levels."
+            elif len({item.access_level_id for item in joining}) > 1:
+                return "The confirmed items have different access levels."
         direct_item = (
             await self.session.execute(
                 select(ItemLocation.item_id).where(ItemLocation.item_id.in_(confirmed_ids)).limit(1)
             )
         ).scalar_one_or_none()
         if direct_item is not None:
-            return "A confirmed item has a direct storage location"
+            return "One of the confirmed items is stored in its own cell."
         other_membership = (
             await self.session.execute(
                 select(StorageBinItem.item_id)
@@ -864,7 +917,7 @@ class BinStorageService:
             )
         ).scalar_one_or_none()
         if other_membership is not None:
-            return "A confirmed item is associated with another storage bin"
+            return "One of the confirmed items belongs to another bin."
         if bin_row.compartment_layout:
             positions = (workflow.resolution or {}).get("candidate_compartments", {})
             memberships = await self.session.scalars(
@@ -874,13 +927,13 @@ class BinStorageService:
                 )
             )
             if any(member.compartment != positions.get(str(member.item_id)) for member in memberships):
-                return "Item compartment no longer matches the workflow"
+                return "The item's compartment changed since this task started."
         return None
 
     async def _store_invariant_error(self, bin_row: StorageBin, item: Item) -> Optional[str]:
         """Validate durable bin/item invariants without requiring live motion state."""
         if not bin_row.active or not self._fits(item, bin_row):
-            return "Item no longer fits the configured storage bin"
+            return "The item no longer fits this bin."
 
         direct_location = (
             await self.session.execute(
@@ -888,7 +941,7 @@ class BinStorageService:
             )
         ).scalar_one_or_none()
         if direct_location is not None:
-            return "Item has a direct storage location"
+            return "The item is stored in its own cell."
 
         members = (
             (
@@ -902,11 +955,11 @@ class BinStorageService:
             .all()
         )
         if len(members) >= bin_row.max_items:
-            return "Storage bin has reached its item limit"
+            return "This bin is full."
         if not self._has_volume_for(item, members, bin_row):
-            return "Storage bin does not have enough available space"
+            return "This bin does not have enough space."
         if any(member.access_level_id != item.access_level_id for member in members):
-            return "Item access level no longer matches the storage bin"
+            return "The item's access level differs from the other items in this bin."
         return None
 
     async def active_workflows(self) -> list[StorageBinWorkflow]:
@@ -926,13 +979,13 @@ class BinStorageService:
             if (workflow.resolution or {}).get("physical_return_completed"):
                 await self.complete_return(workflow)
             elif workflow.state in {"retrieving_bin", "returning_bin"}:
-                await self.fail(workflow, "Robot process restarted during tray motion")
+                await self.fail(workflow, "Robot process restarted during bin motion")
 
     async def serialize_workflow(self, row: StorageBinWorkflow) -> dict[str, Any]:
         tray = await self.session.get(StorageBin, row.bin_id)
         item = await self.session.get(Item, row.item_id) if row.item_id else None
         if tray is None:
-            raise BinWorkflowConflict("Tray no longer exists")
+            raise BinWorkflowConflict("This bin no longer exists.")
         result = {
             "id": row.id,
             "operation": row.operation,
@@ -1042,7 +1095,7 @@ class BinStorageService:
             workflow.resolution = {**(workflow.resolution or {}), "crash_recovered": True}
             workflow.history = [
                 *(workflow.history or []),
-                _history_entry("failed", "Operator confirmed the tray on its shelf after the crash"),
+                _history_entry("failed", "Operator confirmed the bin on its shelf after the crash"),
             ]
             workflow.updated_at = _utc_now()
             await self.session.commit()
@@ -1058,10 +1111,10 @@ class BinStorageService:
                 return None
         elif operation == "store":
             if await self.item_bin(item.id):
-                raise BinWorkflowConflict("Item is already in a tray")
-            tray = await self.allocate_bin(item)
+                raise BinWorkflowConflict("This item is already in a bin.")
+            tray, reason = await self.allocate_bin(item)
             if tray is None:
-                return None
+                raise NoCompatibleBinError(reason)
         else:
             raise ValueError("Expected store or retrieve")
         # Atomic per-tray reservation, not a global operation lock.
@@ -1072,12 +1125,12 @@ class BinStorageService:
         )
         if cast(CursorResult, claimed).rowcount != 1:
             await self.session.rollback()
-            raise BinWorkflowConflict("This tray is currently outside the system")
+            raise BinWorkflowConflict("This bin is outside the machine.")
         if await self.item_has_active_workflow(item.id):
             # One interaction per item, not a lock on the item: an open interaction stops a
             # second one from starting, while edits and commands stay available.
             await self.session.rollback()
-            raise BinWorkflowConflict("An interaction for this item is already in progress")
+            raise BinWorkflowConflict("This item already has a bin task in progress.")
         compartment = (
             (
                 await self.session.scalar(
@@ -1138,18 +1191,18 @@ class BinStorageService:
             await self.session.refresh(workflow)
             if workflow.state in {"completed", "cancelled", "failed"}:
                 return
-            raise BinWorkflowConflict("Wait for tray motion to finish")
+            raise BinWorkflowConflict("Wait for the bin to finish moving.")
         await self.session.refresh(workflow)
         if workflow.operation == BATCH_OPERATION:
             await self.session.rollback()
-            raise BinWorkflowConflict("Finish this tray on the import screen")
+            raise BinWorkflowConflict("This bin is in use by an import. Finish it on the import screen.")
         if workflow.operation == "return":
             await self.transition(workflow, "cancelled")
             return
         tray = await self.session.get(StorageBin, workflow.bin_id)
         item = await self.session.get(Item, workflow.item_id)
         if tray is None or item is None:
-            raise BinWorkflowConflict("Tray or item no longer exists")
+            raise BinWorkflowConflict("This bin or item no longer exists.")
         member = await self.session.scalar(
             select(StorageBinItem).where(StorageBinItem.item_id == item.id)
         )
@@ -1158,7 +1211,7 @@ class BinStorageService:
             if member is None:
                 error = error or await self._store_invariant_error(tray, item)
             elif member.bin_id != tray.id:
-                error = "Item is already in another tray"
+                error = "This item is already in another bin."
             if error:
                 raise BinWorkflowConflict(error)
             if member is None:
@@ -1171,7 +1224,7 @@ class BinStorageService:
             item.enrollment_storage_completed = True
         elif member is not None:
             if member.bin_id != tray.id:
-                raise BinWorkflowConflict("Item is already in another tray")
+                raise BinWorkflowConflict("This item is already in another bin.")
             await self.session.delete(member)
         await self.transition(workflow, "completed")
 
@@ -1190,7 +1243,7 @@ class BinStorageService:
         await self.session.refresh(tray)
         if tray.status != "outside":
             await self.session.rollback()
-            raise BinWorkflowConflict("This tray is already in the system")
+            raise BinWorkflowConflict("This bin is already in the machine.")
         pending = (
             await self.session.scalars(
                 select(StorageBinWorkflow).where(
@@ -1204,13 +1257,13 @@ class BinStorageService:
                 await self.session.commit()
                 return workflow
             if workflow.operation == BATCH_OPERATION:
-                # A stray tray scan must not drop the import's placements; the import
-                # screen returns this tray once the operator has filled it.
+                # A stray bin scan must not drop the import's placements; the import
+                # screen returns this bin once the operator has filled it.
                 await self.session.rollback()
-                raise BinWorkflowConflict("Finish this tray on the import screen")
+                raise BinWorkflowConflict("This bin is in use by an import. Finish it on the import screen.")
             if workflow.state == "retrieving_bin":
                 await self.session.rollback()
-                raise BinWorkflowConflict("Tray delivery is still running")
+                raise BinWorkflowConflict("This bin is still on its way out.")
             # A barcode return supersedes a dismissed/abandoned item instruction.
             workflow.state = "cancelled"
             workflow.completed_at = _utc_now()
@@ -1290,16 +1343,16 @@ class BinStorageService:
 
     async def prepare_return(self, workflow: StorageBinWorkflow, confirmed_ids: list[int]) -> bool:
         if workflow.operation != "return":
-            raise BinWorkflowConflict("Scan the tray barcode to return it")
+            raise BinWorkflowConflict("Scan the bin's barcode to return it.")
         if workflow.state in {"returning_bin", "completed"}:
             if set(confirmed_ids) != set((workflow.resolution or {}).get("confirmed_item_ids", [])):
-                raise BinWorkflowConflict("Return contents were already submitted")
+                raise BinWorkflowConflict("The bin's contents were already confirmed.")
             return False
         if workflow.state != "awaiting_operator":
-            raise BinWorkflowConflict("Scan the tray barcode to start a new return")
+            raise BinWorkflowConflict("Scan the bin's barcode to start the return again.")
         tray = await self.session.get(StorageBin, workflow.bin_id)
         if tray is None:
-            raise BinWorkflowConflict("Tray no longer exists")
+            raise BinWorkflowConflict("This bin no longer exists.")
         workflow.resolution = {**(workflow.resolution or {}), "confirmed_item_ids": confirmed_ids}
         error = await self._return_contents_error(workflow, tray)
         if error:
@@ -1325,7 +1378,7 @@ class BinStorageService:
             return
         tray = await self.session.get(StorageBin, workflow.bin_id)
         if tray is None:
-            raise BinWorkflowConflict("Tray no longer exists")
+            raise BinWorkflowConflict("This bin no longer exists.")
         # Persist physical success before inventory finalization. Startup can finish
         # the database update without ever replaying the robot command.
         workflow.resolution = {**(workflow.resolution or {}), "physical_return_completed": True}
@@ -1420,7 +1473,7 @@ class BinStorageService:
         )
         if cast(CursorResult, claimed).rowcount != 1:
             await self.session.rollback()
-            raise BinWorkflowConflict("This tray is currently outside the system")
+            raise BinWorkflowConflict("This bin is outside the machine.")
         members = (
             await self.session.execute(
                 select(StorageBinItem.item_id, StorageBinItem.compartment).where(
@@ -1450,14 +1503,14 @@ class BinStorageService:
     async def batch_place_error(self, workflow: StorageBinWorkflow, item: Item) -> Optional[str]:
         """Why `item` cannot join the batch tray now, or None when it can."""
         if workflow.operation != BATCH_OPERATION:
-            return "Not an import tray"
+            return "This bin is not part of an import."
         if workflow.state != "awaiting_operator":
-            return "Wait for the tray to arrive"
+            return "Wait for the bin to arrive."
         tray = await self.session.get(StorageBin, workflow.bin_id)
         if tray is None:
-            return "Tray no longer exists"
+            return "This bin no longer exists."
         if tray.compartment_layout is not None and await self._free_compartment(tray) is None:
-            return "The tray is full"
+            return "This bin is full."
         return await self._store_invariant_error(tray, item)
 
     async def place_in_batch(self, workflow: StorageBinWorkflow, item: Item) -> Optional[int]:
@@ -1491,8 +1544,8 @@ class BinStorageService:
         if workflow.state in {"completed", "cancelled", "failed"}:
             return
         if workflow.state != "awaiting_operator":
-            raise BinWorkflowConflict("Wait for tray motion to finish")
-        await self.transition(workflow, "completed", "import tray filled")
+            raise BinWorkflowConflict("Wait for the bin to finish moving.")
+        await self.transition(workflow, "completed", "import bin filled")
 
     async def start_retrieval(self, workflow: StorageBinWorkflow, worker: RobotWorker) -> None:
         tray = await self.session.get(StorageBin, workflow.bin_id)
@@ -1511,7 +1564,7 @@ class BinStorageService:
                 request_id=workflow.id,
                 item={
                     "barcode": tray.barcode,
-                    "name": f"Tray {tray.barcode}",
+                    "name": f"Bin {tray.barcode}",
                     "dimensions": tray.inner_dimensions,
                     "location": _location(tray),
                 },
@@ -1544,7 +1597,7 @@ class BinStorageService:
             return False
         if payload.get("message") != "success":
             code = payload.get("code")
-            error = str(payload.get("error") or "Tray motion failed")
+            error = str(payload.get("error") or "Bin motion failed")
             if code in TRAY_NEVER_LEFT_CODES:
                 # Nothing was lifted, so the command is cancelled: the tray stays home and the
                 # workflow leaves no unfinished motion behind.

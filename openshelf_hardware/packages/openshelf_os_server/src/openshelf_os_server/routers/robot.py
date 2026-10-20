@@ -211,7 +211,7 @@ async def _ensure_laser_auto_calibration_not_running() -> None:
 
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
-        detail="laser auto calibration is running",
+        detail="The robot is calibrating.",
     )
 
 
@@ -473,7 +473,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
         if bin_membership is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Item is already stored in a bin; retrieve it before storing again",
+                detail="This item is in a bin. Retrieve it before storing it again.",
             )
         existing = (
             await db.execute(select(ItemLocation).where(ItemLocation.item_id == item.id))
@@ -717,7 +717,7 @@ async def _validate_mock_retrieve(
     ).scalar_one_or_none()
     if item is None:
         logging.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
-        raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that shelf spot.")
+        raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that cell.")
     if can_user_retrieve_item(current_user, item) is False:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -839,7 +839,7 @@ async def robot_commands(
                 raise api_error(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "request_invalid",
-                    "That command is not valid for the cabinet right now. Check the shelf spot and try again.",
+                    "That command is not valid for the robot right now. Check the cell and try again.",
                 ) from exc
         return CommandAcceptedResponse.model_validate(
             {"message": "success", "command_id": row.command_id, "status": row.status}
@@ -916,7 +916,7 @@ async def robot_commands(
                 if bin_membership is not None:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
-                        detail="Item is stored in a bin; use the storage bin workflow",
+                        detail="This item is in a bin.",
                     )
                 item_data["tare_weight"] = item.tare_weight
                 item_data["full_net_weight"] = item.full_net_weight
@@ -976,24 +976,26 @@ async def robot_commands(
             if binned_item is not None:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Item is stored in a bin; use the storage bin workflow",
+                    detail="This item is in a bin.",
                 )
         if worker.get_safety_status().get("bypassed") is not True:
             try:
                 scale_status = worker.get_cached_scale_status()
                 if scale_status is not None:
                     if scale_status.occupied is True:
-                        raise HTTPException(
-                            status_code=status.HTTP_409_CONFLICT,
-                            detail="Remove the item from the IO box before retrieving another.",
+                        raise api_error(
+                            409,
+                            "io_box_occupied",
+                            "The IO box is not empty. Take the item off the scale and wait for it to read empty.",
                         )
                 else:
                     scale_data = await worker.get_scale_data()
                     weight = abs(scale_data["weight"])
                     if weight > 5.0:
-                        raise HTTPException(
-                            status_code=status.HTTP_409_CONFLICT,
-                            detail="Remove the item from the IO box before retrieving another.",
+                        raise api_error(
+                            409,
+                            "io_box_occupied",
+                            "The IO box is not empty. Take the item off the scale and wait for it to read empty.",
                         )
             except HTTPException:
                 raise
@@ -1021,7 +1023,7 @@ async def robot_commands(
 
         if item is None:
             logging.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
-            raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that shelf spot.")
+            raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that cell.")
 
         if can_user_retrieve_item(current_user, item) is False:
             raise HTTPException(
@@ -1058,7 +1060,7 @@ async def robot_commands(
             raise api_error(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "request_invalid",
-                "That command is not valid for the cabinet right now. Check the shelf spot and try again.",
+                "That command is not valid for the robot right now. Check the cell and try again.",
             ) from exc
         if was_replay is False:
             await enqueue_persisted(worker, command, row)
@@ -1648,7 +1650,7 @@ async def simulate_motor_crash(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
-            "That motor is not configured on this cabinet.",
+            "That motor is not configured on this machine.",
         )
 
     return {"success": True, "motor": motor_name}
@@ -1677,7 +1679,7 @@ async def clear_motor_alarm(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
-            "That motor is not configured on this cabinet.",
+            "That motor is not configured on this machine.",
         )
 
     try:
@@ -1700,7 +1702,7 @@ async def clear_motor_alarm(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_alarm_clear_failed",
-            "The cabinet alarm could not be cleared. Try again.",
+            "The robot alarm could not be cleared. Try again.",
         ) from exc
 
 
@@ -1742,7 +1744,7 @@ async def home_motor(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
-            "That motor is not configured on this cabinet.",
+            "That motor is not configured on this machine.",
         )
 
     try:
@@ -1779,7 +1781,7 @@ async def home_motor(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_home_failed",
-            "The cabinet could not be reset. Try again.",
+            "The robot could not be reset. Try again.",
         ) from exc
 
 
@@ -1844,7 +1846,7 @@ async def power_cycle_rail(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "power_rail_not_configured",
-            "That power rail is not configured on this cabinet.",
+            "That power rail is not configured on this machine.",
         )
 
     try:
@@ -1866,7 +1868,7 @@ async def power_cycle_rail(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "power_cycle_failed",
-            "The cabinet could not power cycle that part. Try again.",
+            "The robot could not power cycle that part. Try again.",
         ) from exc
 
 
@@ -1957,7 +1959,7 @@ async def move_motor(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
-            "That motor is not configured on this cabinet.",
+            "That motor is not configured on this machine.",
         )
 
     try:
@@ -1982,7 +1984,7 @@ async def move_motor(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_move_failed",
-            "The cabinet could not move. Try again.",
+            "The robot could not move. Try again.",
         ) from exc
 
 
@@ -2020,7 +2022,7 @@ async def control_door(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "door_control_failed",
-            "The cabinet door did not move. Try again.",
+            "The machine door did not move. Try again.",
         ) from exc
 
 

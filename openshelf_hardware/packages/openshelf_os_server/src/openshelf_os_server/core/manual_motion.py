@@ -73,7 +73,7 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
-				"Robot is busy processing another command",
+				"The robot is busy with another task.",
 				reason="robot_command_in_progress",
 			),
 		)
@@ -82,7 +82,7 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
-				"Robot has queued commands",
+				"The robot has other tasks waiting.",
 				reason="robot_command_queued",
 			),
 		)
@@ -92,7 +92,7 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
-				"Demo cycle is already running",
+				"The robot is running the demo cycle.",
 				reason="demo_cycle_in_progress",
 			),
 		)

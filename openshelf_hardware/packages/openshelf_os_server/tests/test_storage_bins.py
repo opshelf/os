@@ -46,6 +46,10 @@ class FakeWorker:
         return "restart requires home" if self.is_needs_home else None
 
 
+def _user(role_name: str) -> SimpleNamespace:
+    return SimpleNamespace(id=1, role=SimpleNamespace(name=role_name))
+
+
 def _bin_config(*entries: SimpleNamespace) -> SimpleNamespace:
     return SimpleNamespace(storage=SimpleNamespace(bins=list(entries)))
 
@@ -217,7 +221,7 @@ async def test_return_rejects_occupied_tray_home(monkeypatch) -> None:
         occupant_barcode = occupant.barcode
         # An item recorded in the cell the tray returns to is rejected at confirmation.
         await StorageService(db).add_item_location(occupant_barcode, *home)
-        with pytest.raises(BinWorkflowConflict, match="home cell is occupied"):
+        with pytest.raises(BinWorkflowConflict, match="cell has an item stored in it"):
             await service.prepare_return(returned, [])
 
         await StorageService(db).remove_item_location(occupant_barcode, *home)
@@ -276,7 +280,7 @@ async def test_return_requires_occupancy_then_enqueues_once(monkeypatch):
         returned = await service.begin_return(trays[0].barcode)
         request = storage_router.BinWorkflowReturn(confirmed_item_ids=[])
         worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=False)
-        with pytest.raises(HTTPException, match="Place the tray"):
+        with pytest.raises(HTTPException, match="Place the bin"):
             await storage_router.store_returned_tray(returned.id, request, db)
         worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=True)
         await storage_router.store_returned_tray(returned.id, request, db)
@@ -317,7 +321,7 @@ async def test_return_close_and_store_use_persisted_state_across_sessions(monkey
             else:
                 await storage_router.store_returned_tray(workflow_id, request, store_db)
                 assert returned.state == "awaiting_operator"
-                with pytest.raises(BinWorkflowConflict, match="Wait for tray motion"):
+                with pytest.raises(BinWorkflowConflict, match="Wait for the bin to finish moving"):
                     await service.close(returned)
                 assert returned.state == "returning_bin"
                 assert (await service.begin_return("900000008000")).id == workflow_id
@@ -399,7 +403,7 @@ async def test_return_rejects_unexpected_and_cross_tray_items_before_motion():
         await service.close(w)
         returned = await service.begin_return(trays[0].barcode)
         rid, other_id = returned.id, items[2].id
-        with pytest.raises(BinWorkflowConflict, match="unexpected|compartment"):
+        with pytest.raises(BinWorkflowConflict, match="never in this bin|compartment"):
             await service.prepare_return(returned, [other_id])
         await db.refresh(returned)
         assert returned.state == "awaiting_operator"
@@ -450,7 +454,7 @@ async def test_same_item_cannot_checkout_two_trays():
         )
         service = BinStorageService(db)
         assert await service.begin("store", target, None)
-        with pytest.raises(BinWorkflowConflict, match="already in progress"):
+        with pytest.raises(BinWorkflowConflict, match="bin task in progress"):
             await service.begin("store", target, None)
         assert len(await service.active_workflows()) == 1
         assert (
@@ -575,7 +579,7 @@ async def test_crash_recovery_endpoint_leaves_conflicting_return_outside(monkeyp
 
         assert response["recovered"] == []
         assert [entry["error"] for entry in response["unresolved"]] == [
-            "Tray home cell is occupied by an item"
+            "The bin's cell has an item stored in it."
         ]
         await db.refresh(trays[0])
         assert trays[0].status == "outside"
@@ -601,7 +605,7 @@ async def test_failed_tray_store_keeps_tray_intent_and_item_stays_deletable():
         request = storage_router.BarcodeRequest(barcode=item.barcode)
 
         with pytest.raises(HTTPException) as active:
-            await storage_router.delete_item(request, session=db)
+            await storage_router.delete_item(request, session=db, current_user=_user("admin"))
         assert active.value.status_code == 409
 
         await service.handle_robot_result(
@@ -609,7 +613,7 @@ async def test_failed_tray_store_keeps_tray_intent_and_item_stays_deletable():
         )
         # The next store of this item goes back to a tray instead of a whole cell.
         assert item.item_metadata["storage_mode"] == "bin"
-        await storage_router.delete_item(request, session=db)
+        await storage_router.delete_item(request, session=db, current_user=_user("admin"))
 
         assert await StorageService(db).get_item("123456788009") is None
         await db.refresh(w)
@@ -628,7 +632,9 @@ async def test_deleted_tray_item_is_not_presumed_back_in_its_tray():
         await service.close(taken)
         deleted_id = items[2].id
         await storage_router.delete_item(
-            storage_router.BarcodeRequest(barcode=items[2].barcode), session=db
+            storage_router.BarcodeRequest(barcode=items[2].barcode),
+            session=db,
+            current_user=_user("admin"),
         )
         await StorageService(db).create_item(
             "123456788016", "New item", {"width": 10, "length": 10, "height": 10}
