@@ -42,6 +42,7 @@ from openshelf_os import (
     _sentry_event_has_door_motor_recovery_failure,
     _sentry_event_has_message,
     _sentry_event_has_suppressed_pymodbus_message,
+    _sentry_event_is_simulated_motor_fault,
     _sentry_log_has_door_motor_recovery_failure,
     _sentry_log_has_message,
     _sentry_log_is_suppressed_pymodbus_message,
@@ -454,6 +455,14 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 		return None
 
 	if _sentry_event_is_shutdown_cancelled_request(event) is True:
+		return None
+
+	# The debug fault-injection endpoint (POST /api/robot/debug/motors/{motor}/crash) drives
+	# the real crash pipeline on purpose - crash state, needs-home, artifacts - but the fault
+	# it raises is synthetic: it is not an incident and has no meaningful stack. Only events
+	# the worker marked as injected AND whose reported fault message says so are dropped, so
+	# a real failure that happens while an injected fault is still latched stays reportable.
+	if _sentry_event_is_simulated_motor_fault(event) is True:
 		return None
 
 	request_value = event.get("request")

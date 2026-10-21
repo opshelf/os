@@ -11,6 +11,7 @@ import sentry_sdk
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
+from openshelf_os import SIMULATED_FAULT_CONTEXT_KEY, SIMULATED_MOTOR_FAULT_PREFIX
 from openshelf_os.robot.core import Robot
 from openshelf_os.robot.commands import (
     RobotCommands,
@@ -590,7 +591,7 @@ class RobotWorker:
         success = self._robot.simulate_motor_crash(motor_name)
 
         if success is True:
-            reason = f"Simulated motor fault on {motor_name}"
+            reason = f"{SIMULATED_MOTOR_FAULT_PREFIX}{motor_name}"
             fault = RuntimeError(reason)
             self.set_needs_home(reason, axes=[motor_name])
             prepared_artifacts = self._begin_motion_crash_capture(reason)
@@ -605,6 +606,9 @@ class RobotWorker:
                     report_exception=None,
                 )
                 raise
+            # Marks the event as an injected debug fault so the Sentry filters can drop
+            # it while the crash pipeline itself stays identical to a real fault's.
+            context[SIMULATED_FAULT_CONTEXT_KEY] = True
             self.set_crash_state(reason, context=context)
             self._queue_motion_crash_report(
                 WorkerError(
