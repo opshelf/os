@@ -115,9 +115,15 @@ class CommonChemistry:
         try:
             async with asyncio.timeout(8):
                 async with httpx.AsyncClient(transport=self._transport, timeout=8) as client:
+                    # Keys issued since Oct 2026 are only accepted on /direct-api with the
+                    # x-origin of CAS's api-overview page (their own sample request); /api
+                    # answers 401/403 for them.
                     response = await client.get(
-                        f"https://commonchemistry.cas.org/api/{path}", params=params,
-                        headers={"X-API-KEY": self._api_key},
+                        f"https://commonchemistry.cas.org/direct-api/{path}", params=params,
+                        headers={
+                            "X-API-KEY": self._api_key,
+                            "x-origin": "https://commonchemistry.cas.org/api-overview",
+                        },
                     )
             if response.status_code == 429:
                 try:
