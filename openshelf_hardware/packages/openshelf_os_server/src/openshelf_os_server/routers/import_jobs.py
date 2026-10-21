@@ -121,6 +121,10 @@ class ImportStepResponse(BaseModel):
     units: Optional[list[ImportUnitResponse]] = None
     workflow: Optional[BinWorkflowResponse] = None
     error: Optional[str] = None
+    reason: Optional[str] = Field(
+        default=None,
+        description="Why the step departs from the usual flow (a small item stored on its own, or no tray to fetch); the kiosk shows it for the operator to acknowledge",
+    )
 
 
 class ImportJobResponse(BaseModel):
@@ -146,7 +150,7 @@ class ImportStepResult(BaseModel):
     job: ImportJobResponse
     unit: Optional[ImportUnitResponse] = None
     notice: Optional[str] = Field(
-        default=None, description="Why the machine skipped units during this call, for the operator"
+        default=None, description="What the machine did on its own during this call (a skip, or a unit leaving the tray), for the operator"
     )
 
 
@@ -309,9 +313,10 @@ async def begin_import_unit(
 
     Creates the inventory record with the measured dimensions so its label can be printed
     and scanned. Then submit `store_item` with the unit's `request_id`; the unit becomes
-    `loaded` when that command succeeds. When no free cell fits, the unit is skipped
-    instead and `notice` says why. Calling again before storing updates the dimensions. Units load in
-    CSV order.
+    `loaded` when that command succeeds. When no free cell fits, nothing changes and
+    `409 no_cell_fits` lets the operator choose another size or skip. A small unit is
+    accepted only when no tray compartment takes it. Calling again before storing updates the
+    dimensions. Units load in CSV order.
     """
     async with mutation_lock():
         service = ImportJobService(session)
@@ -366,15 +371,15 @@ async def start_import_tray(
     (or room under `max_items`) and a compartment takes the next unit's planned size, rotated
     if that helps; the smallest such compartment wins a tie. The step offers only the units
     that tray takes; the rest wait for a later tray. Requires an empty IO box and an idle,
-    homed robot. When no tray fits, only the units that fit no home tray with a free
-    compartment are skipped, `notice` gives the count, and no tray moves; a tray that is
-    outside returns `409 trays_outside` instead.
+    homed robot. When no home tray with a free compartment takes the next unit, nothing
+    moves or is skipped: `409 trays_outside` when a tray is out, else `409 no_tray_free`;
+    the step's `reason` says the same, and the operator skips the unit to continue. A small
+    unit no tray compartment takes at all is offered as a `unit` step instead.
     """
     async with mutation_lock():
         service = ImportJobService(session)
         bins = BinStorageService(session)
         job = await _load(service, job_id)
-        workflow = None
         try:
             if is_mock_mode():
                 runtime = get_mock_robot_runtime()
@@ -382,11 +387,9 @@ async def start_import_tray(
                     if await runtime.has_active_commands():
                         raise BinWorkflowConflict("The robot is busy with another task.")
                     workflow = await service.start_tray(job, current_user.id)
-                    if workflow is not None:
-                        await bins.transition(workflow, "awaiting_operator", "mock bin delivered")
-                if workflow is not None:
-                    runtime.set_bin_io_box_occupied(True)
-                    await runtime.publish_status()
+                    await bins.transition(workflow, "awaiting_operator", "mock bin delivered")
+                runtime.set_bin_io_box_occupied(True)
+                await runtime.publish_status()
             else:
                 worker = robot_core.robot_worker
                 if worker is None:
@@ -401,15 +404,13 @@ async def start_import_tray(
                     ensure_worker_homed_for_bin_motion(worker)
                     await ensure_worker_queue_empty_for_bin_start(worker)
                     workflow = await service.start_tray(job, current_user.id)
-                    if workflow is not None:
-                        try:
-                            await bins.start_retrieval(workflow, worker)
-                        except Exception as exc:
-                            await bins.fail(workflow, str(exc), tray_moved=False)
-                            logger.warning("Tray fetch failed: %s", exc)
-                            raise api_error(503, "tray_fetch_failed", "The bin could not be fetched. Try again.") from exc
-                if workflow is not None:
-                    await bins.publish_workflow(worker, workflow)
+                    try:
+                        await bins.start_retrieval(workflow, worker)
+                    except Exception as exc:
+                        await bins.fail(workflow, str(exc), tray_moved=False)
+                        logger.warning("Tray fetch failed: %s", exc)
+                        raise api_error(503, "tray_fetch_failed", "The bin could not be fetched. Try again.") from exc
+                await bins.publish_workflow(worker, workflow)
         except BinWorkflowConflict as exc:
             logger.info("Tray workflow conflict: %s", exc)
             # The conflict text is a written instruction for the operator (place the
@@ -439,9 +440,10 @@ async def place_import_unit_in_tray(
     length, and records it in the next free compartment, returned as `unit.compartment`. Print
     and scan its label before calling.
     A unit whose planned size fits no compartment of this tray returns `409 unit_wrong_tray`
-    before any item is created; one measured taller than the compartment is skipped and
-    `notice` says why. A full tray returns `409 tray_full`; return it to continue with
-    another tray.
+    before any item is created. One measured taller than the compartment is not placed: it
+    stays pending with that height for a taller tray, or is stored on its own when no tray
+    takes it, and `notice` says which. A full tray returns `409 tray_full`; return it to
+    continue with another tray.
     """
     async with mutation_lock():
         service = ImportJobService(session)

@@ -326,22 +326,6 @@ async def test_a_row_with_only_a_width_keeps_it_in_the_stored_item(mock_mode, tr
 
 
 @pytest.mark.anyio
-async def test_a_width_only_row_that_fits_no_compartment_is_skipped_not_offered(mock_mode, trays):
-    # 1x2 compartments are 99 x 160 mm. A 120 mm-wide row keeps its width and falls back to the
-    # compartment's own 160 mm length when stored, which fits neither orientation: offering it
-    # would print a label and then refuse the placement with tray_rejected.
-    trays[:] = [tray(0, rows=1, columns=2)]
-    job_id = await create([row("Oversize", small=True, width=120)])
-    async with AsyncSessionLocal() as db:
-        service = ImportJobService(db)
-        job = await service.get(job_id)
-        assert await service.start_tray(job, None) is None
-        assert service.notice == "No tray with a free compartment fits, so 1 small item was skipped."
-    stored = (await units(job_id))[0]
-    assert stored.status == "skipped"
-
-
-@pytest.mark.anyio
 async def test_a_failed_delivery_stays_visible_when_no_pending_item_fits_the_tray(mock_mode, trays):
     # 2x4 compartments are 48.5 x 79 mm under a 160 mm height, so only the tall unit fits them.
     trays[:] = [tray(0, rows=2, columns=4, height=160), tray(1, rows=1, columns=2)]
@@ -365,16 +349,150 @@ async def test_a_failed_delivery_stays_visible_when_no_pending_item_fits_the_tra
 
 
 @pytest.mark.anyio
-async def test_only_small_items_no_tray_fits_are_skipped(mock_mode, trays):
+async def test_a_small_item_no_compartment_takes_is_stored_on_its_own(mock_mode, trays):
+    # 2x4 compartments are 48.5 x 79 mm: a 90 mm-wide item fits none, so it is not skipped but
+    # offered as a single item, with the reason, and only it may skip the tray.
     trays[:] = [tray(0, rows=2, columns=4)]
     job_id = await create([
         row("Too wide", small=True, length=90, width=90),
         row("Vial", small=True, length=40, width=40),
     ])
     async with AsyncSessionLocal() as db:
+        await BinStorageService(db).sync_config()  # as at startup
         service = ImportJobService(db)
         job = await service.get(job_id)
-        assert await service.start_tray(job, None) is None
-        assert service.notice == "No tray with a free compartment fits, so 1 small item was skipped."
-        assert (await service.next_step(job))["units"][0]["name"] == "Vial"
-    assert [unit.status for unit in await units(job_id)] == ["skipped", "pending"]
+        step = await service.next_step(job)
+        assert step["kind"] == "unit" and step["unit"]["name"] == "Too wide"
+        assert step["reason"] == (
+            "Too wide (90×90 mm) does not fit any multi-item bin compartment. Measure it and store it on its own."
+        )
+        with pytest.raises(ImportJobError) as refused:
+            await service.start_tray(job, None)
+        assert refused.value.code == "not_current"
+        first, vial = await units(job_id)
+        await service.begin_unit(job, first.id, {"width": 90, "length": 90, "height": 60})
+        with pytest.raises(ImportJobError) as refused:
+            await service.begin_unit(job, vial.id, DIMENSIONS)
+        assert refused.value.code == "small_unit"
+    assert [unit.status for unit in await units(job_id)] == ["in_progress", "pending"]
+
+
+@pytest.mark.anyio
+async def test_a_failed_delivery_yields_to_a_next_small_item_no_compartment_takes(mock_mode, trays):
+    # Try again acts on the next item; a later item the tray takes must not keep the failed step.
+    trays[:] = [tray(0, rows=2, columns=4)]
+    job_id = await create([
+        row("Vial", small=True, length=40, width=40),
+        row("Beaker", small=True, length=90, width=90),
+        row("Swab", small=True, length=40, width=40),
+    ])
+    async with AsyncSessionLocal() as db:
+        await BinStorageService(db).sync_config()
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        await bins.transition(workflow, "failed")
+        vial, beaker, _ = await units(job_id)
+        await service.skip_unit(job, vial.id)
+        step = await service.next_step(job)
+        assert step["kind"] == "unit" and step["unit"]["name"] == "Beaker"
+        assert step["reason"]
+        await service.begin_unit(job, beaker.id, {"width": 90, "length": 90, "height": 60})
+        # Measuring it dismisses the failed delivery: its store step shows, then a new fetch for Swab.
+        step = await service.next_step(job)
+        assert step["kind"] == "unit" and step["unit"]["name"] == "Beaker" and step["unit"]["stage"] == "measured"
+        await service.skip_unit(job, beaker.id)
+        step = await service.next_step(job)
+        assert step["kind"] == "tray" and step["phase"] == "start"
+        assert [unit["name"] for unit in step["units"]] == ["Swab"]
+    assert [unit.status for unit in await units(job_id)] == ["skipped", "skipped", "pending"]
+
+
+@pytest.mark.anyio
+async def test_no_free_tray_refuses_the_fetch_and_leaves_the_skip_to_the_operator(mock_mode, trays):
+    trays[:] = [tray(0, rows=1, columns=2)]
+    job_id = await create([row(f"Vial {n}", small=True, length=40, width=40) for n in range(3)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        await bins.transition(workflow, "awaiting_operator")
+        for unit in (await units(job_id))[:2]:
+            await service.place_in_tray(job, unit.id, 30)
+        returning = await service.begin_tray_return(job)
+        await bins.complete_return(returning)
+        await service.apply_tray_return(returning)
+        await service.settle(job)
+
+        step = await service.next_step(job)
+        assert step["phase"] == "start"
+        assert step["reason"] == "No multi-item bin with a free compartment fits this item; skip it to continue"
+        with pytest.raises(ImportJobError) as refused:
+            await service.start_tray(job, None)
+        assert refused.value.code == "no_tray_free"
+    assert [unit.status for unit in await units(job_id)] == ["loaded", "loaded", "pending"]
+
+
+@pytest.mark.anyio
+async def test_an_empty_tray_return_shows_returning_until_the_tray_is_home(mock_mode, trays):
+    job_id = await create([row(f"Vial {n}", small=True, length=40, width=40) for n in range(2)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        await bins.transition(workflow, "awaiting_operator")
+        await service.skip_unit(job, (await units(job_id))[0].id)
+        # On hardware the robot moves the tray after the request; it stays outside until then.
+        returning = await service.begin_tray_return(job)
+        step = await service.next_step(job)
+        assert step["phase"] == "returning" and step["units"] == []
+        await bins.complete_return(returning)
+        await service.apply_tray_return(returning)
+        await service.settle(job)
+        step = await service.next_step(job)
+        assert step["phase"] == "start" and step["reason"] is None
+
+
+@pytest.mark.anyio
+async def test_an_item_measured_too_tall_leaves_the_tray_instead_of_being_skipped(mock_mode, trays):
+    trays[:] = [tray(0, rows=2, columns=4)]
+    job_id = await create([row("Vial", small=True, length=40, width=40)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        await bins.transition(workflow, "awaiting_operator")
+        unit = (await units(job_id))[0]
+        placed = await service.place_in_tray(job, unit.id, 130)
+        assert placed.status == "pending" and placed.item_id is None
+        assert service.notice == (
+            "Vial is taller than this bin's compartments (at most 100 mm). "
+            "It is measured and stored on its own after this bin."
+        )
+        # Nothing left for this tray, yet the empty tray can still go back before the next item.
+        step = await service.next_step(job)
+        assert step["phase"] == "filling" and step["units"] == []
+        returning = await service.begin_tray_return(job)
+        if returning is not None:
+            await bins.complete_return(returning)
+            await service.apply_tray_return(returning)
+        await service.settle(job)
+        assert (await db.get(StorageBin, workflow.bin_id)).status == "at_home"
+        step = await service.next_step(job)
+        assert step["kind"] == "unit" and step["unit"]["planned_dimensions"]["height"] == 130
+
+
+@pytest.mark.anyio
+async def test_no_free_cell_refuses_the_measure_instead_of_skipping(mock_mode):
+    job_id = await create([row(barcode="ACE-1")])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        job = await service.get(job_id)
+        with pytest.raises(ImportJobError) as refused:
+            await service.begin_unit(job, (await units(job_id))[0].id, {"width": 5000, "length": 5000, "height": 5000})
+        assert refused.value.code == "no_cell_fits"
+    assert (await units(job_id))[0].status == "pending"
