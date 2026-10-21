@@ -34,26 +34,60 @@ class UvcCamera:
 
     def start(self) -> None:
         with self._lock:
-            if self._capture is not None and self._capture.isOpened() is True:
+            self._open_locked()
+
+    def reacquire(self) -> None:
+        """Re-open the device after a failed read, so a reconnected camera is usable again.
+
+        A capture opened on a USB camera that is then unplugged never reads again: its device
+        node is gone, so every later read fails even after the camera is plugged back in. The
+        capture loop retries on its own and calls this before each read, so a reconnect heals
+        the camera without an API restart. A handle that is already closed is left to start().
+        """
+        with self._lock:
+            if self._capture is None or self._capture.isOpened() is False:
                 return
 
-            capture = cv2.VideoCapture(self.device)
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            capture.set(cv2.CAP_PROP_FPS, self.fps)
-            capture.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
+            old_capture = self._capture
 
-            if capture.isOpened() is False:
-                capture.release()
-                raise CameraConnectionError(f"failed to open UVC camera {self.device!r}")
-
-            self._capture = capture
+            try:
+                self._capture = self._open_capture()
+            except CameraConnectionError:
+                self._capture = None
+            finally:
+                # The old handle may already sit on the gone device node, so it is released
+                # whether or not the re-open succeeded; a failed one leaves the next retry to
+                # open the device fresh and the read to report the failure as usual.
+                old_capture.release()
 
     def stop(self) -> None:
         with self._lock:
-            if self._capture is not None:
-                self._capture.release()
-                self._capture = None
+            self._release_locked()
+
+    def _open_capture(self) -> cv2.VideoCapture:
+        """Open and configure the device handle. Raises when the device cannot be opened."""
+        capture = cv2.VideoCapture(self.device)
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        capture.set(cv2.CAP_PROP_FPS, self.fps)
+        capture.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
+
+        if capture.isOpened() is False:
+            capture.release()
+            raise CameraConnectionError(f"failed to open UVC camera {self.device!r}")
+
+        return capture
+
+    def _open_locked(self) -> None:
+        if self._capture is not None and self._capture.isOpened() is True:
+            return
+
+        self._capture = self._open_capture()
+
+    def _release_locked(self) -> None:
+        if self._capture is not None:
+            self._capture.release()
+            self._capture = None
 
     def capture_raw(self) -> np.ndarray:
         with self._lock:

@@ -54,6 +54,12 @@ NaluQueueItem = tuple[str, str, float, float, Any]
 class RawCamera(Protocol):
 	def capture_raw(self) -> np.ndarray: ...
 
+	# Optional, probed with getattr by `CameraStreamManager._capture_and_encode`: a camera
+	# whose device handle does not survive a disconnect re-opens itself there before each
+	# read. `hardware.uvc_camera.UvcCamera` implements it, and its size measurement reads go
+	# through the same camera, so the stream loop is the only caller.
+	def reacquire(self) -> None: ...
+
 
 CameraManager = Union["CameraStreamManager", "ToolCameraStreamManager"]
 camera_registry: dict[str, CameraManager] = {}
@@ -513,8 +519,20 @@ class CameraStreamManager:
 		self.jpeg_quality = 70
 		self.first_frame_timeout = 5.0
 		self.stale_frame_timeout = 5.0
+		# How long the capture loop waits before retrying: a failed read, and a camera that
+		# cannot be opened at all. Tests shorten them.
+		self.capture_retry_delay = 1.0
+		self.connection_retry_delay = 5.0
 		self.lifecycle_lock = asyncio.Lock()
 		self.unregistered = asyncio.Event()
+		# The camera device the current capture failure streak belongs to, its exception type,
+		# how many attempts failed, and whether the first of them was already reported. The loop
+		# retries on its own, so a camera that keeps failing would otherwise file one Sentry
+		# event per retry, up to one per second.
+		self.capture_camera: Optional[RawCamera] = None
+		self.capture_failure_kind: Optional[str] = None
+		self.capture_failure_streak = 0
+		self.capture_failure_reported = False
 
 	# run and then pull from this, or size separately
 	async def start(self) -> None:
@@ -604,7 +622,18 @@ class CameraStreamManager:
 
 	def _capture_and_encode(self, camera: RawCamera) -> Optional[bytes]:
 		"""Blocking read + JPEG encode. Runs in the default executor so the
-		encode never blocks the API event loop."""
+		encode never blocks the API event loop.
+
+		A camera that can outlive its device handle (a USB camera that was unplugged and
+		plugged back in) re-opens it here, so the loop recovers without an API restart. It runs
+		just for this loop's own reads: `UvcCamera.measure` shares the device, and re-opening it
+		on every frame would break the measurement happening on another thread.
+		"""
+		reacquire = getattr(camera, "reacquire", None)
+
+		if reacquire is not None:
+			reacquire()
+
 		frame = camera.capture_raw()
 		if frame is None:
 			return None
@@ -637,22 +666,76 @@ class CameraStreamManager:
 					self.latest_frame = frame_bytes
 					self.last_frame_at = time.monotonic()
 
+				if self.capture_failure_streak > 0:
+					logger.info(
+						"camera_capture_recovered",
+						camera_type=self.camera_type,
+						failed_attempts=self.capture_failure_streak,
+					)
+					self.capture_failure_streak = 0
+					self.capture_failure_reported = False
+
 			except RuntimeError as e:
 				if "bad cam" in str(e):
-					logger.error("camera_connection_failed", error=str(e))
-					await asyncio.sleep(5.0)
+					# A disconnected camera keeps failing every retry, so the disconnect is reported
+					# once and the rest of the streak stays at WARNING; the reconnect shows up as the
+					# recovery event above.
+					self.report_capture_failure("camera_connection_failed", e, camera=self.camera)
+					await asyncio.sleep(self.connection_retry_delay)
 				else:
-					logger.error("camera_runtime_error", error=str(e), exc_info=True)
-					await asyncio.sleep(1.0)
+					self.report_capture_failure("camera_runtime_error", e, camera=self.camera, exc_info=True)
+					await asyncio.sleep(self.capture_retry_delay)
 				continue
 			except Exception as e:
-				logger.error("camera_frame_processing_error", error=str(e), error_type=type(e).__name__, exc_info=True)
-				await asyncio.sleep(1.0)
+				# A USB camera that stops delivering frames raises on every read (`UvcCamera.capture_raw`
+				# for the IO box sizer camera), and the loop keeps retrying for as long as the camera
+				# stays unplugged. One ERROR log is one Sentry event, so reporting every retry filed
+				# hundreds of events for a single unplug: the first failure of a streak is reported at
+				# ERROR and the retries stay in the device log at WARNING until frames come back.
+				self.report_capture_failure(
+					"camera_frame_processing_error", e, camera=self.camera, error_type=type(e).__name__, exc_info=True
+				)
+				await asyncio.sleep(self.capture_retry_delay)
 				continue
 
 			elapsed = asyncio.get_event_loop().time() - loop_start
 			sleep_time = max(0.0, (1.0 / self.effective_target_fps()) - elapsed)
 			await asyncio.sleep(sleep_time)
+
+	def report_capture_failure(self, event: str, error: BaseException, camera: Any, **fields: Any) -> None:
+		"""Log one capture failure of the current streak, ERROR only for the first of it.
+
+		The capture loops retry on their own, so a camera that stays broken produces a failure
+		every retry. The Sentry LoggingIntegration turns every ERROR record into an issue event,
+		so a single unplugged camera filed hundreds of events; the first failure of a streak is
+		reported at ERROR, and the retries stay in the device log at WARNING until the streak ends
+		with the recovery event. A new streak - a different exception, a replaced device handle -
+		is reported again, so a new kind of failure is not hidden behind an old one.
+		"""
+		failure_kind = type(error).__name__
+
+		if self.capture_camera is not camera or self.capture_failure_kind != failure_kind:
+			self.capture_camera = camera
+			self.capture_failure_kind = failure_kind
+			self.capture_failure_streak = 0
+			self.capture_failure_reported = False
+
+		self.capture_failure_streak += 1
+
+		if self.capture_failure_reported is True:
+			logger.warning(
+				event,
+				camera_type=self.camera_type,
+				error=str(error),
+				failed_attempts=self.capture_failure_streak,
+				**fields,
+			)
+			return
+
+		self.capture_failure_reported = True
+		# exc_info is part of the first report only: it reaches the device log, and a streak is
+		# the same failure repeating, so a later retry would only add a duplicate traceback.
+		logger.error(event, camera_type=self.camera_type, error=str(error), **fields)
 
 	async def get_latest_frame(self) -> Optional[bytes]:
 		async with self.frame_lock:
