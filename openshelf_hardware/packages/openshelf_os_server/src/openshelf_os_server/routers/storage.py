@@ -1381,12 +1381,37 @@ async def delete_item(
             await session.flush()
         await bin_service.detach_item_history(existing)
 
+    locations = await storage_service.get_item_locations(barcode)
     deleted = await storage_service.delete_item(barcode)
 
     if deleted is False:
         raise HTTPException(status_code=404, detail="Item not found")
 
+    _clear_grid_item(barcode, locations)
     return {"message": "Item deleted successfully"}
+
+
+def _clear_grid_item(barcode: str, locations: Sequence[ItemLocation]) -> None:
+    """Drop a deleted item from the live robot grid.
+
+    The status overlay marks an at-home bin's cell occupied regardless of the grid, so a
+    stale grid item there would keep being listed after its record is gone.
+    """
+    worker = robot_core.robot_worker
+    grid = getattr(getattr(worker, "_robot", None), "_grid", None)
+    if grid is None:
+        return
+    for location in locations:
+        try:
+            cell = grid.get_cell_if_present(
+                StorageModuleCellLocation(
+                    side=location.side, shelf_idx=location.shelf_idx, cell_idx=location.cell_idx
+                )
+            )
+        except ValueError:
+            continue
+        if cell is not None and cell.item is not None and cell.item.barcode == barcode:
+            cell.clear()
 
 
 # ---------------------------------------------------------------------------

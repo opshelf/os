@@ -923,12 +923,12 @@ class Robot:
                 )
 
     def set_reserved_cell_locations(self, locations: Iterable[tuple[str, int, int]]) -> None:
-        """Set server-owned homes that automatic storage allocation must avoid."""
-        configured_locations: set[tuple[str, int, int]] = {
-            (entry.home_location.side, entry.home_location.shelf_idx, entry.home_location.cell_idx)
-            for entry in self._config.storage.bins
-        }
-        self._reserved_cell_locations = configured_locations | set(locations)
+        """Replace the bin homes that ordinary stores and allocation must avoid.
+
+        The caller passes the complete set; the robot's own config is the startup copy and
+        would keep a since-removed bin's home reserved.
+        """
+        self._reserved_cell_locations = set(locations)
 
 
     # ------------------------------------------------------------------ #

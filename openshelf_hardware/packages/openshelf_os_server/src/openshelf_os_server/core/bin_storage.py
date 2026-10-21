@@ -363,6 +363,14 @@ class BinStorageService:
                     row.active = False
         await self.session.commit()
 
+        # Runtime assign/unassign must reach the live robot, which otherwise only learns
+        # bin homes at startup and would accept explicit stores into a new bin's cell.
+        import openshelf_os_server.core.robot as robot_core  # noqa: PLC0415
+
+        robot = getattr(robot_core.robot_worker, "_robot", None)
+        if robot is not None:
+            robot.set_reserved_cell_locations(await reserved_bin_locations(self.session))
+
     async def _member_count(self, bin_id: int) -> int:
         result = await self.session.execute(
             select(func.count()).select_from(StorageBinItem).where(StorageBinItem.bin_id == bin_id)
