@@ -563,15 +563,21 @@ class ImportJobService:
         ]
 
     async def _fitting(self, tray: Optional[StorageBin], group: Sequence[ImportJobUnit]) -> list[ImportJobUnit]:
-        """The units `tray` is the tightest fit for: one a home tray with smaller compartments takes waits for it."""
+        """The units `tray` takes, less those a home tray with smaller compartments has room for."""
         if tray is None or not group:
             return list(group)
-        tighter = await self.bins.tighter_batch_trays(tray, group[0].access_level_id)
+        reserved: set[int] = set()
+        for row, capacity in await self.bins.tighter_batch_trays(tray, group[0].access_level_id):
+            for unit in group:
+                if capacity == 0:
+                    break
+                if unit.id not in reserved and self.bins.batch_fits(row, unit.planned_dimensions):
+                    reserved.add(unit.id)
+                    capacity -= 1
         return [
             unit
             for unit in group
-            if self.bins.batch_fits(tray, unit.planned_dimensions)
-            and not any(self.bins.batch_fits(row, unit.planned_dimensions) for row in tighter)
+            if unit.id not in reserved and self.bins.batch_fits(tray, unit.planned_dimensions)
         ]
 
     async def _batch_tray(self, group: Sequence[ImportJobUnit]) -> Optional[StorageBin]:
@@ -596,7 +602,7 @@ class ImportJobService:
                 if first.small:
                     trays = await self._trays()
                     if not self._tray_takes(trays, first):
-                        # Too large for every compartment: it is measured and stored on its own.
+                        # Too large for every compartment: it is stored on its own.
                         return {"kind": "unit", "unit": self.serialize_unit(first), "reason": self._misfit_reason(first, trays)}
                     group = await self._small_group(job, first, trays)
                     tray = await self._batch_tray(group)
@@ -1042,7 +1048,7 @@ class ImportJobService:
             later = (
                 "It waits for a taller bin."
                 if self._tray_takes(await self._trays(), unit)
-                else "It is measured and stored on its own after this bin."
+                else "It is stored on its own after this bin."
             )
             self.notice = f"{unit.name} is taller than this bin's compartments (at most {maximum:g} mm). {later}"
             await self.session.commit()

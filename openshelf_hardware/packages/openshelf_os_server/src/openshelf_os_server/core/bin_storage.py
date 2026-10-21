@@ -1533,14 +1533,20 @@ class BinStorageService:
         footprint = self._max_item_dimensions(row)
         return footprint["width"] * footprint["length"]
 
-    async def tighter_batch_trays(self, row: StorageBin, access_level_id: Optional[int]) -> list[StorageBin]:
-        """Home trays with room for the access level whose compartments are smaller than `row`'s."""
+    async def tighter_batch_trays(
+        self, row: StorageBin, access_level_id: Optional[int]
+    ) -> list[tuple[StorageBin, int]]:
+        """Home trays with room for the access level whose compartments are smaller than `row`'s,
+        tightest first, as (tray, capacity)."""
         footprint = self.batch_footprint(row)
-        return [
-            tray
-            for tray, _, _ in await self.batch_trays(access_level_id)
-            if tray.id != row.id and self.batch_footprint(tray) < footprint
-        ]
+        return sorted(
+            (
+                (tray, capacity)
+                for tray, _, capacity in await self.batch_trays(access_level_id)
+                if self.batch_footprint(tray) < footprint
+            ),
+            key=lambda entry: self.batch_footprint(entry[0]),
+        )
 
     async def batch_trays(self, access_level_id: Optional[int]) -> list[tuple[StorageBin, int, int]]:
         """Home trays with room for an item of the access level, as (tray, member count, capacity)."""

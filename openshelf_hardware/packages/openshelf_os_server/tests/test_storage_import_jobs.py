@@ -340,6 +340,34 @@ async def test_small_items_take_the_tightest_tray_before_the_one_that_takes_most
 
 
 @pytest.mark.anyio
+async def test_a_tighter_tray_holds_back_only_the_items_it_has_room_for(mock_mode, trays):
+    # The 2x3 has one free compartment, so only S1 waits for it; S2 rides along with L1 instead
+    # of costing a third trip.
+    trays[:] = [tray(0, rows=2, columns=3, height=160), tray(1, rows=1, columns=2, height=160)]
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(
+            await create([row(f"P{index}", small=True, height=85, length=40, width=40) for index in range(1, 6)])
+        )
+        workflow = await service.start_tray(job, None)
+        assert await fill_and_return(service, bins, job, workflow) == [f"P{index}" for index in range(1, 6)]
+        job = await service.get(
+            await create([
+                row("L1", small=True, height=120, length=80, width=80),
+                row("S1", small=True, height=85, length=40, width=40),
+                row("S2", small=True, height=85, length=40, width=40),
+            ])
+        )
+        trips = []
+        while job.state == "active":
+            workflow = await service.start_tray(job, None)
+            layout = (await db.get(StorageBin, workflow.bin_id)).compartment_layout
+            trips.append((layout["columns"], await fill_and_return(service, bins, job, workflow)))
+    assert trips == [(2, ["L1", "S2"]), (3, ["S1"])]
+
+
+@pytest.mark.anyio
 async def test_a_row_with_only_a_width_keeps_it_in_the_stored_item(mock_mode, trays):
     # 1x2 compartments are 99 x 160 mm: a width-only row must keep its own width and fall back
     # to the compartment's length, instead of taking the compartment's footprint for both.
@@ -508,7 +536,7 @@ async def test_an_item_measured_too_tall_leaves_the_tray_instead_of_being_skippe
         assert placed.status == "pending" and placed.item_id is None
         assert service.notice == (
             "Vial is taller than this bin's compartments (at most 100 mm). "
-            "It is measured and stored on its own after this bin."
+            "It is stored on its own after this bin."
         )
         # Nothing left for this tray, yet the empty tray can still go back before the next item.
         step = await service.next_step(job)
