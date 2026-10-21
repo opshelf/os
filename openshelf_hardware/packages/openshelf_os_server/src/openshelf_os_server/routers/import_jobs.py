@@ -366,11 +366,12 @@ async def start_import_tray(
 ) -> dict[str, Any]:
     """Fetch a tray for small units.
 
-    Picks the home tray that takes the most of the next group of small units (same access
-    level) and delivers it to the IO box. A tray qualifies only when it has a free compartment
-    (or room under `max_items`) and a compartment takes the next unit's planned size, rotated
-    if that helps; the smallest such compartment wins a tie. The step offers only the units
-    that tray takes; the rest wait for a later tray. Requires an empty IO box and an idle,
+    Picks the home tray with the smallest compartments that take the next small unit's planned
+    size (rotated if that helps) and delivers it to the IO box; among equal compartments the
+    tray that takes the most of the next group of small units (same access level) wins. A tray
+    qualifies only when it has a free compartment (or room under `max_items`). The step offers
+    only the units that tray takes and no home tray with smaller compartments takes; the rest
+    wait for a later tray. Requires an empty IO box and an idle,
     homed robot. When no home tray with a free compartment takes the next unit, nothing
     moves or is skipped: `409 trays_outside` when a tray is out, else `409 no_tray_free`;
     the step's `reason` says the same, and the operator skips the unit to continue. A small

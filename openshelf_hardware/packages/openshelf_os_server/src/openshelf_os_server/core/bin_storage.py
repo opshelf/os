@@ -866,7 +866,7 @@ class BinStorageService:
             roomy.append((row, members))
         if not roomy:
             return None, "Every bin that fits this item is full."
-        candidates: list[tuple[bool, float, str, int, int, StorageBin]] = []
+        candidates: list[tuple[float, bool, str, int, int, StorageBin]] = []
         for row, members in roomy:
             if any(member.access_level_id != item.access_level_id for member in members):
                 continue
@@ -880,10 +880,11 @@ class BinStorageService:
                 if row.compartment_layout
                 else capacity - used_volume - item_volume
             )
+            # The tightest spot wins; among equal spots a partly filled bin keeps bins full.
             candidates.append(
                 (
-                    len(members) == 0,
                     remaining_volume,
+                    len(members) == 0,
                     row.side,
                     row.shelf_idx,
                     row.cell_idx,
@@ -1491,17 +1492,17 @@ class BinStorageService:
         access_level_id: Optional[int],
         wanted: Sequence[Optional[dict[str, Any]]],
     ) -> Optional[StorageBin]:
-        """Choose a home tray that can take the most of the `wanted` items of one access level.
+        """Choose the home tray with the tightest compartments the first `wanted` item fits.
 
-        `wanted` holds each item's known dimensions; the first item must fit. A tray qualifies
-        when it has a free compartment (or room under `max_items` when it is undivided) and
-        every current member shares the access level. Among trays that take equally many
-        items, the one with the smallest compartment footprint wins so larger compartments stay
-        free for larger items, then a partially filled one is preferred to keep trays full.
+        `wanted` holds each item's known dimensions of one access level. A tray qualifies when it
+        has a free compartment (or room under `max_items` when it is undivided) and every current
+        member shares the access level. The smallest compartment footprint wins so larger
+        compartments stay free for larger items; among equal footprints the tray that takes the
+        most of `wanted` wins, then a partially filled one to keep trays full.
         """
         if not wanted:
             return None
-        candidates: list[tuple[int, float, bool, str, int, int, StorageBin]] = []
+        candidates: list[tuple[float, int, bool, str, int, int, StorageBin]] = []
         for row, member_count, capacity in await self.batch_trays(access_level_id):
             if not self.batch_fits(row, wanted[0]):
                 continue
@@ -1513,11 +1514,10 @@ class BinStorageService:
                     break
                 if self.batch_fits(row, dimensions):
                     fitting += 1
-            footprint = self._max_item_dimensions(row)
             candidates.append(
                 (
+                    self.batch_footprint(row),
                     -min(capacity, fitting),
-                    footprint["width"] * footprint["length"],
                     member_count == 0,
                     row.side,
                     row.shelf_idx,
@@ -1528,6 +1528,19 @@ class BinStorageService:
         if not candidates:
             return None
         return min(candidates, key=lambda entry: entry[:-1])[-1]
+
+    def batch_footprint(self, row: StorageBin) -> float:
+        footprint = self._max_item_dimensions(row)
+        return footprint["width"] * footprint["length"]
+
+    async def tighter_batch_trays(self, row: StorageBin, access_level_id: Optional[int]) -> list[StorageBin]:
+        """Home trays with room for the access level whose compartments are smaller than `row`'s."""
+        footprint = self.batch_footprint(row)
+        return [
+            tray
+            for tray, _, _ in await self.batch_trays(access_level_id)
+            if tray.id != row.id and self.batch_footprint(tray) < footprint
+        ]
 
     async def batch_trays(self, access_level_id: Optional[int]) -> list[tuple[StorageBin, int, int]]:
         """Home trays with room for an item of the access level, as (tray, member count, capacity)."""

@@ -528,15 +528,14 @@ class ImportJobService:
     @staticmethod
     def _misfit_reason(unit: ImportJobUnit, trays: Sequence[StorageBin]) -> str:
         if not trays:
-            return f"{unit.name} is a small item, but this machine has no multi-item bins. Measure it and store it on its own."
+            return f"{unit.name} is marked for a multi-item bin, but this machine has none, so it is stored on its own."
         size = "×".join(
             f"{unit.planned_dimensions[key]:g}"
             for key in ("width", "length", "height")
             if key in (unit.planned_dimensions or {})
         )
         return (
-            f"{unit.name} ({size} mm) does not fit any multi-item bin compartment. "
-            "Measure it and store it on its own."
+            f"{unit.name} ({size} mm) does not fit any multi-item bin compartment, so it is stored on its own."
         )
 
     async def _no_tray(self) -> ImportJobError:
@@ -563,10 +562,17 @@ class ImportJobService:
             if unit.small and unit.access_level_id == first.access_level_id and self._tray_takes(trays, unit)
         ]
 
-    def _fitting(self, tray: Optional[StorageBin], group: Sequence[ImportJobUnit]) -> list[ImportJobUnit]:
-        if tray is None:
+    async def _fitting(self, tray: Optional[StorageBin], group: Sequence[ImportJobUnit]) -> list[ImportJobUnit]:
+        """The units `tray` is the tightest fit for: one a home tray with smaller compartments takes waits for it."""
+        if tray is None or not group:
             return list(group)
-        return [unit for unit in group if self.bins.batch_fits(tray, unit.planned_dimensions)]
+        tighter = await self.bins.tighter_batch_trays(tray, group[0].access_level_id)
+        return [
+            unit
+            for unit in group
+            if self.bins.batch_fits(tray, unit.planned_dimensions)
+            and not any(self.bins.batch_fits(row, unit.planned_dimensions) for row in tighter)
+        ]
 
     async def _batch_tray(self, group: Sequence[ImportJobUnit]) -> Optional[StorageBin]:
         return await self.bins.allocate_batch_tray(
@@ -599,7 +605,7 @@ class ImportJobService:
                         "kind": "tray",
                         "phase": "start",
                         "workflow": None,
-                        "units": [self.serialize_unit(unit) for unit in self._fitting(tray, group)],
+                        "units": [self.serialize_unit(unit) for unit in await self._fitting(tray, group)],
                         "error": None,
                         "reason": None if tray is not None else (await self._no_tray()).message,
                     }
@@ -643,7 +649,7 @@ class ImportJobService:
                     if phase != "failed":
                         # Offer only the items the tray being delivered takes; the rest wait.
                         tray_row = await self.session.get(StorageBin, workflow.bin_id)
-                        group = self._fitting(tray_row, group)
+                        group = await self._fitting(tray_row, group)
             # A failed delivery only matters while its items still wait for a tray.
             if phase != "failed" or group:
                 return {
@@ -875,7 +881,7 @@ class ImportJobService:
             # Only a small unit no tray compartment takes is stored on its own.
             await self.bins.sync_config()
             if self._tray_takes(await self._trays(), unit):
-                raise ImportJobError(409, "small_unit", "Small items are placed in a bin")
+                raise ImportJobError(409, "small_unit", "This item goes in a multi-item bin")
         if unit.status == "in_progress" and unit.stage == "measured":
             if await self._command_admitted(unit):
                 raise ImportJobError(409, "unit_storing", "This item is already being stored")
@@ -980,7 +986,7 @@ class ImportJobService:
         await self.bins.sync_config()
         trays = await self._trays()
         if first is None or not first.small or not self._tray_takes(trays, first):
-            raise ImportJobError(409, "not_current", "The next item is not a small item")
+            raise ImportJobError(409, "not_current", "The next item does not go in a multi-item bin")
         tray = await self._batch_tray(await self._small_group(job, first, trays))
         if tray is None:
             raise await self._no_tray()

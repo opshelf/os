@@ -257,9 +257,16 @@ async def fill_and_return(service, bins, job, workflow):
     if workflow.state == "retrieving_bin":
         await bins.transition(workflow, "awaiting_operator")
     step = await service.next_step(job)
-    names = [unit["name"] for unit in step["units"]]
+    names = []
     for unit in step["units"]:
-        await service.place_in_tray(job, unit["id"], unit["planned_dimensions"]["height"])
+        try:
+            await service.place_in_tray(job, unit["id"], unit["planned_dimensions"]["height"])
+        except ImportJobError as exc:
+            # The kiosk offers every item that fits; the operator stops when the tray is full.
+            if exc.code == "tray_full":
+                break
+            raise
+        names.append(unit["name"])
     returning = await service.begin_tray_return(job)
     await bins.complete_return(returning)
     await service.apply_tray_return(returning)
@@ -300,6 +307,36 @@ async def test_small_items_go_to_a_tray_their_footprint_fits(mock_mode, trays):
     stored = await units(job_id)
     assert [unit.status for unit in stored] == ["loaded"] * 4
     assert stored[3].dimensions == {"width": 74.0, "length": 74.0, "height": 150.0}
+
+
+@pytest.mark.anyio
+async def test_small_items_take_the_tightest_tray_before_the_one_that_takes_most(mock_mode, trays):
+    # The tester's file: nine items for 2x4 compartments, two for 1x2. The ninth must take a
+    # second 2x4 instead of sharing a 1x2 with a larger item, which then needs a third trip.
+    trays[:] = [
+        tray(0, rows=2, columns=4, height=160),
+        tray(1, rows=2, columns=4, height=160),
+        tray(2, rows=1, columns=2, height=160),
+        tray(3, rows=1, columns=2, height=160),
+    ]
+    job_id = await create(
+        [row(f"S{index}", small=True, height=85, length=40, width=40) for index in range(1, 10)]
+        + [row(f"L{index}", small=True, height=120, length=65, width=65) for index in range(1, 3)]
+    )
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        trips = []
+        while job.state == "active":
+            workflow = await service.start_tray(job, None)
+            layout = (await db.get(StorageBin, workflow.bin_id)).compartment_layout
+            trips.append((layout["columns"], await fill_and_return(service, bins, job, workflow)))
+    assert trips == [
+        (4, [f"S{index}" for index in range(1, 9)]),
+        (4, ["S9"]),
+        (2, ["L1", "L2"]),
+    ]
 
 
 @pytest.mark.anyio
@@ -364,7 +401,7 @@ async def test_a_small_item_no_compartment_takes_is_stored_on_its_own(mock_mode,
         step = await service.next_step(job)
         assert step["kind"] == "unit" and step["unit"]["name"] == "Too wide"
         assert step["reason"] == (
-            "Too wide (90×90 mm) does not fit any multi-item bin compartment. Measure it and store it on its own."
+            "Too wide (90×90 mm) does not fit any multi-item bin compartment, so it is stored on its own."
         )
         with pytest.raises(ImportJobError) as refused:
             await service.start_tray(job, None)
