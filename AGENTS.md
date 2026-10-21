@@ -4,6 +4,7 @@
 - Run frontend commands from `dev_ui/` and backend commands from `openshelf_hardware/`. Full stack: `./scripts/start` / `./scripts/stop` from the repo root — never restart repo-managed containers with raw `docker compose up/down/restart` or `docker restart` (the API container can come back without the hardware compose overlay and lose USB/device passthrough).
 - On hardware devices, restart with `./scripts/stop` then `./scripts/start -d -h` (with the appropriate `--mode`/`--build` flags); on deployed devices prefer `--pull` (prebuilt images from the team registry).
 - Always sync the backend with `uv sync --all-packages` — bare `uv sync` only syncs the workspace root project and prunes the dependencies the members need, leaving the venv unable to import `sqlalchemy`/`fastapi` until re-synced.
+- Datasheets, manuals, and hardware notes live in Google Drive and Confluence. When Google Drive or Confluence (Atlassian) MCP tools are available, search them before guessing hardware specs or part behavior; they are local per-machine setup, not configured in this repo.
 - For on-device inspection, use the team's device access helper instead of guessing SSH details. Do not make persistent source edits on a device — change, check, commit, push, then pull on the device and restart through the repo-managed scripts.
 
 ## Runtime
