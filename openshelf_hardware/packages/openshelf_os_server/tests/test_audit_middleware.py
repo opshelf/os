@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -44,6 +45,28 @@ async def test_audit_chain_integrity_verifies_after_skipped_requests(unauthentic
 	assert second.status_code == 200
 	assert verify.status_code == 200
 	assert verify.json()["ok"] is True
+
+
+@pytest.mark.anyio
+async def test_concurrent_requests_keep_one_unbroken_chain(unauthenticated_client: AsyncClient) -> None:
+	# A device answers bursts of parallel requests (startup, kiosk login); each must link to
+	# the previous entry, or verify reports a chain break nobody caused.
+	headers = await admin_headers(unauthenticated_client)
+
+	responses = await asyncio.gather(
+		*(unauthenticated_client.get("/api/users", headers=headers) for _ in range(8))
+	)
+	verify = await unauthenticated_client.get("/api/audit/verify", headers=headers)
+
+	assert all(response.status_code == 200 for response in responses)
+	assert verify.json()["ok"] is True
+	async with AsyncSessionLocal() as db:
+		duplicated = await db.scalar(
+			select(func.count()).select_from(
+				select(AuditLog.seq_no).group_by(AuditLog.seq_no).having(func.count() > 1).subquery()
+			)
+		)
+	assert duplicated == 0
 
 
 @pytest.mark.anyio

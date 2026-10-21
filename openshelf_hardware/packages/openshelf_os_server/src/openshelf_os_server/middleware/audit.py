@@ -1,4 +1,5 @@
 """Audit logging middleware."""
+import asyncio
 import json
 import time
 import traceback
@@ -116,6 +117,25 @@ def redact_sensitive_values(value: Any) -> Any:
         return [redact_sensitive_values(item) for item in value]
     return value
 
+
+# Each entry links to the one before it, so reading the chain head and committing the new
+# entry must not interleave with another request's append, or both take the same seq_no
+# and prev_hash and verify reports a chain break. The api is one process on one loop; the
+# lock is rebuilt per loop because an asyncio.Lock binds to the loop that first waits on it.
+_chain_lock: Optional[asyncio.Lock] = None
+_chain_lock_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _audit_chain_lock() -> asyncio.Lock:
+    global _chain_lock, _chain_lock_loop
+
+    loop = asyncio.get_running_loop()
+    if _chain_lock is None or _chain_lock_loop is not loop:
+        _chain_lock = asyncio.Lock()
+        _chain_lock_loop = loop
+    return _chain_lock
+
+
 class AuditMiddleware(BaseHTTPMiddleware):
 	"""Middleware to log all API requests and responses."""
 
@@ -201,7 +221,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 		duration_ms: int
 	) -> None:
 		"""Log request to database."""
-		async with AsyncSessionLocal() as db:
+		async with _audit_chain_lock(), AsyncSessionLocal() as db:
 			try:
 				token = None
 				auth_header = request.headers.get("Authorization")
