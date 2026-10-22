@@ -567,8 +567,10 @@ class ImportJobService:
         if tray is None or not group:
             return list(group)
         reserved: set[int] = set()
+        # Units `tray` cannot carry claim a tighter tray's free compartments first.
+        ordered = sorted(group, key=lambda unit: self.bins.batch_fits(tray, unit.planned_dimensions))
         for row, capacity in await self.bins.tighter_batch_trays(tray, group[0].access_level_id):
-            for unit in group:
+            for unit in ordered:
                 if capacity == 0:
                     break
                 if unit.id not in reserved and self.bins.batch_fits(row, unit.planned_dimensions):

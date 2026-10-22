@@ -370,8 +370,9 @@ async def start_import_tray(
     size (rotated if that helps) and delivers it to the IO box; among equal compartments the
     tray that takes the most of the next group of small units (same access level) wins. A tray
     qualifies only when it has a free compartment (or room under `max_items`). The step offers
-    only the units that tray takes and no home tray with smaller compartments takes; the rest
-    wait for a later tray. Requires an empty IO box and an idle,
+    the units that tray takes, less those a home tray with smaller compartments holds back; such
+    a tray holds back only as many units as it has free compartments, first those the fetched
+    tray cannot take. The rest wait for a later tray. Requires an empty IO box and an idle,
     homed robot. When no home tray with a free compartment takes the next unit, nothing
     moves or is skipped: `409 trays_outside` when a tray is out, else `409 no_tray_free`;
     the step's `reason` says the same, and the operator skips the unit to continue. A small

@@ -368,6 +368,34 @@ async def test_a_tighter_tray_holds_back_only_the_items_it_has_room_for(mock_mod
 
 
 @pytest.mark.anyio
+async def test_a_tighter_tray_keeps_its_last_compartment_for_an_item_only_it_takes(mock_mode, trays):
+    # The 2x3 has one free compartment: it must hold B, which only it takes, not A, which the
+    # shallower 1x2 also takes; otherwise B is left with no tray.
+    trays[:] = [tray(0, rows=2, columns=3, height=160), tray(1, rows=1, columns=2, height=100)]
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(
+            await create([row(f"P{index}", small=True, height=130, length=40, width=40) for index in range(1, 6)])
+        )
+        workflow = await service.start_tray(job, None)
+        assert await fill_and_return(service, bins, job, workflow) == [f"P{index}" for index in range(1, 6)]
+        job = await service.get(
+            await create([
+                row("L", small=True, height=90, length=80, width=80),
+                row("A", small=True, height=85, length=40, width=40),
+                row("B", small=True, height=130, length=40, width=40),
+            ])
+        )
+        trips = []
+        while job.state == "active":
+            workflow = await service.start_tray(job, None)
+            layout = (await db.get(StorageBin, workflow.bin_id)).compartment_layout
+            trips.append((layout["columns"], await fill_and_return(service, bins, job, workflow)))
+    assert trips == [(2, ["L", "A"]), (3, ["B"])]
+
+
+@pytest.mark.anyio
 async def test_a_row_with_only_a_width_keeps_it_in_the_stored_item(mock_mode, trays):
     # 1x2 compartments are 99 x 160 mm: a width-only row must keep its own width and fall back
     # to the compartment's length, instead of taking the compartment's footprint for both.
