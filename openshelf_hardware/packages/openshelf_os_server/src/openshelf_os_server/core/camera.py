@@ -515,11 +515,9 @@ class CameraStreamManager:
 		self.stale_frame_timeout = 5.0
 		self.lifecycle_lock = asyncio.Lock()
 		self.unregistered = asyncio.Event()
-		# Event and exception type of the current capture failure streak, its length, and whether its first
-		# failure was already reported at ERROR.
+		# Event and exception type of the current capture failure streak, and its length.
 		self.capture_failure_kind: Optional[str] = None
 		self.capture_failure_streak = 0
-		self.capture_failure_reported = False
 
 	# run and then pull from this, or size separately
 	async def start(self) -> None:
@@ -622,6 +620,8 @@ class CameraStreamManager:
 		return buffer.tobytes()
 
 	async def _capture_loop(self) -> None:
+		self.capture_failure_kind = None
+		self.capture_failure_streak = 0
 		while self.is_running is True:
 			loop_start = asyncio.get_event_loop().time()
 
@@ -649,7 +649,6 @@ class CameraStreamManager:
 						failed_attempts=self.capture_failure_streak,
 					)
 					self.capture_failure_streak = 0
-					self.capture_failure_reported = False
 
 			except RuntimeError as e:
 				if "bad cam" in str(e):
@@ -681,11 +680,10 @@ class CameraStreamManager:
 		if self.capture_failure_kind != failure_kind:
 			self.capture_failure_kind = failure_kind
 			self.capture_failure_streak = 0
-			self.capture_failure_reported = False
 
 		self.capture_failure_streak += 1
 
-		if self.capture_failure_reported is True:
+		if self.capture_failure_streak > 1:
 			logger.warning(
 				event,
 				camera_type=self.camera_type,
@@ -695,7 +693,6 @@ class CameraStreamManager:
 			)
 			return
 
-		self.capture_failure_reported = True
 		logger.error(event, camera_type=self.camera_type, error=str(error), exc_info=exc_info, **fields)
 
 	async def get_latest_frame(self) -> Optional[bytes]:
