@@ -31,37 +31,18 @@ class UvcCamera:
         self.buffer_size = buffer_size
         self._capture: cv2.VideoCapture | None = None
         self._lock = threading.Lock()
+        self._started = False
 
     def start(self) -> None:
         with self._lock:
-            self._open_locked()
-
-    def reacquire(self) -> None:
-        """Re-open the device after a failed read, so a reconnected camera is usable again.
-
-        A capture opened on a USB camera that is then unplugged never reads again: its device
-        node is gone, so every later read fails even after the camera is plugged back in. The
-        capture loop retries on its own and calls this before each read, so a reconnect heals
-        the camera without an API restart. A handle that is already closed is left to start().
-        """
-        with self._lock:
             if self._capture is None or self._capture.isOpened() is False:
-                return
-
-            old_capture = self._capture
-
-            try:
                 self._capture = self._open_capture()
-            except CameraConnectionError:
-                self._capture = None
-            finally:
-                # The old handle may already sit on the gone device node, so it is released
-                # whether or not the re-open succeeded; a failed one leaves the next retry to
-                # open the device fresh and the read to report the failure as usual.
-                old_capture.release()
+
+            self._started = True
 
     def stop(self) -> None:
         with self._lock:
+            self._started = False
             self._release_locked()
 
     def _open_capture(self) -> cv2.VideoCapture:
@@ -78,12 +59,6 @@ class UvcCamera:
 
         return capture
 
-    def _open_locked(self) -> None:
-        if self._capture is not None and self._capture.isOpened() is True:
-            return
-
-        self._capture = self._open_capture()
-
     def _release_locked(self) -> None:
         if self._capture is not None:
             self._capture.release()
@@ -91,13 +66,19 @@ class UvcCamera:
 
     def capture_raw(self) -> np.ndarray:
         with self._lock:
-            if self._capture is None or self._capture.isOpened() is False:
+            if self._started is False:
                 raise CameraConnectionError("UVC camera is not started")
+
+            # An unplugged USB camera's handle never reads again, even after a replug, so a failed
+            # read drops it and the next call re-opens the device.
+            if self._capture is None:
+                self._capture = self._open_capture()
 
             ok, frame = self._capture.read()
 
-        if ok is False or frame is None:
-            raise ImageError("failed to capture UVC camera frame")
+            if ok is False or frame is None:
+                self._release_locked()
+                raise ImageError("failed to capture UVC camera frame")
 
         normalized = self._normalize_frame(frame)
         if self.flip_horizontal is True:
