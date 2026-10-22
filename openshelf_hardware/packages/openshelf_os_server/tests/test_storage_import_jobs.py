@@ -256,16 +256,12 @@ async def test_a_tray_return_is_only_moved_once(mock_mode, trays):
 async def fill_and_return(service, bins, job, workflow):
     if workflow.state == "retrieving_bin":
         await bins.transition(workflow, "awaiting_operator")
-    step = await service.next_step(job)
     names = []
-    for unit in step["units"]:
-        try:
-            await service.place_in_tray(job, unit["id"], unit["planned_dimensions"]["height"])
-        except ImportJobError as exc:
-            # The kiosk offers every item that fits; the operator stops when the tray is full.
-            if exc.code == "tray_full":
-                break
-            raise
+    # Like the kiosk: re-read the step after each placement and place what it still offers.
+    while unit := next(
+        (unit for unit in (await service.next_step(job))["units"] if unit["status"] == "pending"), None
+    ):
+        await service.place_in_tray(job, unit["id"], unit["planned_dimensions"]["height"])
         names.append(unit["name"])
     returning = await service.begin_tray_return(job)
     await bins.complete_return(returning)
@@ -376,6 +372,18 @@ async def import_trips(service, bins, db, rows):
         layout = (await db.get(StorageBin, workflow.bin_id)).compartment_layout
         trips.append((layout["columns"], await fill_and_return(service, bins, job, workflow)))
     return trips
+
+
+@pytest.mark.anyio
+async def test_the_tray_being_filled_keeps_its_items_over_an_identical_tray(mock_mode, trays):
+    # After each placement the tray out has less room than the identical tray at home; the
+    # rest of the items must still be offered for the tray out, not moved to another trip.
+    trays[:] = [tray(0, rows=2, columns=3, height=160), tray(1, rows=2, columns=3, height=160)]
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        small = [row(f"S{index}", small=True, height=85, length=40, width=40) for index in range(1, 4)]
+        assert await import_trips(service, bins, db, small) == [(3, ["S1", "S2", "S3"])]
 
 
 @pytest.mark.anyio

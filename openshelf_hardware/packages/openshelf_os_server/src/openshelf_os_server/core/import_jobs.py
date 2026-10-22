@@ -572,6 +572,7 @@ class ImportJobService:
         return self.bins.plan_batch(
             [(row, capacity) for row, _, capacity in trays],
             [(unit.id, unit.planned_dimensions) for unit in group],
+            None if outside is None else outside.id,
         )
 
     async def _batch_tray(

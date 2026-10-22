@@ -1491,6 +1491,7 @@ class BinStorageService:
         self,
         trays: Sequence[tuple[StorageBin, int]],
         wanted: Sequence[tuple[int, Optional[dict[str, Any]]]],
+        outside_id: Optional[int] = None,
     ) -> dict[int, StorageBin]:
         """Assign items of one access level to trays with room, as item key -> tray.
 
@@ -1500,6 +1501,8 @@ class BinStorageService:
         items; among equal footprints the roomiest tray comes first, so one trip carries the most
         items. Items that fit the fewest trays choose first, so an item another tray could carry
         never takes the last compartment of a tray an item needs. Items left out wait for room.
+        `outside_id`, the tray out for filling, ranks first among equal footprints, so the plan
+        stays put as its room shrinks with each placement.
         """
 
         def footprint(row: StorageBin) -> float:
@@ -1510,6 +1513,7 @@ class BinStorageService:
             trays,
             key=lambda entry: (
                 footprint(entry[0]),
+                entry[0].id != outside_id,
                 -entry[1],
                 entry[0].side,
                 entry[0].shelf_idx,
