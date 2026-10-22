@@ -562,30 +562,27 @@ class ImportJobService:
             if unit.small and unit.access_level_id == first.access_level_id and self._tray_takes(trays, unit)
         ]
 
-    async def _fitting(self, tray: Optional[StorageBin], group: Sequence[ImportJobUnit]) -> list[ImportJobUnit]:
-        """The units `tray` takes, less those a home tray with smaller compartments has room for."""
-        if tray is None or not group:
-            return list(group)
-        reserved: set[int] = set()
-        # Units `tray` cannot carry claim a tighter tray's free compartments first.
-        ordered = sorted(group, key=lambda unit: self.bins.batch_fits(tray, unit.planned_dimensions))
-        for row, capacity in await self.bins.tighter_batch_trays(tray, group[0].access_level_id):
-            for unit in ordered:
-                if capacity == 0:
-                    break
-                if unit.id not in reserved and self.bins.batch_fits(row, unit.planned_dimensions):
-                    reserved.add(unit.id)
-                    capacity -= 1
-        return [
-            unit
-            for unit in group
-            if unit.id not in reserved and self.bins.batch_fits(tray, unit.planned_dimensions)
-        ]
-
-    async def _batch_tray(self, group: Sequence[ImportJobUnit]) -> Optional[StorageBin]:
-        return await self.bins.allocate_batch_tray(
-            group[0].access_level_id, [unit.planned_dimensions for unit in group]
+    async def _plan(
+        self, group: Sequence[ImportJobUnit], outside: Optional[StorageBin] = None
+    ) -> dict[int, StorageBin]:
+        """Which tray each unit of the group goes to, by unit id; `outside` is a tray out for filling."""
+        if not group:
+            return {}
+        trays = await self.bins.batch_trays(group[0].access_level_id, None if outside is None else outside.id)
+        return self.bins.plan_batch(
+            [(row, capacity) for row, _, capacity in trays],
+            [(unit.id, unit.planned_dimensions) for unit in group],
         )
+
+    async def _batch_tray(
+        self, group: Sequence[ImportJobUnit]
+    ) -> tuple[Optional[StorageBin], list[ImportJobUnit]]:
+        """The tray to fetch for the group's first unit, and the units the plan puts in it."""
+        plan = await self._plan(group)
+        tray = plan.get(group[0].id)
+        if tray is None:
+            return None, list(group)
+        return tray, [unit for unit in group if (planned := plan.get(unit.id)) is not None and planned.id == tray.id]
 
     async def next_step(self, job: ImportJob) -> Optional[dict[str, Any]]:
         """What the kiosk should show next, or None when it has nothing left to do."""
@@ -606,14 +603,13 @@ class ImportJobService:
                     if not self._tray_takes(trays, first):
                         # Too large for every compartment: it is stored on its own.
                         return {"kind": "unit", "unit": self.serialize_unit(first), "reason": self._misfit_reason(first, trays)}
-                    group = await self._small_group(job, first, trays)
-                    tray = await self._batch_tray(group)
-                    # Show the items the tray to be fetched takes; the rest wait for another.
+                    tray, offered = await self._batch_tray(await self._small_group(job, first, trays))
+                    # Show the items the plan puts in the tray to be fetched; the rest wait for another.
                     return {
                         "kind": "tray",
                         "phase": "start",
                         "workflow": None,
-                        "units": [self.serialize_unit(unit) for unit in await self._fitting(tray, group)],
+                        "units": [self.serialize_unit(unit) for unit in offered],
                         "error": None,
                         "reason": None if tray is not None else (await self._no_tray()).message,
                     }
@@ -655,9 +651,12 @@ class ImportJobService:
                 if anchor is not None:
                     group = [unit for unit in small if unit.access_level_id == anchor.access_level_id]
                     if phase != "failed":
-                        # Offer only the items the tray being delivered takes; the rest wait.
+                        # Offer only the items the plan puts in the tray being delivered; the rest wait.
                         tray_row = await self.session.get(StorageBin, workflow.bin_id)
-                        group = await self._fitting(tray_row, group)
+                        plan = await self._plan(group, tray_row) if tray_row is not None else {}
+                        group = [
+                            unit for unit in group if (planned := plan.get(unit.id)) is not None and planned.id == workflow.bin_id
+                        ]
             # A failed delivery only matters while its items still wait for a tray.
             if phase != "failed" or group:
                 return {
@@ -995,7 +994,7 @@ class ImportJobService:
         trays = await self._trays()
         if first is None or not first.small or not self._tray_takes(trays, first):
             raise ImportJobError(409, "not_current", "The next item does not go in a multi-item bin")
-        tray = await self._batch_tray(await self._small_group(job, first, trays))
+        tray, _ = await self._batch_tray(await self._small_group(job, first, trays))
         if tray is None:
             raise await self._no_tray()
         try:

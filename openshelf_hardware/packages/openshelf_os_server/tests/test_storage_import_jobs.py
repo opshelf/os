@@ -367,32 +367,60 @@ async def test_a_tighter_tray_holds_back_only_the_items_it_has_room_for(mock_mod
     assert trips == [(2, ["L1", "S2"]), (3, ["S1"])]
 
 
+async def import_trips(service, bins, db, rows):
+    """Run an import of `rows` to the end, as (compartment columns, names placed) per trip."""
+    job = await service.get(await create(rows))
+    trips = []
+    while job.state == "active":
+        workflow = await service.start_tray(job, None)
+        layout = (await db.get(StorageBin, workflow.bin_id)).compartment_layout
+        trips.append((layout["columns"], await fill_and_return(service, bins, job, workflow)))
+    return trips
+
+
 @pytest.mark.anyio
-async def test_a_tighter_tray_keeps_its_last_compartment_for_an_item_only_it_takes(mock_mode, trays):
+@pytest.mark.parametrize(
+    ("order", "expected"),
+    [("LAB", [(2, ["L", "A"]), (3, ["B"])]), ("ABL", [(2, ["A", "L"]), (3, ["B"])])],
+)
+async def test_a_tighter_tray_keeps_its_last_compartment_for_an_item_only_it_takes(mock_mode, trays, order, expected):
     # The 2x3 has one free compartment: it must hold B, which only it takes, not A, which the
-    # shallower 1x2 also takes; otherwise B is left with no tray.
+    # shallower 1x2 also takes; otherwise B is left with no tray, whatever the file order.
     trays[:] = [tray(0, rows=2, columns=3, height=160), tray(1, rows=1, columns=2, height=100)]
+    items = {
+        "L": row("L", small=True, height=90, length=80, width=80),
+        "A": row("A", small=True, height=85, length=40, width=40),
+        "B": row("B", small=True, height=130, length=40, width=40),
+    }
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
         bins = BinStorageService(db)
-        job = await service.get(
-            await create([row(f"P{index}", small=True, height=130, length=40, width=40) for index in range(1, 6)])
-        )
-        workflow = await service.start_tray(job, None)
-        assert await fill_and_return(service, bins, job, workflow) == [f"P{index}" for index in range(1, 6)]
-        job = await service.get(
-            await create([
-                row("L", small=True, height=90, length=80, width=80),
-                row("A", small=True, height=85, length=40, width=40),
-                row("B", small=True, height=130, length=40, width=40),
-            ])
-        )
-        trips = []
-        while job.state == "active":
-            workflow = await service.start_tray(job, None)
-            layout = (await db.get(StorageBin, workflow.bin_id)).compartment_layout
-            trips.append((layout["columns"], await fill_and_return(service, bins, job, workflow)))
-    assert trips == [(2, ["L", "A"]), (3, ["B"])]
+        prefill = [row(f"P{index}", small=True, height=130, length=40, width=40) for index in range(1, 6)]
+        assert await import_trips(service, bins, db, prefill) == [(3, [f"P{index}" for index in range(1, 6)])]
+        assert await import_trips(service, bins, db, [items[name] for name in order]) == expected
+
+
+@pytest.mark.anyio
+async def test_an_item_waits_for_the_tray_its_own_trip_fetches(mock_mode, trays):
+    # Q fits all three trays and P only the tall 2x4, which has one free compartment. Q must go
+    # to the 2x2, so P keeps the 2x4's compartment instead of losing it to Q's trip.
+    trays[:] = [
+        tray(0, rows=1, columns=2, height=100),
+        tray(1, rows=2, columns=2, height=100),
+        tray(2, rows=2, columns=4, height=160),
+    ]
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        tall = [row(f"T{index}", small=True, height=130, length=40, width=40) for index in range(1, 8)]
+        assert await import_trips(service, bins, db, tall) == [(4, [f"T{index}" for index in range(1, 8)])]
+        wide = [row(f"W{index}", small=True, height=85, length=70, width=80) for index in range(1, 4)]
+        assert await import_trips(service, bins, db, wide) == [(2, ["W1", "W2", "W3"])]
+        assert await import_trips(service, bins, db, [
+            row("L", small=True, height=90, length=80, width=80),
+            row("Q", small=True, height=85, length=40, width=40),
+            row("P", small=True, height=130, length=40, width=40),
+        ]) == [(2, ["L"]), (2, ["Q"]), (4, ["P"])]
 
 
 @pytest.mark.anyio

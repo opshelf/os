@@ -366,16 +366,15 @@ async def start_import_tray(
 ) -> dict[str, Any]:
     """Fetch a tray for small units.
 
-    Picks the home tray with the smallest compartments that take the next small unit's planned
-    size (rotated if that helps) and delivers it to the IO box; among equal compartments the
-    tray that takes the most of the next group of small units (same access level) wins. A tray
-    qualifies only when it has a free compartment (or room under `max_items`). The step offers
-    the units that tray takes, less those a home tray with smaller compartments holds back; such
-    a tray holds back only as many units as it has free compartments, first those the fetched
-    tray cannot take. The rest wait for a later tray. Requires an empty IO box and an idle,
-    homed robot. When no home tray with a free compartment takes the next unit, nothing
-    moves or is skipped: `409 trays_outside` when a tray is out, else `409 no_tray_free`;
-    the step's `reason` says the same, and the operator skips the unit to continue. A small
+    Plans every pending small unit of the next unit's access level onto home trays with a free
+    compartment (or room under `max_items`): each unit goes to the tray with the smallest
+    compartments that take its planned size (rotated if that helps) and still have room, among
+    equal compartments the roomiest tray first, and units that fit the fewest trays choose first.
+    Delivers the tray planned for the next unit to the IO box; the step offers the units planned
+    for that tray, and the rest wait for a later tray. Requires an empty IO box and an idle,
+    homed robot. When the plan leaves the next unit without a tray, nothing moves or is
+    skipped: `409 trays_outside` when a tray is out, else `409 no_tray_free`; the step's
+    `reason` says the same, and the operator skips the unit to continue. A small
     unit no tray compartment takes at all is offered as a `unit` step instead.
     """
     async with mutation_lock():
