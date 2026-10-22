@@ -93,6 +93,9 @@ class ImportUnitResponse(BaseModel):
     position: int = Field(description="Zero-based load order")
     row_number: Optional[int]
     barcode: str
+    barcode_generated: bool = Field(
+        description="The machine generated `barcode`; scanning the item's own label may replace it"
+    )
     name: str
     small: bool
     access_level_id: Optional[int]
@@ -167,6 +170,16 @@ class BeginUnitRequest(BaseModel):
 class PlaceInTrayRequest(BaseModel):
     unit_id: int
     height: float = Field(gt=0, description="Measured item height in millimeters")
+    barcode: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="The label scanned for the unit; replaces a generated barcode",
+    )
+
+
+class ScanBarcodeRequest(BaseModel):
+    barcode: str = Field(min_length=1, max_length=255, description="The label scanned on the item")
 
 
 def _http(exc: ImportJobError) -> HTTPException:
@@ -329,6 +342,37 @@ async def begin_import_unit(
 
 
 @router.post(
+    "/{job_id}/units/{unit_id}/barcode",
+    summary="Use a scanned barcode for a unit",
+    responses=response_docs(model=ImportStepResult, errors=(401, 403, 404, 409, 422)),
+)
+async def scan_import_unit_barcode(
+    job_id: str,
+    unit_id: int,
+    body: ScanBarcodeRequest,
+    session: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_permissions("storage:write")),
+) -> dict[str, Any]:
+    """Use a scanned barcode for a unit.
+
+    For a measured unit whose store was not submitted yet: the label already on the item
+    replaces the generated barcode, on the unit and its item, so no label is printed. A barcode
+    from the import file is not replaced (`409 barcode_from_file`). A barcode that another item
+    (`409 barcode_in_use`), a bin (`409 barcode_is_bin`), another unit of this import
+    (`409 barcode_in_import`) or a sign-in badge (`409 barcode_is_badge`) uses is refused.
+    Scanning the unit's own barcode changes nothing.
+    """
+    async with mutation_lock():
+        service = ImportJobService(session)
+        job = await _load(service, job_id)
+        try:
+            unit = await service.scan_unit_barcode(job, unit_id, body.barcode)
+        except ImportJobError as exc:
+            raise _http(exc) from exc
+        return await _result(service, job, unit)
+
+
+@router.post(
     "/{job_id}/units/{unit_id}/skip",
     summary="Skip a unit",
     responses=response_docs(model=ImportStepResult, errors=(401, 403, 404, 409, 422)),
@@ -439,7 +483,8 @@ async def place_import_unit_in_tray(
     Creates the item with the measured height and a footprint taken from its import row,
     falling back per axis to the tray's compartment footprint where the row gives no width or
     length, and records it in the next free compartment, returned as `unit.compartment`. Print
-    and scan its label before calling.
+    and scan its label before calling, or pass `barcode` scanned from the item's own label to
+    replace a generated barcode (refused like the unit barcode endpoint).
     A unit whose planned size fits no compartment of this tray returns `409 unit_wrong_tray`
     before any item is created. One measured taller than the compartment is not placed: it
     stays pending with that height for a taller tray, or is stored on its own when no tray
@@ -450,7 +495,7 @@ async def place_import_unit_in_tray(
         service = ImportJobService(session)
         job = await _load(service, job_id)
         try:
-            unit = await service.place_in_tray(job, body.unit_id, body.height)
+            unit = await service.place_in_tray(job, body.unit_id, body.height, body.barcode)
         except ImportJobError as exc:
             raise _http(exc) from exc
         return await _result(service, job, unit)

@@ -14,7 +14,7 @@ from openshelf_os_server.core import bin_storage, mock_robot
 from openshelf_os_server.core import import_jobs as import_jobs_core
 from openshelf_os_server.core.bin_storage import BinStorageService
 from openshelf_os_server.core.import_jobs import ImportJobError, ImportJobService, ImportRowInput, notify_command_result
-from openshelf_os_server.database.models import ImportJob, ImportJobUnit, RobotCommand, StorageBin, StorageBinItem, StorageBinWorkflow
+from openshelf_os_server.database.models import ImportJob, ImportJobUnit, Item, RobotCommand, StorageBin, StorageBinItem, StorageBinWorkflow
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.main import _ensure_developer_user
 from openshelf_os_server.routers import import_jobs as import_jobs_router
@@ -654,3 +654,40 @@ async def test_no_free_cell_refuses_the_measure_instead_of_skipping(mock_mode):
             await service.begin_unit(job, (await units(job_id))[0].id, {"width": 5000, "length": 5000, "height": 5000})
         assert refused.value.code == "no_cell_fits"
     assert (await units(job_id))[0].status == "pending"
+
+
+@pytest.mark.anyio
+async def test_a_scanned_label_replaces_only_a_generated_barcode_that_nothing_else_uses(mock_mode, trays):
+    job_id = await create([
+        row("From file", barcode="FILE-1", width=50, length=50, height=60),
+        row("Generated", width=50, length=50, height=60),
+        row("Small", small=True, width=40, length=40, height=60),
+    ])
+    async with AsyncSessionLocal() as db:
+        db.add(Item(barcode="TAKEN-1", name="Stored", dimensions=DIMENSIONS))
+        await db.commit()
+        service = ImportJobService(db)
+        job = await service.get(job_id)
+        from_file, generated, small = await units(job_id)
+        assert (from_file.barcode_generated, generated.barcode_generated) == (False, True)
+
+        await service.begin_unit(job, from_file.id, DIMENSIONS)
+        with pytest.raises(ImportJobError) as refused:
+            await service.scan_unit_barcode(job, from_file.id, "BOTTLE-1")
+        assert refused.value.code == "barcode_from_file"
+        await service.skip_unit(job, from_file.id)
+
+        await service.begin_unit(job, generated.id, DIMENSIONS)
+        for code, reason in (("TAKEN-1", "barcode_in_use"), ("900000000000", "barcode_is_bin"), (small.barcode, "barcode_in_import")):
+            with pytest.raises(ImportJobError) as refused:
+                await service.scan_unit_barcode(job, generated.id, code)
+            assert refused.value.code == reason
+        unit = await service.scan_unit_barcode(job, generated.id, " BOTTLE-2 ")
+        item = await db.get(Item, unit.item_id)
+        assert (unit.barcode, item.barcode) == ("BOTTLE-2", "BOTTLE-2")
+        await service.skip_unit(job, generated.id)
+
+        workflow = await service.start_tray(job, None)
+        await BinStorageService(db).transition(workflow, "awaiting_operator")
+        placed = await service.place_in_tray(job, small.id, 60, "BOTTLE-3")
+        assert (placed.barcode, (await db.get(Item, placed.item_id)).barcode) == ("BOTTLE-3", "BOTTLE-3")

@@ -54,6 +54,7 @@ from openshelf_os_server.database.models import (
     StorageBin,
     StorageBinItem,
     StorageBinWorkflow,
+    User,
 )
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.settings import get_operating_mode
@@ -353,13 +354,15 @@ class ImportJobService:
             name = _clean(row.name) or ""
             metadata = {str(key): value for key, value in (row.metadata or {}).items() if str(key).strip()}
             for copy in range(row.quantity):
-                barcode = label if copy == 0 and label is not None else next(generated)
+                from_file = copy == 0 and label is not None
+                barcode = label if from_file else next(generated)
                 self.session.add(
                     ImportJobUnit(
                         job_id=job.id,
                         position=position,
                         row_number=row.row_number,
                         barcode=barcode,
+                        barcode_generated=not from_file,
                         name=name,
                         small=bool(row.small),
                         access_level_id=access_level_id,
@@ -710,6 +713,7 @@ class ImportJobService:
             "position": unit.position,
             "row_number": unit.row_number,
             "barcode": unit.barcode,
+            "barcode_generated": unit.barcode_generated,
             "name": unit.name,
             "small": unit.small,
             "access_level_id": unit.access_level_id,
@@ -850,6 +854,48 @@ class ImportJobService:
         if item_id is not None and item_id != unit.item_id:
             return True
         return unit.barcode in await reserved_bin_barcodes(self.session)
+
+    async def _use_scanned_barcode(self, job: ImportJob, unit: ImportJobUnit, scanned: Any) -> None:
+        """Give the unit a barcode scanned from the item instead of its generated one.
+
+        Only a generated barcode is replaced; one from the import file must be scanned as it is.
+        The code must not name another item, a bin, another unit of this import or a sign-in badge.
+        """
+        barcode = _clean(scanned) if isinstance(scanned, str) else None
+        if barcode is None or len(barcode) > BARCODE_MAX_LENGTH or not _printable(barcode):
+            raise ImportJobError(422, "invalid_barcode", "Barcode must be printable ASCII up to 255 characters")
+        if barcode == unit.barcode:
+            return
+        if not unit.barcode_generated:
+            raise ImportJobError(409, "barcode_from_file", "This item's barcode comes from the import file")
+        owner = await self.session.scalar(select(Item.id).where(Item.barcode == barcode))
+        if owner is not None and owner != unit.item_id:
+            raise ImportJobError(409, "barcode_in_use", "This barcode already belongs to an item on this machine")
+        if barcode in await reserved_bin_barcodes(self.session):
+            raise ImportJobError(409, "barcode_is_bin", "This barcode belongs to a bin")
+        if await self.session.scalar(
+            select(ImportJobUnit.id).where(ImportJobUnit.job_id == job.id, ImportJobUnit.barcode == barcode).limit(1)
+        ) is not None:
+            raise ImportJobError(409, "barcode_in_import", "Another item in this import already has this barcode")
+        if await self.session.scalar(select(User.id).where(User.login_barcode == barcode).limit(1)) is not None:
+            raise ImportJobError(409, "barcode_is_badge", "This barcode is a sign-in badge")
+        unit.barcode = barcode
+        if unit.item_id is not None:
+            item = await self.session.get(Item, unit.item_id)
+            if item is not None:
+                item.barcode = barcode
+
+    async def scan_unit_barcode(self, job: ImportJob, unit_id: int, scanned: Any) -> ImportJobUnit:
+        """Use a scanned barcode for a measured unit whose store was not submitted yet."""
+        self._require_active(job)
+        unit = await self.unit(job, unit_id)
+        if unit.status != "in_progress" or unit.stage != "measured":
+            raise ImportJobError(409, "unit_not_measured", "Measure this item first")
+        if await self._command_admitted(unit):
+            raise ImportJobError(409, "unit_storing", "This item is already being stored")
+        await self._use_scanned_barcode(job, unit, scanned)
+        await self.session.commit()
+        return unit
 
     async def _skip(self, unit: ImportJobUnit) -> None:
         await self._discard_item(unit)
@@ -1008,8 +1054,13 @@ class ImportJobService:
         await self.session.commit()
         return workflow
 
-    async def place_in_tray(self, job: ImportJob, unit_id: int, height: Any) -> ImportJobUnit:
-        """Create a small unit's item and put it in the batch tray's next free compartment."""
+    async def place_in_tray(
+        self, job: ImportJob, unit_id: int, height: Any, barcode: Optional[str] = None
+    ) -> ImportJobUnit:
+        """Create a small unit's item and put it in the batch tray's next free compartment.
+
+        `barcode`, when given, is the label scanned for the unit; it replaces a generated barcode.
+        """
         workflow = await self._tray_workflow(job)
         if workflow is None or workflow.state != "awaiting_operator":
             raise ImportJobError(409, "tray_not_ready", "Wait for the bin to arrive.")
@@ -1036,6 +1087,8 @@ class ImportJobService:
         ).all()
         if any(level != unit.access_level_id for level in members):
             raise ImportJobError(409, "access_level_mismatch", "This item belongs in a bin of another access level")
+        if barcode is not None:
+            await self._use_scanned_barcode(job, unit, barcode)
         if await self._barcode_taken(unit):
             await self._skip(unit)
             self.notice = f"{unit.name} was skipped: its barcode already exists on this machine."

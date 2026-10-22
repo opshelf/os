@@ -347,6 +347,8 @@ class ImportJobUnit(Base):
 	barcode: Mapped[str] = mapped_column(String(BARCODE_MAX_LENGTH), nullable=False)
 	name: Mapped[str] = mapped_column(String(255), nullable=False)
 	small: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+	# The machine generated `barcode`; a scanned label may replace it before the item is stored.
+	barcode_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 	access_level_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 	expires_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 	tare_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

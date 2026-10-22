@@ -1,4 +1,4 @@
-"""The planned_dimensions column reaches deployed databases that are at the previous head."""
+"""The planned_dimensions and barcode_generated columns reach deployed databases at an older head."""
 
 import sqlalchemy as sa
 
@@ -6,7 +6,7 @@ from openshelf_os_server import main
 from openshelf_os_server.database.base import Base
 
 PREVIOUS_HEAD = "b6c7d8e9f0a1"
-CURRENT_HEAD = "4c1d2e3f5a6b"
+CURRENT_HEAD = "5d6e7f8a9b0c"
 LOGIN_BARCODE_COLUMN = "login_barcode"
 LOGIN_BARCODE_INDEX = "ix_users_login_barcode"
 
@@ -32,6 +32,7 @@ def test_existing_database_at_previous_head_gains_the_column_in_place(tmp_path, 
         connection.exec_driver_sql(f"DROP INDEX {LOGIN_BARCODE_INDEX}")
         connection.exec_driver_sql(f"ALTER TABLE users DROP COLUMN {LOGIN_BARCODE_COLUMN}")
         connection.exec_driver_sql("ALTER TABLE import_job_units DROP COLUMN planned_dimensions")
+        connection.exec_driver_sql("ALTER TABLE import_job_units DROP COLUMN barcode_generated")
         connection.exec_driver_sql("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
         connection.exec_driver_sql(f"INSERT INTO alembic_version VALUES ('{PREVIOUS_HEAD}')")
         connection.exec_driver_sql(
@@ -46,13 +47,14 @@ def test_existing_database_at_previous_head_gains_the_column_in_place(tmp_path, 
     monkeypatch.setattr(main, "get_database_url", lambda: url)
     main._run_migrations()
 
-    assert "planned_dimensions" in _columns(engine)
+    assert {"planned_dimensions", "barcode_generated"} <= _columns(engine)
     assert LOGIN_BARCODE_COLUMN in {column["name"] for column in sa.inspect(engine).get_columns("users")}
     assert _indexes(engine)[LOGIN_BARCODE_INDEX]["unique"] == 1
     assert _versions(engine) == [CURRENT_HEAD]
     with engine.connect() as connection:
-        row = connection.exec_driver_sql("SELECT name, planned_dimensions FROM import_job_units").one()
-    assert tuple(row) == ("Kept", None)
+        row = connection.exec_driver_sql("SELECT name, planned_dimensions, barcode_generated FROM import_job_units").one()
+    # Which existing barcodes were generated is unknown, so none can be replaced by a scan.
+    assert tuple(row) == ("Kept", None, 0)
 
     main._run_migrations()  # idempotent
     assert _versions(engine) == [CURRENT_HEAD]
