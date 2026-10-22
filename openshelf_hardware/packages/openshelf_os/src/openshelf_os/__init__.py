@@ -75,8 +75,7 @@ DOOR_MOTOR_RECOVERY_FAILED_PREFIX = "Door motor recovery failed:"
 # same crash pipeline as a real one so the crash handling can be exercised on a live machine,
 # but it is not an incident: Sentry filters events whose fault message carries this prefix.
 SIMULATED_MOTOR_FAULT_PREFIX = "Simulated motor fault on "
-# Context key the robot worker sets on every event it reports; true only for events whose
-# fault came from the debug fault-injection endpoint.
+# Context key the robot worker sets on the error context of an injected fault's report.
 SIMULATED_FAULT_CONTEXT_KEY = "simulated_fault"
 
 
@@ -203,8 +202,8 @@ def _event_entries(event: dict[str, Any]) -> list[Any]:
 
 
 def _sentry_event_is_simulated_motor_fault(event: dict[str, Any]) -> bool:
-	"""Whether the event reports an injected debug fault: marker and fault text must both match,
-	so a real fault reported while the marker is still latched stays reportable."""
+	"""Whether the event reports an injected debug fault: both the worker's marker and the
+	simulated fault text must be present."""
 	contexts = event.get("contexts")
 	if isinstance(contexts, dict) is False:
 		return False

@@ -459,9 +459,7 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 	# The debug fault-injection endpoint (POST /api/robot/debug/motors/{motor}/crash) drives
 	# the real crash pipeline on purpose - crash state, needs-home, artifacts - but the fault
-	# it raises is synthetic: it is not an incident and has no meaningful stack. Only events
-	# the worker marked as injected AND whose reported fault message says so are dropped, so
-	# a real failure that happens while an injected fault is still latched stays reportable.
+	# it raises is synthetic: it is not an incident and has no meaningful stack.
 	if _sentry_event_is_simulated_motor_fault(event) is True:
 		return None
 
