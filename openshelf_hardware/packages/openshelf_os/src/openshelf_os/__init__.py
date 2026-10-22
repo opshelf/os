@@ -203,106 +203,21 @@ def _event_entries(event: dict[str, Any]) -> list[Any]:
 
 
 def _sentry_event_is_simulated_motor_fault(event: dict[str, Any]) -> bool:
-	"""Whether the event is the report of an injected debug fault rather than a real one."""
-	context_value = event.get("contexts")
-	if isinstance(context_value, dict) is False:
+	"""Whether the event reports an injected debug fault: marker and fault text must both match,
+	so a real fault reported while the marker is still latched stays reportable."""
+	contexts = event.get("contexts")
+	if isinstance(contexts, dict) is False:
 		return False
 
-	contexts = cast(dict[str, Any], context_value)
-	worker_error_value = contexts.get("worker_error")
-	if isinstance(worker_error_value, dict) is False:
+	worker_error = cast(dict[str, Any], contexts).get("worker_error")
+	hardware_fault = cast(dict[str, Any], contexts).get("hardware_fault")
+	if isinstance(worker_error, dict) is False or isinstance(hardware_fault, dict) is False:
 		return False
 
-	worker_error = cast(dict[str, Any], worker_error_value)
-	if worker_error.get(SIMULATED_FAULT_CONTEXT_KEY) is not True:
+	if cast(dict[str, Any], worker_error).get(SIMULATED_FAULT_CONTEXT_KEY) is not True:
 		return False
 
-	# The marker alone only marks the fault as injected; without a simulated fault in the
-	# reported exception, message or reported fault detail the event is a real failure that
-	# merely ran while an injected fault was still active, and it stays reportable. The
-	# worker reports a stackless crash through ``capture_message``, so the fault text lands
-	# in the ``hardware_fault``/``worker_error`` contexts rather than an exception frame.
-	if _sentry_event_message_is_simulated_motor_fault(event) is True:
-		return True
-
-	for value in _sentry_event_exception_values(event):
-		if _sentry_exception_value_is_simulated_motor_fault(value) is True:
-			return True
-
-	return _sentry_event_fault_detail_is_simulated_motor_fault(contexts)
-
-
-def _sentry_event_fault_detail_is_simulated_motor_fault(contexts: dict[str, Any]) -> bool:
-	for name in ("hardware_fault", "worker_error"):
-		section_value = contexts.get(name)
-		if isinstance(section_value, dict) is False:
-			continue
-
-		section = cast(dict[str, Any], section_value)
-		if _message_is_simulated_motor_fault(section.get("message")) is True:
-			return True
-
-		hardware_fault_value = section.get("hardware_fault")
-		if isinstance(hardware_fault_value, dict) is True:
-			hardware_fault = cast(dict[str, Any], hardware_fault_value)
-			if _message_is_simulated_motor_fault(hardware_fault.get("message")) is True:
-				return True
-
-	return False
-
-
-def _sentry_event_message_is_simulated_motor_fault(event: dict[str, Any]) -> bool:
-	if _message_is_simulated_motor_fault(event.get("message")) is True:
-		return True
-
-	logentry_value = event.get("logentry")
-	if isinstance(logentry_value, dict) is True:
-		logentry = cast(dict[str, Any], logentry_value)
-		if any(_message_is_simulated_motor_fault(logentry.get(key)) is True for key in ("message", "formatted")):
-			return True
-
-	for entry in _event_entries(event):
-		if isinstance(entry, dict) is False:
-			continue
-
-		data = entry.get("data")
-		if isinstance(data, dict) is False:
-			continue
-
-		if any(_message_is_simulated_motor_fault(data.get(key)) is True for key in ("message", "formatted")):
-			return True
-
-	return False
-
-
-def _sentry_event_exception_values(event: dict[str, Any]) -> list[dict[str, Any]]:
-	exception_value = event.get("exception")
-	if isinstance(exception_value, dict) is False:
-		return []
-
-	exception_data = cast(dict[str, Any], exception_value)
-	values = exception_data.get("values")
-	if not isinstance(values, list):
-		return []
-
-	values_list = cast(list[Any], values)
-	return [value for value in values_list if isinstance(value, dict) is True]
-
-
-def _sentry_exception_value_is_simulated_motor_fault(value: dict[str, Any]) -> bool:
-	if _message_is_simulated_motor_fault(value.get("value")) is True:
-		return True
-
-	# A capture without an exception object carries the message only as a synthetic
-	# ``exception.values[].minified`` frame (what ``sentry_sdk.capture_message`` sends).
-	mechanism_value = value.get("mechanism")
-	if isinstance(mechanism_value, dict) is True and mechanism_value.get("synthetic") is True:
-		return _message_is_simulated_motor_fault(value.get("minified")) is True
-
-	return False
-
-
-def _message_is_simulated_motor_fault(message: Any) -> bool:
+	message = cast(dict[str, Any], hardware_fault).get("message")
 	return isinstance(message, str) is True and message.startswith(SIMULATED_MOTOR_FAULT_PREFIX)
 
 
@@ -391,6 +306,9 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 	# warning or an ERROR-level motion-timeout event. The recovery message is a
 	# stackless log-only issue, so drop the whole recovery-failure class.
 	if _sentry_event_has_door_motor_recovery_failure(event) is True:
+		return None
+
+	if _sentry_event_is_simulated_motor_fault(event) is True:
 		return None
 
 	request_value = event.get("request")
