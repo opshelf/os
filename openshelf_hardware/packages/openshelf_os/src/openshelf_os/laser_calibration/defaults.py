@@ -20,6 +20,11 @@ EXPECTED_HOLE_WIDTH_MM = 26.0
 EXPECTED_HOLE_HEIGHT_MM = 30.0
 HOLE_WIDTH_TOLERANCE_MM = 10.0
 HOLE_HEIGHT_TOLERANCE_MM = 10.0
+# An engagement hole measures 26mm or more across every scanned cell, while the joint between two
+# shelf plates reads about 14mm and otherwise passes the width tolerance at a 2mm fine step
+# (lb4a-4 back 3:7, 2026-10-22: 14.4mm accepted at the 14.0mm floor). Anything narrower is a gap,
+# not a hole a gripper can catch.
+MIN_DETECTED_HOLE_WIDTH_MM = 20.0
 MIN_VERTICAL_WALL_COVERAGE_MM = 10.0
 MIN_HORIZONTAL_WALL_COVERAGE_MM = 30.0
 

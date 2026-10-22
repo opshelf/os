@@ -6,6 +6,7 @@ from openshelf_os.laser_calibration.defaults import (
 	EXPECTED_HOLE_WIDTH_MM,
 	HOLE_HEIGHT_TOLERANCE_MM,
 	HOLE_WIDTH_TOLERANCE_MM,
+	MIN_DETECTED_HOLE_WIDTH_MM,
 )
 
 from .core import *
@@ -545,6 +546,9 @@ def build_detected_cell_from_segments(
 	step_mm: float,
 	scan_config: Any,
 ) -> Optional[ScanDetectedCell]:
+	if float(x_segment.width_mm) < MIN_DETECTED_HOLE_WIDTH_MM:
+		return None
+
 	if dimensions_match(
 		x_segment.width_mm,
 		expected_mm=EXPECTED_HOLE_WIDTH_MM,

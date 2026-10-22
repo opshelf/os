@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from openshelf_os.laser_calibration import (
+	build_detected_cell_from_segments,
 	require_z_offset_model_matches_z_place,
 	apply_wall_depth_z_offsets,
 	disable_unreachable_cells,
+	LineGapSegment,
 	run_staged_scan,
 )
 from openshelf_os.laser_calibration.scan import ScanBounds
@@ -164,3 +166,28 @@ def test_apply_wall_depth_z_offsets_refuses_cells_without_wall_depth(tmp_path: P
 
 	# the cell that did have a wall depth was still computed, not left blank
 	assert scanned_shelves[0].cells[0].calibration_point.z_offset == pytest.approx(9.9 + 4.85 - 0.00285 * 340.0)
+
+
+def test_build_detected_cell_from_segments_rejects_a_plate_joint_gap() -> None:
+	# A 14.4mm joint between two shelf plates passed the width tolerance at a 2mm fine step and
+	# became a cell the robot could address (lb4a-4 back 3:7); real holes measure 26mm or more.
+	scan_config = SimpleNamespace(laser_offset_x_mm=51.0, laser_offset_y_mm=0.0)
+	height = LineGapSegment(start_idx=0, end_idx=1, start_mm=0.0, end_mm=30.0, width_mm=30.0, center_mm=15.0)
+
+	def cell_for(width_mm: float):
+		return build_detected_cell_from_segments(
+			x_segment=LineGapSegment(
+				start_idx=0,
+				end_idx=1,
+				start_mm=100.0,
+				end_mm=100.0 + width_mm,
+				width_mm=width_mm,
+				center_mm=100.0 + width_mm / 2.0,
+			),
+			y_segment=height,
+			step_mm=2.0,
+			scan_config=scan_config,
+		)
+
+	assert cell_for(14.42) is None
+	assert cell_for(26.0) is not None
