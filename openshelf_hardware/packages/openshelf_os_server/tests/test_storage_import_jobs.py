@@ -387,6 +387,35 @@ async def test_the_tray_being_filled_keeps_its_items_over_an_identical_tray(mock
 
 
 @pytest.mark.anyio
+async def test_the_fetched_tray_is_offered_the_items_it_was_fetched_for(mock_mode, trays):
+    # Trays 1 and 2 are identical with one free compartment each. H, fetched for tray 2, must
+    # still be offered once tray 2 is out, not swapped for A, which tray 1 was planned to take.
+    trays[:] = [
+        tray(0, rows=1, columns=2, height=100),
+        tray(1, rows=2, columns=2, height=160),
+        tray(2, rows=2, columns=2, height=160),
+    ]
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        for prefix in "PQ":
+            prefill = [row(f"{prefix}{index}", small=True, height=130, length=40, width=40) for index in range(1, 4)]
+            assert await import_trips(service, bins, db, prefill) == [(2, [f"{prefix}{index}" for index in range(1, 4)])]
+        job = await service.get(await create([
+            row("H", small=True, height=85, length=60, width=60),
+            row("A", small=True, height=130, length=40, width=40),
+        ]))
+        trips = []
+        while job.state == "active":
+            offered = [unit["name"] for unit in (await service.next_step(job))["units"]]
+            workflow = await service.start_tray(job, None)
+            assert [unit["name"] for unit in (await service.next_step(job))["units"]] == offered
+            cell = (await db.get(StorageBin, workflow.bin_id)).cell_idx
+            trips.append((cell, await fill_and_return(service, bins, job, workflow)))
+    assert trips == [(2, ["H"]), (1, ["A"])]
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("order", "expected"),
     [("LAB", [(2, ["L", "A"]), (3, ["B"])]), ("ABL", [(2, ["A", "L"]), (3, ["B"])])],

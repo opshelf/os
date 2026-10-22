@@ -1492,6 +1492,7 @@ class BinStorageService:
         trays: Sequence[tuple[StorageBin, int]],
         wanted: Sequence[tuple[int, Optional[dict[str, Any]]]],
         outside_id: Optional[int] = None,
+        placed: int = 0,
     ) -> dict[int, StorageBin]:
         """Assign items of one access level to trays with room, as item key -> tray.
 
@@ -1501,8 +1502,9 @@ class BinStorageService:
         items; among equal footprints the roomiest tray comes first, so one trip carries the most
         items. Items that fit the fewest trays choose first, so an item another tray could carry
         never takes the last compartment of a tray an item needs. Items left out wait for room.
-        `outside_id`, the tray out for filling, ranks first among equal footprints, so the plan
-        stays put as its room shrinks with each placement.
+        `outside_id`, the tray out for filling, ranks by its room at trip start, its room plus the
+        `placed` items already put in it this trip, so the plan made before the fetch stays put as
+        the trip fills the tray.
         """
 
         def footprint(row: StorageBin) -> float:
@@ -1513,15 +1515,21 @@ class BinStorageService:
             trays,
             key=lambda entry: (
                 footprint(entry[0]),
-                entry[0].id != outside_id,
-                -entry[1],
+                -(entry[1] + (placed if entry[0].id == outside_id else 0)),
                 entry[0].side,
                 entry[0].shelf_idx,
                 entry[0].cell_idx,
             ),
         )
         room = {int(row.id): capacity for row, capacity in ordered}
-        fits = {key: [row for row, _ in ordered if self.batch_fits(row, dimensions)] for key, dimensions in wanted}
+        # Units of one import row share a size, so check each distinct size once.
+        by_size: dict[tuple[tuple[str, Any], ...], list[StorageBin]] = {}
+        fits: dict[int, list[StorageBin]] = {}
+        for key, dimensions in wanted:
+            size = tuple(sorted((dimensions or {}).items()))
+            if size not in by_size:
+                by_size[size] = [row for row, _ in ordered if self.batch_fits(row, dimensions)]
+            fits[key] = by_size[size]
         plan: dict[int, StorageBin] = {}
         # sorted is stable, so items with equally many trays keep file order.
         for key, _ in sorted(wanted, key=lambda entry: len(fits[entry[0]])):

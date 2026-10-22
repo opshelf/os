@@ -563,9 +563,10 @@ class ImportJobService:
         ]
 
     async def _plan(
-        self, group: Sequence[ImportJobUnit], outside: Optional[StorageBin] = None
+        self, group: Sequence[ImportJobUnit], outside: Optional[StorageBin] = None, placed: int = 0
     ) -> dict[int, StorageBin]:
-        """Which tray each unit of the group goes to, by unit id; `outside` is a tray out for filling."""
+        """Which tray each unit of the group goes to, by unit id; `outside` is a tray out for filling
+        that already holds `placed` units of this trip."""
         if not group:
             return {}
         trays = await self.bins.batch_trays(group[0].access_level_id, None if outside is None else outside.id)
@@ -573,6 +574,7 @@ class ImportJobService:
             [(row, capacity) for row, _, capacity in trays],
             [(unit.id, unit.planned_dimensions) for unit in group],
             None if outside is None else outside.id,
+            placed,
         )
 
     async def _batch_tray(
@@ -654,7 +656,7 @@ class ImportJobService:
                     if phase != "failed":
                         # Offer only the items the plan puts in the tray being delivered; the rest wait.
                         tray_row = await self.session.get(StorageBin, workflow.bin_id)
-                        plan = await self._plan(group, tray_row) if tray_row is not None else {}
+                        plan = await self._plan(group, tray_row, len(members)) if tray_row is not None else {}
                         group = [
                             unit for unit in group if (planned := plan.get(unit.id)) is not None and planned.id == workflow.bin_id
                         ]
