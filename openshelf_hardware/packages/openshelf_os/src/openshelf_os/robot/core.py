@@ -83,6 +83,9 @@ POWER_CYCLE_BOOT_TIMEOUT_S = 20.0
 POWER_CYCLE_BOOT_POLL_S = 0.25
 
 
+STARTUP_HOME_SKIPPED_CABINET_OPEN = "Startup homing skipped because the cabinet doors were open"
+
+
 class Robot:
     # ------------------------------------------------------------------ #
     #  Lifecycle
@@ -240,7 +243,14 @@ class Robot:
             return False
         return bool(getattr(curtain_cfg, "enabled", False))
 
-    async def configure(self, isolate: bool = False, home_on_init: bool = True):
+    async def configure(self, isolate: bool = False, home_on_init: bool = True) -> Optional[str]:
+        """Connect and configure the hardware, homing it if asked.
+
+        Returns why a requested startup home was skipped, or None. The safety
+        guard only starts with the worker, after this returns, so nothing else
+        stops a startup home from running with the cabinet open.
+        """
+        startup_home_skip_reason: Optional[str] = None
         self._emit_init("motor_bus", "connecting")
         try:
             await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
@@ -292,6 +302,11 @@ class Robot:
             weight_guard.set_listener(self._stop_motion_on_weight_change)
             await weight_guard.start()
 
+        if home_on_init is True and self._are_cabinet_doors_open_at_startup() is True:
+            self._logger.warning("Startup homing skipped: cabinet doors are open")
+            home_on_init = False
+            startup_home_skip_reason = STARTUP_HOME_SKIPPED_CABINET_OPEN
+
         await self._tool.configure(isolate=isolate, home_on_init=home_on_init)
         await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready, home_on_init=home_on_init)
         cabinet = getattr(self, "_cabinet", None)
@@ -309,6 +324,19 @@ class Robot:
             motor = self._get_motor_by_name(name)
             if motor is not None:
                 motor._on_move_complete = self._did_complete_motor_move
+
+        return startup_home_skip_reason
+
+    def _are_cabinet_doors_open_at_startup(self) -> bool:
+        cabinet = getattr(self, "_cabinet", None)
+        if cabinet is None or cabinet.is_configured() is False:
+            return False
+
+        try:
+            return cabinet.get_door_state()["open"] is True
+        except Exception:
+            self._logger.warning("Cabinet door read failed before startup homing", exc_info=True)
+            return True
 
     async def _connect_optional_bus(self, label: str, controller: Controller, isolate: bool) -> bool:
         self._emit_init(f"{label}_bus", "connecting")

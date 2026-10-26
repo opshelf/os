@@ -188,7 +188,9 @@ async def init_robot_worker() -> None:
 
     home_on_init = _home_on_init_enabled() and not has_active_bin_workflow
     try:
-        await robot.configure(isolate=True, home_on_init=home_on_init)
+        startup_home_skip_reason = await robot.configure(isolate=True, home_on_init=home_on_init)
+        if startup_home_skip_reason is not None:
+            home_on_init = False
         logger.info("Built Robot")
     except Exception as e:
         set_robot_initialization_error(e)
@@ -224,6 +226,8 @@ async def init_robot_worker() -> None:
         if home_on_init is False:
             if failed_motor_components:
                 reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
+            elif startup_home_skip_reason is not None:
+                reason = startup_home_skip_reason
             else:
                 reason = "Automatic homing disabled on initialization"
             worker.set_needs_home(reason, axes=sorted(CRITICAL_MOTOR_COMPONENTS))

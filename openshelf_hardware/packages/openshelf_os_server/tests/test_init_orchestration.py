@@ -143,19 +143,29 @@ async def test_robot_initialization_checks_recovered_bin_workflows_before_config
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("has_active_bin_workflow", "failed_motor_components", "expected_reason", "expected_axes"),
+    ("has_active_bin_workflow", "failed_motor_components", "skip_reason", "expected_reason", "expected_axes"),
     [
         (
             True,
             [],
+            None,
             "Automatic homing disabled on initialization",
             sorted(robot_module.CRITICAL_MOTOR_COMPONENTS),
         ),
         (
             False,
             ["x_axis"],
+            None,
             "Startup failed for motion components: x_axis",
             ["x_axis"],
+        ),
+        # Open cabinet doors skip the startup home; unhomed axes must not come up ready.
+        (
+            False,
+            [],
+            "Startup homing skipped because the cabinet doors were open",
+            "Startup homing skipped because the cabinet doors were open",
+            sorted(robot_module.CRITICAL_MOTOR_COMPONENTS),
         ),
     ],
 )
@@ -163,6 +173,7 @@ async def test_robot_initialization_blocks_startup_scans_before_worker_exposure(
     monkeypatch,
     has_active_bin_workflow,
     failed_motor_components,
+    skip_reason,
     expected_reason,
     expected_axes,
 ):
@@ -170,10 +181,11 @@ async def test_robot_initialization_blocks_startup_scans_before_worker_exposure(
     robot = MagicMock()
     robot.get_init_component_names.return_value = ["x_axis"]
 
-    async def configure(**_kwargs) -> None:
+    async def configure(**_kwargs):
         events.append("configure")
         for component in failed_motor_components:
             get_init_tracker().report(component, "failed", reason="startup fault")
+        return skip_reason
 
     robot.configure = configure
 
