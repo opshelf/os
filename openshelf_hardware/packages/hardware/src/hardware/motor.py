@@ -39,7 +39,7 @@ DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
 # Y following-error trip for homing only; restored to max_following_error after,
 # since lifts at speed lag well past 10 mm.
 HOME_FOLLOWING_ERROR_MM = 10.0
-Y_HOME_BRAKE_CYCLE_S = 1.0
+Y_HOME_SETTLE_LIFT_MM = 5.0
 ALARM_DETECT_FOLLOWING_ERROR_BIT = 2
 # Y zeroes only once the homing trip is cleared and 0x6002 reads ready (0x000P):
 # a 0x21 written while it still reads 0x0040 (quick stop) is silently dropped.
@@ -2303,17 +2303,16 @@ class Motor():
 
         return restore_errors
 
-    async def _cycle_brake_after_home(self) -> None:
-        """Release and re-set the Y brake once more after the home park.
+    async def _settle_after_home(self) -> None:
+        """Lift Y off its home stop and return to zero before the first real move.
 
-        On lb4a-4 the first climb after a home tripped alarm 32 at 75-101 mm: the
-        home leaves the belt preloaded against the stop and the park locks that in.
-        One extra enable/disable (the drive's SO2 brake output follows the enable)
-        with no motion releases it, per the onsite test of 2026-10-26.
+        On lb4a-4 the first climb after a home tripped alarm 32 at 75-101 mm
+        whenever it went straight from the homed zero; any upward move first
+        (1 mm was enough) cleared it, a downward one did not.
         """
-        await self.enable()
-        await asyncio.sleep(Y_HOME_BRAKE_CYCLE_S)
-        await self.disable()
+        rpm = self._params.home_rpm or self._params.ret_rpm
+        await self.move_to_position(Y_HOME_SETTLE_LIFT_MM, rpm=rpm)
+        await self.move_to_position(0.0, rpm=rpm)
 
     async def _verify_home_limit_engaged(self) -> None:
         if self._home_limit_input is None:
@@ -2441,10 +2440,9 @@ class Motor():
                         raise MotorConfigError(
                             f"Failed to restore motor {self._motor_id} " + "; ".join(restore_errors)
                         )
+                    await self._settle_after_home()
 
                 await self._park()
-                if is_y_axis and self._hold_enabled is False:
-                    await self._cycle_brake_after_home()
 
                 self._is_homed = True
                 self._hard_stopped = False
