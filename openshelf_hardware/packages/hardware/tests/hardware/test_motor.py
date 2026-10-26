@@ -807,19 +807,21 @@ async def test_y_axis_home_fails_when_the_drive_drops_the_zero(mock_controller, 
 
 
 @pytest.mark.asyncio
-async def test_y_axis_home_lifts_off_the_stop_after_restoring_overrides(mock_controller):
-    # lb4a-4: the first climb straight from the homed zero tripped alarm 32 at ~90 mm.
+async def test_y_axis_home_cycles_the_brake_once_more_after_the_park(mock_controller, monkeypatch):
+    # lb4a-4: the first climb after a home tripped alarm 32 at ~90 mm until the
+    # brake was released and set once more with no motion.
+    monkeypatch.setattr("hardware.motor.Y_HOME_BRAKE_CYCLE_S", 0.0)
     motor = y_home_motor(mock_controller)
     echo_registers(mock_controller, {0x0159: 0x24})
-    targets: list[float] = []
-    motor.move_to_position = AsyncMock(side_effect=lambda value, **_: targets.append(value))
 
     await motor.home(homing_peak_current=30)
 
     calls = mock_controller.write_single_register.await_args_list
-    assert targets == [5.0, 0.0]
+    enables = [c.args[2] for c in calls if c.args[1] == 0x000F]
+    # Homing enable, park, extra release, final park: ends de-energised on the brake.
+    assert enables[-3:] == [0, 1, 0]
+    # The cycle runs at running current and limit, and moves nothing.
+    assert calls.index(call(1, 0x000B, 4000)) < len(calls) - 1 - calls[::-1].index(call(1, 0x000F, 1))
+    assert call(1, 0x0191, 10) in calls
+    assert calls.count(call(1, 0x6002, 0x10)) == 1
     assert motor.is_homed() is True
-    # The lift runs at running current and limit, and before the park.
-    assert motor.move_to_position.await_count == 2
-    assert call(1, 0x0191, 10) in calls and call(1, 0x000B, 4000) in calls
-    assert calls.index(call(1, 0x000F, 0)) > calls.index(call(1, 0x000B, 4000))
