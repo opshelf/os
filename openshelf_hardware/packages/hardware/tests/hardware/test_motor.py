@@ -671,6 +671,7 @@ def y_home_motor(mock_controller, **overrides) -> Motor:
             brake_output_function=0x24,
             brake_release_delay_ms=0,
             physical_to_logical=lambda value: value,
+            logical_to_physical=lambda value: value,
             **overrides,
         ),
     )
@@ -803,3 +804,22 @@ async def test_y_axis_home_fails_when_the_drive_drops_the_zero(mock_controller, 
     assert mock_controller.write_single_register.await_args_list[-1] == call(1, 0x000B, 4000)
     # Never parked on a bad zero.
     assert call(1, 0x000F, 0) not in mock_controller.write_single_register.await_args_list
+
+
+@pytest.mark.asyncio
+async def test_y_axis_home_lifts_off_the_stop_after_restoring_overrides(mock_controller):
+    # lb4a-4: the first climb straight from the homed zero tripped alarm 32 at ~90 mm.
+    motor = y_home_motor(mock_controller)
+    echo_registers(mock_controller, {0x0159: 0x24})
+    targets: list[float] = []
+    motor.move_to_position = AsyncMock(side_effect=lambda value, **_: targets.append(value))
+
+    await motor.home(homing_peak_current=30)
+
+    calls = mock_controller.write_single_register.await_args_list
+    assert targets == [5.0, 0.0]
+    assert motor.is_homed() is True
+    # The lift runs at running current and limit, and before the park.
+    assert motor.move_to_position.await_count == 2
+    assert call(1, 0x0191, 10) in calls and call(1, 0x000B, 4000) in calls
+    assert calls.index(call(1, 0x000F, 0)) > calls.index(call(1, 0x000B, 4000))
