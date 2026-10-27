@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import {
 		abortCycleTest,
 		continueCycleTest,
@@ -37,14 +37,13 @@
 	let snapshot = $state<CycleTestSnapshot | null>(null);
 	let stream: ReconnectingEventSource | null = null;
 	let isRequesting = $state<boolean>(false);
-	let logElement = $state<HTMLPreElement | null>(null);
 
 	const isActive = $derived(snapshot?.state === 'running' || snapshot?.state === 'paused');
 	const passedCount = $derived(snapshot?.results.filter((result) => result.passed).length ?? 0);
-	const failedCount = $derived(
-		snapshot?.results.filter((result) => result.passed === false && result.cell !== snapshot?.current)
-			.length ?? 0
+	const doneCount = $derived(
+		snapshot?.results.filter((result) => result.cell !== snapshot?.current).length ?? 0
 	);
+	const failedResult = $derived(snapshot?.results.find((result) => result.passed === false && result.cell !== snapshot?.current) ?? null);
 
 	onMount(function () {
 		if (browser === false) {
@@ -73,16 +72,24 @@
 		} else {
 			closeStream();
 		}
-
-		void scrollLog();
 	}
 
-	async function scrollLog(): Promise<void> {
-		await tick();
+	// Indexes on these devices are single digits, so "b32" becomes "B:3:2" as it is typed.
+	function formatCellInput(value: string): string {
+		return value
+			.toUpperCase()
+			.replace(/[^FB0-9,:]/g, '')
+			.split(',')
+			.map((part) => part.replace(/:/g, '').split('').join(':'))
+			.join(',');
+	}
 
-		if (logElement !== null) {
-			logElement.scrollTop = logElement.scrollHeight;
-		}
+	function didInputCell(event: Event, assign: (value: string) => void): void {
+		const input = event.target as HTMLInputElement;
+		const formatted = formatCellInput(input.value);
+
+		input.value = formatted;
+		assign(formatted);
 	}
 
 	function openStream(): void {
@@ -208,11 +215,6 @@
 		return request(abortCycleTest, 'failed to abort cycle test');
 	}
 
-	function formatSteps(steps: Record<string, boolean>): string {
-		return Object.entries(steps)
-			.map(([name, ok]) => `${name} ${ok ? 'ok' : 'fail'}`)
-			.join(', ');
-	}
 </script>
 
 <div class="scroll-x cycle-test">
@@ -260,24 +262,50 @@
 			<tr>
 				<td>
 					<span class="field-label">target</span>
-					<input type="text" placeholder="F, 2, F:2, 2:3, F:2:3" bind:value={target} disabled={isActive} />
+					<input
+						type="text"
+						placeholder="F, 2, F:2, 2:3, F:2:3"
+						value={target}
+						oninput={(event) => didInputCell(event, (value) => (target = value))}
+						disabled={isActive}
+					/>
 				</td>
 				<td>
 					<span class="field-label">start</span>
-					<input type="text" placeholder="B:0:3" bind:value={start} disabled={isActive} />
+					<input
+						type="text"
+						class="cell-input"
+						placeholder="B:0:3"
+						value={start}
+						oninput={(event) => didInputCell(event, (value) => (start = value))}
+						disabled={isActive}
+					/>
 				</td>
 				<td>
 					<span class="field-label">skip</span>
-					<input type="text" placeholder="F:1,B:2:4" bind:value={skip} disabled={isActive} />
+					<input
+						type="text"
+						class="cell-input"
+						placeholder="F:1"
+						value={skip}
+						oninput={(event) => didInputCell(event, (value) => (skip = value))}
+						disabled={isActive}
+					/>
 				</td>
 			</tr>
 			<tr>
 				<td colspan="3">
-					<div class="inline">
-						<label class="toggle"><input type="checkbox" bind:checked={shuffle} disabled={isActive} />shuffle</label>
-						<label class="toggle"><input type="checkbox" bind:checked={step} disabled={isActive} />pause after each cell</label>
-						<label class="toggle"><input type="checkbox" bind:checked={clear} disabled={isActive} />clear all items first</label>
-					</div>
+					<label class="toggle"><input type="checkbox" bind:checked={shuffle} disabled={isActive} /><span>shuffle</span></label>
+				</td>
+			</tr>
+			<tr>
+				<td colspan="3">
+					<label class="toggle"><input type="checkbox" bind:checked={step} disabled={isActive} /><span>pause after each cell</span></label>
+				</td>
+			</tr>
+			<tr>
+				<td colspan="3">
+					<label class="toggle"><input type="checkbox" bind:checked={clear} disabled={isActive} /><span>clear all items first</span></label>
 				</td>
 			</tr>
 			<tr>
@@ -306,36 +334,49 @@
 		<table>
 			<thead>
 				<tr>
-					<th colspan="4">
-						{snapshot.state}
-						{#if snapshot.config?.loop !== null && snapshot.config?.loop !== undefined}
-							· loop {snapshot.loop}{snapshot.config.loop > 0 ? `/${snapshot.config.loop}` : ''}
-						{/if}
-						· {snapshot.results.length}/{snapshot.total} cells · {passedCount} passed · {failedCount} failed
-						{#if snapshot.current !== null}· at {snapshot.current}{/if}
-					</th>
+					<th colspan="2">test progress</th>
 				</tr>
 			</thead>
 			<tbody>
-				{#if snapshot.hardware_fault !== null}
-					<tr><td colspan="4" class="fail">hardware fault: {snapshot.hardware_fault}</td></tr>
-				{/if}
-				{#if snapshot.error !== null}
-					<tr><td colspan="4" class="fail">{snapshot.error}</td></tr>
-				{/if}
-				{#each snapshot.results as result}
+				<tr>
+					<td>state</td>
+					<td>{snapshot.state}{snapshot.current !== null ? ` ${snapshot.current}` : ''}</td>
+				</tr>
+				{#if snapshot.config?.loop !== null && snapshot.config?.loop !== undefined}
 					<tr>
-						<td>{result.cell}</td>
-						<td class={result.cell === snapshot.current ? '' : result.passed ? 'pass' : 'fail'}>
-							{result.cell === snapshot.current ? 'running' : result.passed ? 'pass' : 'fail'}
-						</td>
-						<td>{formatSteps(result.steps)}{result.error !== null ? ` — ${result.error}` : ''}</td>
-						<td>{result.cell === snapshot.current ? '' : `${result.duration_s}s`}</td>
+						<td>loop</td>
+						<td>{snapshot.loop}{snapshot.config.loop > 0 ? ` of ${snapshot.config.loop}` : ''}</td>
 					</tr>
-				{/each}
+				{/if}
+				<tr>
+					<td>passed</td>
+					<td>{passedCount}</td>
+				</tr>
+				{#if snapshot.total > 0}
+					<tr>
+						<td>remaining</td>
+						<td>{snapshot.total - doneCount}</td>
+					</tr>
+				{/if}
+				{#if failedResult !== null}
+					<tr>
+						<td>failed</td>
+						<td class="fail">{failedResult.cell}{failedResult.error !== null ? `: ${failedResult.error}` : ''}</td>
+					</tr>
+				{/if}
+				{#if snapshot.hardware_fault !== null}
+					<tr>
+						<td>hardware fault</td>
+						<td class="fail">{snapshot.hardware_fault}</td>
+					</tr>
+				{:else if snapshot.error !== null}
+					<tr>
+						<td>error</td>
+						<td class="fail">{snapshot.error}</td>
+					</tr>
+				{/if}
 			</tbody>
 		</table>
-		<pre class="log" bind:this={logElement}>{snapshot.log.join('\n')}</pre>
 	</div>
 {/if}
 
@@ -360,27 +401,18 @@
 	.toggle {
 		display: flex;
 		align-items: center;
-		gap: 0.4rem;
+		gap: 0.5rem;
 	}
 
 	.short {
 		width: 5em;
 	}
 
-	.pass {
-		color: #087f23;
+	.cell-input {
+		width: 6ch;
 	}
 
 	.fail {
 		color: #c62828;
-	}
-
-	.log {
-		max-height: 20em;
-		overflow: auto;
-		border: 2px solid black;
-		padding: 0.5em;
-		font-size: 0.85em;
-		white-space: pre-wrap;
 	}
 </style>
