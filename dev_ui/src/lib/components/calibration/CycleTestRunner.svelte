@@ -24,7 +24,7 @@
 	];
 
 	let mode = $state<CycleTestMode>('retrieve_store');
-	let liftMm = $state<string>('10');
+	let liftMm = $state<number | null>(10);
 	let target = $state<string>('');
 	let start = $state<string>('');
 	let skip = $state<string>('');
@@ -32,7 +32,7 @@
 	let clear = $state<boolean>(false);
 	let step = $state<boolean>(false);
 	let loop = $state<'once' | 'forever' | 'count'>('once');
-	let loopCount = $state<string>('2');
+	let loopCount = $state<number | null>(2);
 
 	let snapshot = $state<CycleTestSnapshot | null>(null);
 	let stream: ReconnectingEventSource | null = null;
@@ -145,14 +145,14 @@
 			}
 
 			mode = MODES.some((item) => item.value === stored.mode) ? stored.mode : mode;
-			liftMm = typeof stored.liftMm === 'string' ? stored.liftMm : liftMm;
+			liftMm = typeof stored.liftMm === 'number' ? stored.liftMm : liftMm;
 			target = typeof stored.target === 'string' ? stored.target : target;
 			start = typeof stored.start === 'string' ? stored.start : start;
 			skip = typeof stored.skip === 'string' ? stored.skip : skip;
 			shuffle = stored.shuffle === true;
 			step = stored.step === true;
 			loop = ['once', 'forever', 'count'].includes(stored.loop) ? stored.loop : loop;
-			loopCount = typeof stored.loopCount === 'string' ? stored.loopCount : loopCount;
+			loopCount = typeof stored.loopCount === 'number' ? stored.loopCount : loopCount;
 		} catch {
 			return;
 		}
