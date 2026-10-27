@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from sqlalchemy import select
 
@@ -88,3 +90,15 @@ async def test_abort_during_a_step_cell_does_not_leave_the_run_paused() -> None:
 		await asyncio.wait_for(manager.pause(), timeout=1)
 
 	assert manager.snapshot.state != "paused"
+
+
+def test_loopback_token_is_minted_on_a_freshly_booted_host(monkeypatch) -> None:
+	# monotonic() starts near zero after boot; an empty bearer would drop the run's identity to the dev auto-user or a 401.
+	monkeypatch.setattr(cycle_test.time, "monotonic", lambda: 120.0)
+	role = SimpleNamespace(name="admin", permissions=["robot:control"])
+	auth = cycle_test._UserTokenAuth(SimpleNamespace(id=1, email="a@b.c", role=role, access_level=None))
+	request = httpx.Request("GET", "http://test/api/storage/grid")
+
+	next(auth.auth_flow(request))
+
+	assert request.headers["Authorization"].removeprefix("Bearer ")

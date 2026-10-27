@@ -201,7 +201,7 @@ class _UserTokenAuth(httpx.Auth):
 		self._service = AuthService(settings.auth.jwt_secret or "", settings.auth.jwt_algorithm)
 		self._user = user
 		self._token = ""
-		self._minted_at = 0.0
+		self._minted_at = float("-inf")
 
 	def auth_flow(self, request: httpx.Request):
 		if time.monotonic() - self._minted_at > TOKEN_REFRESH_S:
