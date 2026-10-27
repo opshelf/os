@@ -29,6 +29,10 @@
 	let isLoadingHomeOnInit = true;
 	let isUpdatingHomeOnInit = false;
 	let homeOnInitError = '';
+	type SentryReporting = { enabled: boolean; default: boolean; initialized: boolean };
+	let sentryReporting: SentryReporting | null = null;
+	let isUpdatingSentryReporting = false;
+	let sentryReportingError = '';
 	let isRestartingApi = false;
 	let restartApiError = '';
 	let isAcknowledgingSafety = false;
@@ -245,6 +249,34 @@
 		}
 	}
 
+	async function loadSentryReporting(): Promise<void> {
+		sentryReportingError = '';
+
+		try {
+			sentryReporting = await apiFetch<SentryReporting>('/system/sentry-reporting');
+		} catch (err) {
+			sentryReportingError = err instanceof Error ? err.message : 'failed to load sentry setting';
+		}
+	}
+
+	async function didClickSentryReporting(): Promise<void> {
+		if (sentryReporting === null) return;
+		isUpdatingSentryReporting = true;
+		sentryReportingError = '';
+
+		try {
+			sentryReporting = await apiFetch<SentryReporting>('/system/sentry-reporting', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ enabled: !sentryReporting.enabled })
+			});
+		} catch (err) {
+			sentryReportingError = err instanceof Error ? err.message : 'failed to update sentry setting';
+		} finally {
+			isUpdatingSentryReporting = false;
+		}
+	}
+
 	async function didClickRestartApi(): Promise<void> {
 		isRestartingApi = true;
 		restartApiError = '';
@@ -350,6 +382,7 @@
 	onMount(() => {
 		loadSystemInfo();
 		loadHomeOnInit();
+		loadSentryReporting();
 		loadOperatingMode();
 	});
 </script>
@@ -420,6 +453,27 @@
 							</div>
 							{#if homeOnInitError !== ''}
 								<ErrorMessage message={homeOnInitError} />
+							{/if}
+						</td>
+					</tr>
+					<tr>
+						<td class="label-cell">sentry error reporting</td>
+						<td class="value-cell">
+							<div class="status-action-cell">
+								<span
+									>{sentryReporting === null
+										? 'loading...'
+										: `${sentryReporting.enabled ? 'enabled' : 'disabled'}${sentryReporting.initialized ? '' : ' (sdk not initialized)'}, resets to ${sentryReporting.default ? 'enabled' : 'disabled'} on restart`}</span
+								>
+								<button
+									disabled={sentryReporting === null || isUpdatingSentryReporting === true}
+									onclick={didClickSentryReporting}
+								>
+									{sentryReporting?.enabled ? 'DISABLE' : 'ENABLE'}
+								</button>
+							</div>
+							{#if sentryReportingError !== ''}
+								<ErrorMessage message={sentryReportingError} />
 							{/if}
 						</td>
 					</tr>

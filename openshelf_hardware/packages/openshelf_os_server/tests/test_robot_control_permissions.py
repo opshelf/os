@@ -10,6 +10,7 @@ import pytest
 from httpx import ASGITransport
 from sqlalchemy import delete, select
 
+from openshelf_os import operating_mode
 from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.database.models import AuditLog, Item, Role, User
 from openshelf_os_server.database.session import AsyncSessionLocal
@@ -47,6 +48,7 @@ ROBOT_CONTROL_ROUTES: list[tuple[str, str, Any]] = [
     ("POST", "/api/demo/cycle/start", None),
     ("POST", "/api/demo/cycle/stop", None),
     ("POST", "/api/system/restart", None),
+    ("PUT", "/api/system/sentry-reporting", {"enabled": True}),
 ]
 
 
@@ -136,3 +138,20 @@ async def test_store_of_a_new_item_needs_storage_write(tokens: dict[str, str]) -
 
     assert response.status_code == 403, response.text
     assert response.json()["detail"]["message"] == "Missing required permission: storage:write."
+
+
+@pytest.mark.anyio
+async def test_sentry_reporting_toggle_round_trip(tokens: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(operating_mode, "_sentry_reporting_override", None)
+    monkeypatch.setattr(operating_mode, "get_operating_mode", lambda: operating_mode.OperatingMode.development)
+
+    initial = await _request(tokens["controller"], "GET", "/api/system/sentry-reporting", None)
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["enabled"] is False
+    assert initial.json()["default"] is False
+
+    enabled = await _request(tokens["controller"], "PUT", "/api/system/sentry-reporting", {"enabled": True})
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["enabled"] is True
+    assert enabled.json()["default"] is False
+    assert operating_mode.is_sentry_reporting_enabled() is True

@@ -8,6 +8,9 @@ import signal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+import sentry_sdk
+from openshelf_os.operating_mode import is_sentry_reporting_enabled, set_sentry_reporting_enabled, should_enable_sentry
+
 from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.settings import get_operating_mode, get_root_config, save_root_config
 from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
@@ -27,6 +30,16 @@ class HomeOnInitResponse(BaseModel):
 
 class HomeOnInitUpdateRequest(BaseModel):
 	home_on_init: bool
+
+
+class SentryReportingResponse(BaseModel):
+	enabled: bool
+	default: bool
+	initialized: bool
+
+
+class SentryReportingUpdateRequest(BaseModel):
+	enabled: bool
 
 
 class RestartResponse(BaseModel):
@@ -95,6 +108,50 @@ async def set_home_on_init(request: HomeOnInitUpdateRequest) -> HomeOnInitRespon
 	save_root_config(config)
 	logger.info("home_on_init_changed", home_on_init=request.home_on_init)
 	return HomeOnInitResponse(home_on_init=config.robot_app.home_on_init)
+
+
+def _sentry_reporting_response() -> SentryReportingResponse:
+	return SentryReportingResponse(
+		enabled=is_sentry_reporting_enabled(),
+		default=should_enable_sentry(),
+		initialized=sentry_sdk.is_initialized(),
+	)
+
+
+@router.get(
+    "/sentry-reporting",
+    response_model=SentryReportingResponse,
+    dependencies=[Depends(require_permissions("robot:control"))],
+    summary="Read Sentry error reporting state",
+    responses=response_docs(errors=(401, 403)),
+)
+async def get_sentry_reporting() -> SentryReportingResponse:
+	"""Read Sentry error reporting state.
+
+	Requires `robot:control`. `enabled` is the live state, `default` is what it resets to
+	on API restart (on in production and demo, off otherwise), and `initialized` is false
+	when no Sentry DSN is configured for this process, in which case nothing is sent.
+	"""
+	return _sentry_reporting_response()
+
+
+@router.put(
+    "/sentry-reporting",
+    response_model=SentryReportingResponse,
+    dependencies=[Depends(require_permissions("robot:control"))],
+    summary="Enable or disable Sentry error reporting",
+    responses=response_docs(errors=(401, 403)),
+)
+async def set_sentry_reporting(request: SentryReportingUpdateRequest) -> SentryReportingResponse:
+	"""Enable or disable Sentry error reporting.
+
+	Requires `robot:control`. Gates every Sentry event from the API and robot worker,
+	including hardware crash video recordings. Not persisted: an API restart restores the
+	operating mode default.
+	"""
+	set_sentry_reporting_enabled(request.enabled)
+	logger.info("sentry_reporting_changed", enabled=request.enabled)
+	return _sentry_reporting_response()
 
 
 @router.post(

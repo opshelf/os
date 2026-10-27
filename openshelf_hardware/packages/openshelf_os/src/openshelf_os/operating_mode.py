@@ -50,11 +50,25 @@ def is_service_process() -> bool:
 
 
 def should_enable_sentry(mode: OperatingMode | None = None) -> bool:
+    """Default for Sentry reporting before anyone toggles it at runtime."""
     current_mode = mode if mode is not None else get_operating_mode()
 
-    # Demo devices run real hardware but their errors are not customer incidents;
-    # keep them in local logs. Mock devices do not run hardware at all.
-    return current_mode == OperatingMode.production
+    return current_mode in {OperatingMode.demo, OperatingMode.production}
+
+
+# Process-local on purpose: a runtime toggle that resets to the mode default on restart.
+_sentry_reporting_override: bool | None = None
+
+
+def is_sentry_reporting_enabled() -> bool:
+    if _sentry_reporting_override is not None:
+        return _sentry_reporting_override
+    return should_enable_sentry()
+
+
+def set_sentry_reporting_enabled(enabled: bool) -> None:
+    global _sentry_reporting_override
+    _sentry_reporting_override = enabled
 
 
 def has_production_traits(mode: OperatingMode | None = None) -> bool:

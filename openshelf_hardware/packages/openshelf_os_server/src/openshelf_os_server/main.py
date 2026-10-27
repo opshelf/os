@@ -49,7 +49,7 @@ from openshelf_os import (
     _strip_pymodbus_frame_dump,
 )
 from openshelf_os.common import CONFIG_PATH, OperatingMode
-from openshelf_os.operating_mode import is_service_process, should_enable_sentry
+from openshelf_os.operating_mode import is_sentry_reporting_enabled, is_service_process
 from openshelf_os.runtime_state import RuntimeStatePaths
 from openshelf_os_server.core.logging_config import configure_logging, get_logger, get_correlation_id
 from openshelf_os_server.core.migrations import rename_module_side_values
@@ -427,6 +427,9 @@ def _sentry_event_is_shutdown_cancelled_request(event: dict[str, Any]) -> bool:
 
 
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if is_sentry_reporting_enabled() is False:
+		return None
+
 	if _sentry_event_is_http_exception(event, _hint) is True:
 		return None
 
@@ -474,6 +477,9 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if is_sentry_reporting_enabled() is False:
+		return None
+
 	if _sentry_log_is_suppressed_pymodbus_message(log) is True:
 		return None
 
@@ -514,10 +520,8 @@ def _configure_sentry() -> bool:
 	sentry_dsn = os.getenv("SENTRY_DSN_API", "")
 	mode = get_operating_mode()
 
-	if should_enable_sentry(mode) is False:
-		logger.info("sentry_disabled_for_mode", mode=mode.value)
-		return False
-
+	# Initialized in every mode so the runtime toggle can turn reporting on; the
+	# before_send hooks drop everything while it is off.
 	if is_service_process() is False:
 		logger.info("sentry_disabled_outside_service", mode=mode.value)
 		return False

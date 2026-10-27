@@ -1231,6 +1231,7 @@ async def acknowledge_safety_guard(
         Depends(check_robot_enabled),
     ],
     summary="Set the safety guard bypass",
+    include_in_schema=False,
     responses=response_docs(model=SafetyStatus, errors=(401, 403, 503)),
 )
 async def override_safety_guard(
@@ -1254,6 +1255,7 @@ async def override_safety_guard(
         Depends(check_robot_enabled),
     ],
     summary="Set a component safety bypass",
+    include_in_schema=False,
     responses=response_docs(model=SafetyStatus, errors=(401, 403, 503)),
 )
 async def override_safety_component(

@@ -5,7 +5,7 @@ from typing import Any, List, cast
 import sentry_sdk
 
 from openshelf_os.device import get_device_id
-from openshelf_os.operating_mode import get_operating_mode, is_service_process, should_enable_sentry
+from openshelf_os.operating_mode import get_operating_mode, is_service_process, is_sentry_reporting_enabled
 
 try:
 	from sentry_sdk.integrations.logging import LoggingIntegration
@@ -18,10 +18,8 @@ device_id = get_device_id()
 
 def _configure_sentry() -> bool:
 	mode = get_operating_mode()
-	if should_enable_sentry(mode) is False:
-		logging.debug("Sentry disabled for openshelf_os: mode=%s", mode.value)
-		return False
-
+	# Initialized in every mode so the runtime toggle can turn reporting on; the
+	# before_send hooks drop everything while it is off.
 	if is_service_process() is False:
 		logging.debug("Sentry disabled for openshelf_os: not the service process")
 		return False
@@ -293,6 +291,9 @@ def _sentry_event_has_suppressed_pymodbus_message(event: dict[str, Any]) -> bool
 
 
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if is_sentry_reporting_enabled() is False:
+		return None
+
 	if _sentry_event_has_suppressed_pymodbus_message(event) is True:
 		return None
 
@@ -321,6 +322,9 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if is_sentry_reporting_enabled() is False:
+		return None
+
 	if _sentry_log_is_suppressed_pymodbus_message(log) is True:
 		return None
 

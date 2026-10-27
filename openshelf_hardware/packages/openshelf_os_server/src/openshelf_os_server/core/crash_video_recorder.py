@@ -18,6 +18,7 @@ import av
 import cv2
 import numpy as np
 
+from openshelf_os.operating_mode import is_sentry_reporting_enabled
 from openshelf_os.robot.models import (
     CrashReportArtifacts,
     CrashReportAttachment,
@@ -812,6 +813,8 @@ async def stop_crash_video_recorder() -> None:
 
 
 async def capture_motion_crash_artifacts(reason: str) -> CrashReportArtifacts:
+    if is_sentry_reporting_enabled() is False:
+        return CrashReportArtifacts(context={"status": "sentry_disabled"})
     recorder = _recorder
     if recorder is None:
         return CrashReportArtifacts(context={"status": "not_running"})
@@ -821,6 +824,12 @@ async def capture_motion_crash_artifacts(reason: str) -> CrashReportArtifacts:
 def begin_motion_crash_artifacts(
     reason: str,
 ) -> PreparedCrashCapture | asyncio.Future[CrashReportArtifacts]:
+    # The video only exists to ride along with the Sentry event; skip the encode.
+    if is_sentry_reporting_enabled() is False:
+        completed = asyncio.get_running_loop().create_future()
+        completed.set_result(CrashReportArtifacts(context={"status": "sentry_disabled"}))
+        return completed
+
     recorder = _recorder
     if recorder is not None:
         prepared = recorder.begin_capture(reason)
