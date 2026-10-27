@@ -463,7 +463,7 @@
 								<span
 									>{sentryReporting === null
 										? 'loading...'
-										: `${sentryReporting.enabled ? 'enabled' : 'disabled'}${sentryReporting.initialized ? '' : ' (sdk not initialized)'}, resets to ${sentryReporting.default ? 'enabled' : 'disabled'} on restart`}</span
+										: `${sentryReporting.enabled ? 'enabled' : 'disabled'}${sentryReporting.initialized ? '' : ' (sdk not initialized)'}`}</span
 								>
 								<button
 									disabled={sentryReporting === null || isUpdatingSentryReporting === true}
