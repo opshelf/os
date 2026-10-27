@@ -579,7 +579,8 @@ class CycleTestRunner:
 			return False
 		if not locations:
 			self.log("Warning: no storage cells available, skipping cell tests")
-			return True
+			snapshot.error = "no cells to test"
+			return False
 		filtered = self.filter_locations(locations)
 		if filtered is None:
 			snapshot.error = "no cells to test"
