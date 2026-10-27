@@ -746,6 +746,8 @@ class CycleTestManager:
 	def resume(self) -> bool:
 		if self.snapshot.state != "paused":
 			return False
+		self.snapshot.state = "running"
+		self.publish()
 		self._continue.set()
 		return True
 
