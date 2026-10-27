@@ -1001,16 +1001,19 @@
 			return;
 		}
 
+		// Deleting a shelf deletes every cell on it, so the cell count is the cells that
+		// go with the shelves plus the ones selected on a shelf of their own.
+		let cellCount = cellTargets.length;
+		for (const shelfIdx of shelfTargets) {
+			cellCount += getShelfCells(shelfIdx)?.length ?? 0;
+		}
+
 		const parts: string[] = [];
 		if (shelfTargets.length > 0) {
-			const labels = [...shelfTargets].sort((a, b) => a - b).map((idx) => `${sideInitial}:${idx}`);
-			parts.push(`${shelfTargets.length} ${shelfTargets.length === 1 ? 'shelf' : 'shelves'} ${labels.join(', ')}`);
+			parts.push(`${shelfTargets.length} ${shelfTargets.length === 1 ? 'shelf' : 'shelves'}`);
 		}
-		if (cellTargets.length > 0) {
-			const labels = cellTargets
-				.map((target) => `${sideInitial}:${target.shelf}:${target.cellIdx}`)
-				.sort();
-			parts.push(`${cellTargets.length} ${cellTargets.length === 1 ? 'cell' : 'cells'} ${labels.join(', ')}`);
+		if (cellCount > 0) {
+			parts.push(`${cellCount} ${cellCount === 1 ? 'cell' : 'cells'}`);
 		}
 
 		const confirmed = confirm(`are you sure you want to delete ${parts.join(' and ')}?`);
