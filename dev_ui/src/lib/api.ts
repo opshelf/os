@@ -522,6 +522,73 @@ export async function abortCalibrationTestQueue(): Promise<CalibrationTestQueueS
 	return apiFetch<CalibrationTestQueueSnapshot>('/calibration/test/queue/abort', { method: 'POST' });
 }
 
+export type CycleTestMode =
+	| 'retrieve_store'
+	| 'store_retrieve'
+	| 'store_only'
+	| 'retrieve_only'
+	| 'quick'
+	| 'quick_lift';
+
+export type CycleTestConfig = {
+	mode: CycleTestMode;
+	lift_mm: number | null;
+	target: string | null;
+	start: string | null;
+	skip: string | null;
+	shuffle: boolean;
+	clear: boolean;
+	loop: number | null;
+	step: boolean;
+};
+
+export type CycleTestCellResult = {
+	cell: string;
+	barcode: string | null;
+	steps: Record<string, boolean>;
+	passed: boolean;
+	error: string | null;
+	duration_s: number;
+};
+
+export type CycleTestSnapshot = {
+	state: 'idle' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+	run_id: string | null;
+	config: CycleTestConfig | null;
+	loop: number;
+	loops_passed: number;
+	total: number;
+	current: string | null;
+	results: CycleTestCellResult[];
+	unsized_cells: string[];
+	hardware_fault: string | null;
+	error: string | null;
+	log: string[];
+	started_by: string | null;
+	started_at: string | null;
+	updated_at: string | null;
+};
+
+export async function startCycleTest(config: CycleTestConfig): Promise<CycleTestSnapshot> {
+	return apiFetch<CycleTestSnapshot>('/calibration/cycle-test', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(config)
+	});
+}
+
+export async function getCycleTest(): Promise<CycleTestSnapshot> {
+	return apiFetch<CycleTestSnapshot>('/calibration/cycle-test');
+}
+
+export async function continueCycleTest(): Promise<CycleTestSnapshot> {
+	return apiFetch<CycleTestSnapshot>('/calibration/cycle-test/continue', { method: 'POST' });
+}
+
+export async function abortCycleTest(): Promise<CycleTestSnapshot> {
+	return apiFetch<CycleTestSnapshot>('/calibration/cycle-test/abort', { method: 'POST' });
+}
+
 export type RobotCommandReceipt = {
 	message: string;
 	command_id: string;

@@ -4,6 +4,7 @@
 	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
 	import CellAutoCalibration from '$lib/components/calibration/CellAutoCalibration.svelte';
 	import CellCalibrationTest from '$lib/components/calibration/CellCalibrationTest.svelte';
+	import CycleTestRunner from '$lib/components/calibration/CycleTestRunner.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
 	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
@@ -56,6 +57,7 @@
 	<CellAutoCalibration />
 {:else if selectedView === 'test'}
 	<CellCalibrationTest {initialSide} {initialShelf} {initialCell} />
+	<CycleTestRunner />
 {:else if selectedView === 'io'}
 	<IOBoxCalibration />
 {:else if selectedView === 'rotation'}
