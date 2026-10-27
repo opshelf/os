@@ -30,6 +30,8 @@
 		storeItem,
 		retrieveItem,
 		moveMotor,
+		getRotationAngles,
+		rotateToAngle,
 		type StorageBin,
 		type StorageModuleSide,
 		type StorageGrid,
@@ -1470,8 +1472,9 @@
 		});
 	}
 
-	// Gantry jog to the selected cell's calibrated x/y (z untouched). Hardware only:
-	// 503 in mock mode, like the quick/cycle tests.
+	// Gantry jog to the selected cell's calibrated x/y plus the tool rotation for the
+	// selected side, the same front/back orientation the cell calibration panel applies (z
+	// untouched). Hardware only: 503 in mock mode, like the quick/cycle tests.
 	async function didMoveToCell(): Promise<void> {
 		if (isMovingToCell) {
 			return;
@@ -1484,6 +1487,8 @@
 		try {
 			await moveMotor('x_axis', point.x);
 			await moveMotor('y_axis', point.y);
+			const angles = await getRotationAngles();
+			await rotateToAngle(selectedSide === 'back_module' ? angles.back : angles.front);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 		} finally {
