@@ -710,6 +710,7 @@ class CycleTestManager:
 			raise _Aborted()
 
 	async def pause(self) -> None:
+		self.check_abort()
 		self._continue.clear()
 		self.snapshot.state = "paused"
 		self.log("Paused; continue to test the next cell")

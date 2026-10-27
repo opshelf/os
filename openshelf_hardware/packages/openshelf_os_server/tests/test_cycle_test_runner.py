@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -75,3 +76,15 @@ async def test_create_item_skips_past_many_leftover_test_items(client) -> None:
 
 	assert error is None
 	assert barcode == f"{cycle_test.BARCODE_PREFIX}000151"
+
+
+@pytest.mark.asyncio
+async def test_abort_during_a_step_cell_does_not_leave_the_run_paused() -> None:
+	# Abort while a cell runs must end the run at the next pause; a hung pause keeps the run active and blocks new starts.
+	manager = cycle_test.CycleTestManager()
+	manager._abort = True
+
+	with pytest.raises(cycle_test._Aborted):
+		await asyncio.wait_for(manager.pause(), timeout=1)
+
+	assert manager.snapshot.state != "paused"
