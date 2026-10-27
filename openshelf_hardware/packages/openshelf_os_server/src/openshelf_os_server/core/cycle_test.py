@@ -234,7 +234,7 @@ class CycleTestRunner:
 			auth=_UserTokenAuth(user),
 			timeout=COMMAND_TIMEOUT_S + 10,
 		)
-		self.barcode_counter = 1
+		self.barcode_counter: Optional[int] = None
 		self.is_mock = get_operating_mode() == OperatingMode.mock
 
 	def log(self, line: str) -> None:
@@ -316,7 +316,13 @@ class CycleTestRunner:
 		self.log(f"  Cleared {deleted} items (and their locations){suffix}")
 		return True
 
-	def next_barcode(self) -> str:
+	async def next_barcode(self) -> str:
+		if self.barcode_counter is None:
+			# Start past every leftover test barcode so a run never walks through old ones.
+			async with AsyncSessionLocal() as db:
+				existing = (await db.execute(select(Item.barcode).where(Item.barcode.startswith(BARCODE_PREFIX)))).scalars()
+				suffixes = [b[len(BARCODE_PREFIX):] for b in existing]
+			self.barcode_counter = 1 + max((int(x) for x in suffixes if x.isascii() and x.isdigit()), default=0)
 		barcode = f"{BARCODE_PREFIX}{self.barcode_counter:06d}"
 		self.barcode_counter += 1
 		return barcode
@@ -324,7 +330,7 @@ class CycleTestRunner:
 	async def create_item(self, capacity: dict[str, float]) -> tuple[Optional[str], Optional[str]]:
 		dimensions = {axis: int(capacity[axis] * 0.8) for axis in ("width", "height", "length")}
 		for _ in range(100):
-			barcode = self.next_barcode()
+			barcode = await self.next_barcode()
 			# Creating an existing barcode answers 200 and would reuse an item from an earlier
 			# run, possibly still stored elsewhere, so only fresh barcodes are used.
 			async with AsyncSessionLocal() as db:

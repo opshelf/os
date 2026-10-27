@@ -55,3 +55,23 @@ async def test_run_stops_moving_after_the_first_failing_cell(client, monkeypatch
 	assert pick.await_count == 1
 	assert [r["cell"] for r in snapshot["results"]] == ["F:0:0"]
 	assert snapshot["results"][0]["passed"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_item_skips_past_many_leftover_test_items(client) -> None:
+	# Retrieve runs leave their items behind; a later run must still get a fresh barcode, not give up.
+	dims = {"width": 10, "height": 10, "length": 10}
+	async with AsyncSessionLocal() as db:
+		db.add_all(
+			Item(barcode=f"{cycle_test.BARCODE_PREFIX}{n:06d}", name="old", dimensions=dims) for n in range(1, 151)
+		)
+		await db.commit()
+	runner = object.__new__(cycle_test.CycleTestRunner)
+	runner.barcode_counter = None
+	runner.client = AsyncMock()
+	runner.client.post.return_value.status_code = 200
+
+	barcode, error = await runner.create_item({"width": 10, "height": 10, "length": 10})
+
+	assert error is None
+	assert barcode == f"{cycle_test.BARCODE_PREFIX}000151"
