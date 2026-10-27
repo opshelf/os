@@ -1729,6 +1729,7 @@
 								class="storage-cell"
 								class:selected={isSelected(selectedSide, shelf.shelf_idx, cell.cell_idx)}
 								class:occupied={cell.status.toLowerCase() === 'occupied'}
+								class:manual={cell.is_manual === true}
 								class:unsized={isCellUnsized(cell)}
 								class:dimmed={
 									cell.status.toLowerCase() === 'maintenance' ||
@@ -2080,6 +2081,10 @@
 		background: #fdd;
 		border-color: #d00;
 		color: #d00;
+	}
+
+	.storage-cell.manual {
+		border-width: 4px;
 	}
 
 	.storage-cell.dimmed {
