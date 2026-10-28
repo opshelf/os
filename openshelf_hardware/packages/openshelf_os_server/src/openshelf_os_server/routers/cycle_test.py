@@ -4,7 +4,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import Response
-from sse_starlette.sse import EventSourceResponse
+from openshelf_os_server.sse import EventSourceResponse
 
 from openshelf_os_server.core.cycle_test import (
 	TERMINAL_STATES,

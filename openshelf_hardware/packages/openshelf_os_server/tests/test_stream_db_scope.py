@@ -27,10 +27,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
+from sse_starlette.sse import EventSourceResponse as LibraryEventSourceResponse
+
+from openshelf_os_server import main as main_module
 
 from openshelf_os_server.core.camera import camera_registry
 from openshelf_os_server.database.base import engine
 from openshelf_os_server.main import app
+from openshelf_os_server.middleware import audit as audit_module
 from openshelf_os_server.routers import camera as camera_router
 from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, get_relay_or_current_user_for_stream
 
@@ -148,3 +152,43 @@ async def test_mjpeg_stream_still_rejects_an_unauthenticated_client(
 
     assert response.status_code == 401
     assert response.headers.get("www-authenticate") == "Bearer"
+
+
+@pytest.mark.anyio
+async def test_stalled_sse_client_closes_the_stream_without_an_error_report(
+    seeded_db: AsyncGenerator[None, None], auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sentry OPENSHELF-API-CH/CG: a client that stops reading (sleeping laptop, dead
+    Wi-Fi) trips sse-starlette's per-send timeout. SendTimeoutError is a TimeoutError,
+    so the mapped 504 handler caught it after the stream had started, raised
+    "response already started", and the request was reported as an unhandled error.
+    """
+    library_init = LibraryEventSourceResponse.__init__
+
+    def fast_timeout_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        library_init(self, *args, **{**kwargs, "ping": 0.01, "send_timeout": 0.05})
+
+    monkeypatch.setattr(LibraryEventSourceResponse, "__init__", fast_timeout_init)
+    reported = MagicMock()
+    monkeypatch.setattr(main_module, "capture_unhandled_exception", reported)
+    monkeypatch.setattr(audit_module, "capture_unhandled_exception", reported)
+
+    never = asyncio.Event()
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        await never.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+        if message["type"] == "http.response.body":
+            # BaseHTTPMiddleware forwards each chunk on its own task, so the stream only
+            # times out once a later ping backs up behind this stall. Finite so the
+            # middleware chain can unwind.
+            await asyncio.sleep(0.5)
+
+    await asyncio.wait_for(app(_stream_scope("/api/robot/status", auth_headers), receive, send), timeout=5)
+
+    assert sent[0] == {"type": "http.response.start", "status": 200, "headers": sent[0]["headers"]}
+    reported.assert_not_called()

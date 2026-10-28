@@ -30,7 +30,7 @@ from openshelf_os.robot.commands import (
 import logging
 from openshelf_os.robot.core import POWER_CYCLE_HOLD_S, POWER_RAILS
 from openshelf_os.robot.worker import RobotWorker
-from sse_starlette.sse import EventSourceResponse
+from openshelf_os_server.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 

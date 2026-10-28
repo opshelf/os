@@ -9,7 +9,7 @@ from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sse_starlette.sse import EventSourceResponse
+from openshelf_os_server.sse import EventSourceResponse
 
 from ..core.auth import AuthService
 from ..core.event_log import latest_robot_event_seq

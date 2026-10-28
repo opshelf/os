@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Literal, Optional, ParamSpec, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sse_starlette.sse import EventSourceResponse
+from openshelf_os_server.sse import EventSourceResponse
 
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.common import Parameters
