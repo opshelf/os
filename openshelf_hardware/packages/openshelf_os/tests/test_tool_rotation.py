@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from hardware.exceptions import MotorError
+from hardware.motor import Motor, MotorStatus
 from openshelf_os.exceptions import MovementError
 from openshelf_os.tool import (
     Tool,
@@ -264,3 +266,99 @@ async def test_retract_homes_stage_when_zero_move_stops_outside_clearance() -> N
     stage_motor.clear_alarm.assert_awaited_once()
     stage_motor.home.assert_awaited_once()
     stage_motor.idle.assert_awaited_once()
+
+
+def _z_axis_motor() -> Motor:
+    """A real z_axis Motor, since the incident mechanism lives in homing itself: the recovery
+    home repeats the retract move as its pre-home approach. A motor mock cannot show that."""
+    params = SimpleNamespace(
+        motor_id=30,
+        motor_name="z_axis",
+        lim=170.0,
+        lower_lim=0,
+        home_rpm=100,
+        ret_rpm=60,
+        rpm=100,
+        accel=200,
+        Ip=10,
+        dr=0,
+        mpr=80.0,
+        phys_at_zero=0.0,
+        phys_at_max=170.0,
+    )
+    controller = Mock()
+    controller.write_single_register = AsyncMock()
+    controller.read_holding_registers = AsyncMock(return_value=0)
+    motor = Motor(controller, params)
+    # Real up to the drive: every register write and the homing motion wait are stubbed, so the
+    # sequence under test is the one Tool.retract's recovery actually commands.
+    motor._on_home_motion_started = None
+
+    for name in ("clear_alarm", "move_config", "idle", "set_param", "get_param",
+                 "_prepare_home_motion", "_start_path_zero", "_stop_and_clear_motion",
+                 "_set_and_verify_peak_current", "_verify_zero_position",
+                 "_arm_following_error_trip", "_clear_homing_trip"):
+        setattr(motor, name, AsyncMock())
+    motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
+    return motor
+
+
+@pytest.mark.asyncio
+async def test_retract_recovery_does_not_fail_where_the_retract_move_already_did() -> None:
+    """Issue 7708396327: a retract move that faulted the drive partway toward home was followed
+    by a recovery home whose pre-home approach commanded that same move again. Homing then died
+    with "Failed during pre-home approach" and the whole retraction was lost even though the
+    second attempt only needed to cover the ground the first one had already won."""
+    motor = _z_axis_motor()
+    targets: list[float] = []
+    position = [30.0]
+    # Each commanded push carries the axis all the way to where it is sent, except the very
+    # first one: it gets from 30 mm to 12 mm toward home before the drive faults.
+    motor.get_position = AsyncMock(side_effect=lambda: position[0])
+
+    def finish_homing(**kwargs):
+        # The homing motion itself finds the stop and zeroes the axis, as it always did.
+        position[0] = 0.0
+
+        return MotorStatus.STOPPED
+
+    motor.wait_for_move = AsyncMock(side_effect=finish_homing)
+
+    async def move(value, **kwargs):
+        value = float(value)
+        targets.append(value)
+
+        if len(targets) == 1:
+            position[0] = 12.0
+            raise MotorError("Movement failed for motor 30 (status=FAULT)")
+
+        position[0] = value
+
+    motor.move_to_position = AsyncMock(side_effect=move)
+    tool = Tool.__new__(Tool)
+    tool._params = SimpleNamespace(parameters=SimpleNamespace(
+        STAGE_RETRACT_POSITION_MM=0.0,
+        Z_RETRACT_POSITION_MM=0.0,
+        ROTATION_STAGE_MAX_EXTENSION_MM=0.5,
+        ROTATION_Z_MAX_EXTENSION_MM=0.5,
+    ))
+    tool._ms = AsyncMock()
+    tool._ms.get_position = AsyncMock(return_value=0.0)
+    tool._ms.move_to_position = AsyncMock()
+    tool._ms.idle = AsyncMock()
+    tool._mg = motor
+    tool._handle_fault = AsyncMock()
+    tool._logger = Mock()
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        "Z_MOVE_RPM": 100,
+        "Z_MOVE_ACCEL": 200,
+    }[name])
+
+    await tool.retract()
+
+    # Retracted and idle instead of MovementError("Failed during pre-home approach").
+    # The retractions first push to 0 mm is the one that faulted; the recovery home then sends
+    # its pre-home approach once, to 5 mm short of home, and homes from there. A second 5 mm
+    # approach here is the incident: the same faulted move commanded again.
+    assert targets == [0.0, 5.0]
+    assert tool._handle_fault.await_count == 0

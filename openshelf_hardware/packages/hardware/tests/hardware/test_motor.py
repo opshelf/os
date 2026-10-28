@@ -823,3 +823,108 @@ async def test_y_axis_home_lifts_off_the_stop_after_restoring_overrides(mock_con
     assert motor.move_to_position.await_count == 2
     assert call(1, 0x0191, 10) in calls and call(1, 0x000B, 4000) in calls
     assert calls.index(call(1, 0x000F, 0)) > calls.index(call(1, 0x000B, 4000))
+
+
+
+@pytest.mark.asyncio
+async def test_pre_home_approach_retries_once_after_a_fault_partway(mock_controller):
+    """#7708396327: an axis that faulted partway to the pre-home target used to fail the whole
+    homing on the first pass; a second pass from wherever it stopped used to be all it needed."""
+    motor = home_motor(mock_controller)
+    targets: list[float] = []
+    # The first pass carried the axis from 125 mm to 60 mm before the drive faulted.
+    motor.get_position = AsyncMock(side_effect=[125.0, 60.0])
+
+    async def move(value, **kwargs):
+        targets.append(value)
+
+        if len(targets) == 1:
+            raise MotorError("Movement failed for motor 30 (status=FAULT)")
+
+    motor.move_to_position = AsyncMock(side_effect=move)
+
+    await motor._move_near_home(200)
+
+    assert targets == [5.0, 5.0]
+    # The retry is not a blind second push: it clears the alarm the faulted move left behind
+    # first, and a drive that will not clear stops there.
+    assert motor.clear_alarm.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_pre_home_approach_does_not_retry_a_drive_that_will_not_clear(mock_controller):
+    """A persistent alarm is the drive saying it is still jammed, so the approach does not
+    push again; homing fails with the first fault as it always did."""
+    motor = home_motor(mock_controller)
+    motor.clear_alarm = AsyncMock(side_effect=MotorError("Alarm 32 persists after clear attempt"))
+    motor.get_position = AsyncMock(side_effect=[125.0, 60.0])
+    motor.move_to_position = AsyncMock(
+        side_effect=MotorError("Movement failed for motor 30 (status=FAULT)")
+    )
+
+    with pytest.raises(MotorError, match="status=FAULT"):
+        await motor._move_near_home(200)
+
+    assert motor.move_to_position.await_count == 1
+    assert motor.clear_alarm.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_pre_home_approach_does_not_retry_a_fault_that_moved_nothing(mock_controller):
+    """An axis that never got anywhere has no ground a second push could cover; that fault
+    belongs to a human, not to another second of the same failed move."""
+    motor = home_motor(mock_controller)
+    motor.get_position = AsyncMock(side_effect=[60.0, 60.0])
+    motor.move_to_position = AsyncMock(
+        side_effect=MotorError("Movement failed for motor 30 (status=FAULT)")
+    )
+
+    with pytest.raises(MotorError, match="status=FAULT"):
+        await motor._move_near_home(200)
+
+    assert motor.move_to_position.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_pre_home_approach_does_not_retry_when_the_position_cannot_be_read(mock_controller):
+    """With no position to compare the retry has no evidence the axis moved, so homing fails
+    the way it always did instead of pushing blind."""
+    motor = home_motor(mock_controller)
+    motor.get_position = AsyncMock(side_effect=[125.0, MotorError("Failed to read position")])
+    motor.move_to_position = AsyncMock(
+        side_effect=MotorError("Movement failed for motor 30 (status=FAULT)")
+    )
+
+    with pytest.raises(MotorError, match="status=FAULT"):
+        await motor._move_near_home(200)
+
+    assert motor.move_to_position.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phys_at_zero, phys_at_max", [(0.0, 100.0), (100.0, 0.0)])
+async def test_pre_home_approach_reads_progress_toward_home_whichever_end_it_travels_to(
+    mock_controller, phys_at_zero, phys_at_max
+):
+    """Progress is measured along the way home, which is the logical low end on a normal axis
+    and the logical high end on an inverted one; the other direction is never progress."""
+    motor = home_motor(mock_controller, phys_at_zero=phys_at_zero, phys_at_max=phys_at_max)
+    targets: list[float] = []
+    # 15 mm sits near the low end, 85 mm near the high end; the retry is the one that walks
+    # toward whichever end this axis calls home (95 mm on the inverted axis).
+    start_mm = 15.0 if phys_at_max > phys_at_zero else 85.0
+    stopped_mm = 6.0 if phys_at_max > phys_at_zero else 94.0
+    motor.get_position = AsyncMock(side_effect=[start_mm, stopped_mm])
+
+    async def move(value, **kwargs):
+        targets.append(value)
+
+        if len(targets) == 1:
+            raise MotorError("Movement failed for motor 30 (status=FAULT)")
+
+    motor.move_to_position = AsyncMock(side_effect=move)
+
+    await motor._move_near_home(200)
+
+    assert targets[0] == motor._get_home_approach_target_mm()
+    assert targets == [targets[0], targets[0]]
