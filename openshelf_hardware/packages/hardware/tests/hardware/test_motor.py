@@ -735,6 +735,7 @@ async def test_home_fails_when_the_limit_input_never_engages(mock_controller, mo
     motor._start_path_zero = AsyncMock()
     motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
     motor._set_zero_position = AsyncMock()
+    motor._verify_zero_position = AsyncMock()
     motor.move_config = AsyncMock()
     motor._park = AsyncMock()
 
