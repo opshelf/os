@@ -586,7 +586,8 @@ class Tool:
     #  High-level operations
     # ------------------------------------------------------------------ #
 
-    async def pick(self, coordinate: c.AxisCoordinate) -> None:
+    async def pick(self, coordinate: c.AxisCoordinate, *, loaded: bool = True) -> None:
+        """Pick the tray at `coordinate`; `loaded=False` only when its cell is known empty."""
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
@@ -600,7 +601,7 @@ class Tool:
                 is_enabled=self.is_grip_detection_enabled,
                 failure_code=GRIP_PICK_FAILED_CODE,
             )
-            await self.retract()
+            await self.retract(loaded=loaded)
             require_grip(await self._gs.read_state(), "retract", is_enabled=self.is_grip_detection_enabled)
 
         except Exception as e:
@@ -654,13 +655,14 @@ class Tool:
         """Open the fingers and confirm they hold nothing before the tool withdraws."""
         require_release(await self._gs.close(), phase, is_enabled=self.is_grip_detection_enabled)
 
-    async def place(self, coordinate: c.AxisCoordinate):
+    async def place(self, coordinate: c.AxisCoordinate, *, loaded: bool = True):
+        """Set the gripped tray down at `coordinate`; `loaded=False` only for a known-empty tray."""
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
-            await self.extend(coordinate)
+            await self.extend(coordinate, loaded=loaded)
             await self.release("place release")
             await self.retract_empty()
 
@@ -1239,7 +1241,27 @@ class Tool:
     #  Tool extension and retraction
     # ------------------------------------------------------------------ #
 
-    async def extend(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
+    async def _extend_axes(
+        self,
+        slide_ext: float,
+        grip_ext: float,
+        grip_rpm: int,
+        grip_accel: int,
+        *,
+        loaded: bool,
+    ) -> None:
+        """Extend stage and Z. A tray that may carry an item reaches its stage pose before Z
+        pushes it in, so no gap opens under the item; an empty tool or tray moves both at once."""
+        if loaded:
+            await self._ms.move_to_position(slide_ext)
+            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            return
+        await run_together(
+            self._ms.move_to_position(slide_ext),
+            self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel),
+        )
+
+    async def extend(self, coordinate: Optional[c.AxisCoordinate] = None, *, loaded: bool = True) -> None:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for extension")
 
@@ -1256,10 +1278,7 @@ class Tool:
 
 
             await self._ms.ready()
-            await run_together(
-                self._ms.move_to_position(slide_ext),
-                self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel),
-            )
+            await self._extend_axes(slide_ext, grip_ext, grip_rpm, grip_accel, loaded=loaded)
 
         except Exception as e:
             await self._handle_fault(e)
@@ -1269,7 +1288,7 @@ class Tool:
 
             raise MovementError(f"Tool extension failed: {str(e)}") from e
 
-    async def extend_IO(self, nudge_override: float | None = None) -> None:
+    async def extend_IO(self, nudge_override: float | None = None, *, loaded: bool = True) -> None:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for IO extension")
 
@@ -1287,10 +1306,7 @@ class Tool:
 
         try:
             await self._ms.ready()
-            await run_together(
-                self._ms.move_to_position(slide_ext),
-                self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel),
-            )
+            await self._extend_axes(slide_ext, grip_ext, grip_rpm, grip_accel, loaded=loaded)
             await self._ms.move_to_position(slide_ext + stage_nudge)
         except Exception as e:
             await self._handle_fault(e)
@@ -1300,7 +1316,7 @@ class Tool:
 
             raise MovementError(f"Tool IO extension failed: {str(e)}") from e
 
-    async def extend_IO_multi_item(self) -> None:
+    async def extend_IO_multi_item(self, *, loaded: bool = True) -> None:
         """Extend to the multi-item tray pose in the IO box; trays need no stage nudge."""
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for IO extension")
@@ -1317,10 +1333,7 @@ class Tool:
 
         try:
             await self._ms.ready()
-            await run_together(
-                self._ms.move_to_position(slide_ext),
-                self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel),
-            )
+            await self._extend_axes(slide_ext, grip_ext, grip_rpm, grip_accel, loaded=loaded)
         except Exception as e:
             await self._handle_fault(e)
 
@@ -1356,12 +1369,15 @@ class Tool:
 
             raise MovementError(f"Tool empty extension failed: {str(e)}") from e
 
-    async def retract(self) -> None:
+    async def retract(self, *, loaded: bool = True) -> None:
+        """Withdraw the gripped tray. A tray that may carry an item (`loaded`) leaves on Z
+        before the stage moves: retracting both at once opens a gap between the tray and the
+        shelf or IO box floor that the item can wedge into or fall through."""
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for retraction")
 
         try:
-            await self._retract_to_configured_positions()
+            await self._retract_to_configured_positions(together=not loaded)
 
         except Exception as e:
             await self._handle_fault(e)
@@ -1373,13 +1389,13 @@ class Tool:
             raise MotorError("Tool motors (z_axis, stage) required for empty retraction")
 
         try:
-            await self._retract_to_configured_positions()
+            await self._retract_to_configured_positions(together=True)
 
         except Exception as e:
             await self._handle_fault(e)
             raise MovementError(f"Tool empty retraction failed: {str(e)}") from e
 
-    async def _retract_to_configured_positions(self) -> None:
+    async def _retract_to_configured_positions(self, *, together: bool) -> None:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for retraction")
 
@@ -1389,34 +1405,35 @@ class Tool:
         if grip_rpm is None or grip_accel is None:
             raise ConfigError("Missing gripper move speed")
 
-        await run_together(
-            self._move_axis_to_retracted_position(
+        def z_retract() -> Awaitable[None]:
+            return self._move_axis_to_retracted_position(
                 self._mg,
                 axis_name="z_axis",
-                target_mm=self._get_float_param(
-                    "Z_RETRACT_POSITION_MM",
-                    DEFAULT_Z_RETRACT_TARGET_MM,
-                ),
+                target_mm=self._get_float_param("Z_RETRACT_POSITION_MM", DEFAULT_Z_RETRACT_TARGET_MM),
                 maximum_mm=self._get_float_param(
                     "ROTATION_Z_MAX_EXTENSION_MM",
                     DEFAULT_ROTATION_Z_MAX_EXTENSION_MM,
                 ),
                 rpm=grip_rpm,
                 accel=grip_accel,
-            ),
-            self._move_axis_to_retracted_position(
+            )
+
+        def stage_retract() -> Awaitable[None]:
+            return self._move_axis_to_retracted_position(
                 self._ms,
                 axis_name="stage",
-                target_mm=self._get_float_param(
-                    "STAGE_RETRACT_POSITION_MM",
-                    DEFAULT_STAGE_RETRACT_TARGET_MM,
-                ),
+                target_mm=self._get_float_param("STAGE_RETRACT_POSITION_MM", DEFAULT_STAGE_RETRACT_TARGET_MM),
                 maximum_mm=self._get_float_param(
                     "ROTATION_STAGE_MAX_EXTENSION_MM",
                     DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM,
                 ),
-            ),
-        )
+            )
+
+        if together:
+            await run_together(z_retract(), stage_retract())
+        else:
+            await z_retract()
+            await stage_retract()
         await self._ms.idle()
 
     async def tool_wait(

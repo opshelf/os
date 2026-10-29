@@ -1,4 +1,5 @@
 """A tray return must hold the tray at grip and after retract."""
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call
 
@@ -146,3 +147,64 @@ async def test_io_cycle_left_without_its_tray_stops_before_the_door_closes(cycle
     assert raised.value.failure_code == GRIP_IO_BOX_FAILED_CODE
     assert call.close_door() not in ops.mock_calls
     robot._tool.place.assert_not_awaited()
+
+
+def build_retract_tool(events):
+    from openshelf_os.tool import Tool
+
+    class Axis:
+        def __init__(self, name):
+            self.name = name
+
+        async def move_to_position(self, target, **_kwargs):
+            events.append(f"{self.name} start")
+            await asyncio.sleep(0.01)
+            events.append(f"{self.name} end")
+
+        async def get_position(self):
+            return 0.0
+
+        async def idle(self):
+            pass
+
+    tool = Tool.__new__(Tool)
+    tool._mg = Axis("z")
+    tool._ms = Axis("stage")
+    tool._params = SimpleNamespace(parameters=SimpleNamespace(Z_MOVE_RPM=800, Z_MOVE_ACCEL=1200))
+    return tool
+
+
+@pytest.mark.asyncio
+async def test_loaded_retract_clears_z_before_the_stage_moves():
+    # Moving the stage while Z still holds a loaded tray in the shelf or IO box opens a gap
+    # under the tray that the item wedges into or falls through.
+    events = []
+    await build_retract_tool(events).retract()
+    assert events == ["z start", "z end", "stage start", "stage end"]
+
+
+@pytest.mark.asyncio
+async def test_loaded_extend_reaches_the_stage_pose_before_z_pushes_in():
+    events = []
+    tool = build_retract_tool(events)
+    await tool._extend_axes(46.0, 160.0, 800, 1200, loaded=True)
+    assert events == ["stage start", "stage end", "z start", "z end"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('cycle', 'flags'), [
+    # retrieve: the occupied cell's tray carries the item into the IO box and comes back empty
+    ('io_place', {'pick': True, 'extend_IO': True, 'retract': False, 'place': False}),
+    # store: the available cell's empty tray goes into the IO box and comes back with the item
+    ('io_pick', {'pick': False, 'extend': False, 'retract': True, 'place': True}),
+])
+async def test_io_cycles_stage_z_only_while_a_tray_may_carry_an_item(cycle, flags):
+    robot, _ = build_robot()
+    robot._tool._my = SimpleNamespace(move_to_position=AsyncMock())
+    robot._tool.extend = AsyncMock()
+    robot._tool.extend_IO = AsyncMock()
+    robot._tool._gs.read_state = AsyncMock(return_value=GripState(0x71, 0x9000, 0x90, 0x40))
+    robot._io.home_door_after_cycle = AsyncMock()
+    await getattr(robot, cycle)(AxisCoordinate(10, 20))
+    for step, loaded in flags.items():
+        assert getattr(robot._tool, step).await_args.kwargs["loaded"] is loaded, step
