@@ -568,6 +568,13 @@ class IOBox:
         if self._md is None:
             return self._door_open
 
+        # The door only sits in a busy window while stationary (0x1122 is written before the
+        # home trigger and after the zero), so the cache is current. Reading would sleep out
+        # the window under the worker's safety-guard lock, forced or not; a pending forced
+        # refresh stays pending.
+        if self._md.is_bus_busy():
+            return self._door_open
+
         if self._door_force_refresh_on_block:
             self._logger.debug("Forcing door refresh after curtain block")
             force = True
