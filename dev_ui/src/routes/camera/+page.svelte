@@ -45,6 +45,7 @@
 	let previewEnd: Point | null = null;
 	let statusTimer: ReturnType<typeof setInterval> | null = null;
 	let cameraStatusUnavailable = false;
+	let isPageVisible = browser === false || document.visibilityState === 'visible';
 
 	$: selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
 	$: isCameraOnline = selectedCamera !== null && selectedCamera.online === true;
@@ -133,7 +134,9 @@
 			const selectedIsOnline =
 				response.cameras.find((camera) => camera.id === selectedCameraId)?.online === true;
 			const shouldRestartStream =
-				cameraStatusUnavailable || (selectedWasOnline === false && selectedIsOnline);
+				cameraStatusUnavailable ||
+				(selectedWasOnline === false && selectedIsOnline) ||
+				(streamError === true && selectedIsOnline);
 
 			cameras = response.cameras;
 			cameraStatusUnavailable = false;
@@ -145,6 +148,20 @@
 			cameraStatusUnavailable = true;
 			return;
 		}
+	}
+
+	// iOS cuts both stream transports of a backgrounded tab and may resume an MJPEG
+	// image frozen without an error, so streams stop while hidden and start fresh on return.
+	function didChangeVisibility(): void {
+		isPageVisible = document.visibilityState === 'visible';
+
+		if (isPageVisible === false) {
+			stopH264Player();
+			return;
+		}
+
+		restartSelectedStream();
+		void refreshCameraStatus();
 	}
 
 	function restartSelectedStream(): void {
@@ -269,9 +286,10 @@
 	}
 
 	function didH264Error(): void {
-		if (selectedCamera !== null) {
+		if (selectedCamera !== null && h264Ready === false) {
 			// This camera did not deliver a WebCodecs stream; keep using the
-			// MJPEG fallback for it for the rest of this session.
+			// MJPEG fallback for it for the rest of this session. A stream that
+			// drops after decoding frames is retried on the next status poll.
 			h264FailedFor.add(selectedCamera.id);
 		}
 
@@ -542,6 +560,8 @@
 	}
 </script>
 
+<svelte:document on:visibilitychange={didChangeVisibility} />
+
 <svelte:head>
 	<title>Cameras • Openshelf</title>
 </svelte:head>
@@ -614,7 +634,7 @@
 		<ErrorMessage
 			message={`camera '${selectedCamera.id}' is offline. verify it is powered and reachable, then refresh.`}
 		/>
-	{:else if streamUrl !== '' && streamError === false}
+	{:else if streamUrl !== '' && streamError === false && isPageVisible === true}
 		<div class="stream-container" class:webcodecs={h264Ready}>
 			<canvas
 				bind:this={feedCanvasEl}

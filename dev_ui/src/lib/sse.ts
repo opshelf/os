@@ -1,6 +1,8 @@
 import { buildAuthenticatedUrl } from './api';
 import { developerPin, ensureValidToken, isAuthenticated, loginAsDeveloper, logout } from './auth';
 
+const RESUME_RECONNECT_AFTER_HIDDEN_MS = 5000;
+
 type EventHandler = (event: MessageEvent<string>) => void;
 
 type ReconnectingEventSourceOptions = {
@@ -28,6 +30,7 @@ export function createReconnectingEventSource(
 	let shouldRefreshAuthentication = false;
 	let isProbingLoginRedirect = false;
 	let didTriggerReload = false;
+	let hiddenAt: number | null = null;
 	const reconnectDelayMs = options.reconnectDelayMs ?? 2000;
 
 	function clearReconnectTimer(): void {
@@ -208,6 +211,13 @@ export function createReconnectingEventSource(
 		}
 
 		nextSource.onerror = () => {
+			// iOS drops the connection of a backgrounded tab; resuming reconnects, so a hidden
+			// page's error is neither an outage nor a reason to sign in again.
+			if (document.visibilityState === 'hidden') {
+				closeSource();
+				return;
+			}
+
 			if (shouldRefreshAuthenticationAfterError() === true) {
 				shouldRefreshAuthentication = true;
 				logout();
@@ -219,13 +229,49 @@ export function createReconnectingEventSource(
 		};
 	}
 
+	// Safari can resume a suspended page with the old connection still reporting OPEN
+	// while nothing arrives on it, so a page that was hidden for a while reconnects anyway.
+	function didChangeLifecycle(event: Event): void {
+		if (document.visibilityState === 'hidden') {
+			hiddenAt ??= Date.now();
+			return;
+		}
+
+		const hiddenForMs = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+		hiddenAt = null;
+
+		const isStale =
+			source === null ||
+			source.readyState !== EventSource.OPEN ||
+			hiddenForMs >= RESUME_RECONNECT_AFTER_HIDDEN_MS ||
+			event.type === 'online' ||
+			(event instanceof PageTransitionEvent && event.persisted === true);
+
+		if (shouldReconnect === false || isStale === false) {
+			return;
+		}
+
+		clearReconnectTimer();
+		closeSource();
+		void reconnect();
+	}
+
+	function setLifecycleListeners(isListening: boolean): void {
+		const method = isListening ? 'addEventListener' : 'removeEventListener';
+		document[method]('visibilitychange', didChangeLifecycle);
+		window[method]('pageshow', didChangeLifecycle);
+		window[method]('online', didChangeLifecycle);
+	}
+
 	return {
 		connect: () => {
 			shouldReconnect = true;
+			setLifecycleListeners(true);
 			void reconnect();
 		},
 		close: () => {
 			shouldReconnect = false;
+			setLifecycleListeners(false);
 			clearReconnectTimer();
 			closeSource();
 		},
