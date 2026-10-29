@@ -1862,6 +1862,8 @@ class RobotWorker:
                     code="worker_error",
                 )
                 try:
+                    # A fault can leave the tray in the gripper; the next command must not run with it.
+                    await self.refresh_tray_on_tool()
                     await self._publish_status()
                 except Exception as publish_err:
                     logging.warning("Failed to publish error status: %s", publish_err)

@@ -102,10 +102,13 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 
 
 async def ensure_no_tray_on_tool(worker) -> None:
-	"""Reject motion while the gripper holds a tray, re-reading it so a cleared tool passes."""
-	if getattr(worker, "_tray_on_tool", False) is not True:
-		return
-	if await worker.refresh_tray_on_tool() is False:
+	"""Reject motion while the gripper holds a tray. Always re-reads the gripper: flows outside the
+	command queue (demo, calibration tests) can leave a tray held without updating the cached flag."""
+	was_held = getattr(worker, "_tray_on_tool", False) is True
+	is_held = await worker.refresh_tray_on_tool()
+	if is_held is not was_held:
+		await worker.get_status_snapshot(force_refresh=True)
+	if is_held is False:
 		return
 	raise api_error(status.HTTP_409_CONFLICT, TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR)
 

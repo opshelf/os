@@ -101,10 +101,12 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 	except (MotorError, MovementError, ToolError, HardwareMotorError) as exc:
 		logger.error("demo_cycle_hardware_fault", exc_info=True)
 		worker.set_needs_home(f"Demo cycle hardware fault: {exc}")
+		await worker.refresh_tray_on_tool()
 		await worker.get_status_snapshot(force_refresh=True)
 	except Exception as exc:
 		logger.error("demo_cycle_unexpected_error", exc_info=True)
 		worker.set_needs_home(f"Demo cycle crashed: {exc}")
+		await worker.refresh_tray_on_tool()
 		await worker.get_status_snapshot(force_refresh=True)
 	finally:
 		worker._demo_cycling = False

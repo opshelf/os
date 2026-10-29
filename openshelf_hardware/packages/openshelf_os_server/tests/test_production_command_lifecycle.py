@@ -27,6 +27,9 @@ class RecordingWorker:
 	def needs_home(self) -> bool:
 		return False
 
+	async def refresh_tray_on_tool(self) -> bool:
+		return False
+
 	async def enqueue_command(
 		self,
 		command: StoreItemCommand,

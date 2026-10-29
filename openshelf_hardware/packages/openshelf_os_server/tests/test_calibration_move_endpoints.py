@@ -42,6 +42,7 @@ def _mock_worker(stage_position: float):
 		needs_home=lambda: False,
 		needs_home_reason=lambda: None,
 		needs_home_axes=lambda: [],
+		refresh_tray_on_tool=AsyncMock(return_value=False),
 	)
 
 
@@ -110,6 +111,7 @@ def _mock_multi_item_worker(grip_state):
 		needs_home_axes=lambda: [],
 		set_needs_home=lambda *args, **kwargs: None,
 		get_status_snapshot=AsyncMock(),
+		refresh_tray_on_tool=AsyncMock(return_value=False),
 	)
 	return worker, operations
 

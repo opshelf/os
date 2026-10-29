@@ -52,6 +52,7 @@ async def test_run_session_cancel_homes_via_abort_without_needs_home() -> None:
     worker = SimpleNamespace(
         set_needs_home=MagicMock(),
         get_status_snapshot=AsyncMock(),
+        refresh_tray_on_tool=AsyncMock(return_value=False),
     )
 
     with patch.object(manager, '_get_current_calibration_params', AsyncMock(return_value={})):

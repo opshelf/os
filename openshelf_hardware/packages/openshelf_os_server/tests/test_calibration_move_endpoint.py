@@ -59,6 +59,7 @@ def _mock_worker_for_move(stage_position: float = 0.0):
 	worker.set_needs_home = MagicMock()
 	worker.needs_home_axes = MagicMock(return_value=[])
 	worker.get_status_snapshot = AsyncMock(return_value={})
+	worker.refresh_tray_on_tool = AsyncMock(return_value=False)
 
 	return worker, tool, order
 
@@ -105,6 +106,7 @@ def _mock_worker_for_rotation() -> tuple[MagicMock, MagicMock]:
 	worker.needs_home_reason.return_value = None
 	worker.set_needs_home = MagicMock()
 	worker.get_status_snapshot = AsyncMock(return_value={})
+	worker.refresh_tray_on_tool = AsyncMock(return_value=False)
 	worker._current_command = None
 	worker._demo_cycling = False
 	worker._safety_guard_bypassed = False
@@ -216,6 +218,7 @@ async def test_iobox_move_retracts_an_extended_tool_before_rotating() -> None:
 	io.open_door = AsyncMock()
 
 	worker = MagicMock()
+	worker.refresh_tray_on_tool = AsyncMock(return_value=False)
 	worker.needs_home.return_value = False
 	worker.needs_home_axes.return_value = []
 	worker.needs_home_reason.return_value = None

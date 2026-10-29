@@ -32,6 +32,7 @@ def _mock_worker(motors: dict[str, AsyncMock] | None = None):
 	worker.clear_needs_home = MagicMock()
 	worker.clear_crash_state = MagicMock()
 	worker.get_status_snapshot = AsyncMock(return_value={})
+	worker.refresh_tray_on_tool = AsyncMock(return_value=False)
 	worker._current_command = None
 	worker._demo_cycling = False
 	worker._is_crashed = False

@@ -12,6 +12,7 @@ from openshelf_os.exceptions import (
 )
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.robot.commands import StoreItemCommand
+from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE
 from openshelf_os_server.core import bin_storage
 from openshelf_os_server.core.bin_storage import BinStorageService, BinWorkflowConflict
 from openshelf_os_server.core.manual_motion import manual_motion_guard
@@ -35,6 +36,9 @@ class FakeWorker:
 
     async def publish_event(self, event) -> None:
         self.events.append(event)
+
+    async def refresh_tray_on_tool(self) -> bool:
+        return False
 
     def get_cached_scale_status(self):
         return SimpleNamespace(occupied=True)
@@ -114,6 +118,7 @@ async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
 
         worker = MagicMock()
         worker.needs_home.return_value = False
+        worker.refresh_tray_on_tool = AsyncMock(return_value=False)
         monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
         monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
         with pytest.raises(HTTPException) as malformed_hardware_error:
@@ -524,6 +529,43 @@ async def test_a_pick_that_never_lifted_the_tray_leaves_no_unfinished_motion():
         assert await service.crash_interrupted_workflows() == []
         assert await service.has_unfinished_motion() is False
         assert (await service.item_bin(items[0].id)).id == trays[0].id
+
+
+@pytest.mark.anyio
+async def test_a_retrieve_refused_for_a_tray_on_the_tool_leaves_no_unfinished_motion():
+    """The worker rejects before any motion, so the bin stays home and a later scan is not seeded from it."""
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        w = await service.begin("retrieve", items[0], None)
+        await service.handle_robot_result(
+            _motion_failure(w, "retrieve_item", TRAY_ON_TOOL_CODE), FakeWorker()
+        )
+
+        assert w.state == "cancelled"
+        assert w.resolution["failure_code"] == TRAY_ON_TOOL_CODE
+        await db.refresh(trays[0])
+        assert trays[0].status == "at_home"
+        assert await service.crash_interrupted_workflows() == []
+        assert await service.has_unfinished_motion() is False
+        assert (await service.item_bin(items[0].id)).id == trays[0].id
+
+
+@pytest.mark.anyio
+async def test_a_return_refused_for_a_tray_on_the_tool_keeps_its_tray_outside():
+    """A refused return never picked the tray up from the IO box, so the tray is still outside."""
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        returned = await service.begin_return((await _checked_out_tray(service, items, trays)).barcode)
+        assert await service.prepare_return(returned, [items[0].id])
+        await service.handle_robot_result(
+            _motion_failure(returned, "store_item", TRAY_ON_TOOL_CODE), FakeWorker()
+        )
+
+        assert returned.state == "failed"
+        await db.refresh(trays[0])
+        assert trays[0].status == "outside"
 
 
 @pytest.mark.anyio
