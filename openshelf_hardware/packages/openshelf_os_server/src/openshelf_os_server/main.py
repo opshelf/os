@@ -111,6 +111,9 @@ PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
 # no-response retry is the log text plus that trailer. Every appended line
 # carries the marker prefix; a deduplicated frame shows up as
 # ">>>>> Repeating....".
+# The same text is also what the hardware layer raises with, for a request the drive never
+# answered (hardware.controller.ModbusTransientNoResponseError), so it is matched anywhere in the
+# message and not only at its start; see the note on the same constants in openshelf_os.__init__.
 ROBOT_INITIALIZATION_FAILED_EVENT = "robot_initialization_failed"
 TOOL_FAULT_LOG_EVENT = "Tool fault detected - manual intervention required"
 # The message uvicorn hands to Task.cancel() for every request task that is still running when
@@ -165,14 +168,12 @@ def _is_pymodbus_no_response_retry(message: Any) -> bool:
 
 	log_text = _strip_pymodbus_frame_dump(message)
 
-	if log_text.startswith(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) is False:
-		return False
-
-	if log_text.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
+	start = log_text.find(PYMODBUS_NO_RESPONSE_RETRY_PREFIX)
+	if start == -1 or log_text.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
 		return False
 
 	retry_count = log_text[
-		len(PYMODBUS_NO_RESPONSE_RETRY_PREFIX):-len(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX)
+		start + len(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) : -len(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX)
 	]
 	return retry_count.isdigit()
 

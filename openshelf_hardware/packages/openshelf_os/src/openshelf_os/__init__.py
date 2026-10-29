@@ -66,6 +66,15 @@ PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
 # carries the marker prefix; a deduplicated frame shows up as
 # ">>>>> Repeating....".
 PYMODBUS_FRAME_DUMP_LINE_PREFIX = ">>>>> "
+# The same text is also what the hardware layer raises with, for a request the drive never
+# answered (hardware.controller.ModbusTransientNoResponseError). It is matched anywhere in the
+# message rather than only at its start, because the wrapper that reports the failure onward
+# prefixes it with what it was doing -- "Failed to set parameter Control word: ...", which is
+# how a bus dropout reached Sentry as a motor error (issue #7681314056) even though these hooks
+# were meant to drop it. A retry-exhausted no-response is a dropout on a bus that still
+# reconnects: the motor fault, the motion timeout and the crash report still get their own
+# issues. An error the drive did answer -- an exception response, a short payload, a port that
+# will not reopen -- never carries this text and stays reportable.
 DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
 DOOR_MOTOR_RECOVERY_FAILED_PREFIX = "Door motor recovery failed:"
 # Prefix of the fault message the debug fault-injection endpoint builds
@@ -129,14 +138,12 @@ def _is_pymodbus_no_response_retry(message: Any) -> bool:
 
 	log_text = _strip_pymodbus_frame_dump(message)
 
-	if log_text.startswith(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) is False:
-		return False
-
-	if log_text.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
+	start = log_text.find(PYMODBUS_NO_RESPONSE_RETRY_PREFIX)
+	if start == -1 or log_text.endswith(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX) is False:
 		return False
 
 	retry_count = log_text[
-		len(PYMODBUS_NO_RESPONSE_RETRY_PREFIX):-len(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX)
+		start + len(PYMODBUS_NO_RESPONSE_RETRY_PREFIX) : -len(PYMODBUS_NO_RESPONSE_RETRY_SUFFIX)
 	]
 	return retry_count.isdigit()
 

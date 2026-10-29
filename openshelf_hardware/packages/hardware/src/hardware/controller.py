@@ -7,7 +7,8 @@ from pymodbus.client import AsyncModbusSerialClient
 from pymodbus.exceptions import ModbusException, ModbusIOException
 
 from .exceptions import (
-    ModbusError, ModbusTimeoutError, ModbusConnectionError
+    ModbusError, ModbusTimeoutError, ModbusConnectionError,
+    ModbusTransientNoResponseError
 )
 
 logger = logging.getLogger(__name__).getChild("controller")
@@ -21,6 +22,95 @@ TRANSIENT_MODBUS_ERRORS = (
     ModbusException,
     asyncio.TimeoutError,
 )
+
+# pymodbus gives up on a request the drive never answered by exhausting its own retries and
+# raising `ModbusIOException` carrying exactly this text (3.11, transaction/transaction.py);
+# `ModbusException.__str__` prefixes it with "Modbus Error: ", and pymodbus' Log.error also
+# appends the last frames as ">>>>> send: ..."/">>>>> recv: ..." lines when DEBUG logging is
+# off -- that trailer reaches the log record, and is stripped below in case a future pymodbus
+# raises with it too. Keep these two strings in step with the same constants in
+# openshelf_os.__init__, which is what decides whether a report reaches Sentry.
+TRANSIENT_NO_RESPONSE_TEXT = "No response received after "
+TRANSIENT_NO_RESPONSE_SUFFIX = " retries, continue with next request"
+PYMODBUS_FRAME_DUMP_LINE_PREFIX = ">>>>> "
+
+
+def strip_pymodbus_frame_dump(message: str) -> str:
+    """Drop the frame dump pymodbus appends to its messages, if one is there.
+
+    Only the first line carries the log text; every appended line starts with the marker
+    prefix, and a deduplicated frame shows up as ">>>>> Repeating....". Anything else after
+    a newline is left untouched.
+    """
+    log_text, separator, trailer = message.partition("\n")
+    if separator == "":
+        return message
+
+    trailer_lines = [line for line in trailer.split("\n") if line.strip() != ""]
+    if trailer_lines == []:
+        return message
+
+    if any(line.startswith(PYMODBUS_FRAME_DUMP_LINE_PREFIX) is False for line in trailer_lines):
+        return message
+
+    return log_text
+
+
+def no_response_retry_count(message: Any) -> int | None:
+    """The retry count of pymodbus' "gave up, no reply" text, or None for any other message."""
+    if not isinstance(message, str):
+        return None
+
+    log_text = strip_pymodbus_frame_dump(message)
+
+    start = log_text.find(TRANSIENT_NO_RESPONSE_TEXT)
+    if start == -1 or log_text.endswith(TRANSIENT_NO_RESPONSE_SUFFIX) is False:
+        return None
+
+    count = log_text[start + len(TRANSIENT_NO_RESPONSE_TEXT) : -len(TRANSIENT_NO_RESPONSE_SUFFIX)]
+    return int(count) if count.isdigit() else None
+
+
+def is_no_response_error(exc: BaseException | None) -> bool:
+    """Whether an error is pymodbus' own "the drive never answered", or wraps one unchanged.
+
+    A drive that stayed silent through every retry is a dropout on a bus that still reconnects,
+    not a device fault: the request went out and nothing came back. A Modbus error the drive
+    answered badly, or a port that will not reopen, is a different failure and says so.
+
+    Walks the cause chain so the wrapper that carries the failure onward is enough -- every
+    error the hardware layer raises for one of these keeps this one as its cause.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+
+        if getattr(current, "transient", False) is True:
+            return True
+
+        if isinstance(current, ModbusIOException) is True:
+            if no_response_retry_count(str(current)) is not None:
+                return True
+
+        current = current.__cause__ or current.__context__
+
+    return False
+
+
+def _no_response_message(exc: BaseException) -> str:
+    """The pymodbus text of a no-response error, without a caller's wrapper around it.
+
+    The bare text is what the openshelf_os Sentry hooks recognise, so it is kept byte for byte:
+    pymodbus prefixes its wire errors with "[Input/Output] " and `ModbusException.__str__` adds
+    "Modbus Error: ", and neither is part of the pattern the filter matches.
+    """
+    retry_count = no_response_retry_count(str(exc))
+    if retry_count is None:
+        return strip_pymodbus_frame_dump(str(exc))
+
+    return f"{TRANSIENT_NO_RESPONSE_TEXT}{retry_count}{TRANSIENT_NO_RESPONSE_SUFFIX}"
 
 
 class SharedModbusController:
@@ -54,6 +144,7 @@ class SharedModbusController:
         unexpected_message: str,
         retry_modbus_errors: bool = False,
         retry_log_context: dict[str, Any] | None = None,
+        retry_on_transient_errors: bool = False,
     ) -> T:
         for attempt in range(attempts):
             try:
@@ -61,13 +152,51 @@ class SharedModbusController:
                 return await operation(client)
 
             except TRANSIENT_MODBUS_ERRORS as e:
+                # A drive that never answered is retried whether or not the caller opted in.
+                # Any other transient error may have killed the port, so it is retried into a
+                # freshly reopened one only for callers that accept that; a write in particular
+                # may be what made the drive stop answering (a control word that put it into a
+                # save, say), and on a bus with several drives behind one port the next attempt
+                # must not leave stale bytes for whoever reads next.
+                silent_drive = is_no_response_error(e)
+                retryable = silent_drive or retry_on_transient_errors is True
+                # A missed round of replies on a live bus is the dropout pymodbus expects on a
+                # shared RTU line and already logs at ERROR, so it is not worth a WARNING of our
+                # own on every retry; anything else that needs one gets it.
+                log_retry_at_debug = silent_drive or isinstance(e, ModbusTimeoutError)
+
                 if attempt < attempts - 1:
+                    if retryable is False:
+                        raise ModbusConnectionError(f"Port unusable after error: {str(e)}") from e
+
                     reconnected = await self._reconnect()
 
                     if reconnected is False:
                         raise ModbusConnectionError(f"Reconnection failed after error: {str(e)}") from e
 
+                    logger.log(
+                        logging.DEBUG if log_retry_at_debug is True else logging.WARNING,
+                        "Transient Modbus error, retrying",
+                        extra={
+                            **(retry_log_context or {}),
+                            "attempt": attempt + 1,
+                            "max_attempts": attempts,
+                            "port": self.port,
+                            "reconnected": reconnected,
+                            "error": str(e),
+                        },
+                    )
+
                     continue
+
+                if silent_drive is True:
+                    # The drive stayed silent through pymodbus' own retries and through ours on a
+                    # port that reconnects, so this is the dropout pymodbus itself expects on a
+                    # shared RTU line and already logs. Raised with pymodbus' own text, the report
+                    # is one the Sentry hooks in openshelf_os can drop (they match on that text,
+                    # not on a caller's wording) whatever type ends up carrying it; the type here
+                    # is what a log or a crash context will name it as.
+                    raise ModbusTransientNoResponseError(_no_response_message(e)) from e
 
                 raise ModbusError(f"{failure_message}: {str(e)}") from e
 
@@ -136,8 +265,13 @@ class SharedModbusController:
     async def _reconnect(self) -> bool:
         try:
             if self.client:
-                await self.close()
+                # Close is synchronous on the pymodbus client; calling it through this class'
+                # `async def close` would only hand the coroutine to the loop unwaited.
+                self.client.close()
 
+            # A reconnect is a fresh port and a fresh transport, so the per-call retry and
+            # timeout overrides a caller applied to the previous client do not survive it --
+            # the next attempt runs on the client defaults.
             await self.connect()
 
             return self.client is not None and self.client.connected
@@ -196,6 +330,9 @@ class SharedModbusController:
         count and per-attempt timeout for the duration of this read. The guard's
         fast weigh uses `modbus_retries=0` and a short timeout so one read can
         never hold the port lock for the client default (3 retries at `timeout`).
+        A caller that passes them gets one attempt and no retry loop: a reconnect
+        inside them would build a fresh client at the client defaults and spend
+        the full retry budget the override exists to prevent.
         """
         self._require_connected()
 
@@ -260,6 +397,7 @@ class SharedModbusController:
                     failure_message="Modbus read failed after reconnect",
                     unexpected_message=f"Unexpected error reading from unit {unit_id}",
                     retry_modbus_errors=True,
+                    retry_on_transient_errors=True,
                     retry_log_context={
                         "unit_id": unit_id,
                         "function_code": function_code,
@@ -276,6 +414,9 @@ class SharedModbusController:
                     client.ctx.retries = modbus_retries
                 if modbus_timeout_s is not None:
                     client.comm_params.timeout_connect = modbus_timeout_s
+                # The latency-bound caller asked for one attempt precisely so this call cannot
+                # hold the port lock for another device timeout, so it keeps its single attempt
+                # and its own failure handling.
                 return await self._run_with_reconnect_retry(
                     read_operation,
                     attempts=attempts,
@@ -369,4 +510,6 @@ class SharedModbusController:
                 attempts=2,
                 failure_message="Modbus write failed after reconnect",
                 unexpected_message=f"Unexpected error writing to unit {unit_id}",
+                retry_log_context={"unit_id": unit_id, "address": address, "value": value},
+                retry_on_transient_errors=True,
             )

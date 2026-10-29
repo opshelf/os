@@ -18,6 +18,18 @@ class ModbusConnectionError(ModbusError):
     """Failed to establish Modbus connection."""
     pass
 
+class ModbusTransientNoResponseError(ModbusError):
+    """A request the drive never answered, retried in vain on a port that still reconnects.
+
+    A dropout on a shared RTU line rather than a device fault. It is marked with the
+    `transient` attribute the hardware layer checks (hardware.controller.is_no_response_error) and it
+    keeps pymodbus' own no-response text as its message, so the report built from it is one the
+    Sentry hooks in openshelf_os drop. Any Modbus error the drive actually answered -- an
+    exception response, a short payload -- stays a plain ModbusError and stays reportable.
+    """
+
+    transient = True
+
 class CameraError(HardwareError):
     """Base class for camera-related errors."""
     pass

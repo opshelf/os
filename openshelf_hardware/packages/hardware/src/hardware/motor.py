@@ -14,7 +14,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional, Callable, Awaitable
 
 from hardware import motor_helpers
-from hardware.controller import SharedModbusController
+from hardware.controller import SharedModbusController, is_no_response_error
 
 if TYPE_CHECKING:
     from hardware.curtain import MotionSafetyInterlock
@@ -270,6 +270,11 @@ class Motor():
         self._target_pos: Optional[float] = None
         self._last_fault_context: dict[str, Any] | None = None
         self._last_bad_position_log_at = None
+        # Both the motor id and the configured axis name appear in the messages and the log
+        # records this class raises, because the routers infer the faulted axis from the text of
+        # an error (openshelf_os_server.routers.calibration._infer_axes_from_error) and the
+        # worker matches a crash reason against an axis name; a record's extra fields are not
+        # part of the text either of them reads.
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
         self._simulated_fault = False
@@ -369,10 +374,25 @@ class Motor():
             await self.move_config()
         except Exception as e:
             self._emit_init("failed", detail="configure", reason=str(e))
-            self._logger.error(
-                "Failed to configure motor",
+            transient = is_no_response_error(e)
+            # A drive that answered none of the retries is a dropout on a bus that still
+            # reconnects, not a broken configuration: the axis is not unsafe because of it, the
+            # init path still gets the failure, and the next configure or home retries it. Log it
+            # without a traceback and below ERROR level -- the Sentry LoggingIntegration turns
+            # every ERROR record into an issue, which is how one missed round of replies became
+            # a report per startup. The axis name goes into the message rather than only into
+            # the extra payload, for the reason noted where the logger is named.
+            log = (
+                self._logger.warning
+                if transient is True
+                else functools.partial(self._logger.error, exc_info=True)
+            )
+            log(
+                "Failed to configure motor %s (%s): %s",
+                self._motor_id,
+                getattr(self._params, "motor_name", None),
+                str(e),
                 extra={"motor_id": self._motor_id, "error": str(e)},
-                exc_info=True,
             )
             raise MotorConfigError(f"Failed to configure motor {self._motor_id}: {str(e)}") from e
 
