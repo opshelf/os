@@ -176,6 +176,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"timeout": "The robot took too long to respond. Try again.",
 	"tray_config_conflict": "The bin settings conflict with stored items. Check the bin barcode and settings.",
 	"tray_fetch_failed": "The bin could not be fetched. Try again.",
+	"tray_on_tool": "The gripper still holds a bin. Release the gripper and take the bin off the tool.",
 	"tray_return_failed": "The bin could not be returned. Try again.",
 	"unauthorized": "Sign in again.",
 	"validation_failed": "Some details are not valid.",

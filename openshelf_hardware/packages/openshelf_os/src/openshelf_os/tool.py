@@ -260,7 +260,11 @@ class Tool:
     async def configure(self, isolate: bool = False, home_on_init: bool = True):
         try:
             if self._params.gripper.enabled is True:
-                if isolate is True:
+                if await self._found_tray_on_tool() is True:
+                    # Activating the gripper again may move its fingers and drop the tray
+                    # somewhere in the machine, so it stays as found until the operator releases it.
+                    home_on_init = False
+                elif isolate is True:
                     try:
                         await self._gs.configure()
                     except Exception as e:
@@ -299,6 +303,37 @@ class Tool:
             await self._handle_fault(e)
 
             raise MotorError(f"Tool configuration failed: {str(e)}") from e
+
+    @property
+    def is_tray_held(self) -> bool:
+        """Holding state as last read or commanded, without touching the bus."""
+        return self._gs.holding is True
+
+    async def read_tray_held(self) -> bool:
+        """Refresh the gripper's holding state from gOBJ and return it.
+
+        The gripper is the source of truth. Without a usable reading (object detection
+        disabled, a failed read, or a gripper not activated since it lost power) the last grip
+        command stands, and with none since startup the tool counts as empty: there is no
+        evidence either way, as before tracking existed.
+        """
+        if self._params.gripper.enabled is False:
+            return False
+        if self.is_grip_detection_enabled is True:
+            try:
+                state = await self._gs.read_state()
+            except Exception as e:
+                self._logger.warning("tray_on_tool gripper read failed; using the last grip command: %s", e)
+            else:
+                if state.activated is True:
+                    self._gs.holding = state.holding
+        return self._gs.holding is True
+
+    async def _found_tray_on_tool(self) -> bool:
+        is_held = await self.read_tray_held()
+        if is_held is True:
+            self._logger.warning("tray_on_tool at startup: gripper left unconfigured and homing skipped")
+        return is_held
 
     async def stop(self) -> None:
         try:

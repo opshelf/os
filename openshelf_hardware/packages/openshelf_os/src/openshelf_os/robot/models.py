@@ -55,6 +55,7 @@ class WorkerStatus(BaseModel):
     needs_home: bool = False
     needs_home_reason: Optional[str] = None
     needs_home_axes: List[str] = Field(default_factory=list)
+    tray_on_tool: bool = False
 
 
 class WorkerStatusWithQueue(WorkerStatus):

@@ -29,7 +29,7 @@ from openshelf_os.robot.commands import (
 )
 import logging
 from openshelf_os.robot.core import POWER_CYCLE_HOLD_S, POWER_RAILS
-from openshelf_os.robot.worker import RobotWorker
+from openshelf_os.robot.worker import TRAY_ON_TOOL_ALLOWED_COMMANDS, RobotWorker
 from openshelf_os_server.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -44,6 +44,7 @@ from openshelf_os_server.core.iobox_sizer import capture_store_observer_measurem
 from openshelf_os_server.core.logging_config import correlation_id_var
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from openshelf_os_server.core.manual_motion import (
+    ensure_no_tray_on_tool,
     get_manual_motion_operation,
     manual_motion_guard,
     robot_command_enqueue_guard,
@@ -454,6 +455,12 @@ def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: Rob
             "reason": worker.needs_home_reason(),
         },
     )
+
+
+async def _ensure_command_allowed_while_tray_on_tool(command: RobotCommands, worker: RobotWorker) -> None:
+    if isinstance(command, TRAY_ON_TOOL_ALLOWED_COMMANDS):
+        return
+    await ensure_no_tray_on_tool(worker)
 
 
 async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> None:
@@ -868,6 +875,7 @@ async def robot_commands(
             detail="Robot is not initialized or failed to start",
         )
     _ensure_command_allowed_while_needs_home(command, worker)
+    await _ensure_command_allowed_while_tray_on_tool(command, worker)
 
     enrollment_item: Item | None = None
     if isinstance(command, StoreItemCommand):
@@ -1182,7 +1190,7 @@ async def control_gripper(
     """
     await _ensure_laser_auto_calibration_not_running()
 
-    async with manual_motion_guard(f"gripper:{state}", worker=worker):
+    async with manual_motion_guard(f"gripper:{state}", worker=worker, allow_tray_on_tool=True):
         if state == "release":
             await worker.release_gripper()
         else:
@@ -1685,7 +1693,7 @@ async def clear_motor_alarm(
         )
 
     try:
-        async with manual_motion_guard(f"motor_clear:{motor_name}", worker=worker):
+        async with manual_motion_guard(f"motor_clear:{motor_name}", worker=worker, allow_tray_on_tool=True):
             was_simulated_fault = bool(getattr(motor, "_simulated_fault", False))
             await motor.clear_alarm()
             if was_simulated_fault is True:
@@ -1750,7 +1758,7 @@ async def home_motor(
         )
 
     try:
-        async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker):
+        async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker, allow_tray_on_tool=True):
             if motor_name == "rotate":
                 original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
                 try:
@@ -1852,7 +1860,7 @@ async def power_cycle_rail(
         )
 
     try:
-        async with manual_motion_guard(f"power_cycle:{rail}", worker=worker):
+        async with manual_motion_guard(f"power_cycle:{rail}", worker=worker, allow_tray_on_tool=True):
             cut_axes = list(POWER_RAILS[rail].axes)
 
             def _mark_axes_for_homing() -> None:
@@ -1894,7 +1902,7 @@ async def probe_motors(
         return MotorProbeResponse(busy=True, reason=busy_reason)
 
     try:
-        async with manual_motion_guard("motor_probe", worker=worker):
+        async with manual_motion_guard("motor_probe", worker=worker, allow_tray_on_tool=True):
             motor_names = worker.get_motor_names()
             results: List[MotorProbeResult] = []
 

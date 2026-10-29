@@ -6,6 +6,9 @@ from typing import Any, AsyncIterator, Callable, cast
 
 from fastapi import HTTPException, status
 
+from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR
+from openshelf_os_server.errors import api_error
+
 _motion_lock = asyncio.Lock()
 _current_operation: str | None = None
 
@@ -98,11 +101,24 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 		)
 
 
+async def ensure_no_tray_on_tool(worker) -> None:
+	"""Reject motion while the gripper holds a tray, re-reading it so a cleared tool passes."""
+	if getattr(worker, "_tray_on_tool", False) is not True:
+		return
+	if await worker.refresh_tray_on_tool() is False:
+		return
+	raise api_error(status.HTTP_409_CONFLICT, TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR)
+
+
 @asynccontextmanager
 async def manual_motion_guard(
 	operation: str,
 	worker=None,
+	*,
+	allow_tray_on_tool: bool = False,
 ) -> AsyncIterator[None]:
+	"""allow_tray_on_tool admits the actions that recover a held tray: release, homing, clearing
+	alarms, power cycling, probing and unlocking the cabinet."""
 	global _current_operation
 
 	if worker is not None:
@@ -122,6 +138,8 @@ async def manual_motion_guard(
 	try:
 		if worker is not None:
 			ensure_robot_available_for_manual_motion(worker)
+			if allow_tray_on_tool is False:
+				await ensure_no_tray_on_tool(worker)
 
 		_current_operation = operation
 		yield

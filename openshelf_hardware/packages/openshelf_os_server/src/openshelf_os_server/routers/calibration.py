@@ -1866,7 +1866,7 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 		)
 
 	try:
-		async with manual_motion_guard("calibration_home_tool_motors", worker=worker):
+		async with manual_motion_guard("calibration_home_tool_motors", worker=worker, allow_tray_on_tool=True):
 			await tool._ms.home()
 			await tool._mg.home()
 	except (MotorError, HardwareMotorError) as e:
@@ -2788,7 +2788,7 @@ async def abort_calibration():
 	tool = worker._robot._tool
 
 	try:
-		async with manual_motion_guard("calibration_abort", worker=worker):
+		async with manual_motion_guard("calibration_abort", worker=worker, allow_tray_on_tool=True):
 			await tool.home()
 		worker.clear_needs_home()
 		await worker.get_status_snapshot(force_refresh=True)

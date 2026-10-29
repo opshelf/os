@@ -84,6 +84,7 @@ POWER_CYCLE_BOOT_POLL_S = 0.25
 
 
 STARTUP_HOME_SKIPPED_CABINET_OPEN = "Startup homing skipped because the cabinet doors were open"
+STARTUP_HOME_SKIPPED_TRAY_ON_TOOL = "Startup homing skipped because the gripper holds a tray"
 
 
 class Robot:
@@ -308,6 +309,10 @@ class Robot:
             startup_home_skip_reason = STARTUP_HOME_SKIPPED_CABINET_OPEN
 
         await self._tool.configure(isolate=isolate, home_on_init=home_on_init)
+        if home_on_init is True and self._tool.is_tray_held is True:
+            # The tool may still be in a cell or the IO box, so the door stays put as well.
+            home_on_init = False
+            startup_home_skip_reason = STARTUP_HOME_SKIPPED_TRAY_ON_TOOL
         await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready, home_on_init=home_on_init)
         cabinet = getattr(self, "_cabinet", None)
         if cabinet is not None:
@@ -1739,6 +1744,9 @@ class Robot:
 
     async def release_gripper(self) -> None:
         await self._tool._gs.close()
+
+    async def read_tray_held(self) -> bool:
+        return await self._tool.read_tray_held()
 
     async def grip(self) -> None:
         await self._tool._gs.open()

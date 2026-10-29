@@ -58,6 +58,12 @@ IO_BOX_OCCUPIED_ERROR = "Please remove the item from the IO box before retrievin
 ESTOP_POLL_INTERVAL_SECONDS = 0.05
 ESTOP_UNAVAILABLE_REASON = "Emergency stop input unavailable"
 PHYSICAL_ESTOP_REASON = "Physical emergency stop triggered"
+TRAY_ON_TOOL_CODE = "tray_on_tool"
+TRAY_ON_TOOL_ERROR = "The gripper still holds a bin. Release the gripper and take the bin off the tool."
+# Between commands the tool is always empty: every workflow that grips a tray places or releases
+# it before finishing. Home and stop stay open so the operator can recover; release is a manual
+# gripper action outside the queue.
+TRAY_ON_TOOL_ALLOWED_COMMANDS = (HomeCommand, StopCommand)
 
 CrashArtifactProvider = Callable[[str], Awaitable[CrashReportArtifacts]]
 CrashArtifactBeginProvider = Callable[[str], Awaitable[CrashReportArtifacts]]
@@ -251,6 +257,7 @@ def _transform_worker_status_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     transformed["needs_home"] = payload.get("needs_home", False)
     transformed["needs_home_reason"] = payload.get("needs_home_reason")
     transformed["needs_home_axes"] = payload.get("needs_home_axes", [])
+    transformed["tray_on_tool"] = payload.get("tray_on_tool", False)
 
     return transformed
 
@@ -352,6 +359,7 @@ class RobotWorker:
         self._needs_home_axes: set[str] = set()
         self._needs_home_unknown: bool = False
         self._needs_home_reason: Optional[str] = None
+        self._tray_on_tool: bool = False
 
     def _track_background_task(self, coro: Any, *, name: str) -> asyncio.Task[Any]:
         task = asyncio.create_task(coro, name=name)
@@ -625,6 +633,20 @@ class RobotWorker:
 
     def needs_home(self) -> bool:
         return self._needs_home_unknown or bool(self._needs_home_axes)
+
+    def tray_on_tool(self) -> bool:
+        return self._tray_on_tool
+
+    async def refresh_tray_on_tool(self) -> bool:
+        """Re-read the gripper. Only a fresh read showing the tool empty lifts the block."""
+        read_tray_held = getattr(self._robot, "read_tray_held", None)
+        if read_tray_held is None:
+            return self._tray_on_tool
+        is_held = await read_tray_held()
+        if is_held != self._tray_on_tool:
+            self._logger.warning("tray_on_tool %s", "detected" if is_held else "cleared")
+        self._tray_on_tool = is_held
+        return is_held
 
     def needs_home_reason(self) -> Optional[str]:
         return self._needs_home_reason
@@ -1581,6 +1603,8 @@ class RobotWorker:
                 await self._publish_command_failure(command, interruption_reason, operation)
 
             self._clear_current_command_state(task, command, operation)
+            # A fault can leave the tray in the gripper; the next command must not run with it.
+            await self.refresh_tray_on_tool()
             return interruption_boundary
 
     async def _discard_queued_commands(
@@ -1678,6 +1702,7 @@ class RobotWorker:
             needs_home=self.needs_home(),
             needs_home_reason=self._needs_home_reason,
             needs_home_axes=self.needs_home_axes(),
+            tray_on_tool=self._tray_on_tool,
         )
 
         status_payload = status.model_dump(mode="json")
@@ -1742,7 +1767,23 @@ class RobotWorker:
                                     if operation is not queued_operation
                                 ]
                             continue
-                        if await self._is_io_box_occupied_before_retrieve(command) is True:
+                        if (
+                            isinstance(command, TRAY_ON_TOOL_ALLOWED_COMMANDS) is False
+                            and await self.refresh_tray_on_tool() is True
+                        ):
+                            await self._publish_command_failure(
+                                command,
+                                TRAY_ON_TOOL_ERROR,
+                                queued_operation,
+                                code=TRAY_ON_TOOL_CODE,
+                            )
+                            self._queued_commands = [
+                                operation
+                                for operation in self._queued_commands
+                                if operation is not queued_operation
+                            ]
+                            is_rejected_before_start = True
+                        elif await self._is_io_box_occupied_before_retrieve(command) is True:
                             await self._publish_command_failure(
                                 command,
                                 IO_BOX_OCCUPIED_ERROR,
@@ -1859,6 +1900,7 @@ class RobotWorker:
         await self._robot.start_weight_guard()
         await self._start_estop_monitor()
         logger.info("Task created: %s", self._worker_task)
+        await self.refresh_tray_on_tool()
         await self._publish_status()
         self._robot.release_motion_safety()
         logger.info("RobotWorker.start() complete")
@@ -2350,7 +2392,15 @@ class RobotWorker:
         return {"accepted": accepted, "safety": safety_status}
 
     async def release_gripper(self) -> None:
-        await self._robot.release_gripper()
+        try:
+            await self._robot.release_gripper()
+        finally:
+            await self.refresh_tray_on_tool()
+            await self._publish_status()
 
     async def grip(self) -> None:
-        await self._robot.grip()
+        try:
+            await self._robot.grip()
+        finally:
+            await self.refresh_tray_on_tool()
+            await self._publish_status()

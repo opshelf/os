@@ -47,6 +47,17 @@ class GripState:
         return bool(self.status & 0x2)
 
     @property
+    def activated(self) -> bool:
+        """gSTA activation bit; until set (e.g. after a power loss) gOBJ means nothing."""
+        return bool(self.status & (1 << 5))
+
+    @property
+    def holding(self) -> bool:
+        """Any finger contact. Unlike gripped, a contact past the grip margin still ties the tool
+        to whatever the fingers touch, so motion would drag it."""
+        return self.obj in (GripObject.INNER, GripObject.OUTER)
+
+    @property
     def gripped(self) -> bool:
         if self.obj not in (GripObject.INNER, GripObject.OUTER) or self.dropped:
             return False
@@ -68,6 +79,9 @@ class Servo:
         self._status_reg = int(params.get("status_reg", 0x07D0))
         self._open_position = int(params.get("open_position", 0x20)) & 0xFF
         self._configured = False
+        # Last grip command: True from an open() (fingers may hold a tray) until a completed
+        # close(); None until either runs. Stands in for gOBJ when that cannot be read.
+        self.holding: Optional[bool] = None
         self._on_init_progress: Optional[Callable[[str, str, Optional[str]], None]] = None
 
     def _emit_init(self, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
@@ -177,6 +191,7 @@ class Servo:
     async def open(self) -> GripState:
         """Preset 1: splay fingers (inner-support grip)."""
         await self._ensure_configured()
+        self.holding = True
         try:
             await self._controller.write_single_register(self._motor_id, self._control_reg, 0x080B)
             return await self.wait_for_servo()
@@ -195,4 +210,6 @@ class Servo:
         """Preset 2: retract fingers (release)."""
         await self._ensure_configured()
         await self._controller.write_single_register(self._motor_id, self._control_reg, 0x090B)
-        return await self.wait_for_servo()
+        state = await self.wait_for_servo()
+        self.holding = False
+        return state
