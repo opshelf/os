@@ -70,6 +70,46 @@ async def test_run_session_cancel_homes_via_abort_without_needs_home() -> None:
 
 
 @pytest.mark.asyncio
+async def test_abort_during_grip_probe_with_contact_left_flags_needs_home() -> None:
+    """The abort cancels the probe while the fingers are in a tray hole and still touch it after
+    the close: the session must end failed with needs_home, never stuck cancelling."""
+    from hardware.servo import GripState
+    from openshelf_os.common import AxisCoordinate
+    from openshelf_os.laser_calibration.grip_edge import probe_grip_at
+    from openshelf_os.tool import Tool
+
+    manager = LaserAutoCalibrationManager()
+    manager._abort_requested = True
+    tool = Tool.__new__(Tool)
+    tool.is_grip_detection_enabled = True
+    tool._gs = SimpleNamespace(
+        open=AsyncMock(side_effect=asyncio.CancelledError),
+        close=AsyncMock(return_value=GripState(0x71, 0, 0x90, 0x40)),
+    )
+    tool.set_motion_diagnostic_context = MagicMock()
+    tool.extend_empty = AsyncMock()
+    tool.retract_empty = AsyncMock()
+    worker = SimpleNamespace(
+        _robot=SimpleNamespace(_tool=tool),
+        set_needs_home=MagicMock(),
+        get_status_snapshot=AsyncMock(),
+        refresh_tray_on_tool=AsyncMock(return_value=False),
+    )
+
+    async def probe(*_args) -> None:
+        await probe_grip_at(tool, AxisCoordinate(x=1.0, y=2.0, s=0), 3.0)
+
+    with patch.object(manager, '_get_current_calibration_params', AsyncMock(return_value={})):
+        with patch.object(manager, '_run_requested_scope', probe):
+            with patch.object(manager, '_restore_in_memory_calibration_params'):
+                await manager._run_session(worker, 'laser-session')
+
+    worker.set_needs_home.assert_called_once()
+    assert manager._snapshot.state == 'failed'
+    tool.retract_empty.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_home_after_abort_retracts_tool_before_moving_x() -> None:
     manager = LaserAutoCalibrationManager()
     calls = MagicMock()
