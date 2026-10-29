@@ -41,6 +41,21 @@ Y_STARTUP_HOME_CLEARANCE_MM = 10.0
 Y_STARTUP_HOME_PEAK_CURRENT = 30
 
 
+async def _finish_despite_cancel(work: Awaitable[Any]) -> tuple[Any, asyncio.CancelledError | None]:
+    """Run cleanup to completion even if this task is cancelled meanwhile.
+
+    Returns the cleanup result and the last cancellation seen, for the caller to re-raise.
+    """
+    task = asyncio.ensure_future(work)
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as cancelled:
+            cancellation = cancelled
+    return task.result(), cancellation
+
+
 async def run_together(*steps: Awaitable[Any]) -> None:
     """Run independent motions at once; the first failure stops the rest before it propagates."""
     tasks = [asyncio.ensure_future(step) for step in steps]
@@ -49,16 +64,37 @@ async def run_together(*steps: Awaitable[Any]) -> None:
     except BaseException as error:
         for task in tasks:
             task.cancel()
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         # A sibling that failed while being stopped (e.g. its stop write) would otherwise
         # vanish behind the first error.
-        for result in results:
-            if isinstance(result, Exception) and result is not error:
-                logging.getLogger(__name__).warning(
-                    "Concurrent motion also failed while being stopped", exc_info=result
-                )
-                if hasattr(error, "add_note"):
-                    error.add_note(f"concurrent motion also failed: {result!r}")
+        for task in tasks:
+            # gather(return_exceptions=True) swaps a cancelled task's exception for a fresh
+            # CancelledError, dropping what the task attached; result() re-raises the original.
+            try:
+                result = task.exception() if not task.cancelled() else task.result()
+            except asyncio.CancelledError as cancelled:
+                result = cancelled
+            if result is error:
+                continue
+            if isinstance(result, Exception):
+                failure = repr(result)
+            elif isinstance(result, asyncio.CancelledError):
+                # A cancelled gantry move carries its stop failure as fault_context or a cause;
+                # a plain cancellation carries neither.
+                stop_errors = getattr(result, "fault_context", None)
+                cause = result.__cause__
+                if not stop_errors and not isinstance(cause, Exception):
+                    continue
+                failure = f"cancelled with {cause!r}" if isinstance(cause, Exception) else "cancelled"
+                if stop_errors:
+                    failure += f" {stop_errors!r}"
+            else:
+                continue
+            logging.getLogger(__name__).warning(
+                "Concurrent motion also failed while being stopped", exc_info=result
+            )
+            if hasattr(error, "add_note"):
+                error.add_note(f"concurrent motion also failed: {failure}")
         raise
 
 
@@ -660,18 +696,6 @@ class Tool:
                 if isinstance(result, Exception)
             ]
 
-        async def complete_gantry_cleanup() -> tuple[list[str], asyncio.CancelledError | None]:
-            cleanup_task = asyncio.create_task(stop_gantry_axes())
-            cancellation: asyncio.CancelledError | None = None
-
-            while not cleanup_task.done():
-                try:
-                    await asyncio.shield(cleanup_task)
-                except asyncio.CancelledError as exc:
-                    cancellation = exc
-
-            return cleanup_task.result(), cancellation
-
         def attach_stop_errors(error: BaseException, stop_errors: list[str]) -> None:
             if not stop_errors:
                 return
@@ -684,28 +708,34 @@ class Tool:
 
         try:
             await self._ensure_retracted()
+            moving = [
+                (axis, motor, target)
+                for axis, motor, target in (
+                    ("y_axis", self._my, coordinate.y),
+                    ("x_axis", self._mx, coordinate.x),
+                )
+                if _is_settled_at(motor, target) is False
+            ]
+            # A hold already active is waited out here: the starts below run inside the gantry
+            # deadline, which must not be spent on a hold that was there before the move began.
+            held = {id(s): s for _, m, _ in moving if (s := getattr(m, "_safety", None)) is not None}
+            for safety in held.values():
+                await safety.wait_clear()
             # Started together, X is already moving while Y waits out its brake release, and
             # each axis is watched from its own start rather than once both have started.
             await self.gantry_wait(
-                starts={
-                    axis: motor.move_to_position_no_wait(target)
-                    for axis, motor, target in (
-                        ("y_axis", self._my, coordinate.y),
-                        ("x_axis", self._mx, coordinate.x),
-                    )
-                    if _is_settled_at(motor, target) is False
-                }
+                starts={axis: motor.move_to_position_no_wait(target) for axis, motor, target in moving}
             )
 
         except asyncio.CancelledError as e:
-            stop_errors, cancellation = await complete_gantry_cleanup()
+            stop_errors, cancellation = await _finish_despite_cancel(stop_gantry_axes())
             attach_stop_errors(e, stop_errors)
             if cancellation is not None:
                 attach_stop_errors(cancellation, stop_errors)
                 raise cancellation
             raise
         except Exception as e:
-            stop_errors, cancellation = await complete_gantry_cleanup()
+            stop_errors, cancellation = await _finish_despite_cancel(stop_gantry_axes())
             attach_stop_errors(e, stop_errors)
             if cancellation is not None:
                 if hasattr(cancellation, "add_note"):
@@ -861,14 +891,9 @@ class Tool:
                             # The other axis may already be moving (a start can fail after
                             # its sibling triggered), so its stop finishes even if this
                             # task is cancelled meanwhile.
-                            stop_task = asyncio.ensure_future(stop_all_and_drain(pending))
-                            cancellation: asyncio.CancelledError | None = None
-                            while not stop_task.done():
-                                try:
-                                    await asyncio.shield(stop_task)
-                                except asyncio.CancelledError as cancelled:
-                                    cancellation = cancelled
-                            stop_errors = stop_task.result()
+                            stop_errors, cancellation = await _finish_despite_cancel(
+                                stop_all_and_drain(pending)
+                            )
                             if stop_errors:
                                 fault_context = getattr(exc, "fault_context", {})
                                 if not isinstance(fault_context, dict):
