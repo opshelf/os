@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+import time
 
+from hardware.gpio import manager as gpio_manager
 from hardware.gpio.fake import FakeGpioBackend
 from hardware.gpio.pca9535 import Pca9535Backend
 from hardware.gpio.types import (
+    GpioEvent,
     GpioExpanderSpec,
     GpioInterruptSpec,
     GpioPinSpec,
@@ -135,3 +139,21 @@ def test_pca9535_shared_interrupt_line_dispatches_both_expanders() -> None:
 
     assert events0 == [False]
     assert events1 == [False]
+
+
+def test_input_change_log_ends_a_clean_edge_pair_with_the_final_state(monkeypatch, caplog) -> None:
+    # Only the first edge used to be logged, so the log showed the pin stuck in the wrong state.
+    monkeypatch.setattr(gpio_manager, "INPUT_LOG_WINDOW_S", 0.05)
+    log = gpio_manager._InputChangeLog()
+    caplog.set_level(logging.INFO, logger=gpio_manager.logger.name)
+
+    for value in (False, True):
+        log(GpioEvent(name="estop", value=value, raw_value=value, timestamp=0.0))
+
+    deadline = time.monotonic() + 2.0
+    while len(caplog.records) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    log.close()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == ["estop: LOW", "estop: HIGH (1 more change since the last line)"]
