@@ -46,10 +46,19 @@ async def run_together(*steps: Awaitable[Any]) -> None:
     tasks = [asyncio.ensure_future(step) for step in steps]
     try:
         await asyncio.gather(*tasks)
-    except BaseException:
+    except BaseException as error:
         for task in tasks:
             task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # A sibling that failed while being stopped (e.g. its stop write) would otherwise
+        # vanish behind the first error.
+        for result in results:
+            if isinstance(result, Exception) and result is not error:
+                logging.getLogger(__name__).warning(
+                    "Concurrent motion also failed while being stopped", exc_info=result
+                )
+                if hasattr(error, "add_note"):
+                    error.add_note(f"concurrent motion also failed: {result!r}")
         raise
 
 
@@ -675,19 +684,18 @@ class Tool:
 
         try:
             await self._ensure_retracted()
-            # Started together, X is already moving while Y waits out its brake release.
-            results = await asyncio.gather(
-                *(
-                    motor.move_to_position_no_wait(target)
-                    for motor, target in ((self._my, coordinate.y), (self._mx, coordinate.x))
+            # Started together, X is already moving while Y waits out its brake release, and
+            # each axis is watched from its own start rather than once both have started.
+            await self.gantry_wait(
+                starts={
+                    axis: motor.move_to_position_no_wait(target)
+                    for axis, motor, target in (
+                        ("y_axis", self._my, coordinate.y),
+                        ("x_axis", self._mx, coordinate.x),
+                    )
                     if _is_settled_at(motor, target) is False
-                ),
-                return_exceptions=True,
+                }
             )
-            for result in results:
-                if isinstance(result, BaseException):
-                    raise result
-            await self.gantry_wait()
 
         except asyncio.CancelledError as e:
             stop_errors, cancellation = await complete_gantry_cleanup()
@@ -715,7 +723,13 @@ class Tool:
         self,
         timeout_seconds: float = GANTRY_OUTER_TIMEOUT,
         should_abort: Callable[[], bool] | None = None,
+        starts: dict[str, Awaitable[bool]] | None = None,
     ) -> None:
+        """Wait for the commanded gantry axes, stopping both if either fails.
+
+        `starts` maps an axis to the coroutine that starts its move; each axis is then
+        watched as soon as its own start returns, and a failed start stops the other.
+        """
         if self._mx is None or self._my is None:
             raise MotorError("Gantry motors (x_axis, y_axis) required for gantry wait")
 
@@ -726,11 +740,15 @@ class Tool:
         try:
             remaining_timeout = max(0.1, min(GANTRY_WAIT_TIMEOUT, timeout_seconds))
             missing_pending_marker = object()
-            commanded_motors = {
-                axis: motor
-                for axis, motor in (("x_axis", self._mx), ("y_axis", self._my))
-                if getattr(motor, "_pending_motion", missing_pending_marker) is not None
-            }
+            gantry_motors = {"x_axis": self._mx, "y_axis": self._my}
+            if starts is not None:
+                commanded_motors = {axis: gantry_motors[axis] for axis in starts}
+            else:
+                commanded_motors = {
+                    axis: motor
+                    for axis, motor in gantry_motors.items()
+                    if getattr(motor, "_pending_motion", missing_pending_marker) is not None
+                }
 
             if commanded_motors == {}:
                 self._logger.info(
@@ -739,9 +757,18 @@ class Tool:
                 )
                 return
 
+            wait_timeout = remaining_timeout
+
+            async def start_then_wait(start: Awaitable[bool], motor: Motor) -> MotorStatus:
+                if await start is False:
+                    return MotorStatus.STOPPED
+                return await motor.wait_for_move(timeout=wait_timeout, should_abort=should_abort)
+
             tasks = {
                 asyncio.create_task(
-                    motor.wait_for_move(timeout=remaining_timeout, should_abort=should_abort)
+                    start_then_wait(starts[axis], motor)
+                    if starts is not None
+                    else motor.wait_for_move(timeout=wait_timeout, should_abort=should_abort)
                 ): (axis, motor)
                 for axis, motor in commanded_motors.items()
             }
@@ -831,13 +858,25 @@ class Tool:
                         exc = task.exception()
                         if exc is not None:
                             statuses[axis] = MotorStatus.ERROR
-                            stop_errors = await stop_all_and_drain(pending)
+                            # The other axis may already be moving (a start can fail after
+                            # its sibling triggered), so its stop finishes even if this
+                            # task is cancelled meanwhile.
+                            stop_task = asyncio.ensure_future(stop_all_and_drain(pending))
+                            cancellation: asyncio.CancelledError | None = None
+                            while not stop_task.done():
+                                try:
+                                    await asyncio.shield(stop_task)
+                                except asyncio.CancelledError as cancelled:
+                                    cancellation = cancelled
+                            stop_errors = stop_task.result()
                             if stop_errors:
                                 fault_context = getattr(exc, "fault_context", {})
                                 if not isinstance(fault_context, dict):
                                     fault_context = {}
                                 fault_context["gantry_stop_errors"] = stop_errors
                                 setattr(exc, "fault_context", fault_context)
+                            if cancellation is not None:
+                                raise cancellation from exc
                             raise exc
 
                         statuses[axis] = task.result()

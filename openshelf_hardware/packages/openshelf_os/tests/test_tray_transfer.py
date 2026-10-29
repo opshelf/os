@@ -26,7 +26,7 @@ def build_robot():
     tool._gs = SimpleNamespace(
         open=AsyncMock(return_value=gripped), close=AsyncMock(), read_state=AsyncMock(return_value=gripped),
     )
-    io = SimpleNamespace(**{name: AsyncMock() for name in ('open_door', 'close_door', 'home_door')})
+    io = SimpleNamespace(**{name: AsyncMock() for name in ('open_door', 'close_door', 'home_door', 'ensure_door_homed')})
     for name, method in vars(tool).items():
         if isinstance(method, AsyncMock):
             operations.attach_mock(method, name)
@@ -65,3 +65,14 @@ def test_grip_check_rejects_contact_far_short_of_the_open_target(position, is_he
     else:
         with pytest.raises(GripVerificationError, match='No grip on grip'):
             require_grip(state, 'grip')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cycle', ('deliver_tray', 'return_tray'))
+async def test_tray_cycle_homes_a_pending_door_before_any_motion(cycle):
+    # A door home cut short by a failed cycle leaves the drive in homing mode; the next
+    # tray cycle has to finish that home before it moves the tool or opens the door.
+    robot, ops = build_robot()
+    await getattr(robot, cycle)(AxisCoordinate(10, 20))
+    hardware_calls = [c for c in ops.mock_calls if c[0] != 'get_param']
+    assert hardware_calls[0] == call.ensure_door_homed()

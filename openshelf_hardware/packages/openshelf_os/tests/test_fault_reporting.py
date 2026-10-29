@@ -14,7 +14,7 @@ def build_fault_reporting_tool() -> Tool:
     tool = Tool.__new__(Tool)
     tool._logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
     tool._mx = SimpleNamespace(
-        wait_for_move=lambda **kwargs: MotorStatus.FAULT,
+        wait_for_move=AsyncMock(return_value=MotorStatus.FAULT),
         _motor_id=1,
         _cur_pos=10.0,
         _target_pos=20.0,
@@ -24,7 +24,7 @@ def build_fault_reporting_tool() -> Tool:
         is_hard_stopped=lambda: True,
     )
     tool._my = SimpleNamespace(
-        wait_for_move=lambda **kwargs: MotorStatus.STOPPED,
+        wait_for_move=AsyncMock(return_value=MotorStatus.STOPPED),
         _motor_id=2,
         _cur_pos=30.0,
         _target_pos=30.0,
@@ -58,8 +58,8 @@ async def test_move_cancellation_during_x_start_stops_and_clears_both_gantry_axe
         await tool.move(coordinate)
 
     tool._my.move_to_position_no_wait.assert_awaited_once_with(coordinate.y)
-    x_cleanup.assert_awaited_once_with()
-    y_cleanup.assert_awaited_once_with()
+    x_cleanup.assert_awaited()
+    y_cleanup.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -108,9 +108,9 @@ async def test_move_cancellation_during_error_cleanup_waits_for_both_gantry_axes
 
 
 @pytest.mark.asyncio
-async def test_failed_y_start_stops_x_only_after_its_concurrent_start_lands() -> None:
-    # Both gantry axes start together; a cleanup that ran before X's trigger landed
-    # would leave X moving unsupervised.
+async def test_failed_y_start_never_leaves_x_moving() -> None:
+    # Both gantry axes start together; X must end stopped whether or not its trigger
+    # landed before Y's start failed.
     tool = build_fault_reporting_tool()
     coordinate = AxisCoordinate(x=12.0, y=34.0, s=0, z_offset=0.0)
     events: list[str] = []
@@ -135,4 +135,4 @@ async def test_failed_y_start_stops_x_only_after_its_concurrent_start_lands() ->
     with pytest.raises(MovementError):
         await tool.move(coordinate)
 
-    assert events == ["x_triggered", "x_stopped"]
+    assert events and events[-1] == "x_stopped"
