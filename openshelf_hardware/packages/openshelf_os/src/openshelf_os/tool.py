@@ -10,7 +10,7 @@ from typing import Optional, Literal, List, Any, Callable, Sequence
 from openshelf_os.common import Motor as MotorConfig
 from hardware.controller import SharedModbusController as Controller
 from hardware.laser import LaserSensor
-from hardware.motor import Motor, MotorStatus, MOTOR_WAIT_TIMEOUT
+from hardware.motor import Motor, MotorStatus, MOTOR_WAIT_TIMEOUT, SETTLED_ON_TARGET_TOLERANCE_MM
 from hardware.servo import GripState, Servo
 from openshelf_os.common import load_config_file
 from openshelf_os.exceptions import (
@@ -39,6 +39,18 @@ MAX_PICK_LIFT_MM = 30.0
 TOOL_MOTION_AXES: tuple[str, ...] = ("z_axis", "stage", "rotate")
 Y_STARTUP_HOME_CLEARANCE_MM = 10.0
 Y_STARTUP_HOME_PEAK_CURRENT = 30
+
+
+def _is_settled_at(motor: Motor, target_mm: float) -> bool:
+    """A homed axis already within the drive's settle error of its target needs no move.
+
+    The drives stop a few hundredths short of a commanded target, so re-commanding the
+    same coordinate would otherwise run a full move (and, on Y, a brake release and park).
+    """
+    position = getattr(motor, "_cur_pos", None)
+    if getattr(motor, "_is_homed", False) is not True or not isinstance(position, (int, float)):
+        return False
+    return abs(position - target_mm) <= SETTLED_ON_TARGET_TOLERANCE_MM
 
 
 class RotationHomeOrientation(Enum):
@@ -616,8 +628,18 @@ class Tool:
 
         try:
             await self._ensure_retracted()
-            await self._my.move_to_position_no_wait(coordinate.y)
-            await self._mx.move_to_position_no_wait(coordinate.x)
+            # Started together, X is already moving while Y waits out its brake release.
+            results = await asyncio.gather(
+                *(
+                    motor.move_to_position_no_wait(target)
+                    for motor, target in ((self._my, coordinate.y), (self._mx, coordinate.x))
+                    if _is_settled_at(motor, target) is False
+                ),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
             await self.gantry_wait()
 
         except asyncio.CancelledError as e:

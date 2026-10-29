@@ -125,3 +125,27 @@ async def test_deferred_door_home_failure_stops_the_next_cycle_before_motion() -
     with pytest.raises(MotorError, match="Failed to home door"):
         await iobox.ensure_door_homed()
     assert iobox._door_home_pending is True
+
+
+@pytest.mark.asyncio
+async def test_door_home_cancelled_mid_way_is_redone_next_cycle() -> None:
+    # The end-of-cycle home runs alongside the tool's place; a place fault cancels it.
+    iobox = make_iobox()
+    homing = asyncio.Event()
+
+    async def slow_home() -> None:
+        homing.set()
+        await asyncio.Event().wait()
+
+    iobox._md.home.side_effect = slow_home
+    task = asyncio.create_task(iobox.home_door_after_cycle())
+    await homing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert iobox._door_home_pending is True
+    iobox._md.home.side_effect = None
+    iobox._md.home.reset_mock()
+    await iobox.ensure_door_homed()
+    iobox._md.home.assert_awaited_once()

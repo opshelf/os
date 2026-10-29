@@ -105,3 +105,34 @@ async def test_move_cancellation_during_error_cleanup_waits_for_both_gantry_axes
     assert y_cleanup_finished.is_set()
     assert isinstance(exc_info.value.__cause__, RuntimeError)
     assert not isinstance(exc_info.value, MovementError)
+
+
+@pytest.mark.asyncio
+async def test_failed_y_start_stops_x_only_after_its_concurrent_start_lands() -> None:
+    # Both gantry axes start together; a cleanup that ran before X's trigger landed
+    # would leave X moving unsupervised.
+    tool = build_fault_reporting_tool()
+    coordinate = AxisCoordinate(x=12.0, y=34.0, s=0, z_offset=0.0)
+    events: list[str] = []
+
+    async def move_y(_: float) -> None:
+        raise RuntimeError("y brake release failed")
+
+    async def move_x(_: float) -> bool:
+        await asyncio.sleep(0.01)
+        events.append("x_triggered")
+        return True
+
+    async def cleanup_x() -> None:
+        events.append("x_stopped")
+
+    tool._my.move_to_position_no_wait = move_y
+    tool._mx.move_to_position_no_wait = move_x
+    tool._mx._stop_and_clear_motion = cleanup_x
+    tool._my._stop_and_clear_motion = AsyncMock()
+    tool._handle_fault = AsyncMock()
+
+    with pytest.raises(MovementError):
+        await tool.move(coordinate)
+
+    assert events == ["x_triggered", "x_stopped"]

@@ -437,6 +437,8 @@ class IOBox:
             self._logger.info("Door motor not configured; skipping home")
             return
 
+        # Pending until the home completes, so a home cancelled mid-way is redone next cycle.
+        self._door_home_pending = True
         try:
             async with self._door_motion_lock:
                 if not self._curtain_state:
@@ -455,7 +457,6 @@ class IOBox:
 
         except Exception as e:
             self._status = IOBoxStatus.ERROR
-            self._door_home_pending = True
 
             if isinstance(e, IOBoxError):
                 raise
