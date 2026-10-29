@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Mapping
 from typing import Any, Callable, cast
 
@@ -22,6 +23,10 @@ from hardware.gpio.types import (
 
 logger = logging.getLogger(__name__)
 
+# A chattering input (y_lim_minunsafe on lb4a-3 toggles ~70 times a second) would flood the
+# log; after a logged change, a pin's further changes within this window are only counted.
+INPUT_LOG_WINDOW_S = 5.0
+
 
 class GpioManager:
     def __init__(
@@ -40,6 +45,7 @@ class GpioManager:
         self._inputs: dict[str, DigitalInput] = {}
         self._outputs: dict[str, DigitalOutput] = {}
         self._input_log_subscriptions: list[GpioSubscription] = []
+        self._log_input_change = _InputChangeLog()
         self._closed = False
         self._validate_unique_physical_pins()
 
@@ -80,7 +86,7 @@ class GpioManager:
             digital_input = DigitalInput(spec, backend)
             self._inputs[name] = digital_input
             try:
-                subscription = digital_input.subscribe(_log_input_change)
+                subscription = digital_input.subscribe(self._log_input_change)
             except Exception:
                 logger.warning(
                     "Failed to subscribe to GPIO input '%s' for diagnostic logging",
@@ -283,8 +289,34 @@ class GpioManager:
                 )
 
 
-def _log_input_change(event: GpioEvent) -> None:
-    logger.info("%s: %s", event.name, "HIGH" if event.value else "LOW")
+class _InputChangeLog:
+    """Log input changes, at most one line per pin per window plus a count of the rest."""
+
+    def __init__(self) -> None:
+        self._logged_at: dict[str, float] = {}
+        self._suppressed: dict[str, int] = {}
+
+    def __call__(self, event: GpioEvent) -> None:
+        now = time.monotonic()
+        logged_at = self._logged_at.get(event.name)
+
+        if logged_at is not None and now - logged_at < INPUT_LOG_WINDOW_S:
+            self._suppressed[event.name] = self._suppressed.get(event.name, 0) + 1
+            return
+
+        self._logged_at[event.name] = now
+        state = "HIGH" if event.value else "LOW"
+        suppressed = self._suppressed.pop(event.name, 0)
+
+        if suppressed == 0:
+            logger.info("%s: %s", event.name, state)
+        else:
+            logger.info(
+                "%s: %s (%d more changes since the last line; input is chattering)",
+                event.name,
+                state,
+                suppressed,
+            )
 
 
 def _to_dict(value: Any | None) -> dict[str, Any] | None:
