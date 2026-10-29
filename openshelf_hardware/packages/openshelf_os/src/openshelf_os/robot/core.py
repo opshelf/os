@@ -1228,6 +1228,8 @@ class Robot:
         position = await self._tool.get_param("PICKUP_POSITION_MULTI_ITEM")
         if position is None:
             raise ConfigError("Missing PICKUP_POSITION_MULTI_ITEM parameter")
+        self.set_operation_context(phase="deliver_tray.ensure_door_homed")
+        await self._io.ensure_door_homed()
         self.set_operation_context(phase="deliver_tray.pick_from_shelf", target_coordinate=coord)
         await self._tool.pick(coord)
         self.set_operation_context(phase="deliver_tray.rotate_to_front")
@@ -1255,6 +1257,8 @@ class Robot:
         position = await self._tool.get_param("PICKUP_POSITION_MULTI_ITEM")
         if position is None:
             raise ConfigError("Missing PICKUP_POSITION_MULTI_ITEM parameter")
+        self.set_operation_context(phase="return_tray.ensure_door_homed")
+        await self._io.ensure_door_homed()
         self.set_operation_context(phase="return_tray.release")
         await self._set_tray_grip(engaged=False)
         self.set_operation_context(phase="return_tray.rotate_to_front")
