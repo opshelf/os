@@ -2418,9 +2418,10 @@ class Motor():
                 except Exception as e:
                     raise MotorError(f"Failed to set home position as zero: {str(e)}") from e
 
-                if is_y_axis:
-                    await self._verify_zero_position()
-                else:
+                # The drive applies 0x21 a few ms late, and a move_config written before it
+                # lands drops the zero (seen on X and rotate), so every axis waits for it.
+                await self._verify_zero_position()
+                if is_y_axis is False:
                     await self.move_config()
 
                 await self._verify_home_limit_engaged()
