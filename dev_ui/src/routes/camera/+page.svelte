@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
-	import { apiFetch, buildAuthenticatedUrl, buildAuthenticatedWsUrl } from '$lib';
+	import {
+		apiFetch,
+		buildAuthenticatedUrl,
+		buildAuthenticatedWsUrl,
+		ensureValidToken,
+		isAuthenticated
+	} from '$lib';
 	import { H264StreamPlayer, isWebCodecsAvailable } from '$lib/h264-stream';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
@@ -135,6 +141,12 @@
 			return;
 		}
 
+		await refreshStreamToken();
+
+		if (document.hidden === true) {
+			return;
+		}
+
 		try {
 			const response = await apiFetch<CamerasResponse>('/camera');
 			const selectedWasOnline = selectedCamera?.online === true;
@@ -161,21 +173,47 @@
 
 	// iOS cuts both stream transports of a backgrounded tab and may resume an MJPEG
 	// image frozen without an error, so streams stop while hidden and start fresh on return.
-	function didChangeVisibility(): void {
-		isPageVisible = document.visibilityState === 'visible';
-
-		if (isPageVisible === false) {
+	async function didChangeVisibility(): Promise<void> {
+		if (document.visibilityState === 'hidden') {
+			isPageVisible = false;
 			stopH264Player();
 			return;
 		}
 
+		// The token is not refreshed while hidden, so renew it before any stream
+		// URL is built for the restart.
+		await refreshStreamToken();
+
+		if (document.hidden === true) {
+			return;
+		}
+
+		isPageVisible = true;
 		restartSelectedStream();
 		void refreshCameraStatus();
+	}
+
+	async function refreshStreamToken(): Promise<void> {
+		if (isAuthenticated() === false) {
+			return;
+		}
+
+		try {
+			await ensureValidToken();
+		} catch {
+			// The next status poll retries the refresh.
+		}
 	}
 
 	function restartSelectedStream(): void {
 		if (selectedCameraId === '') {
 			return;
+		}
+
+		// The reactive streamUrl only recomputes when the camera or its status changes,
+		// so a restart would reuse the token it was built with.
+		if (streamUrl !== '') {
+			streamUrl = buildAuthenticatedUrl(`/camera/${selectedCameraId}`);
 		}
 
 		streamError = false;
