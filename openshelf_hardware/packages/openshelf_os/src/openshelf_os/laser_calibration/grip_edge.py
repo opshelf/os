@@ -74,7 +74,7 @@ async def probe_grip_at(tool: Any, coordinate: Any, z_offset_mm: float) -> Any:
 		state = await tool._gs.open()
 	finally:
 		# Release before the retract: splayed fingers would drag the tray out with the tool.
-		await tool._gs.close()
+		await tool.release("grip edge probe release")
 
 	await tool.retract_empty()
 

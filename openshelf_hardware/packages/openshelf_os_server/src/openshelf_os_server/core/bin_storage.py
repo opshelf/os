@@ -27,6 +27,7 @@ from openshelf_os.exceptions import (
     GRIP_DROPPED_CODE,
     GRIP_IO_BOX_FAILED_CODE,
     GRIP_PICK_FAILED_CODE,
+    GRIP_RELEASE_FAILED_CODE,
 )
 from openshelf_os.robot.commands import DeliverTrayCommand, ReturnTrayCommand
 
@@ -78,12 +79,14 @@ TRAY_DIVIDER_THICKNESS_MM = 2.0
 
 # Robot failure codes that stop operation and open the crash dialog: a hardware fault raised
 # mid-motion, an emergency stop interrupting the command, a tray lost between shelf and IO box,
-# or a tray left in the IO box by a failed grip check. Plain command errors do not.
+# a tray left in the IO box by a failed grip check, or a tray the gripper would not let go of.
+# Plain command errors do not.
 CRASH_FAILURE_CODES = {
     "execution_error",
     "command_interrupted",
     GRIP_DROPPED_CODE,
     GRIP_IO_BOX_FAILED_CODE,
+    GRIP_RELEASE_FAILED_CODE,
 }
 
 # A pick whose grip check failed before anything was lifted: the tray never left its shelf, so

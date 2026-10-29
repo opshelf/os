@@ -28,7 +28,7 @@ from openshelf_os.storage import (
 	StorageModuleSide,
 )
 from openshelf_os.laser_calibration.grip_edge import probe_grip_at
-from openshelf_os.exceptions import ConfigError, IOBoxError, MotorError, MovementError, ToolError
+from openshelf_os.exceptions import ConfigError, GripVerificationError, IOBoxError, MotorError, MovementError, ToolError
 from hardware.exceptions import MotorError as HardwareMotorError
 
 from openshelf_os_server.core.robot import get_robot_worker
@@ -2364,14 +2364,14 @@ async def test_iobox_sequence(with_gripper: bool = False):
 			await tool._ms.move_to_position(stage_ext + stage_nudge)
 
 			if with_gripper is True:
-				await tool._gs.open()
+				require_grip(await tool._gs.open(), "io test grip", is_enabled=tool.is_grip_detection_enabled)
 
 			await tool.move(AxisCoordinate(iobox_current.pickup_high_x, iobox_current.pickup_high_y))
 			await tool.retract()
 
 			if with_gripper is True:
-				await tool._gs.close()
-		except (MotorError, HardwareMotorError) as e:
+				await tool.release("io test release")
+		except (MotorError, HardwareMotorError, ToolError) as e:
 			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
 	return {"success": True}
 
@@ -2428,14 +2428,14 @@ async def test_iobox_multi_item_cycle():
 			logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
 
 		try:
-			await tool._gs.close()
+			await tool.release("multi-item test start release")
 			await tool.move(AxisCoordinate(iobox_current.multi_item_x, iobox_current.multi_item_y))
 			await extend()
 			require_grip(await tool._gs.open(), "tray grip", is_enabled=tool.is_grip_detection_enabled)
 			await tool.retract()
 			require_grip(await tool._gs.read_state(), "tray retract", is_enabled=tool.is_grip_detection_enabled)
 			await extend()
-			await tool._gs.close()
+			await tool.release("multi-item test release")
 			await tool.retract_empty()
 		except (MotorError, HardwareMotorError, ToolError) as e:
 			await _raise_motor_error(worker, f"Multi-item test failed: {str(e)}", e)
@@ -2486,7 +2486,10 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 		worker._robot.reload_parameters()
 
 		try:
-			await worker._robot._tool._gs.close()
+			await worker._robot._tool.release("save home release")
+		except GripVerificationError as e:
+			# Homing would drag what the gripper still holds.
+			await _raise_motor_error(worker, f"Gripper did not release before homing: {str(e)}", e)
 		except Exception:
 			pass
 

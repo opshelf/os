@@ -5,6 +5,8 @@
 GRIP_PICK_FAILED_CODE = "grip_pick_failed"
 GRIP_DROPPED_CODE = "grip_dropped"
 GRIP_IO_BOX_FAILED_CODE = "grip_io_box_failed"
+# The gripper still touched the tray after a release, so the tool stopped instead of withdrawing.
+GRIP_RELEASE_FAILED_CODE = "grip_release_failed"
 
 
 class OpenshelfError(Exception):

@@ -641,7 +641,7 @@ class ScopeRunnerMixin:
     async def _home_after_abort(self, worker: RobotWorker) -> None:
         # An abort can land mid grip-edge probe with the fingers inside a tray hole, possibly before
         # the probe's own close: release, then withdraw, before X moves.
-        await worker._robot._tool._gs.close()
+        await worker._robot._tool.release("abort release")
 
         await worker._robot._tool.retract_empty()
 

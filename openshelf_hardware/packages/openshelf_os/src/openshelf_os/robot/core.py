@@ -22,7 +22,8 @@ from openshelf_os.serial_ports import (
     SCALE_PORT_CANDIDATES,
 )
 from openshelf_os.exceptions import (
-    ConfigError as CabinetConfigError, GRIP_IO_BOX_FAILED_CODE, MotorError, MovementError, ToolError
+    ConfigError as CabinetConfigError, GRIP_DROPPED_CODE, GRIP_IO_BOX_FAILED_CODE, MotorError, MovementError,
+    ToolError,
 )
 from openshelf_os.iobox import IOBox
 from openshelf_os.operating_mode import should_enable_demo_features
@@ -1170,6 +1171,8 @@ class Robot:
         await self._tool._my.move_to_position(pph[1])
         self.set_operation_context(phase="io_place.retract")
         await self._tool.retract()
+        # A tray left in the IO box would meet the closing door.
+        await self._require_tray_held("io place retract", GRIP_IO_BOX_FAILED_CODE)
         # The tool is clear of the IO box, so the door closes while the gantry returns.
         self.set_operation_context(phase="io_place.close_door")
         await run_together(self._io.close_door(), self._tool.move(coord))
@@ -1202,12 +1205,22 @@ class Robot:
         await self._tool._my.move_to_position(ppl[1])
         self.set_operation_context(phase="io_pick.retract")
         await self._tool.retract()
+        await self._require_tray_held("io pick retract", GRIP_IO_BOX_FAILED_CODE)
         self.set_operation_context(phase="io_pick.close_door")
         await run_together(self._io.close_door(), self._tool.move(coord))
         self.set_operation_context(phase="io_pick.place_back_at_shelf_coordinate")
         await run_together(self._tool.place(coord), self._io.home_door_after_cycle())
         self.set_operation_context(phase="io_pick.clear_alarms")
         await self._tool.clear_alarms()
+
+    async def _require_tray_held(self, phase: str, failure_code: str) -> None:
+        """Raise unless the tool still holds the tray it is carrying."""
+        if self._tool.is_grip_detection_enabled is False:
+            return
+        try:
+            require_grip(await self._tool._gs.read_state(), phase, failure_code=failure_code)
+        except Exception as exc:
+            raise rewrap_gripper_fault(exc, "Tray grip verification failed") from exc
 
     async def _set_tray_grip(self, *, engaged: bool) -> None:
         """Route tray servo failures through the command hardware-fault interlock.
@@ -1224,7 +1237,7 @@ class Robot:
                     failure_code=GRIP_IO_BOX_FAILED_CODE,
                 )
             else:
-                await self.release_gripper()
+                await self._tool.release("bin release")
         except Exception as exc:
             action = "grip" if engaged else "release"
             raise rewrap_gripper_fault(exc, f"Bin {action} failed") from exc
@@ -1241,6 +1254,8 @@ class Robot:
         await self._tool.rotate_to_position("front")
         self.set_operation_context(phase="deliver_tray.move_to_io")
         await self._tool.move(AxisCoordinate(position[0], position[1]))
+        # A tray dropped on the way must not be reported as delivered; the door is still closed.
+        await self._require_tray_held("bin delivery", GRIP_DROPPED_CODE)
         self.set_operation_context(phase="deliver_tray.open_door")
         await self._io.open_door()
         self.set_operation_context(phase="deliver_tray.extend_into_io")
@@ -1278,15 +1293,7 @@ class Robot:
         await self._set_tray_grip(engaged=True)
         self.set_operation_context(phase="return_tray.retract")
         await self._tool.retract()
-        try:
-            require_grip(
-                await self._tool._gs.read_state(),
-                "bin retract",
-                is_enabled=self._tool.is_grip_detection_enabled,
-                failure_code=GRIP_IO_BOX_FAILED_CODE,
-            )
-        except Exception as exc:
-            raise rewrap_gripper_fault(exc, "Bin retract grip verification failed") from exc
+        await self._require_tray_held("bin retract", GRIP_IO_BOX_FAILED_CODE)
         self.set_operation_context(phase="return_tray.close_door")
         await self._io.close_door()
         self.set_operation_context(phase="return_tray.place_at_home", target_coordinate=coord)

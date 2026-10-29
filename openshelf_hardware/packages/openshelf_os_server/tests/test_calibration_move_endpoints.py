@@ -88,6 +88,7 @@ def _mock_multi_item_worker(grip_state):
 		rotate_to_position=AsyncMock(),
 		retract=AsyncMock(),
 		retract_empty=AsyncMock(),
+		release=AsyncMock(),
 		is_grip_detection_enabled=True,
 		_mg=z_axis,
 		_ms=stage,
@@ -99,7 +100,7 @@ def _mock_multi_item_worker(grip_state):
 		("stage", stage.move_to_position),
 		("z", z_axis.move_to_position),
 		("grip", gripper.open),
-		("release", gripper.close),
+		("release", tool.release),
 		("retract", tool.retract),
 		("retract_empty", tool.retract_empty),
 	):

@@ -40,6 +40,7 @@ from openshelf_os.barcode_service import (
 )
 from openshelf_os.exceptions import (
     GRIP_IO_BOX_FAILED_CODE,
+    GRIP_RELEASE_FAILED_CODE,
     GripVerificationError,
     MotorError,
     MovementError,
@@ -1092,9 +1093,9 @@ class RobotWorker:
         """Motors a gripper feedback fault invalidates: the tool, plus the door on an IO box fault.
 
         A multi-item tray fault leaves the tool in the IO box with the door mid-cycle, so the
-        door homes right after the tool.
+        door homes right after the tool. A failed release can stop the tool in the IO box too.
         """
-        if err.failure_code == GRIP_IO_BOX_FAILED_CODE:
+        if err.failure_code in (GRIP_IO_BOX_FAILED_CODE, GRIP_RELEASE_FAILED_CODE):
             return [*TOOL_MOTION_AXES, "door"]
         return list(TOOL_MOTION_AXES)
 

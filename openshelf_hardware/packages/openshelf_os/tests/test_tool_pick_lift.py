@@ -25,7 +25,8 @@ async def test_pick_lift_place_keeps_z_extended_until_after_release() -> None:
     tool._gs = SimpleNamespace(
         safe_open=AsyncMock(side_effect=lambda: events.append("safe_open")),
         open=AsyncMock(side_effect=lambda: events.append("grip") or GRIPPED),
-        close=AsyncMock(side_effect=lambda: events.append("release")),
+        close=AsyncMock(side_effect=lambda: events.append("release") or MISSED),
+        read_state=AsyncMock(return_value=GRIPPED),
     )
     tool._my = SimpleNamespace(
         move_to_position=AsyncMock(side_effect=lambda y: events.append(f"y:{y}")),

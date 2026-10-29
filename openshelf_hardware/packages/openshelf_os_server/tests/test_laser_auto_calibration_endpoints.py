@@ -75,7 +75,7 @@ async def test_home_after_abort_retracts_tool_before_moving_x() -> None:
     calls = MagicMock()
     tool = SimpleNamespace(
         _mx=SimpleNamespace(move_to_position=AsyncMock(side_effect=lambda *a: calls.x_move())),
-        _gs=SimpleNamespace(close=AsyncMock(side_effect=lambda: calls.close())),
+        release=AsyncMock(side_effect=lambda _phase: calls.close()),
         retract_empty=AsyncMock(side_effect=lambda: calls.retract()),
         home=AsyncMock(side_effect=lambda: calls.home()),
     )

@@ -16,7 +16,7 @@ from openshelf_os.common import load_config_file
 from openshelf_os.exceptions import (
     MotorError, ConfigError,
     GripperError, GripVerificationError, MovementError, MotorWaitTimeoutError,
-    GRIP_DROPPED_CODE, GRIP_PICK_FAILED_CODE
+    GRIP_DROPPED_CODE, GRIP_PICK_FAILED_CODE, GRIP_RELEASE_FAILED_CODE
 )
 
 
@@ -136,6 +136,23 @@ def require_grip(
     )
     if not state.gripped:
         raise GripVerificationError(f"No grip on {phase}: {state}", failure_code=failure_code)
+
+
+def require_release(state: GripState, phase: str, *, is_enabled: bool = True) -> None:
+    """Raise if the gripper still reports contact after a release.
+
+    Withdrawing then would drag the tray out of its cell or the IO box, so the caller stops with
+    the tool where it is. Any contact counts, not only a full grip.
+    """
+    if is_enabled is False:
+        return
+    logging.getLogger(__name__).info(
+        "release_check", extra={"phase": phase, "holding": state.holding, "grip_state": str(state)}
+    )
+    if state.holding:
+        raise GripVerificationError(
+            f"Still holding after {phase}: {state}", failure_code=GRIP_RELEASE_FAILED_CODE
+        )
 
 
 def rewrap_gripper_fault(error: Exception, message: str) -> Exception:
@@ -621,9 +638,10 @@ class Tool:
             await self._ms.move_to_position(0.0)
             await self._my.move_to_position(coordinate.y + lift_mm)
             await asyncio.sleep(hold_seconds)
+            require_grip(await self._gs.read_state(), "lift hold", is_enabled=self.is_grip_detection_enabled)
             await self._my.move_to_position(coordinate.y)
             await self._ms.move_to_position(original_stage_mm)
-            await self._gs.close()
+            await self.release("set-down release")
             await self.retract_empty()
 
         except Exception as e:
@@ -632,6 +650,10 @@ class Tool:
                 raise
             raise rewrap_gripper_fault(e, "Pick lift/place operation failed") from e
 
+    async def release(self, phase: str) -> None:
+        """Open the fingers and confirm they hold nothing before the tool withdraws."""
+        require_release(await self._gs.close(), phase, is_enabled=self.is_grip_detection_enabled)
+
     async def place(self, coordinate: c.AxisCoordinate):
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
@@ -639,7 +661,7 @@ class Tool:
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
             await self.extend(coordinate)
-            await self._gs.close()
+            await self.release("place release")
             await self.retract_empty()
 
         except Exception as e:
@@ -648,7 +670,7 @@ class Tool:
             if isinstance(e, MovementError):
                 raise
 
-            raise GripperError(f"Place operation failed: {str(e)}") from e
+            raise rewrap_gripper_fault(e, "Place operation failed") from e
 
     # ------------------------------------------------------------------ #
     #  Laser

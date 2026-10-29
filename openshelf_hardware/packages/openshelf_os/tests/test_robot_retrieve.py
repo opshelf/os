@@ -88,6 +88,7 @@ async def test_io_cycle_homes_the_door_first_and_survives_a_failed_final_home(cy
 
     class Tool:
         _my = SimpleNamespace(move_to_position=lambda *_: _record("y_transfer"))
+        is_grip_detection_enabled = False
 
         async def get_param(self, name: str) -> tuple[float, float]:
             return (1.0, 2.0)

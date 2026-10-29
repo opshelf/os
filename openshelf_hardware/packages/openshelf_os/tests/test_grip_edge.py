@@ -32,6 +32,9 @@ class FakeGripTool:
 	async def _close(self):
 		self.events.append("close")
 
+	async def release(self, _phase: str) -> None:
+		await self._close()
+
 	async def retract_empty(self) -> None:
 		self.events.append("retract")
 
