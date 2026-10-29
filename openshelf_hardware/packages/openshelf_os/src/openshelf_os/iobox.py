@@ -257,8 +257,8 @@ class IOBox:
             elapsed = time.monotonic() - start_time
 
             if weight is None:
-                self._logger.warning(
-                    "Scale did not stabilize within timeout",
+                self._logger.info(
+                    "Scale returned no measurement",
                     extra={"elapsed_s": round(elapsed, 3), "timeout_s": 15.0},
                 )
             else:
