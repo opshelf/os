@@ -1325,13 +1325,18 @@ class Motor():
 
         await self._verify_brake_output_before_motion_trigger()
         await self._enable_for_motion()
-        await self._controller.write_single_register(
-            self._motor_id,
-            motor_helpers.TRIGGER,
-            0x10
-        )
+        try:
+            await self._controller.write_single_register(
+                self._motor_id,
+                motor_helpers.TRIGGER,
+                0x10
+            )
 
-        await asyncio.sleep(0.1)
+            await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            # The trigger may have landed; no wait_for_move is watching yet, so stop the drive.
+            await asyncio.shield(self._stop_and_clear_motion())
+            raise
 
         self._commanded_direction = _direction_of(None if self._cur_pos is None else value - self._cur_pos)
         self._status = MotorStatus.MOVING
@@ -2121,11 +2126,16 @@ class Motor():
         self._clear_pending_motion()
         await self._verify_brake_output_before_motion_trigger()
         await self._enable_for_motion()
-        await self._controller.write_single_register(
-            self._motor_id,
-            motor_helpers.TRIGGER,
-            0x10,
-        )
+        try:
+            await self._controller.write_single_register(
+                self._motor_id,
+                motor_helpers.TRIGGER,
+                0x10,
+            )
+        except asyncio.CancelledError:
+            # The trigger may have landed; no wait_for_move is watching yet, so stop the drive.
+            await asyncio.shield(self._cancel_motion(homing=True))
+            raise
         # The drive seeks its home limit, which is the logical far end on an inverted axis.
         self._commanded_direction = 1 if self._is_physical_mapping_inverted() is True else -1
         self._status = MotorStatus.MOVING

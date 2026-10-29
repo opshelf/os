@@ -234,6 +234,33 @@ async def test_stop_and_clear_motion_clears_motion_when_stop_write_fails(
 
 
 @pytest.mark.asyncio
+async def test_move_cancelled_after_trigger_write_stops_the_drive(mock_controller):
+    # A peer failure cancels a concurrent start in the 0.1 s after TRIGGER, before wait_for_move.
+    motor = Motor(mock_controller, make_motor_params(logical_to_physical=lambda value: value))
+    motor.set_param = AsyncMock()
+    motor._verify_brake_output_before_motion_trigger = AsyncMock()
+    motor._enable_for_motion = AsyncMock()
+    triggered = asyncio.Event()
+
+    async def write(_unit, address, value, **_kwargs):
+        if value == 0x10:
+            triggered.set()
+
+    mock_controller.write_single_register.side_effect = write
+
+    task = asyncio.create_task(motor._start_absolute_move(50.0))
+    await triggered.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert mock_controller.write_single_register.await_args_list[-1] == call(1, 0x6002, 0x40)
+    assert motor._pending_motion is None
+    assert motor._target_pos is None
+
+
+@pytest.mark.asyncio
 async def test_wait_for_move_cancelled_during_homing_marks_unhomed_and_stops(mock_controller):
     params = make_motor_params()
     motor = Motor(mock_controller, params)
