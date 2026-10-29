@@ -6,7 +6,7 @@ import time
 import openshelf_os.common as c
 
 from enum import Enum
-from typing import Optional, Literal, List, Any, Callable, Sequence
+from typing import Optional, Literal, List, Any, Awaitable, Callable, Sequence
 from openshelf_os.common import Motor as MotorConfig
 from hardware.controller import SharedModbusController as Controller
 from hardware.laser import LaserSensor
@@ -39,6 +39,18 @@ MAX_PICK_LIFT_MM = 30.0
 TOOL_MOTION_AXES: tuple[str, ...] = ("z_axis", "stage", "rotate")
 Y_STARTUP_HOME_CLEARANCE_MM = 10.0
 Y_STARTUP_HOME_PEAK_CURRENT = 30
+
+
+async def run_together(*steps: Awaitable[Any]) -> None:
+    """Run independent motions at once; the first failure stops the rest before it propagates."""
+    tasks = [asyncio.ensure_future(step) for step in steps]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 def _is_settled_at(motor: Motor, target_mm: float) -> bool:
@@ -1123,8 +1135,10 @@ class Tool:
 
 
             await self._ms.ready()
-            await self._ms.move_to_position(slide_ext)
-            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            await run_together(
+                self._ms.move_to_position(slide_ext),
+                self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel),
+            )
 
         except Exception as e:
             await self._handle_fault(e)
@@ -1152,8 +1166,10 @@ class Tool:
 
         try:
             await self._ms.ready()
-            await self._ms.move_to_position(slide_ext)
-            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            await run_together(
+                self._ms.move_to_position(slide_ext),
+                self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel),
+            )
             await self._ms.move_to_position(slide_ext + stage_nudge)
         except Exception as e:
             await self._handle_fault(e)
@@ -1180,8 +1196,10 @@ class Tool:
 
         try:
             await self._ms.ready()
-            await self._ms.move_to_position(slide_ext)
-            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            await run_together(
+                self._ms.move_to_position(slide_ext),
+                self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel),
+            )
         except Exception as e:
             await self._handle_fault(e)
 
@@ -1250,30 +1268,32 @@ class Tool:
         if grip_rpm is None or grip_accel is None:
             raise ConfigError("Missing gripper move speed")
 
-        await self._move_axis_to_retracted_position(
-            self._mg,
-            axis_name="z_axis",
-            target_mm=self._get_float_param(
-                "Z_RETRACT_POSITION_MM",
-                DEFAULT_Z_RETRACT_TARGET_MM,
+        await run_together(
+            self._move_axis_to_retracted_position(
+                self._mg,
+                axis_name="z_axis",
+                target_mm=self._get_float_param(
+                    "Z_RETRACT_POSITION_MM",
+                    DEFAULT_Z_RETRACT_TARGET_MM,
+                ),
+                maximum_mm=self._get_float_param(
+                    "ROTATION_Z_MAX_EXTENSION_MM",
+                    DEFAULT_ROTATION_Z_MAX_EXTENSION_MM,
+                ),
+                rpm=grip_rpm,
+                accel=grip_accel,
             ),
-            maximum_mm=self._get_float_param(
-                "ROTATION_Z_MAX_EXTENSION_MM",
-                DEFAULT_ROTATION_Z_MAX_EXTENSION_MM,
-            ),
-            rpm=grip_rpm,
-            accel=grip_accel,
-        )
-        await self._move_axis_to_retracted_position(
-            self._ms,
-            axis_name="stage",
-            target_mm=self._get_float_param(
-                "STAGE_RETRACT_POSITION_MM",
-                DEFAULT_STAGE_RETRACT_TARGET_MM,
-            ),
-            maximum_mm=self._get_float_param(
-                "ROTATION_STAGE_MAX_EXTENSION_MM",
-                DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM,
+            self._move_axis_to_retracted_position(
+                self._ms,
+                axis_name="stage",
+                target_mm=self._get_float_param(
+                    "STAGE_RETRACT_POSITION_MM",
+                    DEFAULT_STAGE_RETRACT_TARGET_MM,
+                ),
+                maximum_mm=self._get_float_param(
+                    "ROTATION_STAGE_MAX_EXTENSION_MM",
+                    DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM,
+                ),
             ),
         )
         await self._ms.idle()
