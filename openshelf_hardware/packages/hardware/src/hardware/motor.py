@@ -41,7 +41,7 @@ DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
 HOME_FOLLOWING_ERROR_MM = 10.0
 Y_HOME_SETTLE_LIFT_MM = 5.0
 ALARM_DETECT_FOLLOWING_ERROR_BIT = 2
-# Y zeroes only once the homing trip is cleared and 0x6002 reads ready (0x000P):
+# A drive zeroes only once the homing trip is cleared and 0x6002 reads ready (0x000P):
 # a 0x21 written while it still reads 0x0040 (quick stop) is silently dropped.
 TRIGGER_READY_MASK = 0xFFF0
 ZERO_TOLERANCE_MM = 0.25
@@ -2410,19 +2410,16 @@ class Motor():
 
             if stop == MotorStatus.STOPPED:
                 is_y_axis = getattr(self._params, "motor_name", None) == "y_axis"
-                if is_y_axis:
-                    await self._clear_homing_trip()
+                # Every drive drops a 0x21 written while the limit stop still holds it in
+                # quick stop; the 0x1122 EEPROM stall used to hide that on all but Y.
+                await self._clear_homing_trip()
 
                 try:
                     await self._set_zero_position()
                 except Exception as e:
                     raise MotorError(f"Failed to set home position as zero: {str(e)}") from e
 
-                # The drive applies 0x21 a few ms late, and a move_config written before it
-                # lands drops the zero (seen on X and rotate), so every axis waits for it.
                 await self._verify_zero_position()
-                if is_y_axis is False:
-                    await self.move_config()
 
                 await self._verify_home_limit_engaged()
 
