@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from hardware.exceptions import MotorError as HardwareMotorError
@@ -17,6 +17,7 @@ def make_iobox() -> IOBox:
     motor._safety = SimpleNamespace(blocked=False)
     motor.get_param.return_value = 0
     motor.get_position.return_value = 0.0
+    motor.is_bus_busy = Mock(return_value=False)
 
     iobox = IOBox.__new__(IOBox)
     iobox._md = motor
@@ -149,3 +150,23 @@ async def test_door_home_cancelled_mid_way_is_redone_next_cycle() -> None:
     iobox._md.home.reset_mock()
     await iobox.ensure_door_homed()
     iobox._md.home.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_door_read_is_skipped_while_the_door_drive_is_busy() -> None:
+    # A read inside the door's post-0x1122 busy window sleeps it out, and the worker holds its
+    # safety-guard lock across this read, so a cabinet-door change could not block motion.
+    iobox = make_iobox()
+    iobox._door_open = True
+    iobox._door_force_refresh_on_block = True
+    iobox._md.is_bus_busy.return_value = True
+
+    assert await asyncio.wait_for(iobox.refresh_door_state(force=True), timeout=0.1) is True
+
+    iobox._md.get_position.assert_not_awaited()
+    assert iobox._door_force_refresh_on_block is True
+
+    iobox._md.is_bus_busy.return_value = False
+    iobox._md.get_position.return_value = 0.0
+    assert await iobox.refresh_door_state() is False
+    iobox._md.get_position.assert_awaited_once()

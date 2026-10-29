@@ -42,6 +42,10 @@ class SharedModbusController:
         self.lock = asyncio.Lock()
         self._unit_ready_at: dict[int, float] = {}
 
+    def is_unit_busy(self, unit_id: int) -> bool:
+        """Whether a busy write holds frames to `unit_id` back right now."""
+        return self._unit_ready_at.get(int(unit_id), 0.0) > time.monotonic()
+
     @contextlib.asynccontextmanager
     async def _port_for_unit(self, unit_id: int):
         """Hold the port lock once `unit_id` is out of its busy window.
