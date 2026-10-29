@@ -16,6 +16,7 @@
 	};
 
 	const STATUS_POLL_INTERVAL_MS = 5000;
+	const MAX_H264_DROPS = 3;
 
 	type CameraLine = [number, number, number, number];
 	type Point = {
@@ -37,6 +38,7 @@
 	let h264Player: H264StreamPlayer | null = null;
 	let h264Ready = false;
 	const h264FailedFor = new Set<string>();
+	const h264DropsFor = new Map<string, number>();
 	const webCodecsSupported = browser && isWebCodecsAvailable();
 	let resizeObserver: ResizeObserver | null = null;
 	let observedCanvas: HTMLCanvasElement | null = null;
@@ -128,20 +130,26 @@
 	}
 
 	async function refreshCameraStatus(): Promise<void> {
+		if (isPageVisible === false) {
+			return;
+		}
+
 		try {
 			const response = await apiFetch<CamerasResponse>('/camera');
 			const selectedWasOnline = selectedCamera?.online === true;
 			const selectedIsOnline =
 				response.cameras.find((camera) => camera.id === selectedCameraId)?.online === true;
-			const shouldRestartStream =
-				cameraStatusUnavailable ||
-				(selectedWasOnline === false && selectedIsOnline) ||
-				(streamError === true && selectedIsOnline);
+			const didComeOnline =
+				cameraStatusUnavailable || (selectedWasOnline === false && selectedIsOnline);
 
 			cameras = response.cameras;
 			cameraStatusUnavailable = false;
 
-			if (shouldRestartStream) {
+			if (didComeOnline) {
+				h264FailedFor.delete(selectedCameraId);
+				h264DropsFor.delete(selectedCameraId);
+				restartSelectedStream();
+			} else if (streamError === true && selectedIsOnline) {
 				restartSelectedStream();
 			}
 		} catch {
@@ -169,7 +177,6 @@
 			return;
 		}
 
-		h264FailedFor.delete(selectedCameraId);
 		streamError = false;
 		mjpegErrorDuringTry = false;
 		stopH264Player();
@@ -286,11 +293,16 @@
 	}
 
 	function didH264Error(): void {
-		if (selectedCamera !== null && h264Ready === false) {
-			// This camera did not deliver a WebCodecs stream; keep using the
-			// MJPEG fallback for it for the rest of this session. A stream that
-			// drops after decoding frames is retried on the next status poll.
-			h264FailedFor.add(selectedCamera.id);
+		if (selectedCamera !== null) {
+			// A camera that delivers no WebCodecs stream, or keeps dropping one
+			// after decoding frames, stays on the MJPEG fallback for the rest of
+			// this session. Other drops are retried on the next status poll.
+			const drops = (h264DropsFor.get(selectedCamera.id) ?? 0) + 1;
+			h264DropsFor.set(selectedCamera.id, drops);
+
+			if (h264Ready === false || drops >= MAX_H264_DROPS) {
+				h264FailedFor.add(selectedCamera.id);
+			}
 		}
 
 		h264Ready = false;
