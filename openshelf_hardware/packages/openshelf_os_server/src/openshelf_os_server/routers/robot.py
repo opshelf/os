@@ -460,7 +460,7 @@ def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: Rob
 async def _ensure_command_allowed_while_tray_on_tool(command: RobotCommands, worker: RobotWorker) -> None:
     if isinstance(command, TRAY_ON_TOOL_ALLOWED_COMMANDS):
         return
-    await ensure_no_tray_on_tool(worker)
+    await ensure_no_tray_on_tool(worker, read_gripper=False)
 
 
 async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> None:

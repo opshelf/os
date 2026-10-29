@@ -101,10 +101,14 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 		)
 
 
-async def ensure_no_tray_on_tool(worker) -> None:
-	"""Reject motion while the gripper holds a tray. Always re-reads the gripper: flows outside the
-	command queue (demo, calibration tests) can leave a tray held without updating the cached flag."""
+async def ensure_no_tray_on_tool(worker, *, read_gripper: bool = True) -> None:
+	"""Reject motion while the gripper holds a tray. By default always re-reads the gripper: flows
+	outside the command queue (demo, calibration tests) can leave a tray held without updating the
+	cached flag. read_gripper=False reads it only when the cache says held, so a clear tool passes;
+	queued commands are gated by the worker, and a read while one carries a tray would misreport it."""
 	was_held = getattr(worker, "_tray_on_tool", False) is True
+	if read_gripper is False and was_held is False:
+		return
 	is_held = await worker.refresh_tray_on_tool()
 	if is_held is not was_held:
 		await worker.get_status_snapshot(force_refresh=True)
