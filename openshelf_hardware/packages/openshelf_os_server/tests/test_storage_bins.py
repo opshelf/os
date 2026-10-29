@@ -118,7 +118,6 @@ async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
 
         worker = MagicMock()
         worker.needs_home.return_value = False
-        worker.refresh_tray_on_tool = AsyncMock(return_value=False)
         monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
         monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
         with pytest.raises(HTTPException) as malformed_hardware_error:

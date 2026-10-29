@@ -23,7 +23,6 @@ def _mock_worker():
 	worker.scale_tare = AsyncMock()
 	worker.enqueue_command = AsyncMock()
 	worker.get_cached_scale_status = MagicMock(return_value=None)
-	worker.refresh_tray_on_tool = AsyncMock(return_value=False)
 	return worker
 
 
