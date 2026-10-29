@@ -4,7 +4,7 @@ import logging
 import sentry_sdk
 
 from pathlib import Path as _Path
-from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, List, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, Dict, Iterable, NamedTuple, Optional, List, TYPE_CHECKING
 
 from hardware.controller import SharedModbusController as Controller
 from hardware.curtain import MotionSafetyInterlock
@@ -55,6 +55,18 @@ logger = logging.getLogger(__name__)
 
 # (component, phase, detail, reason)
 InitProgressReporter = Callable[[str, str, str, Optional[str]], None]
+
+async def _run_together(*steps: Awaitable[Any]) -> None:
+    """Run independent motions at once; the first failure stops the rest before it propagates."""
+    tasks = [asyncio.ensure_future(step) for step in steps]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
 
 _INIT_MOTOR_COMPONENTS = ["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]
 
@@ -1155,25 +1167,22 @@ class Robot:
         await self._tool.pick(coord)
         self.set_operation_context(phase="io_place.rotate_to_front")
         await self._tool.rotate_to_position("front")
-        self.set_operation_context(phase="io_place.move_to_io_position")
-        await self._tool.move(AxisCoordinate(ppl[0], ppl[1]))
+        # The door opens while the gantry approaches. The phase keeps its open_door name
+        # for the whole step: the light curtain blocks motion during an opening door.
         self.set_operation_context(phase="io_place.open_door")
-        await self._io.open_door()
+        await _run_together(self._tool.move(AxisCoordinate(ppl[0], ppl[1])), self._io.open_door())
         self.set_operation_context(phase="io_place.extend_into_io", nudge_override=nudge_override)
         await self._tool.extend_IO(nudge_override=nudge_override)
         self.set_operation_context(phase="io_place.y_axis_transfer")
         await self._tool._my.move_to_position(pph[1])
         self.set_operation_context(phase="io_place.retract")
         await self._tool.retract()
+        # The tool is clear of the IO box, so the door closes while the gantry returns.
         self.set_operation_context(phase="io_place.close_door")
-        await self._io.close_door()
-        self.set_operation_context(phase="io_place.return_to_shelf_coordinate")
-        await self._tool.move(coord)
+        await _run_together(self._io.close_door(), self._tool.move(coord))
+        # The closed door re-homes while the tool places; neither crosses the other's path.
         self.set_operation_context(phase="io_place.place_at_shelf_coordinate")
-        await self._tool.place(coord)
-
-        self.set_operation_context(phase="io_place.home_door")
-        await self._io.home_door_after_cycle()
+        await _run_together(self._tool.place(coord), self._io.home_door_after_cycle())
         self.set_operation_context(phase="io_place.clear_alarms")
         await self._tool.clear_alarms()
 
@@ -1192,10 +1201,8 @@ class Robot:
         await self._tool.pick(coord)
         self.set_operation_context(phase="io_pick.rotate_to_front")
         await self._tool.rotate_to_position("front")
-        self.set_operation_context(phase="io_pick.move_to_io_high_position")
-        await self._tool.move(AxisCoordinate(pph[0], pph[1]))
         self.set_operation_context(phase="io_pick.open_door")
-        await self._io.open_door()
+        await _run_together(self._tool.move(AxisCoordinate(pph[0], pph[1])), self._io.open_door())
         self.set_operation_context(phase="io_pick.extend_into_io")
         await self._tool.extend()
         self.set_operation_context(phase="io_pick.y_axis_transfer")
@@ -1203,14 +1210,9 @@ class Robot:
         self.set_operation_context(phase="io_pick.retract")
         await self._tool.retract()
         self.set_operation_context(phase="io_pick.close_door")
-        await self._io.close_door()
-        self.set_operation_context(phase="io_pick.return_to_shelf_coordinate")
-        await self._tool.move(coord)
+        await _run_together(self._io.close_door(), self._tool.move(coord))
         self.set_operation_context(phase="io_pick.place_back_at_shelf_coordinate")
-        await self._tool.place(coord)
-
-        self.set_operation_context(phase="io_pick.home_door")
-        await self._io.home_door_after_cycle()
+        await _run_together(self._tool.place(coord), self._io.home_door_after_cycle())
         self.set_operation_context(phase="io_pick.clear_alarms")
         await self._tool.clear_alarms()
 

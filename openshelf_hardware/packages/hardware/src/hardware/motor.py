@@ -340,7 +340,8 @@ class Motor():
                 extra={"motor_id": self._motor_id, "limit_mm": self._params.lim},
             )
 
-            # Clear any existing alarms
+            # Clear any existing alarms. 0x1122 resets the alarm history, an EEPROM
+            # write that leaves the drive deaf for ~0.5 s, so it runs only here at startup.
             await self.set_param("Control word", 0x1111)
             await self.set_param("Control word", 0x1122)
 
@@ -1184,7 +1185,6 @@ class Motor():
     async def clear_alarm(self) -> None:
         try:
             await self.set_param("Control word", 0x1111)
-            await self.set_param("Control word", 0x1122)
             await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
             await self.move_config()
 
@@ -1223,7 +1223,6 @@ class Motor():
     async def move_config(self) -> None:
         try:
             await self.set_param("Control word", 0x1111)
-            await self.set_param("Control word", 0x1122)
 
             await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
 
@@ -1430,7 +1429,6 @@ class Motor():
             pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_dist, self._params.mpr), ppr)
 
             await self.set_param("Control word", 0x1111)
-            await self.set_param("Control word", 0x1122)
             await self.set_param("Motion of Path 0", 0x41)
             await self.set_param("Motor direction", self._params.dr)
             await self.set_param("Velocity", rpm or self._params.rpm)
@@ -2098,7 +2096,6 @@ class Motor():
 
     async def _prepare_home_motion(self, rpm: int, direction: int) -> None:
         await self.set_param("Control word", 0x1111)
-        await self.set_param("Control word", 0x1122)
         await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
         self._status = MotorStatus.STOPPED
         await self.set_param("Motion of Path 0", 0x2)

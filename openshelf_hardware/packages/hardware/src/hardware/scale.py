@@ -37,6 +37,10 @@ class Scale:
     # pymodbus re-sends for the controller's default 2 s timeout.
     FAST_READ_TIMEOUT_S = 0.1
 
+    # A steady empty pan has nothing to settle, so this many consecutive stable zero
+    # reads end the wait instead of the full timeout.
+    STABLE_ZERO_CONFIRM_READS = 3
+
     CAL_STATUS_ZERO_OK = 0x04
     CAL_STATUS_WEIGHT_OK = 0x08
 
@@ -258,6 +262,7 @@ class Scale:
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
         saw_unstable = False
+        stable_zero_reads = 0
         collected_weights: list[float] = []
 
         while loop.time() < deadline:
@@ -293,6 +298,12 @@ class Scale:
                     )
 
                     return weight
+
+                stable_zero_reads = stable_zero_reads + 1 if weight is not None else 0
+                if stable_zero_reads >= self.STABLE_ZERO_CONFIRM_READS:
+                    return weight
+            else:
+                stable_zero_reads = 0
 
             await asyncio.sleep(poll_interval)
 
