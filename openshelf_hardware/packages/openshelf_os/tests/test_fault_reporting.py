@@ -8,7 +8,7 @@ import pytest
 from hardware.curtain import MotionSafetyInterlock
 from hardware.motor import MotorStatus
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.exceptions import MovementError
+from openshelf_os.exceptions import MotorError, MovementError
 from openshelf_os.tool import Tool, run_together
 
 
@@ -253,3 +253,32 @@ async def test_run_together_ignores_plain_cancelled_sibling(caplog) -> None:
 
     assert not getattr(raised.value, "__notes__", [])
     assert not caplog.records
+
+
+@pytest.mark.asyncio
+async def test_run_together_cancelled_twice_still_finishes_and_reports_child_stop(caplog) -> None:
+    moving = asyncio.Event()
+    stop_started = asyncio.Event()
+    stopped = []
+
+    async def moving_axis() -> None:
+        moving.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            stop_started.set()
+            await asyncio.sleep(0.05)
+            stopped.append(True)
+            raise MotorError("stop write failed")
+
+    with caplog.at_level("WARNING", logger="openshelf_os.tool"):
+        outer = asyncio.create_task(run_together(moving_axis(), asyncio.sleep(10)))
+        await moving.wait()
+        outer.cancel()
+        await stop_started.wait()
+        outer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await outer
+
+    assert stopped == [True]
+    assert any("also failed while being stopped" in r.getMessage() for r in caplog.records)

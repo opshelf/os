@@ -60,11 +60,13 @@ async def run_together(*steps: Awaitable[Any]) -> None:
     """Run independent motions at once; the first failure stops the rest before it propagates."""
     tasks = [asyncio.ensure_future(step) for step in steps]
     try:
-        await asyncio.gather(*tasks)
+        # Shielded so a cancellation reaches the children once, below, not again mid-stop.
+        await asyncio.shield(asyncio.gather(*tasks))
     except BaseException as error:
         for task in tasks:
             task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # A second cancellation mid-drain would cancel the children again and drop their stops.
+        _, cancellation = await _finish_despite_cancel(asyncio.gather(*tasks, return_exceptions=True))
         # A sibling that failed while being stopped (e.g. its stop write) would otherwise
         # vanish behind the first error.
         for task in tasks:
@@ -95,6 +97,8 @@ async def run_together(*steps: Awaitable[Any]) -> None:
             )
             if hasattr(error, "add_note"):
                 error.add_note(f"concurrent motion also failed: {failure}")
+        if cancellation is not None:
+            raise cancellation from error
         raise
 
 
