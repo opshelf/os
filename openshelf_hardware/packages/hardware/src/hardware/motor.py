@@ -41,6 +41,10 @@ DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
 HOME_FOLLOWING_ERROR_MM = 10.0
 Y_HOME_SETTLE_LIFT_MM = 5.0
 ALARM_DETECT_FOLLOWING_ERROR_BIT = 2
+# Control word 0x1122 resets the alarm history, an EEPROM write that leaves the drive
+# deaf for ~0.5 s (the next frame is answered late or dropped). Homing keeps it;
+# per-move alarm clears do not.
+ALARM_HISTORY_RESET = 0x1122
 # Y zeroes only once the homing trip is cleared and 0x6002 reads ready (0x000P):
 # a 0x21 written while it still reads 0x0040 (quick stop) is silently dropped.
 TRIGGER_READY_MASK = 0xFFF0
@@ -340,10 +344,9 @@ class Motor():
                 extra={"motor_id": self._motor_id, "limit_mm": self._params.lim},
             )
 
-            # Clear any existing alarms. 0x1122 resets the alarm history, an EEPROM
-            # write that leaves the drive deaf for ~0.5 s, so it runs only here at startup.
+            # Clear any existing alarms
             await self.set_param("Control word", 0x1111)
-            await self.set_param("Control word", 0x1122)
+            await self.set_param("Control word", ALARM_HISTORY_RESET)
 
             # Disable auto-homing to prevent blocking motion commands
             await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
@@ -2096,6 +2099,7 @@ class Motor():
 
     async def _prepare_home_motion(self, rpm: int, direction: int) -> None:
         await self.set_param("Control word", 0x1111)
+        await self.set_param("Control word", ALARM_HISTORY_RESET)
         await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
         self._status = MotorStatus.STOPPED
         await self.set_param("Motion of Path 0", 0x2)
@@ -2421,13 +2425,11 @@ class Motor():
                 if is_y_axis:
                     await self._verify_zero_position()
                 else:
-                    # These drives apply the 0x21 once the alarm reset releases the limit
-                    # stop. The rest of move_config must wait for it: written within a few
-                    # ms it drops the zero (X, rotate), and zeroing after move_config
-                    # instead leaves the next door open tripping alarm 32. The 0x1122
-                    # EEPROM stall used to provide this wait.
+                    # Keep the alarm-history reset here. Without it the zero is dropped (X,
+                    # rotate) or, zeroed after move_config, the next door open trips alarm
+                    # 32 at ~20 mm (lb4a-3, 2026-10-29). Homing is rare enough to pay its stall.
                     await self.set_param("Control word", 0x1111)
-                    await self._verify_zero_position()
+                    await self.set_param("Control word", ALARM_HISTORY_RESET)
                     await self.move_config()
 
                 await self._verify_home_limit_engaged()
