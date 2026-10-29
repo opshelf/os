@@ -39,6 +39,7 @@
 	let h264Ready = false;
 	const h264FailedFor = new Set<string>();
 	const h264DropsFor = new Map<string, number>();
+	const h264DecodedFor = new Set<string>();
 	const webCodecsSupported = browser && isWebCodecsAvailable();
 	let resizeObserver: ResizeObserver | null = null;
 	let observedCanvas: HTMLCanvasElement | null = null;
@@ -286,6 +287,9 @@
 
 	function didH264FirstFrame(): void {
 		h264Ready = true;
+		if (selectedCamera !== null) {
+			h264DecodedFor.add(selectedCamera.id);
+		}
 		requestAnimationFrame(() => {
 			resizeCanvas();
 			drawLines();
@@ -300,7 +304,7 @@
 			const drops = (h264DropsFor.get(selectedCamera.id) ?? 0) + 1;
 			h264DropsFor.set(selectedCamera.id, drops);
 
-			if (h264Ready === false || drops >= MAX_H264_DROPS) {
+			if (h264DecodedFor.has(selectedCamera.id) === false || drops >= MAX_H264_DROPS) {
 				h264FailedFor.add(selectedCamera.id);
 			}
 		}

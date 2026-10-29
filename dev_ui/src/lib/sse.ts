@@ -225,13 +225,6 @@ export function createReconnectingEventSource(
 			}
 			closeSource();
 			options.onError?.();
-
-			// iOS drops the connections of a backgrounded tab and freezes its timers, so a
-			// hidden page reconnects when it is shown again instead of on a timer.
-			if (document.visibilityState === 'hidden') {
-				return;
-			}
-
 			void reloadIfLoginRedirect();
 			scheduleReconnect();
 		};
@@ -247,20 +240,27 @@ export function createReconnectingEventSource(
 		return Math.max(hiddenMaxTickGapMs, Date.now() - hiddenLastTickAt);
 	}
 
+	function startHiddenTimer(): void {
+		if (hiddenTimer !== null) {
+			return;
+		}
+
+		hiddenLastTickAt = Date.now();
+		hiddenMaxTickGapMs = 0;
+		hiddenTimer = setInterval(() => {
+			const now = Date.now();
+			hiddenMaxTickGapMs = Math.max(hiddenMaxTickGapMs, now - hiddenLastTickAt);
+			hiddenLastTickAt = now;
+		}, HIDDEN_TICK_MS);
+	}
+
 	// Safari can resume a suspended page with the old connection still reporting OPEN
 	// while nothing arrives on it. Suspension shows as a stalled timer, so only a page
-	// that was actually suspended drops a healthy-looking connection.
+	// that was actually suspended drops a healthy-looking connection. iOS also freezes
+	// the reconnect timer of a hidden page, so showing it reconnects at once.
 	function didChangeLifecycle(event: Event): void {
 		if (document.visibilityState === 'hidden') {
-			if (hiddenTimer === null) {
-				hiddenLastTickAt = Date.now();
-				hiddenMaxTickGapMs = 0;
-				hiddenTimer = setInterval(() => {
-					const now = Date.now();
-					hiddenMaxTickGapMs = Math.max(hiddenMaxTickGapMs, now - hiddenLastTickAt);
-					hiddenLastTickAt = now;
-				}, HIDDEN_TICK_MS);
-			}
+			startHiddenTimer();
 			return;
 		}
 
@@ -273,7 +273,7 @@ export function createReconnectingEventSource(
 			event.type === 'online' ||
 			(event instanceof PageTransitionEvent && event.persisted === true);
 
-		if (shouldReconnect === false || isStale === false || isConnecting === true) {
+		if (shouldReconnect === false || isStale === false) {
 			return;
 		}
 
@@ -293,6 +293,9 @@ export function createReconnectingEventSource(
 		connect: () => {
 			shouldReconnect = true;
 			setLifecycleListeners(true);
+			if (document.visibilityState === 'hidden') {
+				startHiddenTimer();
+			}
 			void reconnect();
 		},
 		close: () => {
