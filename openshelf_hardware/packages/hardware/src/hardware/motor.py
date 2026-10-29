@@ -45,6 +45,9 @@ ALARM_DETECT_FOLLOWING_ERROR_BIT = 2
 # deaf for ~0.5 s (the next frame is answered late or dropped). Homing keeps it;
 # per-move alarm clears do not.
 ALARM_HISTORY_RESET = 0x1122
+# Slow replies to the frame after it landed ~0.49 s later; nothing is sent to the drive
+# before this, since a frame it drops holds the shared port for the 2 s Modbus timeout.
+ALARM_HISTORY_RESET_BUSY_S = 0.6
 # Y zeroes only once the homing trip is cleared and 0x6002 reads ready (0x000P):
 # a 0x21 written while it still reads 0x0040 (quick stop) is silently dropped.
 TRIGGER_READY_MASK = 0xFFF0
@@ -346,7 +349,7 @@ class Motor():
 
             # Clear any existing alarms
             await self.set_param("Control word", 0x1111)
-            await self.set_param("Control word", ALARM_HISTORY_RESET)
+            await self._reset_alarm_history()
 
             # Disable auto-homing to prevent blocking motion commands
             await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
@@ -1184,6 +1187,14 @@ class Motor():
     # ------------------------------------------------------------------ #
     #  Alarm / fault management
     # ------------------------------------------------------------------ #
+
+    async def _reset_alarm_history(self) -> None:
+        await self._controller.write_single_register(
+            self._motor_id,
+            motor_helpers.get_register_by_name("Control word"),
+            ALARM_HISTORY_RESET,
+            busy_after_s=ALARM_HISTORY_RESET_BUSY_S,
+        )
 
     async def clear_alarm(self) -> None:
         try:
@@ -2099,7 +2110,7 @@ class Motor():
 
     async def _prepare_home_motion(self, rpm: int, direction: int) -> None:
         await self.set_param("Control word", 0x1111)
-        await self.set_param("Control word", ALARM_HISTORY_RESET)
+        await self._reset_alarm_history()
         await self._controller.write_single_register(self._motor_id, 0x6000, 0x0000)
         self._status = MotorStatus.STOPPED
         await self.set_param("Motion of Path 0", 0x2)
@@ -2429,7 +2440,7 @@ class Motor():
                     # rotate) or, zeroed after move_config, the next door open trips alarm
                     # 32 at ~20 mm (lb4a-3, 2026-10-29). Homing is rare enough to pay its stall.
                     await self.set_param("Control word", 0x1111)
-                    await self.set_param("Control word", ALARM_HISTORY_RESET)
+                    await self._reset_alarm_history()
                     await self.move_config()
 
                 await self._verify_home_limit_engaged()

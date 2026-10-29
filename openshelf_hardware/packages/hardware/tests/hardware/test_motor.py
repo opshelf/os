@@ -375,7 +375,7 @@ def echo_registers(mock_controller, registers: dict[int, int]) -> dict[int, int]
     0x6002 is a command register whose read is drive status, so writes to it are not echoed.
     Pr0.07 is mirrored into the 0x1003 enable bit.
     """
-    async def write(_unit, address, value):
+    async def write(_unit, address, value, **_kwargs):
         if address == 0x000F:
             registers[0x1003] = (registers.get(0x1003, 0) & ~(1 << 1)) | (value << 1)
         if address != motor_helpers.TRIGGER:
