@@ -141,3 +141,18 @@ async def test_robot_command_conflicts_while_manual_move_running(client: AsyncCl
 	assert command_response.status_code == 409
 	assert command_response.json()["detail"]["code"] == "movement_in_progress"
 	mock_worker.enqueue_command.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_move_motor_admitted_while_tray_on_tool(client: AsyncClient) -> None:
+	"""An engineer has to be able to drive a held tray back to its cell by hand."""
+	mock_worker = _mock_worker()
+	mock_worker._tray_on_tool = True
+	mock_worker.refresh_tray_on_tool = AsyncMock(return_value=True)
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post("/api/robot/debug/motors/x_axis/move", json={"position_mm": 250.5})
+
+	assert response.status_code == 200
+	mock_worker._robot._get_motor_by_name("x_axis").move_to_position.assert_awaited_once()

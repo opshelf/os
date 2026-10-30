@@ -124,8 +124,9 @@ async def manual_motion_guard(
 	*,
 	allow_tray_on_tool: bool = False,
 ) -> AsyncIterator[None]:
-	"""allow_tray_on_tool admits the actions that recover a held tray: release, homing, clearing
-	alarms, power cycling, probing and unlocking the cabinet."""
+	"""allow_tray_on_tool admits the actions that recover a held tray: operator-driven moves and jogs,
+	release, homing, clearing alarms, power cycling, probing and unlocking the cabinet. Automated
+	sequences (demo, test cycles, grip probe) stay blocked."""
 	global _current_operation
 
 	if worker is not None:

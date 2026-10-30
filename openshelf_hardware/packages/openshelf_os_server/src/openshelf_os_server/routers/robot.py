@@ -1973,7 +1973,7 @@ async def move_motor(
         )
 
     try:
-        async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker):
+        async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker, allow_tray_on_tool=True):
             if motor_name == "rotate":
                 if await worker._robot._tool.is_rotation_at_position(request.position_mm):
                     return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
@@ -2016,7 +2016,7 @@ async def control_door(
     failures return `503`.
     """
     try:
-        async with manual_motion_guard(f"door:{action}", worker=worker):
+        async with manual_motion_guard(f"door:{action}", worker=worker, allow_tray_on_tool=True):
             if action == "open":
                 await worker._robot._io.open_door()
             elif action == "close":
