@@ -16,6 +16,7 @@ from .apply_runner import ApplyRunnerMixin
 from openshelf_os_server.core.logging_config import get_correlation_id
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from .snapshot_runner import SnapshotRunnerMixin
+from openshelf_os.robot.worker import fault_needs_home_axes
 
 
 class LaserAutoCalibrationManager(
@@ -178,7 +179,10 @@ class LaserAutoCalibrationManager(
                 await self._home_after_abort(worker)
             except Exception as exc:
                 logger.error("laser_auto_calibration_abort_home_failed", exc_info=True)
-                worker.set_needs_home("Laser auto calibration abort homing failed")
+                worker.set_needs_home(
+                    "Laser auto calibration abort homing failed",
+                    axes=fault_needs_home_axes(worker._robot, exc),
+                )
                 await worker.get_status_snapshot(force_refresh=True)
                 await self._set_terminal_state("failed", f"Abort homing failed: {exc}")
                 return

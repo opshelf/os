@@ -15,7 +15,7 @@ from hardware.servo import GripState, Servo
 from openshelf_os.common import load_config_file
 from openshelf_os.exceptions import (
     MotorError, ConfigError,
-    GripperError, GripVerificationError, MovementError, MotorWaitTimeoutError,
+    GripperError, GripVerificationError, MovementError, MotorWaitTimeoutError, RotationClearanceError,
     GRIP_DROPPED_CODE, GRIP_PICK_FAILED_CODE, GRIP_RELEASE_FAILED_CODE
 )
 
@@ -1196,7 +1196,7 @@ class Tool:
                     )
 
         if unsafe:
-            raise MovementError("Unsafe tool clearance for rotation: " + "; ".join(unsafe))
+            raise RotationClearanceError("Unsafe tool clearance for rotation: " + "; ".join(unsafe))
 
     async def ensure_safe_rotation_x_position(self) -> Optional[float]:
         x_motor = getattr(self, "_mx", None)

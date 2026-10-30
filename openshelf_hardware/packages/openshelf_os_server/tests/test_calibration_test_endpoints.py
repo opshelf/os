@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from openshelf_os.exceptions import GRIP_PICK_FAILED_CODE, GripVerificationError
 from openshelf_os.storage import CalibrationCoordinate, Cell, CellItem, CellStatus, Dimensions, Shelf, StorageGrid
 
 
@@ -177,3 +178,24 @@ async def test_saving_a_typed_z_stamps_the_shelf_stage_extension(client) -> None
 	point = grid.front_module[0].cells[0].calibration_point
 	assert point.z_offset == 8.5
 	assert point.z_captured_at_stage_mm == 46.0
+
+
+@pytest.mark.asyncio
+async def test_quick_test_without_grip_homes_only_the_tool(client) -> None:
+	"""A tray the gripper did not detect leaves the gantry in place, so it must not home everything."""
+	grid = build_grid(is_occupied=True)
+	worker = build_worker(grid)
+	worker._robot._tool.pick.side_effect = GripVerificationError(
+		'Pick operation failed: No grip on grip: obj=NONE', failure_code=GRIP_PICK_FAILED_CODE
+	)
+
+	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
+		with patch('openshelf_os_server.routers.calibration._clear_motors_for_move', AsyncMock()):
+			response = await client.post(
+				'/api/calibration/test',
+				json={'side': 'front_module', 'shelf_idx': 0, 'cell_idx': 0},
+			)
+
+	assert response.status_code == 409
+	worker.set_needs_home.assert_called_once()
+	assert worker.set_needs_home.call_args.kwargs['axes'] == ['rotate', 'stage', 'z_axis']
