@@ -50,6 +50,10 @@ class GripVerificationError(GripperError):
 class MovementError(ToolError):
     """Exception raised for movement-related errors."""
     pass
+
+
+class RotationClearanceError(MovementError):
+    """The rotation guard refused to rotate; it raises before any axis moves."""
 class IOBoxError(OpenshelfError):
     """Exception raised for IO box-related errors."""
     pass

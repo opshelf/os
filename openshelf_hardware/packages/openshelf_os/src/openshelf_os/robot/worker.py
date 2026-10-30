@@ -41,9 +41,11 @@ from openshelf_os.barcode_service import (
 from openshelf_os.exceptions import (
     GRIP_IO_BOX_FAILED_CODE,
     GRIP_RELEASE_FAILED_CODE,
+    GripperError,
     GripVerificationError,
     MotorError,
     MovementError,
+    RotationClearanceError,
     ToolError,
 )
 from openshelf_os.tool import TOOL_MOTION_AXES
@@ -74,6 +76,85 @@ CommandLifecycleCallback = Callable[
 ]
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
+
+
+def _axis_motors(robot: Any) -> dict[str, Any]:
+    tool = getattr(robot, "_tool", None)
+    io = getattr(robot, "_io", None)
+    motors = {
+        "x_axis": getattr(tool, "_mx", None),
+        "y_axis": getattr(tool, "_my", None),
+        "z_axis": getattr(tool, "_mg", None),
+        "stage": getattr(tool, "_ms", None),
+        "rotate": getattr(tool, "_mr", None),
+        "door": getattr(io, "_md", None),
+    }
+    return {axis: motor for axis, motor in motors.items() if motor is not None}
+
+
+def _axis_named_in(robot: Any, text: str) -> Optional[str]:
+    match = _MOTOR_ID_RE.search(text)
+    if not match:
+        return None
+
+    motor_id = int(match.group(1))
+    for axis, motor in _axis_motors(robot).items():
+        if getattr(motor, "_motor_id", None) == motor_id:
+            return axis
+
+    return None
+
+
+def _is_caused_by(err: BaseException, cls: type[BaseException]) -> bool:
+    current: Optional[BaseException] = err
+    while current is not None:
+        if isinstance(current, cls):
+            return True
+        current = current.__cause__
+    return False
+
+
+def _grip_fault_axes(err: GripVerificationError) -> list[str]:
+    """Motors a gripper feedback fault invalidates: the tool, plus the door on an IO box fault.
+
+    A multi-item tray fault leaves the tool in the IO box with the door mid-cycle, so the
+    door homes right after the tool. A failed release can stop the tool in the IO box too.
+    """
+    if err.failure_code in (GRIP_IO_BOX_FAILED_CODE, GRIP_RELEASE_FAILED_CODE):
+        return [*TOOL_MOTION_AXES, "door"]
+    return list(TOOL_MOTION_AXES)
+
+
+def is_rotation_clearance_refusal(err: BaseException) -> bool:
+    """The rotation guard refused before rotating, so no axis lost its position."""
+    return _is_caused_by(err, RotationClearanceError)
+
+
+def fault_needs_home_axes(robot: Any, err: BaseException) -> Optional[list[str]]:
+    """Axes a failed operation left without a trusted position.
+
+    [] means nothing has to home; None means the fault cannot be attributed, so every axis is
+    untrusted. A motor flags its own lost position (fault, timeout, interrupted home), which
+    attributes wrapped errors whose text never names the motor. A gripper servo fault can stop
+    the tool mid-transfer, so the tool homes; the gantry keeps its position.
+    """
+    if isinstance(err, GripVerificationError):
+        return _grip_fault_axes(err)
+    if is_rotation_clearance_refusal(err):
+        return []
+
+    axes = {
+        axis
+        for axis, motor in _axis_motors(robot).items()
+        if getattr(motor, "_is_homed", None) is False
+    }
+    named_axis = _axis_named_in(robot, str(err))
+    if named_axis is not None:
+        axes.add(named_axis)
+    if isinstance(err, GripperError):
+        axes.update(TOOL_MOTION_AXES)
+
+    return sorted(axes) if axes else None
 
 def _default_axis_status() -> Dict[str, Any]:
     return {
@@ -1064,44 +1145,15 @@ class RobotWorker:
             self._needs_home_reason = None
 
     def _infer_needs_home_axes(self, reason: str) -> Optional[list[str]]:
-        match = _MOTOR_ID_RE.search(reason)
-        if not match:
-            return None
-
-        try:
-            motor_id = int(match.group(1))
-        except ValueError:
-            return None
-
-        tool = self._robot._tool
-        io = self._robot._io
-        axis_lookup = {
-            "x_axis": tool._mx,
-            "y_axis": tool._my,
-            "z_axis": tool._mg,
-            "stage": tool._ms,
-            "rotate": tool._mr,
-            "door": io._md,
-        }
-        for axis, motor in axis_lookup.items():
-            if motor is not None and getattr(motor, "_motor_id", None) == motor_id:
-                return [axis]
-
-        return None
-
-    def _grip_fault_axes(self, err: GripVerificationError) -> list[str]:
-        """Motors a gripper feedback fault invalidates: the tool, plus the door on an IO box fault.
-
-        A multi-item tray fault leaves the tool in the IO box with the door mid-cycle, so the
-        door homes right after the tool. A failed release can stop the tool in the IO box too.
-        """
-        if err.failure_code in (GRIP_IO_BOX_FAILED_CODE, GRIP_RELEASE_FAILED_CODE):
-            return [*TOOL_MOTION_AXES, "door"]
-        return list(TOOL_MOTION_AXES)
+        axis = _axis_named_in(self._robot, reason)
+        return None if axis is None else [axis]
 
     def set_needs_home(self, reason: str, axes: Optional[list[str]] = None) -> None:
+        """axes=None infers the axis from a motor id in reason, else every axis; [] homes nothing."""
         if axes is None:
             axes = self._infer_needs_home_axes(reason)
+        elif not axes:
+            return
 
         # A wider requirement invalidates the crash code of the fault that set it: a grip code
         # tells the operator to reset the tool alone, which is wrong once a stop, a power cycle or
@@ -1475,7 +1527,10 @@ class RobotWorker:
             # machine: the gantry never lost position, so only the tool (plus the IO box door when
             # the tray was in the IO box) has to home before the operator can resume.
             is_grip_fault = isinstance(err, GripVerificationError)
-            is_hardware_fault = isinstance(err, (MotorError, MovementError, ToolError))
+            is_hardware_fault = (
+                isinstance(err, (MotorError, MovementError, ToolError))
+                and not is_rotation_clearance_refusal(err)
+            )
             failure_code = err.failure_code if is_grip_fault else "execution_error"
 
             try:
@@ -1489,10 +1544,10 @@ class RobotWorker:
                 logging.warning("Failed to publish command failure: %s", publish_error)
 
             if is_grip_fault:
-                self.set_needs_home(str(err), axes=self._grip_fault_axes(err))
+                self.set_needs_home(str(err), axes=fault_needs_home_axes(self._robot, err))
                 logging.warning("Gripper feedback fault - tool motors need homing: %s", err)
             elif is_hardware_fault:
-                self.set_needs_home(str(err))
+                self.set_needs_home(str(err), axes=fault_needs_home_axes(self._robot, err))
                 logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
 
             prepared_artifacts = (

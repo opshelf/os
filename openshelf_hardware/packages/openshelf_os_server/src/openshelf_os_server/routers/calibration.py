@@ -17,6 +17,7 @@ from openshelf_os_server.sse import EventSourceResponse
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.common import Parameters
 from openshelf_os.tool import MAX_PICK_LIFT_MM, require_grip
+from openshelf_os.robot.worker import fault_needs_home_axes, is_rotation_clearance_refusal
 from openshelf_os.storage import (
 	CalibrationCoordinate,
 	Cell,
@@ -414,31 +415,6 @@ async def _get_current_stage_extension(tool, fallback: float = 0.0) -> float:
 		return fallback
 
 
-def _infer_axes_from_error(worker, exc: Exception) -> Optional[list[str]]:
-	match = _MOTOR_ID_RE.search(str(exc))
-	if not match:
-		return None
-
-	try:
-		motor_id = int(match.group(1))
-	except ValueError:
-		return None
-
-	tool = worker._robot._tool
-	axis_lookup = {
-		"x_axis": tool._mx,
-		"y_axis": tool._my,
-		"z_axis": tool._mg,
-		"stage": tool._ms,
-		"rotate": tool._mr,
-	}
-	for axis, motor in axis_lookup.items():
-		if motor is not None and getattr(motor, "_motor_id", None) == motor_id:
-			return [axis]
-
-	return None
-
-
 def _reason_matches_axis_or_motor(reason: Optional[str], axis: str, motor) -> bool:
 	if not reason:
 		return False
@@ -547,7 +523,12 @@ async def _raise_motor_error(
 	axes: Optional[list[str]] = None,
 ) -> None:
 	if axes is None:
-		axes = _infer_axes_from_error(worker, exc)
+		if is_rotation_clearance_refusal(exc):
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail=_build_error_detail(message, code="rotation_blocked"),
+			) from exc
+		axes = fault_needs_home_axes(worker._robot, exc)
 	worker.set_needs_home(message, axes=axes)
 	await worker.get_status_snapshot(force_refresh=True)
 	raise HTTPException(

@@ -13,7 +13,10 @@ from pydantic import TypeAdapter, ValidationError
 from openshelf_os.exceptions import (
     GRIP_IO_BOX_FAILED_CODE,
     GRIP_PICK_FAILED_CODE,
+    GripperError,
     GripVerificationError,
+    MovementError,
+    RotationClearanceError,
 )
 from openshelf_os.robot.commands import HomeCommand, RetrieveItemCommand, RobotCommands
 from openshelf_os.robot.core import Robot
@@ -184,3 +187,56 @@ def test_an_attributable_fault_adds_axes_without_taking_over_the_reason():
     assert worker.needs_home_axes() == ["stage", "z_axis"]
     assert worker.needs_home() is True
     assert worker.needs_home_reason() == PHYSICAL_ESTOP_REASON
+
+
+def _motor(motor_id: int) -> SimpleNamespace:
+    return SimpleNamespace(_motor_id=motor_id, _is_homed=True)
+
+
+def _rotation_clearance_refusal() -> MovementError:
+    refusal = RotationClearanceError("Unsafe tool clearance for rotation: z_axis=9mm")
+    err = MovementError(f"Tool rotation failed: {refusal}")
+    err.__cause__ = refusal
+    return err
+
+
+@pytest.mark.parametrize(
+    ("fault", "stage_lost_position", "expected_axes", "is_crashed"),
+    [
+        # A wrapped drive fault never names its motor; the motor flagged its own lost position.
+        (MovementError("Tool extension failed: Movement failed (status=FAULT)"), True, ["stage"], True),
+        # A gripper servo fault stops the tool, not the gantry.
+        (GripperError("Pick operation failed: Gripper fault: OVERLOAD"), False, ["rotate", "stage", "z_axis"], True),
+        # The rotation guard refuses before anything moves.
+        (_rotation_clearance_refusal(), False, [], False),
+    ],
+)
+async def test_a_fault_homes_only_the_axes_that_lost_position(
+    fault, stage_lost_position, expected_axes, is_crashed
+):
+    robot = PickRobot(fault)
+    robot._tool = SimpleNamespace(  # type: ignore[attr-defined]
+        _mx=_motor(1), _my=_motor(2), _mg=_motor(3), _ms=_motor(4), _mr=_motor(5)
+    )
+    robot._io = SimpleNamespace(_md=_motor(6))  # type: ignore[attr-defined]
+    # The drive fault cleared the stage motor's homed flag, as Motor.wait_for_move does.
+    robot._tool._ms._is_homed = stage_lost_position is False  # type: ignore[attr-defined]
+
+    RobotWorker._instance = None
+    worker = RobotWorker(robot)  # type: ignore[arg-type]
+    events = await worker.subscribe_events()
+    await worker.enqueue_command(RetrieveItemCommand(location=LOCATION), command_id=COMMAND_ID)
+    worker._running = True
+    task = asyncio.create_task(worker.process_commands())
+    try:
+        await _next_event(events, lambda e: e.get("command") == "retrieve_item")
+
+        assert worker.needs_home_axes() == expected_axes
+        assert worker.needs_home() is bool(expected_axes)
+        assert worker._is_crashed is is_crashed
+    finally:
+        worker._running = False
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        RobotWorker._instance = None

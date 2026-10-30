@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.exceptions import MotorError, MovementError, ToolError
+from openshelf_os.robot.worker import fault_needs_home_axes
 from openshelf_os.storage import StorageModuleCellLocation
 from hardware.exceptions import MotorError as HardwareMotorError
 
@@ -100,12 +101,14 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 		logger.info("demo_cycle_cancelled")
 	except (MotorError, MovementError, ToolError, HardwareMotorError) as exc:
 		logger.error("demo_cycle_hardware_fault", exc_info=True)
-		worker.set_needs_home(f"Demo cycle hardware fault: {exc}")
+		worker.set_needs_home(
+			f"Demo cycle hardware fault: {exc}", axes=fault_needs_home_axes(worker._robot, exc)
+		)
 		await worker.refresh_tray_on_tool()
 		await worker.get_status_snapshot(force_refresh=True)
 	except Exception as exc:
 		logger.error("demo_cycle_unexpected_error", exc_info=True)
-		worker.set_needs_home(f"Demo cycle crashed: {exc}")
+		worker.set_needs_home(f"Demo cycle crashed: {exc}", axes=fault_needs_home_axes(worker._robot, exc))
 		await worker.refresh_tray_on_tool()
 		await worker.get_status_snapshot(force_refresh=True)
 	finally:
