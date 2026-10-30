@@ -36,6 +36,7 @@
 	let statusError = '';
 	let streamError = false;
 	let mjpegErrorDuringTry = false;
+	let mjpegFailed = false;
 	let loading = true;
 	let isImageFlipped = false;
 	let isDrawingMode = false;
@@ -127,6 +128,7 @@
 			statusError = '';
 			streamError = false;
 			mjpegErrorDuringTry = false;
+			mjpegFailed = false;
 
 			selectAvailableCamera();
 		} catch (error) {
@@ -218,6 +220,7 @@
 
 		streamError = false;
 		mjpegErrorDuringTry = false;
+		mjpegFailed = false;
 		stopH264Player();
 	}
 
@@ -258,6 +261,8 @@
 	}
 
 	function didStreamError(): void {
+		mjpegFailed = true;
+
 		if (h264Ready === false && h264Player !== null) {
 			// The WebCodecs primary is still being attempted for this
 			// camera; let it run to completion. The key below remounts
@@ -272,6 +277,7 @@
 
 	function didStreamLoad(): void {
 		streamError = false;
+		mjpegFailed = false;
 		requestAnimationFrame(() => {
 			resizeCanvas();
 			drawLines();
@@ -347,6 +353,9 @@
 			}
 		}
 
+		// The MJPEG image is about to be remounted for a fresh attempt; clear the
+		// failed flag so the new image is visible while it loads.
+		mjpegFailed = false;
 		h264Ready = false;
 		h264Player = null;
 	}
@@ -493,6 +502,7 @@
 		selectedCameraId = cameraId;
 		streamError = false;
 		mjpegErrorDuringTry = false;
+		mjpegFailed = false;
 		lineStart = null;
 		previewEnd = null;
 		stopH264Player();
@@ -700,6 +710,7 @@
 				{#key mjpegErrorDuringTry && h264Player === null && h264FailedFor.has(selectedCameraId)}
 					<img
 						class:flipped={isImageFlipped}
+						class:mjpeg-off={mjpegFailed}
 						src={streamUrl}
 						alt="camera feed"
 						on:error={didStreamError}
@@ -763,6 +774,11 @@
 		display: block;
 		position: relative;
 		z-index: 0;
+	}
+
+	/* Hide the image (and its broken-image icon) once the feed fails to load. */
+	.stream-container img.mjpeg-off {
+		display: none;
 	}
 
 	.stream-container img.flipped,
