@@ -43,7 +43,7 @@ async def test_stale_false_cache_with_a_held_gripper_blocks_manual_motion(worker
 
 	entered = False
 	with pytest.raises(HTTPException) as exc_info:
-		async with manual_motion_guard("motor_move:x_axis", worker=worker):
+		async with manual_motion_guard("calibration_move", worker=worker):
 			entered = True
 
 	assert entered is False
@@ -57,7 +57,7 @@ async def test_empty_gripper_admits_manual_motion_and_reads_it(worker_factory):
 	robot = GripperRobot(held=False)
 	worker = await worker_factory(robot)
 
-	async with manual_motion_guard("motor_move:x_axis", worker=worker):
+	async with manual_motion_guard("calibration_move", worker=worker):
 		pass
 
 	assert robot.reads == 1

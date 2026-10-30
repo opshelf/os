@@ -710,7 +710,7 @@ async def _move_tool_to_coordinate(
 	tool = worker._robot._tool
 
 	try:
-		async with manual_motion_guard("calibration_move", worker=worker, allow_tray_on_tool=True):
+		async with manual_motion_guard("calibration_move", worker=worker):
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await tool.move(coord)
 
@@ -1203,7 +1203,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 	warnings: list[str] = []
 
 	try:
-		async with manual_motion_guard("calibration_jog", worker=worker, allow_tray_on_tool=True):
+		async with manual_motion_guard("calibration_jog", worker=worker):
 			if request.axis == "x":
 				if tool._mx is None:
 					raise HTTPException(
@@ -2056,7 +2056,7 @@ async def move_iobox_door(request: IOBoxDoorMoveRequest):
 	original_config = motor._params
 
 	try:
-		async with manual_motion_guard("calibration_iobox_door_move", worker=worker, allow_tray_on_tool=True):
+		async with manual_motion_guard("calibration_iobox_door_move", worker=worker):
 			async with io._door_motion_lock:
 				motor._params = temporary_config
 				try:
@@ -2189,7 +2189,7 @@ async def move_to_iobox_position(position: IOBoxPositionName) -> IOBoxPositionRe
 	x = getattr(iobox_current, fields["x"])
 	y = getattr(iobox_current, fields["y"])
 
-	async with manual_motion_guard("calibration_iobox_move", worker=worker, allow_tray_on_tool=True):
+	async with manual_motion_guard("calibration_iobox_move", worker=worker):
 		try:
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await _retract_tool_for_move(tool, worker)
@@ -2246,7 +2246,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	warnings: list[str] = []
 
 	try:
-		async with manual_motion_guard("calibration_iobox_jog", worker=worker, allow_tray_on_tool=True):
+		async with manual_motion_guard("calibration_iobox_jog", worker=worker):
 			if request.axis == "x":
 				if tool._mx is None:
 					raise HTTPException(
@@ -2581,7 +2581,7 @@ async def rotate_to_angle(angle: float):
 	rotation_limit = tool._mr._params.lim
 	clamped_angle = max(0, min(rotation_limit, angle))
 	try:
-		async with manual_motion_guard("calibration_rotation", worker=worker, allow_tray_on_tool=True):
+		async with manual_motion_guard("calibration_rotation", worker=worker):
 			await _clear_motors_for_move(tool, gantry=True, stage=True, rotation=True)
 			if await tool.is_rotation_at_position(clamped_angle):
 				return {"success": True}
@@ -2761,7 +2761,7 @@ async def move_stage(request: StageMoveRequest):
 	target = _clamp_value(request.position, stage_limit, "Stage", warnings)
 
 	try:
-		async with manual_motion_guard("calibration_stage", worker=worker, allow_tray_on_tool=True):
+		async with manual_motion_guard("calibration_stage", worker=worker):
 			await _clear_motors_for_move(tool, stage=True)
 			await tool._ms.move_to_position(target)
 			await tool._ms.stop()

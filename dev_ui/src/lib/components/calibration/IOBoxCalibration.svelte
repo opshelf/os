@@ -524,8 +524,8 @@
 		warning = '';
 
 		try {
-			await moveMotor('z_axis', ioboxPosition[selectedFields.z]);
 			await moveStage(ioboxPosition[selectedFields.stage]);
+			await moveMotor('z_axis', ioboxPosition[selectedFields.z]);
 			message = 'stage and z extended';
 		} catch (err) {
 			handleNeedsHomeError(err);
