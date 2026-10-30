@@ -27,6 +27,7 @@ def _mock_worker(motors: dict[str, AsyncMock] | None = None):
 	})
 	worker.clear_needs_home_axes = MagicMock()
 	worker.needs_home = MagicMock(return_value=False)
+	worker.needs_reset = MagicMock(return_value=False)
 	worker.needs_home_axes = MagicMock(return_value=[])
 	worker.needs_home_reason = MagicMock(return_value=None)
 	worker.clear_needs_home = MagicMock()

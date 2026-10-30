@@ -27,6 +27,9 @@ class RecordingWorker:
 	def needs_home(self) -> bool:
 		return False
 
+	def needs_reset(self) -> bool:
+		return False
+
 	async def enqueue_command(
 		self,
 		command: StoreItemCommand,

@@ -19,6 +19,7 @@
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 	import { orderSectionMoves, type MotorMove } from '$lib/motor-order';
+	import { robotStatus } from '$lib/stores';
 
 	let motors: MotorList | null = null;
 	let isLoading = true;
@@ -390,6 +391,28 @@
 		}
 	}
 
+	// Recover opens the fingers and withdraws the tool without homing, then homes only the axes
+	// the robot reports as having lost position.
+	async function didClickRecoverTool(): Promise<void> {
+		sectionAction = 'tool:recover';
+		error = '';
+		message = '';
+		const axes = $robotStatus?.needs_home_axes ?? [];
+
+		try {
+			await apiFetch('/robot/commands', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(axes.length > 0 ? { command: 'recover', axes } : { command: 'recover' })
+			});
+			message = 'recover command sent';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'recover command failed';
+		} finally {
+			sectionAction = null;
+		}
+	}
+
 	async function didClickMoveSection(
 		sectionName: string,
 		sectionMotors: MotorInfo[]
@@ -678,6 +701,11 @@
 									type="button"
 									on:click={() => didClickMoveSection('tool', toolMotors())}
 									disabled={isActionDisabled()}>MOVE</button
+								>
+								<button
+									type="button"
+									on:click={didClickRecoverTool}
+									disabled={isActionDisabled()}>RECOVER</button
 								>
 							</span>
 						</div>

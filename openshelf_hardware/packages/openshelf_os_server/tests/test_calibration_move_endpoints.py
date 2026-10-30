@@ -40,6 +40,7 @@ def _mock_worker(stage_position: float):
 	return SimpleNamespace(
 		_robot=robot,
 		needs_home=lambda: False,
+		needs_reset=lambda: False,
 		needs_home_reason=lambda: None,
 		needs_home_axes=lambda: [],
 		refresh_tray_on_tool=AsyncMock(return_value=False),
@@ -108,6 +109,7 @@ def _mock_multi_item_worker(grip_state):
 	worker = SimpleNamespace(
 		_robot=SimpleNamespace(_tool=tool, _io=io),
 		needs_home=lambda: False,
+		needs_reset=lambda: False,
 		needs_home_reason=lambda: None,
 		needs_home_axes=lambda: [],
 		set_needs_home=lambda *args, **kwargs: None,

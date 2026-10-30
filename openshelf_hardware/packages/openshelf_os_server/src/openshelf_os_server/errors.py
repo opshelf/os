@@ -163,6 +163,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"request_replay": "That request was already sent. Reload and try again.",
 	"reserved_bin_barcode": "That barcode belongs to a bin. Scan the item barcode instead.",
 	"reserved_tray_item": "That item is already stored in a bin. Use the bin workflow instead.",
+	"reset_required": "The robot needs to be reset first. Reset it and try again.",
 	"rotation_blocked": "The robot cannot rotate right now. Clear the machine and try again.",
 	"safety_interruption_active": "The robot has an active safety interruption. Clear the listed source and try again.",
 	"scale_calibration_failed": "The scale could not be calibrated. Try again.",

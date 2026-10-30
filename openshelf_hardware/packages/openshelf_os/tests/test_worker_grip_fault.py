@@ -18,7 +18,7 @@ from openshelf_os.exceptions import (
     MovementError,
     RotationClearanceError,
 )
-from openshelf_os.robot.commands import HomeCommand, RetrieveItemCommand, RobotCommands
+from openshelf_os.robot.commands import HomeCommand, RecoverCommand, RetrieveItemCommand, RobotCommands
 from openshelf_os.robot.core import Robot
 from openshelf_os.robot.status import RobotCommandSuccessful
 from openshelf_os.robot.worker import PHYSICAL_ESTOP_REASON, RobotWorker
@@ -41,7 +41,7 @@ class PickRobot:
         return None
 
     async def handle_command(self, command: object) -> RobotCommandSuccessful:
-        if self.fault is not None and command.command != "home":  # type: ignore[attr-defined]
+        if self.fault is not None and command.command not in ("home", "recover"):  # type: ignore[attr-defined]
             raise self.fault
         return RobotCommandSuccessful(command=command.command)  # type: ignore[attr-defined]
 
@@ -93,28 +93,42 @@ async def test_partial_home_homes_the_io_door_after_the_tool(extra_axis, homes_d
     assert order == (["tool", "door"] if homes_door is True else ["tool"])
 
 
-@pytest.mark.parametrize(
-    ("failure_code", "expected_axes"),
-    [
-        (GRIP_PICK_FAILED_CODE, ["rotate", "stage", "z_axis"]),
-        # A multi-item tray fault leaves the tool in the IO box, so the door homes too.
-        (GRIP_IO_BOX_FAILED_CODE, ["door", "rotate", "stage", "z_axis"]),
-    ],
-)
-async def test_grip_fault_cancels_the_command_and_homes_only_what_it_invalidated(
-    failure_code, expected_axes
-):
+async def test_recover_opens_the_gripper_before_the_tool_withdraws_and_homes_only_given_axes():
+    """A failed grip can leave the fingers on the tray; withdrawing first would drag it."""
+    robot = Robot.__new__(Robot)
+    order: list[str] = []
+    robot._operation_context = {}
+    robot._tool = SimpleNamespace(
+        _gs=SimpleNamespace(close=AsyncMock(side_effect=lambda: order.append("open fingers"))),
+        retract_empty=AsyncMock(side_effect=lambda: order.append("retract")),
+        home=AsyncMock(side_effect=lambda **kwargs: order.append(f"home {kwargs['axes']}")),
+    )
+    robot._io = SimpleNamespace(
+        get_door_state=lambda: True,
+        home_door=AsyncMock(side_effect=lambda: order.append("close door")),
+        ensure_door_homed=AsyncMock(),
+    )
+
+    await robot.handle_command(RecoverCommand(axes=["y_axis"]))
+
+    assert order == ["open fingers", "retract", "close door", "home ['y_axis']"]
+
+
+@pytest.mark.parametrize("failure_code", [GRIP_PICK_FAILED_CODE, GRIP_IO_BOX_FAILED_CODE])
+async def test_grip_fault_cancels_the_command_and_recovers_without_homing(failure_code):
     async with _crashed_by_grip_fault(failure_code) as (worker, events, failure):
         assert failure["message"] == "failed"
         assert failure["code"] == failure_code
-        # The gantry kept its position, so a reset must not home the whole machine.
-        assert worker.needs_home_axes() == expected_axes
+        # No motor lost its position, so nothing is reported as needing a home, yet motion
+        # still waits for the operator's reset.
+        assert worker.needs_home() is False
+        assert worker.needs_reset() is True
         assert worker._crash_code == failure_code
 
-        await worker.enqueue_command(HomeCommand(axes=expected_axes))
-        await _next_event(events, lambda e: e.get("command") == "home")
+        await worker.enqueue_command(RecoverCommand())
+        await _next_event(events, lambda e: e.get("command") == "recover")
 
-        assert worker.needs_home() is False
+        assert worker.needs_reset() is False
         assert worker._is_crashed is False
 
 
@@ -145,16 +159,12 @@ async def test_partial_home_keeps_a_needs_home_it_cannot_attribute_to_axes():
 
 
 async def test_an_estop_after_a_grip_fault_widens_the_reset_and_drops_the_grip_code():
-    """The grip code narrows a reset to the tool, so a whole-machine stop must not keep it."""
+    """The grip code resets without a home, so a whole-machine stop must not keep it."""
     async with _crashed_by_grip_fault() as (worker, _events, _failure):
-        assert worker.needs_home_axes() == ["rotate", "stage", "z_axis"]
         assert worker._crash_code == GRIP_PICK_FAILED_CODE
 
         worker.set_needs_home(PHYSICAL_ESTOP_REASON)
 
-        # Every axis is untrusted now, so the known axes stay reported and keep the debug motor
-        # home from clearing the requirement after re-homing one of them.
-        assert worker.needs_home_axes() == ["rotate", "stage", "z_axis"]
         assert worker.needs_home() is True
         assert worker.needs_home_reason() == PHYSICAL_ESTOP_REASON
         # The kiosk falls back to the full checklist and a full home.
@@ -206,12 +216,11 @@ def _rotation_clearance_refusal() -> MovementError:
         # A drive fault whose effect is not classified leaves every axis untrusted, even when
         # another motor already holds a lost-position flag.
         (MovementError("Tool extension failed: Movement failed (status=FAULT)"), ["y_axis"], [], True, True),
-        # A grip fault also homes a motor its cancelled sibling move left without a position, and
-        # the wider reset drops the grip code.
+        # A grip fault homes only a motor its cancelled sibling move left without a position.
         (
             GripVerificationError("Pick operation failed: No grip on grip", failure_code=GRIP_PICK_FAILED_CODE),
             ["door"],
-            ["door", "rotate", "stage", "z_axis"],
+            ["door"],
             False,
             True,
         ),
@@ -247,10 +256,9 @@ async def test_a_classified_fault_homes_only_the_axes_it_invalidated(
         assert worker._needs_home_unknown is is_unknown
         assert worker.needs_home() is bool(expected_axes or is_unknown)
         assert worker._is_crashed is is_crashed
-        # Only a requirement the grip axes cover keeps the code that sends the operator to reset
-        # the tool alone.
+        # The recover reset homes the reported axes, so the grip code survives them.
         if isinstance(fault, GripVerificationError):
-            assert worker._crash_code is None
+            assert worker._crash_code == GRIP_PICK_FAILED_CODE
     finally:
         worker._running = False
         task.cancel()

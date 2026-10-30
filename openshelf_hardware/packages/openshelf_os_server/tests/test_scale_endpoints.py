@@ -12,6 +12,7 @@ from openshelf_os_server.routers import robot as robot_router
 def _mock_worker():
 	worker = MagicMock()
 	worker.needs_home = MagicMock(return_value=False)
+	worker.needs_reset = MagicMock(return_value=False)
 	worker.needs_home_axes = MagicMock(return_value=[])
 	worker.needs_home_reason = MagicMock(return_value="")
 	worker.get_scale_data = AsyncMock()

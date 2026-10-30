@@ -28,7 +28,7 @@ from openshelf_os.exceptions import (
 from openshelf_os.iobox import IOBox
 from openshelf_os.operating_mode import should_enable_demo_features
 from openshelf_os.robot.commands import (
-    RobotCommands, StopCommand, InitializeCommand, IdleCommand, HomeCommand,
+    RobotCommands, StopCommand, InitializeCommand, IdleCommand, HomeCommand, RecoverCommand,
     MoveCommand, RetrieveItemCommand, StoreItemCommand, DeliverTrayCommand, ReturnTrayCommand,
 )
 from openshelf_os.robot.status import (
@@ -1620,6 +1620,9 @@ class Robot:
                 if command.axes is None or "door" in command.axes:
                     await self._io.home_door()
                 result = RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, RecoverCommand):
+                await self.recover(command.axes)
+                result = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, MoveCommand):
                 self.set_operation_context(command=command_name, phase="move", target_coordinate=command.coordinate)
                 await self._tool.move(command.coordinate)
@@ -1758,6 +1761,24 @@ class Robot:
 
     async def release_gripper(self) -> None:
         await self._tool._gs.close()
+
+    async def recover(self, axes: Optional[List[str]] = None) -> None:
+        """Withdraw the tool after a grip fault without homing what kept its position.
+
+        The fingers open first: a failed grip can leave them touching the tray or the cell, and
+        withdrawing would drag it. The door closes through its home, as at the end of every IO
+        cycle, only when it is open, its last home did not finish, or it is in `axes`. The other
+        `axes` lost their position for another reason and home once the tool is out.
+        """
+        await self.release_gripper()
+        await self._tool.retract_empty()
+        if self._io.get_door_state() is True or (axes is not None and "door" in axes):
+            await self._io.home_door()
+        else:
+            await self._io.ensure_door_homed()
+        tool_axes = [axis for axis in axes or [] if axis != "door"]
+        if tool_axes:
+            await self._tool.home(axes=tool_axes)
 
     async def read_tray_held(self) -> bool:
         return await self._tool.read_tray_held()

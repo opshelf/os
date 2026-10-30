@@ -21,6 +21,7 @@ from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.storage import CellItem, CellStatus, Dimensions, StorageModuleCellLocation
 from openshelf_os.robot.commands import (
     HomeCommand,
+    RecoverCommand,
     InitializeCommand,
     RetrieveItemCommand,
     RobotCommands,
@@ -439,11 +440,19 @@ async def get_command_submitter(
 
 
 def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: RobotWorker) -> None:
-    if worker.needs_home() is False:
+    if worker.needs_reset() is False:
         return
 
-    if isinstance(command, (HomeCommand, InitializeCommand, StopCommand)):
+    if isinstance(command, (HomeCommand, RecoverCommand, InitializeCommand, StopCommand)):
         return
+
+    if worker.needs_home() is False:
+        # A grip fault crash keeps every position; the operator resets it with recover.
+        raise api_error(
+            status.HTTP_409_CONFLICT,
+            "reset_required",
+            "Reset the cabinet before running another command.",
+        )
 
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,

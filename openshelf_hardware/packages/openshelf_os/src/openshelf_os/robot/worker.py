@@ -17,6 +17,7 @@ from openshelf_os.robot.commands import (
     RobotCommands,
     StopCommand,
     HomeCommand,
+    RecoverCommand,
     InitializeCommand,
     DeliverTrayCommand,
     RetrieveItemCommand,
@@ -39,15 +40,12 @@ from openshelf_os.barcode_service import (
     describe_missing_scanner,
 )
 from openshelf_os.exceptions import (
-    GRIP_IO_BOX_FAILED_CODE,
-    GRIP_RELEASE_FAILED_CODE,
     GripVerificationError,
     MotorError,
     MovementError,
     RotationClearanceError,
     ToolError,
 )
-from openshelf_os.tool import TOOL_MOTION_AXES
 
 logger = logging.getLogger(__name__)
 
@@ -113,17 +111,6 @@ def _is_caused_by(err: BaseException, cls: type[BaseException]) -> bool:
     return False
 
 
-def _grip_fault_axes(err: GripVerificationError) -> list[str]:
-    """Motors a gripper feedback fault invalidates: the tool, plus the door on an IO box fault.
-
-    A multi-item tray fault leaves the tool in the IO box with the door mid-cycle, so the
-    door homes right after the tool. A failed release can stop the tool in the IO box too.
-    """
-    if err.failure_code in (GRIP_IO_BOX_FAILED_CODE, GRIP_RELEASE_FAILED_CODE):
-        return [*TOOL_MOTION_AXES, "door"]
-    return list(TOOL_MOTION_AXES)
-
-
 def is_rotation_clearance_refusal(err: BaseException) -> bool:
     """The rotation guard refused before rotating, so no axis lost its position."""
     return _is_caused_by(err, RotationClearanceError)
@@ -132,25 +119,19 @@ def is_rotation_clearance_refusal(err: BaseException) -> bool:
 def fault_needs_home_axes(robot: Any, err: BaseException) -> Optional[list[str]]:
     """Axes a classified fault left without a trusted position; None for any other fault.
 
-    A grip check that did not confirm its tray stops the tool (and the IO box door on an IO box
-    grip fault), and a rotation clearance refusal moves nothing. Every motor already flagged
-    `_is_homed is False` is added, since a sibling move the fault cancelled lost its position too.
-    Any other fault returns None so the caller keeps the long-standing rule: the motor its
-    reason names ("motor <id>"), else every axis.
+    A grip check that did not confirm its tray and a rotation clearance refusal lose no position:
+    only motors already flagged `_is_homed is False` home, such as a sibling move the fault
+    cancelled. Any other fault returns None so the caller keeps the long-standing rule: the motor
+    its reason names ("motor <id>"), else every axis.
     """
-    if isinstance(err, GripVerificationError):
-        axes = set(_grip_fault_axes(err))
-    elif is_rotation_clearance_refusal(err):
-        axes = set()
-    else:
+    if not isinstance(err, GripVerificationError) and not is_rotation_clearance_refusal(err):
         return None
 
-    flagged = {
+    return sorted(
         axis
         for axis, motor in _axis_motors(robot).items()
         if getattr(motor, "_is_homed", None) is False
-    }
-    return sorted(axes | flagged)
+    )
 
 
 def _default_axis_status() -> Dict[str, Any]:
@@ -712,6 +693,10 @@ class RobotWorker:
 
     def needs_home(self) -> bool:
         return self._needs_home_unknown or bool(self._needs_home_axes)
+
+    def needs_reset(self) -> bool:
+        """Motion waits for an operator reset: a home, or a recover after a grip fault crash."""
+        return self.needs_home() or self._is_crashed
 
     def tray_on_tool(self) -> bool:
         return self._tray_on_tool
@@ -1480,10 +1465,12 @@ class RobotWorker:
             logging.info("Command result: %s", type(result).__name__)
 
             if (
-                isinstance(command, (HomeCommand, InitializeCommand))
+                isinstance(command, (HomeCommand, InitializeCommand, RecoverCommand))
                 and isinstance(result, RobotCommandSuccessful)
             ):
                 homed_axes = command.axes if isinstance(command, HomeCommand) else None
+                if isinstance(command, RecoverCommand):
+                    homed_axes = list(command.axes or [])
                 if self._is_crashed:
                     self.clear_crash_state(homed_axes)
                     logging.info("Crash state cleared after successful %s", command.command)
@@ -1495,7 +1482,7 @@ class RobotWorker:
                         self.clear_emergency_stop_state()
                         logging.info("Emergency stop state cleared after successful %s", command.command)
 
-                if self.needs_home() and isinstance(command, HomeCommand):
+                if self.needs_home() and isinstance(command, (HomeCommand, RecoverCommand)):
                     if command.axes is not None:
                         self.clear_needs_home_axes(list(command.axes))
                     else:
@@ -1542,7 +1529,7 @@ class RobotWorker:
 
             if is_grip_fault:
                 self.set_needs_home(str(err), axes=fault_needs_home_axes(self._robot, err))
-                logging.warning("Gripper feedback fault - tool motors need homing: %s", err)
+                logging.warning("Gripper feedback fault - tool needs recovery: %s", err)
             elif is_hardware_fault:
                 self.set_needs_home(str(err), axes=fault_needs_home_axes(self._robot, err))
                 logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
@@ -1572,18 +1559,13 @@ class RobotWorker:
                     )
                 raise
 
-            is_grip_only_reset = (
-                is_grip_fault
-                and self._needs_home_unknown is False
-                and self._needs_home_axes <= set(_grip_fault_axes(err))
-            )
             if is_hardware_fault:
                 self.set_crash_state(
                     str(err),
                     context=error_context,
-                    # A cancelled sibling move can widen the requirement past the grip axes; the
-                    # grip code would then send the operator to reset the tool alone.
-                    code=failure_code if is_grip_only_reset else None,
+                    # The grip code resets through recover, which homes only the reported axes;
+                    # an unattributable requirement needs the full home instead.
+                    code=failure_code if is_grip_fault and self._needs_home_unknown is False else None,
                 )
 
             if is_grip_fault:
@@ -1873,7 +1855,7 @@ class RobotWorker:
                         if self._current_command is not command or self._current_operation is not queued_operation:
                             continue
 
-                        if isinstance(command, HomeCommand) and (self._is_crashed is True or self._is_emergency_stopped is True):
+                        if isinstance(command, (HomeCommand, RecoverCommand)) and (self._is_crashed is True or self._is_emergency_stopped is True):
                             if self._is_estop_active is True:
                                 logging.info("Keeping motion safety engaged while emergency stop is active")
                             elif self._safety_motion_blocked is False:

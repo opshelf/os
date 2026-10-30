@@ -22,8 +22,14 @@ class IdleCommand(BaseModel):
 class HomeCommand(BaseModel):
     command: Literal["home"] = "home"
     # Axes to home; omit to home the whole machine. Never empty: a home that moves nothing would
-    # still clear the crash latch. A gripper feedback fault leaves the gantry valid, so its reset
-    # homes TOOL_MOTION_AXES, plus the door when the tray was in the IO box.
+    # still clear the crash latch.
+    axes: Optional[List[MotorAxis]] = Field(default=None, min_length=1)
+
+
+class RecoverCommand(BaseModel):
+    """Reset after a grip fault, which loses no position: open the fingers, withdraw the tool,
+    close a door left open mid-cycle, then home only `axes` (motors that did lose position)."""
+    command: Literal["recover"] = "recover"
     axes: Optional[List[MotorAxis]] = Field(default=None, min_length=1)
 
 
@@ -112,6 +118,7 @@ RobotCommands = Annotated[
         InitializeCommand,
         IdleCommand,
         HomeCommand,
+        RecoverCommand,
         MoveCommand,
         RetrieveItemCommand,
         StoreItemCommand,

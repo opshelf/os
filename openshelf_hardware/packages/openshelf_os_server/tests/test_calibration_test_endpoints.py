@@ -74,6 +74,7 @@ def build_worker(grid: StorageGrid):
 		_current_command=None,
 		_demo_cycling=False,
 		needs_home=MagicMock(return_value=False),
+		needs_reset=MagicMock(return_value=False),
 		needs_home_reason=MagicMock(return_value=None),
 		needs_home_axes=MagicMock(return_value=[]),
 		set_needs_home=MagicMock(),
@@ -181,12 +182,13 @@ async def test_saving_a_typed_z_stamps_the_shelf_stage_extension(client) -> None
 
 
 @pytest.mark.asyncio
-async def test_quick_test_without_grip_homes_only_the_tool(client) -> None:
-	"""A tray the gripper did not detect leaves the gantry in place, so it must not home everything."""
+async def test_quick_test_without_grip_recovers_the_tool_without_homing(client) -> None:
+	"""A tray the gripper did not detect costs no position, so the test withdraws instead of homing."""
 	grid = build_grid(is_occupied=True)
 	worker = build_worker(grid)
+	worker._robot.recover = AsyncMock()
 	worker._robot._tool.pick.side_effect = GripVerificationError(
-		'Pick operation failed: No grip on grip: obj=NONE', failure_code=GRIP_PICK_FAILED_CODE
+		'Pick operation failed: No grip on grip: obj=INNER', failure_code=GRIP_PICK_FAILED_CODE
 	)
 
 	with patch('openshelf_os_server.routers.calibration.get_robot_worker', AsyncMock(return_value=worker)):
@@ -197,5 +199,6 @@ async def test_quick_test_without_grip_homes_only_the_tool(client) -> None:
 			)
 
 	assert response.status_code == 409
-	worker.set_needs_home.assert_called_once()
-	assert worker.set_needs_home.call_args.kwargs['axes'] == ['rotate', 'stage', 'z_axis']
+	assert response.json()['detail']['code'] == GRIP_PICK_FAILED_CODE
+	worker._robot.recover.assert_awaited_once_with(None)
+	worker.set_needs_home.assert_not_called()

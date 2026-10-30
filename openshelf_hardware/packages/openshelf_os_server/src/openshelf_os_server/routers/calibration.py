@@ -370,6 +370,11 @@ def _build_error_detail(
 
 
 def _ensure_ready(worker) -> None:
+	if worker.needs_home() is False and worker.needs_reset() is True:
+		raise HTTPException(
+			status_code=status.HTTP_409_CONFLICT,
+			detail=_build_error_detail("Recover the tool before calibration movement.", code="reset_required"),
+		)
 	if worker.needs_home():
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
@@ -523,6 +528,16 @@ async def _raise_motor_error(
 	axes: Optional[list[str]] = None,
 ) -> None:
 	if axes is None:
+		if isinstance(exc, GripVerificationError):
+			# A grip miss keeps every position: open the fingers and withdraw instead of homing.
+			try:
+				await worker._robot.recover(fault_needs_home_axes(worker._robot, exc) or None)
+			except Exception as recover_error:
+				await _raise_motor_error(worker, f"{message}; tool recovery failed: {recover_error}", recover_error)
+			raise HTTPException(
+				status_code=status.HTTP_409_CONFLICT,
+				detail=_build_error_detail(message, code=exc.failure_code),
+			) from exc
 		if is_rotation_clearance_refusal(exc):
 			# Nothing moved; only a sibling motor the run cancelled has to home.
 			refusal_axes = fault_needs_home_axes(worker._robot, exc)

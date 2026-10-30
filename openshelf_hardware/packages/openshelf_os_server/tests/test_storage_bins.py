@@ -46,6 +46,9 @@ class FakeWorker:
     def needs_home(self) -> bool:
         return self.is_needs_home
 
+    def needs_reset(self) -> bool:
+        return self.is_needs_home
+
     def needs_home_reason(self) -> str | None:
         return "restart requires home" if self.is_needs_home else None
 
@@ -118,6 +121,7 @@ async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
 
         worker = MagicMock()
         worker.needs_home.return_value = False
+        worker.needs_reset.return_value = False
         monkeypatch.setattr(robot_router, "get_operating_mode", lambda: OperatingMode.production)
         monkeypatch.setattr(robot_router, "_ensure_laser_auto_calibration_not_running", AsyncMock())
         with pytest.raises(HTTPException) as malformed_hardware_error:

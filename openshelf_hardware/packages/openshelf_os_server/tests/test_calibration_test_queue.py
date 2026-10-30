@@ -53,6 +53,7 @@ def build_worker(grid: StorageGrid, pick: AsyncMock):
 		_current_command=None,
 		_demo_cycling=False,
 		needs_home=MagicMock(return_value=False),
+		needs_reset=MagicMock(return_value=False),
 		needs_home_reason=MagicMock(return_value=None),
 		needs_home_axes=MagicMock(return_value=[]),
 		set_needs_home=MagicMock(),
