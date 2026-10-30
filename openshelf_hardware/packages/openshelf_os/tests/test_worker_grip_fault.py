@@ -201,26 +201,38 @@ def _rotation_clearance_refusal() -> MovementError:
 
 
 @pytest.mark.parametrize(
-    ("fault", "stage_lost_position", "expected_axes", "is_crashed"),
+    ("fault", "flagged", "expected_axes", "is_unknown", "is_crashed"),
     [
-        # A wrapped drive fault never names its motor; the motor flagged its own lost position.
-        (MovementError("Tool extension failed: Movement failed (status=FAULT)"), True, ["stage"], True),
-        # A gripper servo fault stops the tool, not the gantry.
-        (GripperError("Pick operation failed: Gripper fault: OVERLOAD"), False, ["rotate", "stage", "z_axis"], True),
-        # The rotation guard refuses before anything moves.
-        (_rotation_clearance_refusal(), False, [], False),
+        # A drive fault whose effect is not classified leaves every axis untrusted, even when
+        # another motor already holds a lost-position flag.
+        (MovementError("Tool extension failed: Movement failed (status=FAULT)"), ["y_axis"], [], True, True),
+        # A grip fault also homes a motor its cancelled sibling move left without a position, and
+        # the wider reset drops the grip code.
+        (
+            GripVerificationError("Pick operation failed: No grip on grip", failure_code=GRIP_PICK_FAILED_CODE),
+            ["door"],
+            ["door", "rotate", "stage", "z_axis"],
+            False,
+            True,
+        ),
+        # A servo error may be a dropped pwr_out0 rail that also reset the gantry drives.
+        (GripperError("Pick operation failed: Modbus timeout"), [], [], True, True),
+        # The rotation guard moves nothing; a sibling door home it cancelled still has to home.
+        (_rotation_clearance_refusal(), ["door"], ["door"], False, False),
+        (_rotation_clearance_refusal(), [], [], False, False),
     ],
 )
-async def test_a_fault_homes_only_the_axes_that_lost_position(
-    fault, stage_lost_position, expected_axes, is_crashed
+async def test_a_classified_fault_homes_only_the_axes_it_invalidated(
+    fault, flagged, expected_axes, is_unknown, is_crashed
 ):
     robot = PickRobot(fault)
     robot._tool = SimpleNamespace(  # type: ignore[attr-defined]
         _mx=_motor(1), _my=_motor(2), _mg=_motor(3), _ms=_motor(4), _mr=_motor(5)
     )
     robot._io = SimpleNamespace(_md=_motor(6))  # type: ignore[attr-defined]
-    # The drive fault cleared the stage motor's homed flag, as Motor.wait_for_move does.
-    robot._tool._ms._is_homed = stage_lost_position is False  # type: ignore[attr-defined]
+    motors = {"y_axis": robot._tool._my, "stage": robot._tool._ms, "door": robot._io._md}
+    for axis in flagged:
+        motors[axis]._is_homed = False
 
     RobotWorker._instance = None
     worker = RobotWorker(robot)  # type: ignore[arg-type]
@@ -232,8 +244,13 @@ async def test_a_fault_homes_only_the_axes_that_lost_position(
         await _next_event(events, lambda e: e.get("command") == "retrieve_item")
 
         assert worker.needs_home_axes() == expected_axes
-        assert worker.needs_home() is bool(expected_axes)
+        assert worker._needs_home_unknown is is_unknown
+        assert worker.needs_home() is bool(expected_axes or is_unknown)
         assert worker._is_crashed is is_crashed
+        # Only a requirement the grip axes cover keeps the code that sends the operator to reset
+        # the tool alone.
+        if isinstance(fault, GripVerificationError):
+            assert worker._crash_code is None
     finally:
         worker._running = False
         task.cancel()

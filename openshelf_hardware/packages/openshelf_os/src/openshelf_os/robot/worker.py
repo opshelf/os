@@ -41,7 +41,6 @@ from openshelf_os.barcode_service import (
 from openshelf_os.exceptions import (
     GRIP_IO_BOX_FAILED_CODE,
     GRIP_RELEASE_FAILED_CODE,
-    GripperError,
     GripVerificationError,
     MotorError,
     MovementError,
@@ -92,7 +91,7 @@ def _axis_motors(robot: Any) -> dict[str, Any]:
     return {axis: motor for axis, motor in motors.items() if motor is not None}
 
 
-def _axis_named_in(robot: Any, text: str) -> Optional[str]:
+def axis_named_in(robot: Any, text: str) -> Optional[str]:
     match = _MOTOR_ID_RE.search(text)
     if not match:
         return None
@@ -131,30 +130,28 @@ def is_rotation_clearance_refusal(err: BaseException) -> bool:
 
 
 def fault_needs_home_axes(robot: Any, err: BaseException) -> Optional[list[str]]:
-    """Axes a failed operation left without a trusted position.
+    """Axes a classified fault left without a trusted position; None for any other fault.
 
-    [] means nothing has to home; None means the fault cannot be attributed, so every axis is
-    untrusted. A motor flags its own lost position (fault, timeout, interrupted home), which
-    attributes wrapped errors whose text never names the motor. A gripper servo fault can stop
-    the tool mid-transfer, so the tool homes; the gantry keeps its position.
+    A grip check that did not confirm its tray stops the tool (and the IO box door on an IO box
+    grip fault), and a rotation clearance refusal moves nothing. Every motor already flagged
+    `_is_homed is False` is added, since a sibling move the fault cancelled lost its position too.
+    Any other fault returns None so the caller keeps the long-standing rule: the motor its
+    reason names ("motor <id>"), else every axis.
     """
     if isinstance(err, GripVerificationError):
-        return _grip_fault_axes(err)
-    if is_rotation_clearance_refusal(err):
-        return []
+        axes = set(_grip_fault_axes(err))
+    elif is_rotation_clearance_refusal(err):
+        axes = set()
+    else:
+        return None
 
-    axes = {
+    flagged = {
         axis
         for axis, motor in _axis_motors(robot).items()
         if getattr(motor, "_is_homed", None) is False
     }
-    named_axis = _axis_named_in(robot, str(err))
-    if named_axis is not None:
-        axes.add(named_axis)
-    if isinstance(err, GripperError):
-        axes.update(TOOL_MOTION_AXES)
+    return sorted(axes | flagged)
 
-    return sorted(axes) if axes else None
 
 def _default_axis_status() -> Dict[str, Any]:
     return {
@@ -1145,7 +1142,7 @@ class RobotWorker:
             self._needs_home_reason = None
 
     def _infer_needs_home_axes(self, reason: str) -> Optional[list[str]]:
-        axis = _axis_named_in(self._robot, reason)
+        axis = axis_named_in(self._robot, reason)
         return None if axis is None else [axis]
 
     def set_needs_home(self, reason: str, axes: Optional[list[str]] = None) -> None:
@@ -1549,6 +1546,9 @@ class RobotWorker:
             elif is_hardware_fault:
                 self.set_needs_home(str(err), axes=fault_needs_home_axes(self._robot, err))
                 logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
+            elif is_rotation_clearance_refusal(err):
+                # Nothing moved; only a sibling motor this run cancelled has to home ([] is a no-op).
+                self.set_needs_home(str(err), axes=fault_needs_home_axes(self._robot, err))
 
             prepared_artifacts = (
                 self._begin_motion_crash_capture(str(err))
@@ -1572,11 +1572,18 @@ class RobotWorker:
                     )
                 raise
 
+            is_grip_only_reset = (
+                is_grip_fault
+                and self._needs_home_unknown is False
+                and self._needs_home_axes <= set(_grip_fault_axes(err))
+            )
             if is_hardware_fault:
                 self.set_crash_state(
                     str(err),
                     context=error_context,
-                    code=failure_code if is_grip_fault else None,
+                    # A cancelled sibling move can widen the requirement past the grip axes; the
+                    # grip code would then send the operator to reset the tool alone.
+                    code=failure_code if is_grip_only_reset else None,
                 )
 
             if is_grip_fault:

@@ -17,7 +17,7 @@ from openshelf_os_server.sse import EventSourceResponse
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.common import Parameters
 from openshelf_os.tool import MAX_PICK_LIFT_MM, require_grip
-from openshelf_os.robot.worker import fault_needs_home_axes, is_rotation_clearance_refusal
+from openshelf_os.robot.worker import axis_named_in, fault_needs_home_axes, is_rotation_clearance_refusal
 from openshelf_os.storage import (
 	CalibrationCoordinate,
 	Cell,
@@ -524,11 +524,24 @@ async def _raise_motor_error(
 ) -> None:
 	if axes is None:
 		if is_rotation_clearance_refusal(exc):
+			# Nothing moved; only a sibling motor the run cancelled has to home.
+			refusal_axes = fault_needs_home_axes(worker._robot, exc)
+			if refusal_axes:
+				worker.set_needs_home(message, axes=refusal_axes)
+				await worker.get_status_snapshot(force_refresh=True)
 			raise HTTPException(
 				status_code=status.HTTP_409_CONFLICT,
-				detail=_build_error_detail(message, code="rotation_blocked"),
+				detail=_build_error_detail(
+					message,
+					code="rotation_blocked",
+					needs_home=bool(refusal_axes),
+					needs_home_axes=worker.needs_home_axes() if refusal_axes else None,
+				),
 			) from exc
 		axes = fault_needs_home_axes(worker._robot, exc)
+		if axes is None:
+			named_axis = axis_named_in(worker._robot, str(exc))
+			axes = None if named_axis is None else [named_axis]
 	worker.set_needs_home(message, axes=axes)
 	await worker.get_status_snapshot(force_refresh=True)
 	raise HTTPException(

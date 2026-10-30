@@ -198,4 +198,4 @@ async def test_quick_test_without_grip_homes_only_the_tool(client) -> None:
 
 	assert response.status_code == 409
 	worker.set_needs_home.assert_called_once()
-	assert worker.set_needs_home.call_args.kwargs['axes'] == ['z_axis', 'stage', 'rotate']
+	assert worker.set_needs_home.call_args.kwargs['axes'] == ['rotate', 'stage', 'z_axis']
