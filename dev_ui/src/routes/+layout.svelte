@@ -19,6 +19,7 @@
 		type WorkerStatusPayload
 	} from '$lib';
 	import { devicePath, stripDeviceId } from '$lib/nav';
+	import { createToastSource } from '$lib/toasts';
 	import NeedsHomeToast from '$lib/components/NeedsHomeToast.svelte';
 	import SafetyAckAlert from '$lib/components/SafetyAckAlert.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
@@ -54,6 +55,15 @@
 	let isSizerEnabled = $state(false);
 	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
 	let didReceiveRobotUnavailable = false;
+
+	// Status stream faults have no page of their own, so the layout reports them to the
+	// toast queue: the message changes when the fault changes and goes empty once the
+	// stream recovers, which is what ends the condition.
+	const streamState = createToastSource('error');
+
+	$effect(() => {
+		streamState.report($robotStatusError);
+	});
 
 	async function loadNavigationState(): Promise<void> {
 		const [systemInfo, sizerStatus] = await Promise.allSettled([

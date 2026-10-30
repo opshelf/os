@@ -2,7 +2,7 @@
 	import { homeMotor } from '$lib/api';
 	import { devicePath } from '$lib/nav';
 	import { robotStatus } from '$lib/stores';
-	import { dismissToast, postToast, updateToastActions, type ToastAction } from '$lib/toasts';
+	import { createToastSource, postToast, type ToastAction } from '$lib/toasts';
 
 	// The global /robot/status stream is the single source of truth: a motor
 	// crash publishes a snapshot with needs_home + needs_home_axes immediately,
@@ -13,10 +13,9 @@
 	const motorsKey = $derived(motors.length > 0 ? motors.join(':') : `reason:${reason}`);
 	const message = $derived(motors.length === 1 ? 'motor needs homing' : 'motors need homing');
 
-	// Each motor set is announced once. The id remains after timed expiry so
-	// repeated status snapshots do not recreate the same toast.
-	let shownKey = $state<string | null>(null);
-	let toastId = $state<number | null>(null);
+	// Each motor set is announced once, under its own queue key, and the queue remembers
+	// a dismissal or an expiry while that key and wording are unchanged.
+	const source = createToastSource('status');
 	let homingMotor = $state<string | null>(null);
 	let queuedMotors = $state<string[]>([]);
 
@@ -69,29 +68,17 @@
 	}
 
 	$effect(() => {
-		const actions = toastActions();
-
 		if (needsHome === false) {
-			if (toastId !== null) {
-				dismissToast(toastId);
-			}
-			shownKey = null;
-			toastId = null;
 			queuedMotors = [];
-			return;
-		}
-
-		if (shownKey !== motorsKey) {
-			if (toastId !== null) {
-				dismissToast(toastId);
-			}
-			shownKey = motorsKey;
-			toastId = postToast('status', message, actions);
-			return;
-		}
-
-		if (toastId !== null) {
-			updateToastActions(toastId, actions);
 		}
 	});
+
+	$effect(() => {
+		source.report(needsHome === true ? message : '', {
+			key: needsHome === true ? `needs-home:${motorsKey}` : '',
+			actions: needsHome === true ? toastActions() : undefined
+		});
+	});
+
+	$effect(() => () => source.release());
 </script>
