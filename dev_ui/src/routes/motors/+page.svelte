@@ -18,6 +18,7 @@
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
+	import { orderSectionMoves, type MotorMove } from '$lib/motor-order';
 
 	let motors: MotorList | null = null;
 	let isLoading = true;
@@ -393,7 +394,7 @@
 		sectionName: string,
 		sectionMotors: MotorInfo[]
 	): Promise<void> {
-		const targets: { motor: MotorInfo; positionMm: number }[] = [];
+		const targets: MotorMove[] = [];
 
 		for (const motor of sectionMotors) {
 			const targetValue = moveTargets[motor.name];
@@ -410,7 +411,20 @@
 				return;
 			}
 
-			targets.push({ motor, positionMm });
+			targets.push({ name: motor.name, positionMm });
+		}
+
+		const currentMm: Record<string, number | undefined> = {};
+
+		for (const [name, position] of Object.entries(motorPositions)) {
+			currentMm[name] = parseFloat(position);
+		}
+
+		const ordered = orderSectionMoves(targets, currentMm);
+
+		if ('unknown' in ordered) {
+			error = `${ordered.unknown} position unknown, wait for the position readout`;
+			return;
 		}
 
 		sectionAction = `${sectionName}:move`;
@@ -418,12 +432,12 @@
 		message = '';
 
 		try {
-			for (const target of targets) {
-				movingMotor = target.motor.name;
-				const result = await moveMotor(target.motor.name, target.positionMm);
+			for (const target of ordered) {
+				movingMotor = target.name;
+				const result = await moveMotor(target.name, target.positionMm);
 
 				if (result.success !== true) {
-					error = `failed to move ${target.motor.name}`;
+					error = `failed to move ${target.name}`;
 					return;
 				}
 			}
