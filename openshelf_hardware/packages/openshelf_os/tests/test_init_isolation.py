@@ -22,10 +22,10 @@ def _make_tool() -> Tool:
 
 def _record_home_order(tool: Tool) -> list[str]:
     events: list[str] = []
-    tool._mg.home.side_effect = lambda: events.append("z_axis")
-    tool._ms.home.side_effect = lambda: events.append("stage")
-    tool._mx.home.side_effect = lambda: events.append("x_axis")
-    tool._my.home.side_effect = lambda: events.append("y_axis")
+    tool._mg.home.side_effect = lambda **_: events.append("z_axis")
+    tool._ms.home.side_effect = lambda **_: events.append("stage")
+    tool._mx.home.side_effect = lambda **_: events.append("x_axis")
+    tool._my.home.side_effect = lambda **_: events.append("y_axis")
     tool._home_rotate_sequence = AsyncMock(side_effect=lambda: events.append("rotate"))
     return events
 
@@ -55,6 +55,7 @@ async def test_isolated_home_keeps_the_provisional_x_home_when_rotate_fails():
     await tool.home(isolate=True)
 
     assert events == ["z_axis", "stage", "x_axis", "y_axis"]
+    tool._mx.home.assert_awaited_once_with(provisional=True)
 
 
 @pytest.mark.asyncio

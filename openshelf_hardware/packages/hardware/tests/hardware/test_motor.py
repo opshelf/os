@@ -777,6 +777,54 @@ async def test_home_fails_when_the_limit_input_never_engages(mock_controller, mo
     motor._park.assert_not_awaited()
 
 
+def _limit_checked_home_motor(mock_controller, guard: AsyncMock) -> Motor:
+    limit_input = SimpleNamespace(name="x_lim_min", read=lambda: False)
+    motor = Motor(mock_controller, make_motor_params(), home_limit_input=limit_input)
+    motor.set_motion_guard(guard)
+    motor.clear_alarm = AsyncMock()
+    motor._move_near_home = AsyncMock()
+    motor._prepare_home_motion = AsyncMock()
+    motor._start_path_zero = AsyncMock()
+    motor.wait_for_move = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor._set_zero_position = AsyncMock()
+    motor.set_param = AsyncMock()
+    motor._verify_zero_position = AsyncMock()
+    motor.move_config = AsyncMock()
+    motor._park = AsyncMock()
+    motor._start_absolute_move = AsyncMock()
+    return motor
+
+
+@pytest.mark.asyncio
+async def test_motion_guard_refuses_move_and_home_before_any_motion(mock_controller):
+    # lb4a-3: X driven home with the tool at 20 deg stalled on a gantry upright.
+    guard = AsyncMock(side_effect=RuntimeError("tool rotated"))
+    motor = _limit_checked_home_motor(mock_controller, guard)
+
+    with pytest.raises(RuntimeError, match="tool rotated"):
+        await motor.move_to_position(10.0)
+    with pytest.raises(RuntimeError, match="tool rotated"):
+        await motor.home()
+
+    assert guard.await_args_list == [call(10.0), call(None)]
+    motor._start_absolute_move.assert_not_awaited()
+    motor._move_near_home.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_provisional_home_skips_the_guard_and_the_limit_check(mock_controller, monkeypatch):
+    # Rotate homing needs X coordinates even when the tool angle holds X off its switch;
+    # without this an unhomed X and a rotated tool block each other for good.
+    monkeypatch.setattr("hardware.motor.HOME_LIMIT_VERIFY_TIMEOUT_S", 0.0)
+    guard = AsyncMock(side_effect=RuntimeError("tool rotated"))
+    motor = _limit_checked_home_motor(mock_controller, guard)
+
+    await motor.home(provisional=True)
+
+    guard.assert_not_awaited()
+    assert motor.is_homed() is True
+
+
 @pytest.mark.asyncio
 async def test_y_axis_home_arms_following_error_trip_before_motion(mock_controller):
     motor = y_home_motor(mock_controller)
@@ -841,7 +889,7 @@ async def test_y_axis_home_lifts_off_the_stop_after_restoring_overrides(mock_con
     motor = y_home_motor(mock_controller)
     echo_registers(mock_controller, {0x0159: 0x24})
     targets: list[float] = []
-    motor.move_to_position = AsyncMock(side_effect=lambda value, **_: targets.append(value))
+    motor._move_to_position = AsyncMock(side_effect=lambda value, **_: targets.append(value))
 
     await motor.home(homing_peak_current=30)
 
@@ -849,6 +897,6 @@ async def test_y_axis_home_lifts_off_the_stop_after_restoring_overrides(mock_con
     assert targets == [5.0, 0.0]
     assert motor.is_homed() is True
     # The lift runs at running current and limit, and before the park.
-    assert motor.move_to_position.await_count == 2
+    assert motor._move_to_position.await_count == 2
     assert call(1, 0x0191, 10) in calls and call(1, 0x000B, 4000) in calls
     assert calls.index(call(1, 0x000F, 0)) > calls.index(call(1, 0x000B, 4000))

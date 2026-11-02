@@ -1779,24 +1779,15 @@ async def home_motor(
 
     try:
         async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker, allow_tray_on_tool=True):
+            await motor.clear_alarm()
             if motor_name == "rotate":
-                original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
-                try:
-                    await worker._robot._tool.ensure_safe_rotation_stage_extension()
-                    await motor.clear_alarm()
-                    await motor.home()
-                finally:
-                    await worker._robot._tool.restore_safe_rotation_x_position(original_x)
+                # The full sequence also recovers an unhomed X: a provisional X home gives the
+                # clearance move coordinates, and X re-homes verified once the tool is straight.
+                await worker._robot._tool._home_rotate_sequence()
+            elif skip_pre_home_approach is True:
+                await motor.home(skip_pre_home_approach=True)
             else:
-                await motor.clear_alarm()
-                if skip_pre_home_approach is True:
-                    await motor.home(skip_pre_home_approach=True)
-                else:
-                    await motor.home()
-            if motor_name == "rotate":
-                await worker._robot._tool.rotate_to_home_orientation(
-                    should_ensure_safe_stage_extension=False,
-                )
+                await motor.home()
             worker.clear_needs_home_axes([motor_name])
             if worker.needs_home() and worker.needs_home_axes() == []:
                 if _reason_matches_motor(worker.needs_home_reason(), motor_name, motor):
