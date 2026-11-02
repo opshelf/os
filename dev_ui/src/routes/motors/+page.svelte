@@ -57,6 +57,10 @@
 		return 'mm';
 	}
 
+	function sectionLabel(sectionName: string): string {
+		return sectionName === 'io' ? 'IO' : sectionName;
+	}
+
 	function positionLabelForMotor(motorName: string, position: string | undefined): string {
 		if (position === undefined) {
 			return '-';
@@ -196,14 +200,14 @@
 		}
 
 		if (state.min_engaged === null) {
-			throw new Error(`${motorName} min limit switch could not be read`);
+			throw new Error(`The ${motorName} min limit switch could not be read.`);
 		}
 
 		if (state.min_engaged !== isHomed) {
 			const where = isHomed === true ? 'after homing' : 'away from home';
 			const expected = isHomed === true ? 'H' : 'L';
 			throw new Error(
-				`${motorName} min limit switch reads ${minLimitLabel(state)} ${where}, expected ${expected}`
+				`The ${motorName} min limit switch reads ${minLimitLabel(state)} ${where}, expected ${expected}.`
 			);
 		}
 	}
@@ -262,7 +266,7 @@
 			const result = await homeMotor(motorName);
 
 			if (result.success === true) {
-				message = `${motorName} homed`;
+				message = `Homed ${motorName}.`;
 			} else {
 				error = `Failed to home ${motorName}.`;
 			}
@@ -327,7 +331,7 @@
 			testResults[motorName] = 'ok';
 		} catch (err) {
 			testResults[motorName] = 'err';
-			postToast('error', err instanceof Error ? err.message : `${motorName} test failed`);
+			postToast('error', err instanceof Error ? err.message : `The ${motorName} test failed.`);
 		}
 	}
 
@@ -357,7 +361,7 @@
 
 		try {
 			await testSingleMotor(motorName);
-			message = `${motorName} test complete`;
+			message = `The ${motorName} test is complete.`;
 		} finally {
 			testingMotor = null;
 			isTesting = false;
@@ -441,9 +445,9 @@
 				}
 			}
 
-			message = `${sectionName} motors homed`;
+			message = `Homed the ${sectionLabel(sectionName)} motors.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : `${sectionName} home failed`;
+			error = err instanceof Error ? err.message : `Homing the ${sectionLabel(sectionName)} motors failed.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -506,7 +510,7 @@
 		const ordered = orderSectionMoves(targets, currentMm);
 
 		if ('unknown' in ordered) {
-			error = `${ordered.unknown} position unknown, wait for the position readout`;
+			error = `The ${ordered.unknown} position is unknown. Wait for the position readout.`;
 			return;
 		}
 
@@ -525,9 +529,9 @@
 				}
 			}
 
-			message = `${sectionName} motors moved`;
+			message = `Moved the ${sectionLabel(sectionName)} motors.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : `${sectionName} move failed`;
+			error = err instanceof Error ? err.message : `Moving the ${sectionLabel(sectionName)} motors failed.`;
 		} finally {
 			movingMotor = null;
 			sectionAction = null;
@@ -557,7 +561,7 @@
 			const result = await moveMotor(motorName, positionMm);
 
 			if (result.success === true) {
-				message = `${motorName} moved to ${positionMm}${unitForMotor(motorName)}`;
+				message = `Moved ${motorName} to ${positionMm} ${unitForMotor(motorName)}.`;
 			} else {
 				error = `Failed to move ${motorName}.`;
 			}

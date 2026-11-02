@@ -753,11 +753,11 @@ class CycleTestManager:
 	async def start(self, app: Any, user: Any, config: CycleTestConfig) -> CycleTestSnapshot:
 		async with self._lock:
 			if self.is_active():
-				raise CycleTestStartError("cycle_test_running", "A cycle test is already running.")
+				raise CycleTestStartError("cycle_test_running", "")
 			if get_operating_mode() not in ALLOWED_MODES:
 				raise CycleTestStartError(
 					"cycle_test_mode",
-					"Cycle tests run only in development or mock mode because they create and delete items.",
+					"",
 				)
 			self._abort = False
 			self._log.clear()

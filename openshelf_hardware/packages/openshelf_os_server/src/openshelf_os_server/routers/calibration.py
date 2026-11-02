@@ -111,14 +111,14 @@ async def ensure_laser_auto_calibration_not_running() -> None:
 	if await manager.is_active() is False:
 		return
 
-	raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "The robot is calibrating.")
+	raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "")
 
 
 async def get_robot_worker_or_503():
 	try:
 		return await get_robot_worker()
 	except ValueError as exc:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot has not started. Check the robot status.") from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from exc
 _DEFAULT_CELL_HEIGHT = 200.0
 _DEFAULT_CELL_WIDTH = 480.0
 _DEFAULT_DIVIDER_WIDTH = 12.0
@@ -278,7 +278,7 @@ def _coordinate_or_400(grid, location: StorageModuleCellLocation) -> AxisCoordin
 		raise api_error(
 			status.HTTP_400_BAD_REQUEST,
 			"cell_not_calibrated",
-			"That cell has no calibration point. Calibrate it first.",
+			"",
 		) from exc
 
 
@@ -388,7 +388,7 @@ def _clamp_value(value: float, limit: float, label: str, warnings: list[str]) ->
 	clamped = max(0.0, min(limit, value))
 	if clamped != value:
 		warnings.append(
-			f"{label} limit reached; requested {value:.2f}mm, clamped to {clamped:.2f}mm (limit {limit:.2f}mm)"
+			f"The {label} limit is {limit:.2f} mm, so the move to {value:.2f} mm stopped at {clamped:.2f} mm."
 		)
 	return clamped
 
@@ -400,7 +400,7 @@ def _clamp_motor_value(value: float, motor, label: str, warnings: list[str]) -> 
 
 	if clamped != value:
 		warnings.append(
-			f"{label} limit reached; requested {value:.2f}mm, clamped to {clamped:.2f}mm (range {lower_limit:.2f}-{upper_limit:.2f}mm)"
+			f"The {label} range is {lower_limit:.2f} to {upper_limit:.2f} mm, so the move to {value:.2f} mm stopped at {clamped:.2f} mm."
 		)
 
 	return clamped
@@ -781,7 +781,7 @@ async def _build_clamped_manual_coordinate(tool, request: MovePositionRequest) -
 
 def _get_stage_limit(tool) -> float:
 	if tool._ms is None:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor not configured")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The stage motor is not configured on this machine.")
 	return tool._ms._params.lim
 
 
@@ -859,7 +859,7 @@ async def read_laser() -> LaserReadingResponse:
 			exc,
 			status.HTTP_503_SERVICE_UNAVAILABLE,
 			"laser_read_failed",
-			"The laser distance could not be read. Check that the laser is connected and its path is clear.",
+			"",
 		) from exc
 
 	return LaserReadingResponse(distance_mm=float(distance_mm))
@@ -1010,15 +1010,15 @@ async def stream_laser_auto_calibration(
 		try:
 			worker = await get_robot_worker()
 		except ValueError as exc:
-			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot has not started. Check the robot status.") from exc
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from exc
 
 		_ensure_ready(worker)
 
 		if getattr(worker, "_current_command", None) is not None:
-			raise api_error(status.HTTP_409_CONFLICT, "robot_busy", "The robot is busy with another task.")
+			raise api_error(status.HTTP_409_CONFLICT, "robot_busy", "")
 
 		if getattr(worker, "_demo_cycling", False) is True:
-			raise api_error(status.HTTP_409_CONFLICT, "demo_running", "The robot is running the demo cycle.")
+			raise api_error(status.HTTP_409_CONFLICT, "demo_running", "")
 
 		try:
 			# Reserve laser motion under the same gate as bin workflow creation.
@@ -1032,7 +1032,7 @@ async def stream_laser_auto_calibration(
 		snapshot = await manager.get_snapshot()
 
 		if snapshot.requested_scope.model_dump() != requested_scope.model_dump():
-			raise api_error(status.HTTP_409_CONFLICT, "laser_calibration_running", "Laser auto calibration is already running with a different scope")
+			raise api_error(status.HTTP_409_CONFLICT, "laser_calibration_running", "Laser auto calibration is already running with a different scope.")
 
 	queue, initial_snapshot = await manager.subscribe()
 
@@ -1098,7 +1098,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	cell = _get_cell(shelf, request.cell_idx)
 
 	if cell.calibration_point is None:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_calibrated", "That cell has no calibration point. Calibrate it first.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_calibrated", "")
 
 	cal_point = cell.calibration_point
 
@@ -1159,7 +1159,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 	await ensure_laser_auto_calibration_not_running()
 
 	if _current_position is None:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "calibration_session_required", "No calibration session is active. Move to a cell first.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "calibration_session_required", "")
 
 	worker = await get_robot_worker_or_503()
 
@@ -1181,19 +1181,19 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 		async with manual_motion_guard("calibration_jog", worker=worker):
 			if request.axis == "x":
 				if tool._mx is None:
-					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "X motor not configured")
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The X motor is not configured on this machine.")
 				await _clear_motors_for_move(tool, gantry=True)
 				new_x = _clamp_value(new_x + request.delta, x_limit, "X axis", warnings)
 				await tool._mx.move_to_position(new_x)
 			elif request.axis == "y":
 				if tool._my is None:
-					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Y motor not configured")
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The Y motor is not configured on this machine.")
 				await _clear_motors_for_move(tool, gantry=True)
 				new_y = _clamp_value(new_y + request.delta, y_limit, "Y axis", warnings)
 				await tool._my.move_to_position(new_y)
 			elif request.axis == "z":
 				if tool._mg is None:
-					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Gripper motor not configured")
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The gripper motor is not configured on this machine.")
 				await _clear_motors_for_move(tool, gripper=True)
 				grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
 				if grip_ext is None:
@@ -1207,9 +1207,9 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 				await tool._mg.move_to_position(new_gripper_pos, rpm=grip_rpm, accel=grip_accel)
 			elif request.axis == "stage":
 				if tool._ms is None:
-					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor not configured")
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The stage motor is not configured on this machine.")
 				await _clear_motors_for_move(tool, stage=True)
-				new_slide = _clamp_value(new_slide + request.delta, stage_limit, "Stage", warnings)
+				new_slide = _clamp_value(new_slide + request.delta, stage_limit, "stage", warnings)
 				await tool._ms.move_to_position(new_slide)
 	except (MotorError, HardwareMotorError, RotationClearanceError) as e:
 		if isinstance(e, RotationClearanceError):
@@ -1451,7 +1451,7 @@ async def _perform_cycle_test(worker, location: StorageModuleCellLocation) -> No
 			raise api_error(
 				status.HTTP_500_INTERNAL_SERVER_ERROR,
 				"calibration_test_failed",
-				"The cycle test did not finish. Check the robot before continuing.",
+				"",
 			) from exc
 
 
@@ -1554,7 +1554,7 @@ def _test_queue_error_message(detail: Any) -> str:
 	if reason and reason != message:
 		return f"{message} ({reason})"
 	if detail.get("needs_home") and reason is None:
-		return f"{message} (home required)"
+		return f"{message} Home required."
 	return message
 
 
@@ -1631,7 +1631,7 @@ async def start_cell_test_queue(request: TestQueueRequest) -> TestQueueSnapshot:
 
 	async with _test_queue_lock:
 		if _test_queue_task is not None and _test_queue_task.done() is False:
-			raise api_error(status.HTTP_409_CONFLICT, "calibration_test_running", "A calibration test queue is already running.")
+			raise api_error(status.HTTP_409_CONFLICT, "calibration_test_running", "")
 
 		_test_queue_abort_requested = False
 		now = _test_queue_now_iso()
@@ -1696,7 +1696,7 @@ async def abort_cell_test_queue(request: Request) -> TestQueueSnapshot:
 	global _test_queue_abort_requested
 
 	if _test_queue_task is None or _test_queue_task.done() is True:
-		raise api_error(status.HTTP_409_CONFLICT, "calibration_test_not_running", "No calibration test queue is running.")
+		raise api_error(status.HTTP_409_CONFLICT, "calibration_test_not_running", "")
 
 	_test_queue_abort_requested = True
 	# A failed queue sets error_debug before its terminal publish completes, so the task
@@ -1755,7 +1755,7 @@ async def save_calibration(request: SaveRequest):
 				side=request.side, shelf_idx=request.shelf_idx, cell_idx=request.cell_idx
 			))
 		except (IndexError, ValueError) as exc:
-			raise api_error(409, "bin_home_missing", "The bin's home cell is missing from storage.") from exc
+			raise api_error(409, "bin_home_missing", "") from exc
 
 	side_enum = request.side
 	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
@@ -1817,7 +1817,7 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 	tool = worker._robot._tool
 
 	if tool._ms is None or tool._mg is None:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Tool motors not configured")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The tool motors are not configured on this machine.")
 
 	try:
 		async with manual_motion_guard("calibration_home_tool_motors", worker=worker, allow_tray_on_tool=True):
@@ -1929,12 +1929,12 @@ def _get_iobox_door_config(config):
 	try:
 		return config.robot.io.motors.by_name("door")
 	except KeyError as exc:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "IO door motor is not configured") from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The IO door motor is not configured on this machine.") from exc
 
 
 def _validate_iobox_door_positions(close: float, open: float) -> None:
 	if close >= open:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "door_positions_invalid", "IO door close position must be less than open position")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "door_positions_invalid", "The IO door close position must be less than the open position.")
 
 
 def _with_iobox_door_positions(door_config, close: float, open: float):
@@ -1948,7 +1948,7 @@ def _with_iobox_door_positions(door_config, close: float, open: float):
 		raise api_error(
 			status.HTTP_400_BAD_REQUEST,
 			"door_positions_invalid",
-			"Those IO door positions are not valid.",
+			"",
 		) from exc
 
 
@@ -1995,7 +1995,7 @@ async def move_iobox_door(request: IOBoxDoorMoveRequest):
 	io = worker._robot._io
 	motor = io._md
 	if motor is None:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "IO door motor is not configured")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The IO door motor is not configured on this machine.")
 
 	temporary_config = _with_iobox_door_positions(motor._params, request.close, request.open)
 	target = request.close if request.position == "close" else request.open
@@ -2015,7 +2015,7 @@ async def move_iobox_door(request: IOBoxDoorMoveRequest):
 			exc,
 			status.HTTP_503_SERVICE_UNAVAILABLE,
 			"door_control_failed",
-			"The machine's door did not move. Check that nothing blocks it before moving it again.",
+			"",
 		) from exc
 
 	return {"success": True, "position": request.position, "position_mm": target}
@@ -2197,21 +2197,21 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 		async with manual_motion_guard("calibration_iobox_jog", worker=worker):
 			if request.axis == "x":
 				if tool._mx is None:
-					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "X motor not configured")
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The X motor is not configured on this machine.")
 				await _clear_motors_for_move(tool, gantry=True)
 				new_value = _clamp_value(current_value + request.delta, tool._mx._params.lim, "X axis", warnings)
 				new_value = _round_iobox_calibration_value(new_value)
 				await tool._mx.move_to_position(new_value)
 			elif request.axis == "y":
 				if tool._my is None:
-					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Y motor not configured")
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The Y motor is not configured on this machine.")
 				await _clear_motors_for_move(tool, gantry=True)
 				new_value = _clamp_value(current_value + request.delta, tool._my._params.lim, "Y axis", warnings)
 				new_value = _round_iobox_calibration_value(new_value)
 				await tool._my.move_to_position(new_value)
 			elif request.axis == "z":
 				if tool._mg is None:
-					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Gripper motor not configured")
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The gripper motor is not configured on this machine.")
 				await _clear_motors_for_move(tool, gripper=True)
 				new_value = _clamp_value(current_value + request.delta, tool._mg._params.lim, "Z axis", warnings)
 				new_value = _round_iobox_calibration_value(new_value)
@@ -2220,9 +2220,9 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				await tool._mg.move_to_position(new_value, rpm=grip_rpm, accel=grip_accel)
 			else:
 				if tool._ms is None:
-					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor not configured")
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The stage motor is not configured on this machine.")
 				await _clear_motors_for_move(tool, stage=True)
-				new_value = _clamp_value(current_value + request.delta, tool._ms._params.lim, "Stage", warnings)
+				new_value = _clamp_value(current_value + request.delta, tool._ms._params.lim, "stage", warnings)
 				new_value = _round_iobox_calibration_value(new_value)
 				await tool._ms.move_to_position(new_value)
 			setattr(iobox_current, field, new_value)
@@ -2294,7 +2294,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 		stage_nudge = await tool.get_param("STAGE_NUDGE")
 
 		if tool._ms is None or tool._mg is None:
-			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Motors not configured")
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "")
 
 		if stage_nudge is None:
 			raise api_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "config_error", "The stage nudge distance is not set in the robot settings.")
@@ -2347,7 +2347,7 @@ async def test_iobox_multi_item_cycle():
 	io = worker._robot._io
 
 	if tool._ms is None or tool._mg is None:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Motors not configured")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "")
 
 	stage_ext = iobox_current.multi_item_stage_extension
 	grip_ext = iobox_current.multi_item_z_extension
@@ -2521,7 +2521,7 @@ async def rotate_to_angle(angle: float):
 
 	tool = worker._robot._tool
 	if tool._mr is None:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Rotation motor not configured")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The rotation motor is not configured on this machine.")
 
 	rotation_limit = tool._mr._params.lim
 	clamped_angle = max(0, min(rotation_limit, angle))
@@ -2642,7 +2642,7 @@ async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 		stage_limit = _get_stage_limit_from_config(config)
 
 	if stage_limit is None:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor limit unavailable")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The stage motor has no travel limit configured.")
 
 	_validate_stage_target(request.front, stage_limit, "front shelf stage extension")
 	_validate_stage_target(request.back, stage_limit, "back shelf stage extension")
@@ -2689,12 +2689,12 @@ async def move_stage(request: StageMoveRequest):
 	tool = worker._robot._tool
 
 	if tool._ms is None:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor not configured")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The stage motor is not configured on this machine.")
 
 	stage_limit = tool._ms._params.lim
 
 	warnings: list[str] = []
-	target = _clamp_value(request.position, stage_limit, "Stage", warnings)
+	target = _clamp_value(request.position, stage_limit, "stage", warnings)
 
 	try:
 		async with manual_motion_guard("calibration_stage", worker=worker):

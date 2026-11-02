@@ -445,7 +445,7 @@ async def start_import_tray(
                         raise api_error(
                             409,
                             "io_box_occupied",
-                            "The IO box is not empty. Take the item off the scale and wait for it to read empty.",
+                            "",
                         )
                     ensure_worker_homed_for_bin_motion(worker)
                     await ensure_worker_queue_empty_for_bin_start(worker)
@@ -455,7 +455,7 @@ async def start_import_tray(
                     except Exception as exc:
                         await bins.fail(workflow, failure_detail(exc, "tray_fetch_failed")[1], tray_moved=False)
                         logger.warning("Tray fetch failed: %s", exc, exc_info=exc)
-                        raise hardware_api_error(exc, 503, "tray_fetch_failed", "The bin could not be fetched. Check the robot status before fetching it again.") from exc
+                        raise hardware_api_error(exc, 503, "tray_fetch_failed", "") from exc
                 await bins.publish_workflow(worker, workflow)
         except BinWorkflowConflict as exc:
             logger.info("Tray workflow conflict: %s", exc)
@@ -553,7 +553,7 @@ async def return_import_tray(
                         except Exception as exc:
                             await service.fail_tray_return(returning, failure_detail(exc, "tray_return_failed")[1])
                             logger.warning("Tray return failed: %s", exc, exc_info=exc)
-                            raise hardware_api_error(exc, 503, "tray_return_failed", "The bin could not be returned. Check the robot status before returning it again.") from exc
+                            raise hardware_api_error(exc, 503, "tray_return_failed", "") from exc
                 if returning is not None:
                     await bins.publish_workflow(worker, returning)
         except BinWorkflowConflict as exc:

@@ -13,7 +13,8 @@
 		type ApiErrorDetail,
 		type CalibrationStatus,
 		type Cell,
-		type StorageGrid
+		type StorageGrid,
+		formatHomeRequired
 	} from '$lib/api';
 	import { activeVocabulary, activeVocabularyStore, isSideToken, sideIndex, sideLabel } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -70,7 +71,7 @@
 
 	const needsToolHome = $derived(needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
 	const homeMessage = $derived(
-		needsHome === true ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
+		needsHome === true ? formatHomeRequired(needsHomeReason) : ''
 	);
 	const isBusy = $derived(
 		isRunningQuick === true ||

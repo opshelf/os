@@ -29,7 +29,7 @@ async def search_chemicals(
     authentication. Upstream failure returns `503` with `Retry-After: 5`.
     """
     if len(q.strip()) < 2:
-        raise api_error(422, "chemical_query_too_short", "Enter at least two characters.")
+        raise api_error(422, "chemical_query_too_short", "")
     return await service.search(q, offset)
 
 
@@ -51,5 +51,5 @@ async def chemical_detail(
     try:
         cas_number = normalize_cas(cas_number)
     except ValueError:
-        raise api_error(422, "cas_number_invalid", "That CAS number is not valid.") from None
+        raise api_error(422, "cas_number_invalid", "") from None
     return await service.detail(cas_number)

@@ -189,7 +189,7 @@ async def stream_camera(
 		raise api_error(
 			status.HTTP_404_NOT_FOUND,
 			"camera_not_found",
-			"That camera is not set up on this machine.",
+			"",
 		)
 
 	try:
@@ -199,7 +199,7 @@ async def stream_camera(
 		raise api_error(
 			status.HTTP_503_SERVICE_UNAVAILABLE,
 			"camera_unavailable",
-			"That camera is not delivering frames.",
+			"",
 		)
 
 	try:
@@ -218,7 +218,7 @@ async def stream_camera(
 		raise api_error(
 			status.HTTP_503_SERVICE_UNAVAILABLE,
 			"camera_unavailable",
-			"That camera is not delivering frames.",
+			"",
 		)
 
 	async def stream_with_cleanup() -> AsyncGenerator[bytes, None]:

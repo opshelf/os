@@ -25,6 +25,8 @@ from openshelf_os.exceptions import (
 )
 
 EXECUTION_ERROR_CODE = "execution_error"
+RETRIEVE_FAILED_CODE = "retrieve_failed"
+STORE_FAILED_CODE = "store_failed"
 WORKER_ERROR_CODE = "worker_error"
 
 FAULT_MESSAGES: dict[str, str] = {
@@ -39,7 +41,9 @@ FAULT_MESSAGES: dict[str, str] = {
     "motor_fault": "The robot reported a motor fault. Check the robot before continuing.",
     "motor_stalled": "A motor stalled before reaching its target. Check for an obstruction, then reset the robot.",
     "motor_timeout": "A motor did not reach its target in time. Check for an obstruction, then reset the robot.",
+    RETRIEVE_FAILED_CODE: "The robot could not retrieve the item. Check the robot before continuing.",
     "rotation_blocked": "The robot could not turn the tray or bin. Clear the way and try again.",
+    STORE_FAILED_CODE: "The robot could not store the item. Check the robot before continuing.",
     WORKER_ERROR_CODE: "The robot stopped the command after an internal error. Check the robot before continuing.",
 }
 
@@ -87,6 +91,13 @@ def fault_code(exc: BaseException) -> Optional[str]:
         if isinstance(current, (HardwareMotorConfigError, ConfigError, RobotConfigError)):
             config = True
     return "config_error" if config else None
+
+
+def fault_failure(exc: BaseException, fallback_code: str) -> tuple[str, str]:
+    """(fault code, operator sentence) for a failed action: the classified cause in the
+    chain, else `fallback_code`, which must be a FAULT_MESSAGES key."""
+    code = fault_code(exc) or fallback_code
+    return code, FAULT_MESSAGES[code]
 
 
 def exception_debug(exc: BaseException) -> dict[str, Any]:

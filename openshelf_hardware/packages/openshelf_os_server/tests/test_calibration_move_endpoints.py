@@ -64,7 +64,7 @@ async def test_move_to_position_clamps_out_of_range_targets(client) -> None:
 	assert response.json()["z_offset"] == pytest.approx(9.5)
 	warnings = response.json()["warnings"]
 	assert warnings is not None
-	assert any("X axis limit reached" in w for w in warnings)
+	assert any("X axis range" in w for w in warnings)
 	assert len(response.json()["warnings"]) == 3
 
 	move_coordinate = worker._robot._tool.move.await_args.args[0]

@@ -16,7 +16,7 @@ from ..core.login import generate_login_barcode
 from ..settings import get_settings
 from .auth_deps import get_current_user, require_permissions
 from .printer import _print_payload as print_payload
-from openshelf_os_server.errors import api_error
+from openshelf_os_server.errors import api_error, error_detail
 
 router = APIRouter(
 	prefix="/api/users",
@@ -179,18 +179,18 @@ async def create_user(
 	existing_result = await db.execute(select(User).filter(User.email == request.email))
 	existing = existing_result.scalar_one_or_none()
 	if existing is not None:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "email_in_use", "That email already belongs to another operator.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "email_in_use", "")
 	
 	role_result = await db.execute(select(Role).filter(Role.id == request.role_id))
 	role = role_result.scalar_one_or_none()
 	if role is None:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "role_not_found", "That role no longer exists.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "role_not_found", "")
 
 	if request.access_level_id is not None:
 		access_level_result = await db.execute(select(AccessLevel).filter(AccessLevel.id == request.access_level_id))
 		access_level = access_level_result.scalar_one_or_none()
 		if access_level is None:
-			raise api_error(status.HTTP_400_BAD_REQUEST, "access_level_not_found", "That access level no longer exists.")
+			raise api_error(status.HTTP_400_BAD_REQUEST, "access_level_not_found", "")
 	
 	settings = get_settings()
 	auth_service = AuthService(
@@ -237,7 +237,7 @@ async def get_user(
 	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id, ~User.is_system))
 	user = user_result.scalar_one_or_none()
 	if user is None:
-		raise api_error(status.HTTP_404_NOT_FOUND, "user_not_found", "That operator account no longer exists.")
+		raise api_error(status.HTTP_404_NOT_FOUND, "user_not_found", "")
 	
 	return _build_user_response(user)
 
@@ -270,7 +270,7 @@ async def update_user(
 	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id, ~User.is_system))
 	user = user_result.scalar_one_or_none()
 	if user is None:
-		raise api_error(status.HTTP_404_NOT_FOUND, "user_not_found", "That operator account no longer exists.")
+		raise api_error(status.HTTP_404_NOT_FOUND, "user_not_found", "")
 	
 	if request.email is not None:
 		existing_result = await db.execute(
@@ -281,7 +281,7 @@ async def update_user(
 		)
 		existing = existing_result.scalar_one_or_none()
 		if existing is not None:
-			raise api_error(status.HTTP_400_BAD_REQUEST, "email_in_use", "That email already belongs to another operator.")
+			raise api_error(status.HTTP_400_BAD_REQUEST, "email_in_use", "")
 		user.email = str(request.email)
 	
 	if request.first_name is not None:
@@ -302,14 +302,14 @@ async def update_user(
 		role_result = await db.execute(select(Role).filter(Role.id == request.role_id))
 		role = role_result.scalar_one_or_none()
 		if role is None:
-			raise api_error(status.HTTP_400_BAD_REQUEST, "role_not_found", "That role no longer exists.")
+			raise api_error(status.HTTP_400_BAD_REQUEST, "role_not_found", "")
 		user.role_id = int(request.role_id)
 
 	if request.access_level_id is not None:
 		access_level_result = await db.execute(select(AccessLevel).filter(AccessLevel.id == request.access_level_id))
 		access_level = access_level_result.scalar_one_or_none()
 		if access_level is None:
-			raise api_error(status.HTTP_400_BAD_REQUEST, "access_level_not_found", "That access level no longer exists.")
+			raise api_error(status.HTTP_400_BAD_REQUEST, "access_level_not_found", "")
 		user.access_level_id = int(request.access_level_id)
 
 	if request.is_active is not None:
@@ -342,7 +342,7 @@ async def resolve_login_barcode(
 		.where(User.login_barcode == request.login_barcode, ~User.is_system)
 	)
 	if user is None:
-		raise api_error(status.HTTP_404_NOT_FOUND, "user_not_found", "That operator account no longer exists.")
+		raise api_error(status.HTTP_404_NOT_FOUND, "user_not_found", "")
 	return _build_user_response(user)
 
 
@@ -364,7 +364,7 @@ async def print_login_barcode(
 	"""Replace any prior assignment, persist it, then print the new barcode."""
 	user = await db.scalar(select(User).where(User.id == user_id, ~User.is_system))
 	if user is None:
-		raise api_error(status.HTTP_404_NOT_FOUND, "user_not_found", "That operator account no longer exists.")
+		raise api_error(status.HTTP_404_NOT_FOUND, "user_not_found", "")
 
 	had_barcode = user.login_barcode is not None
 	assigned = not had_barcode
@@ -379,21 +379,19 @@ async def print_login_barcode(
 	except Exception as exc:
 		raise HTTPException(
 			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail={
-				"message": "The new label code is saved, but the printer did not print. The old label no longer works.",
-				"code": "label_print_failed",
-				"login_barcode_assigned": True,
-			},
+			detail=error_detail(
+				"", "label_print_failed",
+				login_barcode_assigned=True,
+			),
 		) from exc
 
 	if not printed:
 		raise HTTPException(
 			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail={
-				"message": "The new label code is saved, but the printer did not print. The old label no longer works.",
-				"code": "label_print_failed",
-				"login_barcode_assigned": True,
-			},
+			detail=error_detail(
+				"", "label_print_failed",
+				login_barcode_assigned=True,
+			),
 		)
 
 	return LoginBarcodePrintResponse(
@@ -424,10 +422,10 @@ async def delete_user(
 	user_result = await db.execute(select(User).options(selectinload(User.role), selectinload(User.access_level)).filter(User.id == user_id, ~User.is_system))
 	user = user_result.scalar_one_or_none()
 	if user is None:
-		raise api_error(status.HTTP_404_NOT_FOUND, "user_not_found", "That operator account no longer exists.")
+		raise api_error(status.HTTP_404_NOT_FOUND, "user_not_found", "")
 	
 	if user.id == current_user.id:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "self_delete_forbidden", "You cannot delete the account you are signed in with.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "self_delete_forbidden", "")
 	
 	user.is_active = False
 	await db.commit()

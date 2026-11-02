@@ -19,6 +19,7 @@ from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.database.models import StorageBin, StorageBinItem, StorageBinWorkflow
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.errors import CODE_MESSAGES
 from openshelf_os_server.routers import robot as robot_router
 from openshelf_os_server.routers import storage as storage_router
 
@@ -81,6 +82,7 @@ async def test_direct_store_rejects_live_bin_barcode_in_both_modes(
             await robot_router._validate_direct_store_reservation({"barcode": configured.barcode}, db)
         assert barcode_error.value.status_code == 409
         assert barcode_error.value.detail["code"] == "reserved_bin_barcode"
+        assert barcode_error.value.detail["message"] == CODE_MESSAGES["reserved_bin_barcode"]
 
         # A tray home is a usable target for the reservation guard in both modes: the tray's
         # return reports the occupied cell instead of the store being refused up front. The

@@ -83,7 +83,7 @@ async def _run_nmcli(*args: str) -> _NmcliResult:
 		raise api_error(
 			status.HTTP_500_INTERNAL_SERVER_ERROR,
 			"wifi_unavailable",
-			"Network settings are not available on this machine.",
+			"",
 		) from exc
 
 	try:
@@ -247,7 +247,7 @@ async def scan_networks() -> WifiNetworkList:
 		raise api_error(
 			status.HTTP_502_BAD_GATEWAY,
 			"wifi_list_failed",
-			"The network list could not be read. Try again.",
+			"",
 		)
 
 	strongest: dict[str, WifiNetwork] = {}
@@ -277,7 +277,7 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 	ssid = requested_ssid.strip()
 
 	if ssid == "":
-		raise api_error(status.HTTP_400_BAD_REQUEST, "wifi_network_required", "Choose a network to connect to.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "wifi_network_required", "")
 	previous_connection = await _active_connection_name()
 	logger.info("wifi_connect_requested", ssid=ssid, previous=previous_connection)
 

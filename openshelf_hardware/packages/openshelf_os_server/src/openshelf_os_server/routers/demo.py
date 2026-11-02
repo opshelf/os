@@ -30,14 +30,14 @@ async def ensure_laser_auto_calibration_not_running() -> None:
 	if await is_laser_auto_calibration_running() is False:
 		return
 
-	raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "The robot is calibrating.")
+	raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "")
 
 
 async def get_robot_worker_or_503():
 	try:
 		return await get_robot_worker()
 	except ValueError as exc:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot has not started. Check the robot status.") from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from exc
 
 router = APIRouter(prefix="/api/demo", tags=["demo"], dependencies=[Depends(get_current_user)])
 
@@ -133,7 +133,7 @@ async def start_demo_cycle() -> SuccessResponse:
 	await ensure_laser_auto_calibration_not_running()
 
 	if _is_running is True:
-		raise api_error(status.HTTP_409_CONFLICT, "demo_running", "The robot is running the demo cycle.")
+		raise api_error(status.HTTP_409_CONFLICT, "demo_running", "")
 
 	worker = await get_robot_worker_or_503()
 
@@ -142,7 +142,7 @@ async def start_demo_cycle() -> SuccessResponse:
 	robot = worker._robot
 
 	if robot._demo_cell_map is None or len(robot._demo_cell_map) == 0:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "demo_not_configured", "The demo cell map is not set up on this machine.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "demo_not_configured", "")
 
 	cells = _build_cell_list(robot)
 
@@ -192,7 +192,7 @@ async def stop_demo_cycle() -> SuccessResponse:
 	demo status for completion; this is not a physical emergency stop.
 	"""
 	if _is_running is False:
-		raise api_error(status.HTTP_409_CONFLICT, "demo_not_running", "The demo cycle is not running.")
+		raise api_error(status.HTTP_409_CONFLICT, "demo_not_running", "")
 
 	_stop_event.set()
 

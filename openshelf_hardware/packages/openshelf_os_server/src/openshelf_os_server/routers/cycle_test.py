@@ -131,7 +131,7 @@ async def continue_cycle_test(request: Request) -> CycleTestSnapshot:
 	"""
 	manager = get_cycle_test_manager()
 	if manager.resume() is False:
-		raise api_error(status.HTTP_409_CONFLICT, "cycle_test_not_paused", "The cycle test is not paused.")
+		raise api_error(status.HTTP_409_CONFLICT, "cycle_test_not_paused", "")
 	return CycleTestSnapshot.model_validate_json(public_snapshot_json(manager.serialize(), debug_allowed(request)))
 
 
@@ -150,5 +150,5 @@ async def abort_cycle_test(request: Request) -> CycleTestSnapshot:
 	"""
 	manager = get_cycle_test_manager()
 	if manager.abort() is False:
-		raise api_error(status.HTTP_409_CONFLICT, "cycle_test_not_running", "No cycle test is running.")
+		raise api_error(status.HTTP_409_CONFLICT, "cycle_test_not_running", "")
 	return CycleTestSnapshot.model_validate_json(public_snapshot_json(manager.serialize(), debug_allowed(request)))

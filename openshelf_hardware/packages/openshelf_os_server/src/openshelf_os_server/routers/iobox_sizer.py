@@ -69,7 +69,7 @@ def _unavailable_error(exc: Exception) -> HTTPException:
 	return api_error(
 		status.HTTP_503_SERVICE_UNAVAILABLE,
 		"iobox_sizer_unavailable",
-		"The IO box measure tool is not available. Try again.",
+		"",
 	)
 
 
@@ -218,7 +218,7 @@ async def frame_endpoint() -> Response:
 		raise api_error(
 			status.HTTP_500_INTERNAL_SERVER_ERROR,
 			"frame_encode_failed",
-			"The IO box camera image could not be read. Try again.",
+			"",
 		)
 
 	return Response(content=buffer.tobytes(), media_type="image/jpeg")

@@ -108,7 +108,7 @@ class RobotCommandError(BaseModel):
     error: str
     # The exception behind an unexpected failure (`faults.exception_debug`); developer-only.
     debug: Optional[dict[str, Any]] = None
-    # Typed cause (`faults.fault_code`) when the exception is a classified fault; the kiosk maps it to copy.
+    # Cause code from `faults.fault_failure`: the classified fault, else the command's fallback code; the kiosk maps it to copy.
     fault_code: Optional[str] = None
 
 

@@ -126,7 +126,7 @@ async def get_public_users(
 	)
 	users = list(result.scalars().all())
 	if len(users) > 3:
-		raise api_error(status.HTTP_404_NOT_FOUND, "not_found", "Not found")
+		raise api_error(status.HTTP_404_NOT_FOUND, "not_found", "")
 
 	return [
 		PublicUserResponse(
@@ -172,8 +172,6 @@ async def stream_login_scans() -> EventSourceResponse:
 	)
 
 
-LOGIN_FAILED_DETAIL = "That sign-in did not work. Try again."
-
 @router.post(
     "/login/json",
     response_model=TokenResponse,
@@ -212,7 +210,7 @@ async def login_json(
 	if retry_after > 0:
 		raise HTTPException(
 			status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-			detail=error_detail(LOGIN_FAILED_DETAIL, "login_rate_limited"),
+			detail=error_detail("", "login_rate_limited"),
 			headers={"Retry-After": str(retry_after)},
 		)
 
@@ -220,7 +218,7 @@ async def login_json(
 		retry_after = login_backoff.record_failure(backoff_key)
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail=error_detail(LOGIN_FAILED_DETAIL, "login_failed"),
+			detail=error_detail("", "login_failed"),
 			headers={"Retry-After": str(retry_after)},
 		)
 
@@ -272,7 +270,7 @@ async def refresh_token(
 	
 	payload = auth_service.decode_token(request.refresh_token)
 	if payload is None or payload.get("type") != "refresh":
-		raise api_error(status.HTTP_401_UNAUTHORIZED, "refresh_token_invalid", "Your sign-in expired. Sign in again.")
+		raise api_error(status.HTTP_401_UNAUTHORIZED, "refresh_token_invalid", "")
 	
 	result = await db.execute(
 		select(User)
