@@ -13,6 +13,8 @@ def _make_tool() -> Tool:
     tool._logger = logging.getLogger("test_init_isolation")
     tool._init_reporter = None
     tool._mx = AsyncMock()
+    tool._mx._is_homed = False
+    tool._mx._is_home_provisional = False
     tool._my = AsyncMock()
     tool._mg = AsyncMock()
     tool._ms = AsyncMock()
@@ -24,7 +26,13 @@ def _record_home_order(tool: Tool) -> list[str]:
     events: list[str] = []
     tool._mg.home.side_effect = lambda **_: events.append("z_axis")
     tool._ms.home.side_effect = lambda **_: events.append("stage")
-    tool._mx.home.side_effect = lambda **_: events.append("x_axis")
+
+    def home_x(provisional: bool = False) -> None:
+        events.append("x_axis")
+        tool._mx._is_homed = True
+        tool._mx._is_home_provisional = provisional
+
+    tool._mx.home.side_effect = home_x
     tool._my.home.side_effect = lambda **_: events.append("y_axis")
     tool._home_rotate_sequence = AsyncMock(side_effect=lambda: events.append("rotate"))
     return events
@@ -44,6 +52,20 @@ async def test_tool_only_home_leaves_the_gantry_where_it_is():
 
 
 @pytest.mark.asyncio
+async def test_home_all_does_not_home_an_already_homed_x_provisionally():
+    """lb4a-3: a provisional X home skips the rotation guard, so it must not run once X has coordinates."""
+    tool = _make_tool()
+    tool._mr = AsyncMock()
+    tool._mx._is_homed = True
+    events = _record_home_order(tool)
+
+    await tool.home()
+
+    assert events == ["z_axis", "stage", "rotate", "x_axis", "y_axis"]
+    tool._mx.home.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
 async def test_isolated_home_keeps_the_provisional_x_home_when_rotate_fails():
     """With the tool angle still unknown a second X home could false-home on the same upright."""
     tool = _make_tool()
@@ -56,6 +78,7 @@ async def test_isolated_home_keeps_the_provisional_x_home_when_rotate_fails():
 
     assert events == ["z_axis", "stage", "x_axis", "y_axis"]
     tool._mx.home.assert_awaited_once_with(provisional=True)
+    assert tool._mx._is_home_provisional is True
 
 
 @pytest.mark.asyncio

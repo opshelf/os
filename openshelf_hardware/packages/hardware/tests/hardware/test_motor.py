@@ -823,6 +823,7 @@ async def test_provisional_home_skips_the_guard_and_the_limit_check(mock_control
 
     guard.assert_not_awaited()
     assert motor.is_homed() is True
+    assert motor._is_home_provisional is True
 
 
 @pytest.mark.asyncio

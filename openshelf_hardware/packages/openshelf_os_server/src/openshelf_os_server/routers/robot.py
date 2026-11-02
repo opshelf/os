@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 from openshelf_os.common import ConfigError
 from openshelf_os.config.settings import BARCODE_MAX_LENGTH
+from openshelf_os.exceptions import RotationClearanceError
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.storage import CellItem, CellStatus, Dimensions, StorageModuleCellLocation
 from openshelf_os.robot.commands import (
@@ -1797,6 +1798,13 @@ async def home_motor(
             return {"success": True, "motor": motor_name}
     except HTTPException:
         raise
+    except RotationClearanceError as exc:
+        logging.warning("Motor home refused", exc_info=exc)
+        raise api_error(
+            status.HTTP_409_CONFLICT,
+            "rotation_blocked",
+            "The tool is turned away from its front or back position. Home the rotation and try again.",
+        ) from exc
     except Exception as exc:
         logging.error("Motor home failed: %s", exc)
         raise api_error(
@@ -2064,6 +2072,13 @@ async def move_motor(
             return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
     except HTTPException:
         raise
+    except RotationClearanceError as exc:
+        logging.warning("Motor move refused", exc_info=exc)
+        raise api_error(
+            status.HTTP_409_CONFLICT,
+            "rotation_blocked",
+            "The tool is turned away from its front or back position. Home the rotation and try again.",
+        ) from exc
     except Exception as exc:
         logging.warning("Motor move failed: %s", exc)
         raise api_error(

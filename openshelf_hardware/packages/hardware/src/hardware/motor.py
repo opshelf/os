@@ -284,6 +284,7 @@ class Motor():
         self._on_move_complete: Optional[Callable[[float], None]] = None
         self._on_init_progress: Optional[Callable[[str, str, Optional[str]], None]] = None
         self._is_homed = False
+        self._is_home_provisional = False
         self._hard_stopped = False
         self._should_skip_pre_home_once = False
         self._flight_recorder: deque[MotionRecordEntry] = deque(maxlen=MOTION_FLIGHT_RECORDER_SIZE)
@@ -2511,6 +2512,7 @@ class Motor():
                 await self._park()
 
                 self._is_homed = True
+                self._is_home_provisional = provisional
                 self._hard_stopped = False
                 self._should_skip_pre_home_once = False
                 self._emit_init("ready")

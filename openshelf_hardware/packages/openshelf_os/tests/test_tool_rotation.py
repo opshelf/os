@@ -32,15 +32,34 @@ def _mock_x_motor(
 
 
 @pytest.mark.asyncio
+async def test_home_rotate_sequence_rehomes_x_verified_when_its_home_is_provisional() -> None:
+    # Isolated init left X provisionally homed after rotate failed; a rotate-only home must verify it.
+    tool = Tool.__new__(Tool)
+    tool._mx = _mock_x_motor(position=300.0)
+    tool._mx._is_homed = True
+    tool._mx._is_home_provisional = True
+    tool._mr = AsyncMock()
+    tool._ms = None
+    tool.ensure_safe_rotation_stage_extension = AsyncMock(return_value=False)
+    tool.rotate_to_home_orientation = AsyncMock()
+
+    await tool._home_rotate_sequence()
+
+    tool._mx.home.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
 async def test_home_rotate_sequence_homes_unhomed_x_before_clearance_move() -> None:
     events: list[str] = []
     tool = Tool.__new__(Tool)
     tool._mx = _mock_x_motor(position=0.0)
     tool._mx._is_homed = False
+    tool._mx._is_home_provisional = False
 
     async def home_x(**kwargs) -> None:
         events.append("home_x:provisional" if kwargs.get("provisional") else "home_x")
         tool._mx._is_homed = True
+        tool._mx._is_home_provisional = kwargs.get("provisional", False)
 
     tool._mx.home = AsyncMock(side_effect=home_x)
     tool._mx.move_to_position = AsyncMock(side_effect=lambda mm: events.append(f"x:{mm}"))
@@ -243,6 +262,16 @@ async def test_x_guard_needs_front_or_back_outside_the_rotation_window(
 async def test_restore_leaves_x_in_the_window_while_the_tool_is_off_its_pose() -> None:
     # lb4a-3: restoring X to 0.1 mm after a 20 deg rotate move stalled X on a gantry upright.
     tool = _tool_for_x_guard(rotate_deg=20.0)
+
+    await tool.restore_safe_rotation_x_position(0.1)
+
+    tool._mx.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_leaves_x_in_the_window_while_rotate_is_unhomed() -> None:
+    # A faulted or timed-out rotate move clears its homed flag; the angle is then unknown.
+    tool = _tool_for_x_guard(rotate_deg=60.0, rotate_homed=False)
 
     await tool.restore_safe_rotation_x_position(0.1)
 

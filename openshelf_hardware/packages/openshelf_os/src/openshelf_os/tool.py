@@ -1219,14 +1219,13 @@ class Tool:
         if x_motor is None:
             return None
 
-        margin_mm = ROTATION_SAFE_X_MARGIN_MM
-        lower_lim = float(getattr(x_motor._params, "lower_lim", 0.0))
-        upper_lim = float(x_motor._params.lim)
+        window_min_mm, window_max_mm = self._rotation_x_window(x_motor)
 
-        if upper_lim - lower_lim < margin_mm * 2:
+        if window_max_mm < window_min_mm:
+            margin_mm = ROTATION_SAFE_X_MARGIN_MM
             raise ConfigError(
                 "X axis limit is too small for safe rotation margin "
-                f"({upper_lim - lower_lim} < {margin_mm * 2})"
+                f"({window_max_mm - window_min_mm + margin_mm * 2} < {margin_mm * 2})"
             )
 
         if getattr(x_motor, "_is_homed", True) is False:
@@ -1234,12 +1233,12 @@ class Tool:
 
         current_x = await x_motor.get_position()
 
-        if current_x < lower_lim + margin_mm:
-            await x_motor.move_to_position(lower_lim + margin_mm)
+        if current_x < window_min_mm:
+            await x_motor.move_to_position(window_min_mm)
             return current_x
 
-        if current_x > upper_lim - margin_mm:
-            await x_motor.move_to_position(upper_lim - margin_mm)
+        if current_x > window_max_mm:
+            await x_motor.move_to_position(window_max_mm)
             return current_x
 
         return None
@@ -1250,8 +1249,11 @@ class Tool:
         if original_x is None or x_motor is None:
             return
 
-        angle = await self._rotation_off_x_pose()
-        if angle is not None:
+        # A rotate move that faulted or timed out leaves rotate unhomed at an unknown angle.
+        rotate_motor = getattr(self, "_mr", None)
+        is_angle_unknown = rotate_motor is not None and getattr(rotate_motor, "_is_homed", True) is False
+        angle = None if is_angle_unknown else await self._rotation_off_x_pose()
+        if is_angle_unknown or angle is not None:
             self._logger.warning(
                 "Leaving X in the rotation window; the tool is off its front/back pose",
                 extra={"rotate_deg": angle, "original_x_mm": original_x},
@@ -1644,16 +1646,15 @@ class Tool:
 
         rotate_motor = self._mr
         original_x = None
-        did_home_x_provisionally = False
 
         if self._mx is not None:
             # The clearance move below is in X coordinates; after a power cycle the drive
             # reads 0 wherever the carriage stands, so X must be homed before it moves. With the
             # tool at an unknown angle that home can stop on a gantry upright short of the limit
             # switch, so it is provisional and X homes again, verified, once the tool is straight.
+            # A home that is still provisional from an earlier call is verified the same way.
             if getattr(self._mx, "_is_homed", True) is False:
                 await self._mx.home(provisional=True)
-                did_home_x_provisionally = True
 
             original_x = await self.ensure_safe_rotation_x_position()
 
@@ -1669,7 +1670,7 @@ class Tool:
         if did_extend_stage is True and self._ms is not None:
             await self._ms.home()
 
-        if did_home_x_provisionally is True:
+        if self._mx is not None and getattr(self._mx, "_is_home_provisional", False) is True:
             await self._mx.home()
 
     async def _home_sequence(
@@ -1685,15 +1686,21 @@ class Tool:
         def should_home(axis: str) -> bool:
             return axes is None or axis in axes
 
-        # X homes twice around rotate. The first home only gives the rotate clearance move real
-        # coordinates (after a power loss the drive reads 0 wherever the carriage stands), and
+        # X homes around rotate. A first, provisional home only gives the rotate clearance move
+        # real coordinates (after a power loss the drive reads 0 wherever the carriage stands);
         # with the tool at an unknown angle it can stop on a gantry upright short of the hard
-        # stop. The second runs with the tool straight and sets the zero every later move uses.
+        # stop. It runs only while X is unhomed: a homed X already has coordinates, and a verified
+        # home with the tool rotated is what the X guard refuses. The home that runs with the tool
+        # straight sets the zero every later move uses.
         will_home_rotate = should_home("rotate") and self._mr is not None
         for motor, axis in ((self._mg, "z_axis"), (self._ms, "stage"), (self._mx, "x_axis")):
             if motor is None or should_home(axis) is False:
                 continue
-            provisional = axis == "x_axis" and will_home_rotate
+            provisional = False
+            if axis == "x_axis" and will_home_rotate:
+                if getattr(motor, "_is_homed", True) is not False:
+                    continue
+                provisional = True
             if isolate is True:
                 if await self._home_step_isolated(
                     motor, failed_config_motors, provisional=provisional
@@ -1703,6 +1710,10 @@ class Tool:
                 await motor.home(provisional=provisional)
 
         did_home_rotate = False
+        # A provisional X home is verified at the end of the rotate sequence itself.
+        is_x_verified_by_rotate = (
+            self._mx is not None and getattr(self._mx, "_is_home_provisional", False) is True
+        )
 
         if should_home("rotate"):
             if isolate is True:
@@ -1711,7 +1722,12 @@ class Tool:
                 await self._home_rotate_sequence()
                 did_home_rotate = True
 
-        if did_home_rotate is True and self._mx is not None and should_home("x_axis"):
+        if (
+            did_home_rotate is True
+            and is_x_verified_by_rotate is False
+            and self._mx is not None
+            and should_home("x_axis")
+        ):
             if isolate is True:
                 await self._home_step_isolated(self._mx, failed_config_motors)
             else:
