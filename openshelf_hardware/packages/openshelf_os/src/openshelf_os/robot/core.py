@@ -1312,7 +1312,7 @@ class Robot:
         command_name = "store_item"
 
         if not self._grid:
-            return RobotCommandError(command=command_name, error="Storage grid not calibrated")
+            return RobotCommandError(command=command_name, error="The machine's storage is not ready. Reset it and try again.")
 
         resolved_barcode: str
         resolved_item_name: str
@@ -1336,7 +1336,7 @@ class Robot:
             item={"barcode": resolved_barcode, "name": resolved_item_name},
         )
         if provided_dimensions is None:
-            return RobotCommandError(command=command_name, error="Item dimensions required")
+            return RobotCommandError(command=command_name, error="This item needs its size before it can be stored.")
 
         self._logger.info("Using provided dimensions: %s", provided_dimensions)
         width = float(provided_dimensions.get("width", 0))
@@ -1344,7 +1344,7 @@ class Robot:
         length = float(provided_dimensions.get("length", 0))
 
         if width <= 0 or height <= 0 or length <= 0:
-            return RobotCommandError(command=command_name, error="Invalid dimensions provided")
+            return RobotCommandError(command=command_name, error="Check the item size and try again.")
 
         weight = await self._io.get_weight()
 
@@ -1373,7 +1373,7 @@ class Robot:
                     cell_idx=int(provided_location.get("cell_idx", 0)),
                 )
             except (AttributeError, TypeError, ValueError):
-                return RobotCommandError(command=command_name, error="Invalid storage location provided")
+                return RobotCommandError(command=command_name, error="That cell is not valid.")
 
             is_reserved = (
                 parsed_location.side.value,
@@ -1393,14 +1393,14 @@ class Robot:
                 if is_reserved is False and tray is False:
                     cell = self._grid.get_cell_if_present(parsed_location)
                     if cell is None:
-                        return RobotCommandError(command=command_name, error="Requested storage cell does not exist")
+                        return RobotCommandError(command=command_name, error="That cell does not exist.")
                     if cell.status != CellStatus.AVAILABLE:
                         return RobotCommandError(
                             command=command_name,
                             error=f"Requested storage cell is {cell.status.value}",
                         )
                     if self._grid.cell_fits_item(cell, item) is False:
-                        return RobotCommandError(command=command_name, error="Item does not fit the requested storage cell")
+                        return RobotCommandError(command=command_name, error="The item does not fit that cell.")
                 location = parsed_location
 
         if location is None and self._demo_cell_map is not None:
@@ -1408,7 +1408,7 @@ class Robot:
             if demo_location is None:
                 return RobotCommandError(
                     command=command_name,
-                    error=f"barcode {resolved_barcode} not in demo mapping",
+                    error=f"Barcode {resolved_barcode} is not in the demo cell map.",
                 )
             if (
                 demo_location.side.value,
@@ -1417,7 +1417,7 @@ class Robot:
             ) in reserved_locations:
                 return RobotCommandError(
                     command=command_name,
-                    error="Demo storage location is reserved",
+                    error="That cell is reserved for the demo.",
                 )
             location = demo_location
         elif location is None:
@@ -1427,7 +1427,7 @@ class Robot:
             )
 
         if not location:
-            return RobotCommandError(command=command_name, error="No suitable storage location found")
+            return RobotCommandError(command=command_name, error="No open cell fits this item.")
 
         self._state.current_cell = location
         self.set_operation_context(
@@ -1468,7 +1468,7 @@ class Robot:
         command_name = "retrieve_item"
 
         if not self._grid:
-            return RobotCommandError(command=command_name, error="Storage grid not initialized")
+            return RobotCommandError(command=command_name, error="The machine's storage is not ready. Reset it and try again.")
 
         location = next(
             (
@@ -1482,7 +1482,7 @@ class Robot:
             None,
         )
         if location is None:
-            return RobotCommandError(command=command_name, error=f"Item '{item_name}' not found in storage")
+            return RobotCommandError(command=command_name, error=f"Item {item_name} is not in storage.")
 
         return await self.retrieve_by_location(location.model_dump())
 
@@ -1510,7 +1510,7 @@ class Robot:
         command_name = "retrieve_item"
 
         if not self._grid:
-            return RobotCommandError(command=command_name, error="Storage grid not initialized")
+            return RobotCommandError(command=command_name, error="The machine's storage is not ready. Reset it and try again.")
 
         resolved_location: Optional[StorageModuleCellLocation] = None
 
@@ -1518,12 +1518,12 @@ class Robot:
             try:
                 resolved_location = StorageModuleCellLocation(**location_payload)
             except Exception:
-                return RobotCommandError(command=command_name, error="Invalid location payload")
+                return RobotCommandError(command=command_name, error="That cell is not valid.")
 
         if resolved_location is None:
             resolved_location = await self._find_location_for_barcode(barcode)
             if resolved_location is None:
-                return RobotCommandError(command=command_name, error=f"Item '{barcode}' not found in storage")
+                return RobotCommandError(command=command_name, error=f"Item {barcode} is not in storage.")
 
         return await self.retrieve_by_location(resolved_location.model_dump(), barcode_hint=barcode)
 
@@ -1536,18 +1536,18 @@ class Robot:
         command_name = "retrieve_item"
 
         if not self._grid:
-            return RobotCommandError(command=command_name, error="Storage grid not initialized")
+            return RobotCommandError(command=command_name, error="The machine's storage is not ready. Reset it and try again.")
 
         self.set_operation_context(command=command_name, phase="retrieve.resolving_cell_location")
         try:
             location = StorageModuleCellLocation(**location_payload)
         except Exception:
-            return RobotCommandError(command=command_name, error="Invalid location payload")
+            return RobotCommandError(command=command_name, error="That cell is not valid.")
 
         try:
             cell = self._grid.get_cell(location)
         except Exception:
-            return RobotCommandError(command=command_name, error="Location out of range")
+            return RobotCommandError(command=command_name, error="That cell is not valid.")
 
         cached_item = cell.item
         if cached_item is None and barcode_hint is None:
@@ -1646,7 +1646,7 @@ class Robot:
                 elif command.location:
                     result = await self.retrieve_by_location(command.location)
                 else:
-                    result = RobotCommandError(command=command_name, error="Missing barcode or location for retrieval")
+                    result = RobotCommandError(command=command_name, error="This item has no cell to retrieve from.")
             else:
                 result = RobotCommandError(command=command_name, error="Invalid Robot Command")
             self.clear_operation_context()
@@ -1669,7 +1669,7 @@ class Robot:
 
     def _require_scale(self):
         if self._io._scale is None:
-            raise ConfigError("Scale is not enabled")
+            raise ConfigError("The scale is not available on this machine.")
         return self._io._scale
 
     async def get_scale_data(self) -> Dict[str, Any]:

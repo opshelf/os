@@ -37,7 +37,7 @@ async def get_robot_worker_or_503():
 	try:
 		return await get_robot_worker()
 	except ValueError as exc:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized") from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot is not ready. Try again in a moment.") from exc
 
 router = APIRouter(prefix="/api/demo", tags=["demo"], dependencies=[Depends(get_current_user)])
 

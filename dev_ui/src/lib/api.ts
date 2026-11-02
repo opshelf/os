@@ -64,6 +64,7 @@ export type ApiErrorDetail = {
 	reason?: string;
 	warnings?: string[];
 	correlation_id?: string;
+	permission?: string;
 	// Sent only to the developer user: the exception chain behind the sentence.
 	debug?: {
 		chain?: string[];
@@ -194,6 +195,9 @@ function formatDeveloperDetail(detail?: ApiErrorDetail, request?: string): strin
 	const ids = request === undefined ? [] : [request];
 	if (detail?.code !== undefined) {
 		ids.push(`code ${detail.code}`);
+	}
+	if (detail?.permission !== undefined) {
+		ids.push(`needs ${detail.permission}`);
 	}
 	if (detail?.correlation_id !== undefined) {
 		ids.push(`ref ${detail.correlation_id}`);

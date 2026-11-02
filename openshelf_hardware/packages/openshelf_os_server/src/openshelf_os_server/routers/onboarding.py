@@ -149,7 +149,7 @@ async def ensure_onboarding_state(db: AsyncSession) -> str:
 	except (RuntimeError, ValueError, OSError) as exc:
 		# A corrupt, unreadable, or unwritable state file is a device fault, not a client error.
 		logger.error(f"Onboarding state unavailable: {exc}", exc_info=exc)
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "Onboarding state unavailable") from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "The robot could not read its setup state. Try again.") from exc
 
 
 async def require_first_run(db: AsyncSession = Depends(get_db)) -> None:
@@ -247,11 +247,11 @@ async def create_admin_user(
 		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
 		admin_role = role_result.scalar_one_or_none()
 		if admin_role is None:
-			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "admin_role_unavailable", "Admin role is not available yet")
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "admin_role_unavailable", "The robot is not ready to create the administrator yet. Try again in a moment.")
 
 		regular_users = await _list_regular_users(db)
 		if len(regular_users) > 1:
-			raise api_error(status.HTTP_409_CONFLICT, "admin_already_created", "Administrator account is already created")
+			raise api_error(status.HTTP_409_CONFLICT, "admin_already_created", "The administrator account already exists.")
 
 		settings = get_settings()
 		auth_service = AuthService(
@@ -262,7 +262,7 @@ async def create_admin_user(
 		if len(regular_users) == 1:
 			existing_user = regular_users[0]
 			if existing_user.email != request.email or existing_user.role_id != admin_role.id:
-				raise api_error(status.HTTP_409_CONFLICT, "admin_already_created", "Administrator account is already created")
+				raise api_error(status.HTTP_409_CONFLICT, "admin_already_created", "The administrator account already exists.")
 
 			# The wizard created this administrator but onboarding never completed, for
 			# example because the client was reloaded before it posted /complete. Take
@@ -295,7 +295,7 @@ async def create_admin_user(
 			)
 			conflicting_user = conflict_result.scalar_one_or_none()
 			if conflicting_user is None or conflicting_user.is_system or conflicting_user.role_id != admin_role_id:
-				raise api_error(status.HTTP_409_CONFLICT, "admin_already_created", "Administrator account is already created") from None
+				raise api_error(status.HTTP_409_CONFLICT, "admin_already_created", "The administrator account already exists.") from None
 			return await _take_over_admin(db, conflicting_user, request, auth_service)
 		await db.refresh(user)
 
@@ -323,5 +323,5 @@ async def complete_onboarding() -> OnboardingStatus:
 	except (RuntimeError, ValueError, OSError) as exc:
 		# A corrupt, unreadable, or unwritable state file is a device fault, not a client error.
 		logger.error(f"Onboarding state unavailable: {exc}", exc_info=exc)
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "Onboarding state unavailable") from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "The robot could not read its setup state. Try again.") from exc
 	return OnboardingStatus(needs_onboarding=False)

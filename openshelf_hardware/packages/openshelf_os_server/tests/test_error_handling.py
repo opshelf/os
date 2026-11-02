@@ -43,7 +43,7 @@ def _raise_for_kind(kind: str) -> None:
 	if kind == "chemical_not_found":
 		raise ChemicalNotFound("no match for cas 123-45-6")
 	if kind == "chemical_unavailable":
-		raise ChemicalUnavailable("CAS search unavailable")
+		raise ChemicalUnavailable("The chemical lookup is unavailable. Try again.")
 	if kind == "integrity":
 		raise IntegrityError("stmt", {}, Exception("UNIQUE constraint failed: user.email"))
 	if kind == "db_error":
@@ -84,7 +84,7 @@ def _raise_for_kind(kind: str) -> None:
 	if kind == "dict_detail":
 		raise HTTPException(
 			status_code=409,
-			detail={"message": "Home required before robot commands.", "code": "home_required"},
+			detail={"message": "The robot needs to be reset before this can continue.", "code": "home_required"},
 		)
 	raise ValueError(f"unknown kind {kind}")
 
@@ -181,7 +181,7 @@ async def test_client_message_is_one_sentence_without_server_detail(
 
 	structured = (await client.get(TEST_PATH, params={"kind": "dict_detail"})).json()["detail"]
 	assert structured["code"] == "home_required"
-	assert structured["message"] == "Home required before robot commands."
+	assert structured["message"] == "The robot needs to be reset before this can continue."
 
 
 def test_non_string_dict_message_never_reaches_client_as_repr() -> None:

@@ -203,7 +203,7 @@ class StorageService:
 
             if existing_location is not None:
                 raise CellOccupiedError(
-                    f"Cell ({side_enum.value}, shelf={shelf_idx}, cell={cell_idx}) is already occupied by item_id={existing_location.item_id}"
+                    "That cell already holds another item."
                 )
 
             try:
@@ -223,7 +223,7 @@ class StorageService:
             except IntegrityError as exc:
                 await self.session.rollback()
                 raise CellOccupiedError(
-                    f"Cell ({side_enum.value}, shelf={shelf_idx}, cell={cell_idx}) is already occupied"
+                    "That cell already holds another item."
                 ) from exc
             except Exception:
                 await self.session.rollback()

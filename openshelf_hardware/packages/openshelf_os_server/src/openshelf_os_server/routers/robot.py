@@ -181,7 +181,7 @@ class MotorsResponse(BaseModel):
 router = APIRouter(tags=["robot"])
 
 _MOTOR_ID_RE = re.compile(r"motor\s+(\d+)", re.IGNORECASE)
-_SCALE_NOT_ENABLED_MESSAGE = "Scale is not enabled"
+_SCALE_NOT_ENABLED_MESSAGE = "The scale is not available on this machine."
 
 
 
@@ -364,14 +364,14 @@ class CommandLifecycleResponse(BaseModel):
 async def check_robot_enabled() -> None:
     settings = get_settings()
     if not settings.robot.enabled:
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_disabled", "Robot is not enabled or configured")
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_disabled", "The robot is not set up to move. Check its settings.")
 
 
 async def get_robot_worker_or_error() -> RobotWorker:
     try:
         return await get_robot_worker()
     except ValueError as e:
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized or failed to start") from e
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot is not ready. Try again in a moment.") from e
 
 
 async def get_command_worker_for_mode() -> RobotWorker | None:
@@ -450,7 +450,7 @@ def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: Rob
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail={
-            "message": "Home required before robot commands.",
+            "message": "The robot needs to be reset before this can continue.",
             "code": "home_required",
             "needs_home": True,
             "needs_home_axes": worker.needs_home_axes(),
@@ -485,14 +485,14 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
             await db.execute(select(ItemLocation).where(ItemLocation.item_id == item.id))
         ).scalars().first()
         if existing is not None:
-            raise api_error(status.HTTP_409_CONFLICT, "item_already_stored", "Item is already stored; retrieve it before storing again")
+            raise api_error(status.HTTP_409_CONFLICT, "item_already_stored", "This item is already stored. Retrieve it before storing it again.")
         await _validate_mock_store_location(item_data, item.dimensions, db)
         return
 
     name = item_data.get("name")
     dimensions = item_data.get("dimensions")
     if not isinstance(name, str) or name.strip() == "" or not isinstance(dimensions, dict):
-        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "item_details_required", "A new item requires barcode, name, and complete dimensions")
+        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "item_details_required", "This item needs a name and size before it can be stored.")
     try:
         if any(
             isinstance(dimensions.get(key), bool)
@@ -504,7 +504,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
         if item_data.get("weight") is not None and float(item_data["weight"]) <= 0:
             raise ValueError
     except (KeyError, TypeError, ValueError) as exc:
-        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "dimension_invalid", "Item dimensions and weight must be positive numbers") from exc
+        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "dimension_invalid", "Enter a size and weight greater than zero.") from exc
 
     await _validate_mock_store_location(item_data, dimensions, db)
 
@@ -515,7 +515,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
 
     access_level_id = item_data.get("access_level_id")
     if access_level_id is not None and await db.get(AccessLevel, access_level_id) is None:
-        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "access_level_invalid", "Invalid access level")
+        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "access_level_invalid", "Choose an access level and try again.")
 
 
 async def _validate_direct_store_reservation(item_data: dict[str, Any], db: AsyncSession) -> None:
@@ -593,7 +593,7 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
     if cell is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=error_detail("Requested storage cell does not exist", "cell_not_found"),
+            detail=error_detail("That cell does not exist.", "cell_not_found"),
         )
     if cell.status != CellStatus.AVAILABLE:
         logger.info("Requested storage cell is %s", cell.status.value)
@@ -615,7 +615,7 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
     if grid.cell_fits_item(cell, item) is False:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("Item does not fit the requested storage cell", "cell_too_small"),
+            detail=error_detail("The item does not fit that cell.", "cell_too_small"),
         )
 
 
@@ -638,7 +638,7 @@ async def _validate_mock_store_location(
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=error_detail("Requested storage cell does not exist", "cell_not_found"),
+            detail=error_detail("That cell does not exist.", "cell_not_found"),
         )
 
     occupied = (
@@ -667,7 +667,7 @@ async def _validate_mock_store_location(
     if isinstance(dimensions, dict) and mock_cell_fits(dimensions) is False:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("Item does not fit the requested storage cell", "cell_too_small"),
+            detail=error_detail("The item does not fit that cell.", "cell_too_small"),
         )
 
 
@@ -854,7 +854,7 @@ async def robot_commands(
     await _ensure_laser_auto_calibration_not_running()
     if worker is None:
         await check_robot_enabled()
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized or failed to start")
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot is not ready. Try again in a moment.")
     _ensure_command_allowed_while_needs_home(command, worker)
     await _ensure_command_allowed_while_tray_on_tool(command, worker)
 
@@ -892,7 +892,7 @@ async def robot_commands(
                 )
                 existing_location = location_result.scalars().first()
                 if existing_location is not None:
-                    raise api_error(status.HTTP_409_CONFLICT, "item_already_stored", "Item is already stored; retrieve it before storing again")
+                    raise api_error(status.HTTP_409_CONFLICT, "item_already_stored", "This item is already stored. Retrieve it before storing it again.")
                 bin_membership = (
                     await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
                 ).scalar_one_or_none()
@@ -1187,7 +1187,7 @@ async def acknowledge_safety_guard(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "message": "Cannot acknowledge: safety interruption is still active",
+                "message": "The robot is still stopped. Clear the reason and try again.",
                 "code": "safety_interruption_active",
                 "active_sources": safety.get("active_sources", []),
             },

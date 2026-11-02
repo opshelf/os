@@ -105,7 +105,7 @@ async def get_robot_worker_or_503():
 	try:
 		return await get_robot_worker()
 	except ValueError as exc:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized") from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot is not ready. Try again in a moment.") from exc
 _DEFAULT_CELL_HEIGHT = 200.0
 _DEFAULT_CELL_WIDTH = 480.0
 _DEFAULT_DIVIDER_WIDTH = 12.0
@@ -167,7 +167,7 @@ async def _ensure_cell_is_testable(
 		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_found", "") from exc
 
 	if cell.status in UNTESTABLE_CELL_STATUSES:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_unavailable", f"cell is {cell.status.value} and cannot be used for calibration tests")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_unavailable", f"That cell is {cell.status.value} and cannot be used for calibration tests.")
 
 	if not allow_tray_home:
 		# Grip tests exercise the tray in its home; single-item transfers would record a fake
@@ -176,7 +176,7 @@ async def _ensure_cell_is_testable(
 			if await is_reserved_bin_location(
 				(location.side.value, location.shelf_idx, location.cell_idx), session
 			):
-				raise api_error(status.HTTP_400_BAD_REQUEST, "cell_unavailable", "cell is a bin home and cannot be used for this calibration test")
+				raise api_error(status.HTTP_400_BAD_REQUEST, "cell_unavailable", "That cell is a bin home and cannot be used for this calibration test.")
 
 	return cell
 
@@ -190,14 +190,14 @@ def _build_laser_auto_calibration_scope(
 	include_extension_calibration: bool | None,
 ) -> LaserAutoCalibrationScope:
 	if shelf_idx is not None and shelf_idx < 0:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "shelf_idx must be non-negative")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "The shelf number cannot be negative.")
 
 	if cell_idx is not None and cell_idx < 0:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "cell_idx must be non-negative")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "The cell number cannot be negative.")
 
 	if mode == "both":
 		if side is not None or shelf_idx is not None or cell_idx is not None:
-			raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "side, shelf_idx, and cell_idx cannot be used with both mode")
+			raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "Both-sides mode cannot be limited to a side, shelf or cell.")
 
 		return LaserAutoCalibrationScope(
 			mode="both",
@@ -207,7 +207,7 @@ def _build_laser_auto_calibration_scope(
 
 	if side is None:
 		if shelf_idx is not None or cell_idx is not None:
-			raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "side is required when shelf_idx or cell_idx is provided")
+			raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "Choose a side when you choose a shelf or cell.")
 
 		return LaserAutoCalibrationScope(
 			mode="all",
@@ -216,7 +216,7 @@ def _build_laser_auto_calibration_scope(
 		)
 
 	if cell_idx is not None and shelf_idx is None:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "shelf_idx is required when cell_idx is provided")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "Choose a shelf when you choose a cell.")
 
 	if shelf_idx is None:
 		return LaserAutoCalibrationScope(
@@ -569,19 +569,19 @@ def _get_shelf(grid, side: StorageModuleSide, shelf_idx: int):
 	try:
 		return grid.get_shelf(side, shelf_idx)
 	except IndexError as e:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "shelf_not_found", f"Invalid shelf_idx: {shelf_idx}") from e
+		raise api_error(status.HTTP_400_BAD_REQUEST, "shelf_not_found", f"Shelf {shelf_idx} does not exist.") from e
 
 
 def _get_cell(shelf, cell_idx: int):
 	try:
 		return shelf.get_cell(cell_idx)
 	except IndexError as e:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_found", f"Invalid cell_idx: {cell_idx}") from e
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_found", f"Cell {cell_idx} does not exist.") from e
 
 
 def _validate_non_negative_index(index: int, label: str) -> None:
 	if index < 0:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", f"Invalid {label}: {index}")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", f"The {label} cannot be negative.")
 
 
 def _find_shelf(grid, side: StorageModuleSide, shelf_idx: int):
@@ -780,7 +780,7 @@ def _get_stage_limit_from_config(config) -> Optional[float]:
 
 def _validate_stage_target(value: float, limit: float, label: str) -> None:
 	if value < 0 or value > limit:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", f"{label} must be between 0 and {limit} (got {value})")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", f"The {label} must be between 0 and {limit} mm, not {value} mm.")
 
 
 @router.get(
@@ -995,7 +995,7 @@ async def stream_laser_auto_calibration(
 		try:
 			worker = await get_robot_worker()
 		except ValueError as exc:
-			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized") from exc
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot is not ready. Try again in a moment.") from exc
 
 		_ensure_ready(worker)
 
@@ -1182,7 +1182,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 				await _clear_motors_for_move(tool, gripper=True)
 				grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
 				if grip_ext is None:
-					raise api_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "config_error", "Z_EXTENSION_PLACE not configured")
+					raise api_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "config_error", "The Z place extension is not set in the robot settings.")
 				current_gripper_pos = grip_ext + _current_position.z_offset
 				z_limit = tool._mg._params.lim
 				new_gripper_pos = _clamp_value(current_gripper_pos + request.delta, z_limit, "Z axis", warnings)
@@ -1338,7 +1338,7 @@ async def grip_probe(request: GripProbeRequest) -> list[GripProbePoint]:
 	far = [z for z in request.z_offsets if abs(float(z) - float(coordinate.z_offset)) > GRIP_PROBE_MAX_DEVIATION_MM]
 
 	if far:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", f"z offsets {far} are more than {GRIP_PROBE_MAX_DEVIATION_MM:.0f}mm from the cell's {coordinate.z_offset:.2f}")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", f"These Z offsets are more than {GRIP_PROBE_MAX_DEVIATION_MM:.0f} mm from the cell's {coordinate.z_offset:.2f} mm: {', '.join(f'{z:g}' for z in far)}.")
 
 	tool = worker._robot._tool
 	target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
@@ -1601,7 +1601,7 @@ async def start_cell_test_queue(request: TestQueueRequest) -> TestQueueSnapshot:
 
 	async with _test_queue_lock:
 		if _test_queue_task is not None and _test_queue_task.done() is False:
-			raise api_error(status.HTTP_409_CONFLICT, "calibration_test_running", "a calibration test queue is already running")
+			raise api_error(status.HTTP_409_CONFLICT, "calibration_test_running", "A calibration test queue is already running.")
 
 		_test_queue_abort_requested = False
 		now = _test_queue_now_iso()
@@ -1663,7 +1663,7 @@ async def abort_cell_test_queue() -> TestQueueSnapshot:
 	global _test_queue_abort_requested
 
 	if _test_queue_task is None or _test_queue_task.done() is True:
-		raise api_error(status.HTTP_409_CONFLICT, "calibration_test_not_running", "no calibration test queue is running")
+		raise api_error(status.HTTP_409_CONFLICT, "calibration_test_not_running", "No calibration test queue is running.")
 
 	_test_queue_abort_requested = True
 	return _test_queue_snapshot.model_copy(deep=True)
@@ -1676,7 +1676,7 @@ def _validate_saved_dimensions(dimensions: Dimensions) -> None:
 		("length", dimensions.length),
 	):
 		if not value > 0:
-			raise api_error(status.HTTP_400_BAD_REQUEST, "dimension_invalid", f"Dimension {field} must be greater than zero")
+			raise api_error(status.HTTP_400_BAD_REQUEST, "dimension_invalid", f"Enter a {field} greater than zero.")
 
 
 @router.post(
@@ -1697,15 +1697,15 @@ async def save_calibration(request: SaveRequest):
 	worker = await get_robot_worker_or_503()
 
 	grid = worker._robot._grid
-	_validate_non_negative_index(request.shelf_idx, "shelf_idx")
-	_validate_non_negative_index(request.cell_idx, "cell_idx")
+	_validate_non_negative_index(request.shelf_idx, "shelf number")
+	_validate_non_negative_index(request.cell_idx, "cell number")
 
 	new_status = None
 	if request.status is not None:
 		try:
 			new_status = CellStatus(request.status)
 		except ValueError:
-			raise api_error(status.HTTP_400_BAD_REQUEST, "cell_status_invalid", f"Invalid status: {request.status}. Must be one of: available, occupied, maintenance, disabled")
+			raise api_error(status.HTTP_400_BAD_REQUEST, "cell_status_invalid", "Choose a cell status: available, occupied, maintenance or disabled.")
 
 	# Read tray homes while the caller's request session is open, so a coordinate save
 	# cannot silently change the cell a checked-out tray returns to.
@@ -2256,11 +2256,11 @@ async def test_iobox_sequence(with_gripper: bool = False):
 			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Motors not configured")
 
 		if stage_nudge is None:
-			raise api_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "config_error", "STAGE_NUDGE not configured")
+			raise api_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "config_error", "The stage nudge distance is not set in the robot settings.")
 
 		stage_limit = _get_stage_limit(tool)
-		_validate_stage_target(stage_ext, stage_limit, "STAGE_EXTENSION_IO_BOX")
-		_validate_stage_target(stage_ext + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
+		_validate_stage_target(stage_ext, stage_limit, "IO box stage extension")
+		_validate_stage_target(stage_ext + stage_nudge, stage_limit, "IO box stage extension plus nudge")
 
 		try:
 			await tool._ms.move_to_position(stage_ext)
@@ -2310,7 +2310,7 @@ async def test_iobox_multi_item_cycle():
 
 	stage_ext = iobox_current.multi_item_stage_extension
 	grip_ext = iobox_current.multi_item_z_extension
-	_validate_stage_target(stage_ext, _get_stage_limit(tool), "STAGE_EXTENSION_IO_BOX_MULTI_ITEM")
+	_validate_stage_target(stage_ext, _get_stage_limit(tool), "multi-item IO box stage extension")
 	grip_rpm = await tool.get_param("Z_MOVE_RPM")
 	grip_accel = await tool.get_param("Z_MOVE_ACCEL")
 
@@ -2369,9 +2369,9 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	stage_limit = _get_stage_limit(worker._robot._tool)
 	config = get_root_config()
 	stage_nudge = config.robot.tool.parameters.STAGE_NUDGE
-	_validate_stage_target(request.stage_extension, stage_limit, "STAGE_EXTENSION_IO_BOX")
-	_validate_stage_target(request.stage_extension + stage_nudge, stage_limit, "STAGE_EXTENSION_IO_BOX + STAGE_NUDGE")
-	_validate_stage_target(request.multi_item_stage_extension, stage_limit, "STAGE_EXTENSION_IO_BOX_MULTI_ITEM")
+	_validate_stage_target(request.stage_extension, stage_limit, "IO box stage extension")
+	_validate_stage_target(request.stage_extension + stage_nudge, stage_limit, "IO box stage extension plus nudge")
+	_validate_stage_target(request.multi_item_stage_extension, stage_limit, "multi-item IO box stage extension")
 
 	async with manual_motion_guard("calibration_iobox_save_home", worker=worker):
 		params_dict = config.robot.tool.parameters.model_dump()
@@ -2603,8 +2603,8 @@ async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 	if stage_limit is None:
 		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor limit unavailable")
 
-	_validate_stage_target(request.front, stage_limit, "STAGE_EXTENSION_SHELF_FRONT")
-	_validate_stage_target(request.back, stage_limit, "STAGE_EXTENSION_SHELF_BACK")
+	_validate_stage_target(request.front, stage_limit, "front shelf stage extension")
+	_validate_stage_target(request.back, stage_limit, "back shelf stage extension")
 
 	params_dict = config.robot.tool.parameters.model_dump()
 	params_dict["STAGE_EXTENSION_SHELF_FRONT"] = request.front

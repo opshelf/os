@@ -86,17 +86,17 @@ class CommonChemistry:
 
     async def _fetch(self, path: str, params: dict[str, str]) -> dict[str, Any]:
         if not self._api_key:
-            raise ChemicalUnavailable("CAS search unavailable")
+            raise ChemicalUnavailable("The chemical lookup is unavailable. Try again.")
         key = (path, tuple(sorted(params.items())))
         cached = self._cache.get(key)
         if cached and cached[0] > time.monotonic():
             self._cache.move_to_end(key)
             return cached[1]
         if time.monotonic() < self._cooldown_until:
-            raise ChemicalUnavailable("CAS search unavailable")
+            raise ChemicalUnavailable("The chemical lookup is unavailable. Try again.")
         if key not in self._pending:
             if len(self._pending) >= 32:
-                raise ChemicalUnavailable("CAS search unavailable")
+                raise ChemicalUnavailable("The chemical lookup is unavailable. Try again.")
             task = asyncio.create_task(self._request(path, params))
             self._pending[key] = task
 
@@ -131,9 +131,9 @@ class CommonChemistry:
                 except ValueError:
                     delay = 60
                 self._cooldown_until = time.monotonic() + delay
-                raise ChemicalUnavailable("CAS search unavailable")
+                raise ChemicalUnavailable("The chemical lookup is unavailable. Try again.")
             if response.status_code == 404 and path == "detail":
-                raise ChemicalNotFound("Chemical not found")
+                raise ChemicalNotFound("That chemical is not in the database.")
             response.raise_for_status()
             data = response.json()
             if not isinstance(data, dict):
@@ -145,7 +145,7 @@ class CommonChemistry:
             return data
         except (httpx.HTTPError, TimeoutError, KeyError, ValueError, TypeError):
             self._cooldown_until = max(self._cooldown_until, time.monotonic() + 5)
-            raise ChemicalUnavailable("CAS search unavailable") from None
+            raise ChemicalUnavailable("The chemical lookup is unavailable. Try again.") from None
 
     @staticmethod
     def _chemical(data: Any) -> Chemical:
@@ -192,14 +192,14 @@ class CommonChemistry:
                 result = self._search_result(data)
             return result
         except (KeyError, ValueError, TypeError):
-            raise ChemicalUnavailable("CAS search unavailable") from None
+            raise ChemicalUnavailable("The chemical lookup is unavailable. Try again.") from None
 
     async def detail(self, cas_number: str) -> ChemicalDetail:
         data = await self._fetch("detail", {"cas_rn": normalize_cas(cas_number)})
         try:
             return self._detail_result(data)
         except (KeyError, ValueError, TypeError):
-            raise ChemicalUnavailable("CAS search unavailable") from None
+            raise ChemicalUnavailable("The chemical lookup is unavailable. Try again.") from None
 
 
 @lru_cache(maxsize=1)

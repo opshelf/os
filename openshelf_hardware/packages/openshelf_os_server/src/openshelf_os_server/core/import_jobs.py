@@ -218,7 +218,7 @@ class ImportJobService:
     async def get(self, job_id: str) -> ImportJob:
         job = await self.session.get(ImportJob, job_id)
         if job is None:
-            raise ImportJobError(404, "not_found", "Import job not found")
+            raise ImportJobError(404, "not_found", "That import is no longer on this machine.")
         return job
 
     async def units(
@@ -232,7 +232,7 @@ class ImportJobService:
     async def unit(self, job: ImportJob, unit_id: int) -> ImportJobUnit:
         unit = await self.session.get(ImportJobUnit, unit_id)
         if unit is None or unit.job_id != job.id:
-            raise ImportJobError(404, "not_found", "Import unit not found")
+            raise ImportJobError(404, "not_found", "That item is no longer in this import.")
         return unit
 
     async def counts(self, job: ImportJob) -> dict[str, int]:
@@ -253,9 +253,9 @@ class ImportJobService:
 
     async def create(self, rows: Sequence[ImportRowInput], filename: Optional[str]) -> ImportJob:
         if await self.open_job() is not None:
-            raise ImportJobError(409, "import_active", "Another import is still running on this machine")
+            raise ImportJobError(409, "import_active", "Another import is still running. Finish it before starting this one.")
         if not rows:
-            raise ImportJobError(422, "invalid_rows", "Select at least one item to import")
+            raise ImportJobError(422, "invalid_rows", "Choose at least one item to import.")
         total = sum(max(0, row.quantity) for row in rows)
         if total > MAX_UNITS:
             raise ImportJobError(
@@ -332,7 +332,7 @@ class ImportJobService:
             prepared.append((row, label, access_level_id, expires_at, planned or None))
 
         if errors:
-            raise ImportJobError(422, "invalid_rows", "Some rows cannot be imported", errors)
+            raise ImportJobError(422, "invalid_rows", "Some rows in the file cannot be imported.", errors)
 
         existing = await self._existing_barcodes(labels)
         reserved = await reserved_bin_barcodes(self.session)
@@ -341,7 +341,7 @@ class ImportJobService:
             raise ImportJobError(
                 409,
                 "barcodes_exist",
-                "Some barcodes already exist on this machine",
+                "Some barcodes in the file already exist on this machine.",
                 [{"row": labels[barcode], "field": "barcode", "barcode": barcode, "message": "Already on this machine"} for barcode in conflicts],
             )
 
@@ -405,7 +405,7 @@ class ImportJobService:
             chosen.update(unused)
         if len(fresh) >= count:
             return fresh[:count]
-        raise ImportJobError(503, "barcode_generation_failed", "Could not generate unique barcodes")
+        raise ImportJobError(503, "barcode_generation_failed", "A barcode could not be generated. Try again.")
 
     # ---------------------------------------------------------- reconciliation
 
@@ -549,10 +549,10 @@ class ImportJobService:
         if outside is not None:
             # A tray that is out may be the one these items need; the operator returns it first.
             return ImportJobError(
-                409, "trays_outside", "A bin is outside the machine; return it, then fetch a bin again"
+                409, "trays_outside", "A bin is outside the machine. Return it, then fetch a bin again."
             )
         return ImportJobError(
-            409, "no_tray_free", "No multi-item bin with a free compartment fits this item; skip it to continue"
+            409, "no_tray_free", "No multi-item bin with a free compartment fits this item. Skip it to continue."
         )
 
     async def _small_group(
@@ -932,7 +932,7 @@ class ImportJobService:
         unit = await self.unit(job, unit_id)
         measured = _valid_dimensions(dimensions)
         if measured is None:
-            raise ImportJobError(422, "invalid_dimensions", "Width, height and length must be positive numbers")
+            raise ImportJobError(422, "invalid_dimensions", "Enter a size greater than zero.")
         if unit.small:
             # Only a small unit no tray compartment takes is stored on its own.
             await self.bins.sync_config()
@@ -944,16 +944,16 @@ class ImportJobService:
         elif unit.status == "pending":
             current = await self._current_pending(job)
             if current is None or current.id != unit.id:
-                raise ImportJobError(409, "not_current", "Load the items in CSV order")
+                raise ImportJobError(409, "not_current", "Load the items in the order the file lists them.")
         else:
-            raise ImportJobError(409, "unit_not_pending", "This item was already handled")
+            raise ImportJobError(409, "unit_not_pending", "That item was already handled.")
 
         if await self._barcode_taken(unit):
             await self._skip(unit)
             self.notice = f"{unit.name} was skipped: its barcode already exists on this machine."
         elif not await self.free_cell_fits(measured):
             # The operator chooses another size or skips the item.
-            raise ImportJobError(409, "no_cell_fits", "No free storage cell fits this item")
+            raise ImportJobError(409, "no_cell_fits", "No free storage cell fits this item. Choose another size or skip it.")
         else:
             item = await self._create_item(job, unit, measured)
             if unit.status == "pending":
@@ -992,7 +992,7 @@ class ImportJobService:
             if unit.stage != "measured" or await self._command_admitted(unit):
                 raise ImportJobError(409, "unit_storing", "This item is already being stored")
         else:
-            raise ImportJobError(409, "unit_not_skippable", "This item can no longer be skipped")
+            raise ImportJobError(409, "unit_not_skippable", "That item can no longer be skipped.")
         await self._skip(unit)
         await self.session.commit()
         await self.settle(job)
@@ -1035,14 +1035,14 @@ class ImportJobService:
         self._require_active(job)
         workflow = await self._tray_workflow(job)
         if workflow is not None and workflow.state in ("retrieving_bin", "awaiting_operator"):
-            raise ImportJobError(409, "tray_active", "A bin is already out for this import")
+            raise ImportJobError(409, "tray_active", "A bin is already out. Return it first.")
         if any(unit.stage in ("placed", "returning") for unit in await self.units(job, ["in_progress"])):
             raise ImportJobError(409, "tray_outside", "Return the current bin first")
         first = await self._current_pending(job)
         await self.bins.sync_config()
         trays = await self._trays()
         if first is None or not first.small or not self._tray_takes(trays, first):
-            raise ImportJobError(409, "not_current", "The next item does not go in a multi-item bin")
+            raise ImportJobError(409, "not_current", "That item does not belong in the bin.")
         tray, _ = await self._batch_tray(await self._small_group(job, first, trays))
         if tray is None:
             raise await self._no_tray()
@@ -1068,13 +1068,13 @@ class ImportJobService:
             raise ImportJobError(409, "import_not_active", "This import was stopped")
         unit = await self.unit(job, unit_id)
         if unit.status != "pending" or not unit.small:
-            raise ImportJobError(409, "unit_not_pending", "This item was already handled")
+            raise ImportJobError(409, "unit_not_pending", "That item was already handled.")
         try:
             measured_height = float(height)
         except (TypeError, ValueError):
             measured_height = math.nan
         if isinstance(height, bool) or not math.isfinite(measured_height) or measured_height <= 0:
-            raise ImportJobError(422, "invalid_dimensions", "Height must be a positive number")
+            raise ImportJobError(422, "invalid_dimensions", "Enter a height greater than zero.")
         tray = await self.session.get(StorageBin, workflow.bin_id)
         if tray is None:
             raise ImportJobError(409, "tray_missing", "This bin no longer exists.")
@@ -1086,7 +1086,7 @@ class ImportJobService:
             )
         ).all()
         if any(level != unit.access_level_id for level in members):
-            raise ImportJobError(409, "access_level_mismatch", "This item belongs in a bin of another access level")
+            raise ImportJobError(409, "access_level_mismatch", "This item's access level does not match this bin.")
         if barcode is not None:
             await self._use_scanned_barcode(job, unit, barcode)
         if await self._barcode_taken(unit):
@@ -1097,7 +1097,7 @@ class ImportJobService:
             return unit
         footprint = {key: value for key, value in (unit.planned_dimensions or {}).items() if key != "height"}
         if not self.bins.batch_fits(tray, footprint):
-            raise ImportJobError(409, "unit_wrong_tray", "This item does not fit this bin's compartments")
+            raise ImportJobError(409, "unit_wrong_tray", "This item does not fit this bin. Return the bin to get one that fits.")
         maximum = self.bins.batch_max_height(tray)
         if measured_height > maximum:
             # Not skipped: the measured height leaves this bin for a taller one, else to storing it alone.
@@ -1114,7 +1114,7 @@ class ImportJobService:
         probe = Item(barcode=unit.barcode, name=unit.name, dimensions=dimensions, access_level_id=unit.access_level_id)
         error = await self.bins.batch_place_error(workflow, probe)
         if error == "This bin is full.":
-            raise ImportJobError(409, "tray_full", "This bin is full; return it to continue")
+            raise ImportJobError(409, "tray_full", "This bin is full. Return it to continue.")
         if error:
             raise ImportJobError(409, "tray_rejected", error)
         item = await self._create_item(job, unit, dimensions)
@@ -1154,7 +1154,7 @@ class ImportJobService:
             if placed:
                 bin_id = placed[0].bin_id
         if bin_id is None:
-            raise ImportJobError(409, "no_tray", "No import bin is waiting to be returned")
+            raise ImportJobError(409, "no_tray", "No bin is waiting to be returned.")
         tray = await self.session.get(StorageBin, bin_id)
         if tray is None:
             raise ImportJobError(409, "tray_missing", "This bin no longer exists.")

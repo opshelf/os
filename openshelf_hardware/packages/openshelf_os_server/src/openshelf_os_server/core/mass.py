@@ -5,6 +5,7 @@ from ..database.models import Item
 from .validation import ValidationError
 
 MASS_FIELDS = ("tare_weight", "net_weight", "full_net_weight")
+_MASS_LABELS = {"tare_weight": "container weight", "net_weight": "net weight", "full_net_weight": "full net weight"}
 
 def validate_mass(values: dict[str, Any], tare: float | None = None) -> None:
     for key in MASS_FIELDS:
@@ -16,12 +17,16 @@ def validate_mass(values: dict[str, Any], tare: float | None = None) -> None:
             except (TypeError, ValueError):
                 valid = False
             if not valid:
-                raise ValidationError(f"{key} must be a finite {'nonnegative' if key == 'net_weight' else 'positive'} number")
+                raise ValidationError(
+                    f"Enter a {_MASS_LABELS[key]} of zero or more."
+                    if key == "net_weight"
+                    else f"Enter a {_MASS_LABELS[key]} greater than zero."
+                )
     if "net_weight" in values:
         if "weight" in values:
-            raise ValidationError("Supply gross weight or net_weight, not both")
+            raise ValidationError("Enter either the gross weight or the net weight, not both.")
         if values["net_weight"] is not None and values.get("tare_weight", tare) is None:
-            raise ValidationError("net_weight requires tare_weight")
+            raise ValidationError("Enter the container weight together with the net weight.")
         if values["net_weight"] is not None and not math.isfinite(float(values["net_weight"]) + float(values.get("tare_weight", tare) or 0)):
             raise ValidationError("Total gross mass must be finite")
 

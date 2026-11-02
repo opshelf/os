@@ -38,7 +38,7 @@ def test_robot_command_home_required_blocks_normal_command() -> None:
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == {
-        "message": "Home required before robot commands.",
+        "message": "The robot needs to be reset before this can continue.",
         "code": "home_required",
         "needs_home": True,
         "needs_home_axes": ["stage"],

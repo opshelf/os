@@ -63,10 +63,10 @@ SCALE_WEIGHT_PUBLISH_DELTA_GRAMS = 1.0
 SCALE_PRE_RETRIEVE_READ_TIMEOUT_SECONDS = 2.0
 IO_BOX_OCCUPIED_ERROR = "Please remove the item from the IO box before retrieving another"
 ESTOP_POLL_INTERVAL_SECONDS = 0.05
-ESTOP_UNAVAILABLE_REASON = "Emergency stop input unavailable"
-PHYSICAL_ESTOP_REASON = "Physical emergency stop triggered"
+ESTOP_UNAVAILABLE_REASON = "The emergency stop could not be read. Check the robot before continuing."
+PHYSICAL_ESTOP_REASON = "The emergency stop was pressed. Release it, then reset the robot."
 TRAY_ON_TOOL_CODE = "tray_on_tool"
-TRAY_ON_TOOL_ERROR = "The gripper still holds a bin. Release the gripper and take the bin off the tool."
+TRAY_ON_TOOL_ERROR = "The gripper is still holding a tray or bin. Release it and take it off the tool."
 # Between commands the tool is always empty: every workflow that grips a tray places or releases
 # it before finishing. Home and stop stay open so the operator can recover; release is a manual
 # gripper action outside the queue.
@@ -1824,7 +1824,7 @@ class RobotWorker:
                             if any(operation is queued_operation for operation in self._queued_commands):
                                 await self._publish_command_failure(
                                     command,
-                                    self._latest_interruption_reason or "Command interrupted",
+                                    self._latest_interruption_reason or "The operation was interrupted. Check the robot before continuing.",
                                     queued_operation,
                                 )
                                 self._queued_commands = [

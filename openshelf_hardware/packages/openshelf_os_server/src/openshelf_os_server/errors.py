@@ -204,7 +204,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"no_compatible_bin": "No bin can take that item right now.",
 	"not_found": "The machine could not find what you asked for. Reload and try again.",
 	"offsets_incomplete": "Enter the X, Y and Z offset values together.",
-	"onboarding_completed": "Onboarding is already completed.",
+	"onboarding_completed": "Setup is already finished.",
 	"onboarding_state_unavailable": "The robot onboarding state is not available. Try again.",
 	"power_cycle_failed": "The machine could not power cycle that part. Try again.",
 	"power_rail_not_configured": "That power rail is not configured on this machine.",

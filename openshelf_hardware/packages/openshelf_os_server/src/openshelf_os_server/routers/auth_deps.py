@@ -104,12 +104,12 @@ async def get_current_user(
 					email=settings.auth.dev_auto_user,
 					action="answering 503 for unauthenticated requests",
 				)
-			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "dev_user_missing", f"Dev auto-user {settings.auth.dev_auto_user} not found in database")
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "dev_user_missing", "The developer user is missing on this machine.")
 	
 	if not token:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail=error_detail("Not authenticated", "unauthorized"),
+			detail=error_detail("Your sign-in expired. Sign in again.", "unauthorized"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 	
@@ -122,7 +122,7 @@ async def get_current_user(
 	if payload is None or payload.get("type") != "access":
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail=error_detail("Invalid token", "token_invalid"),
+			detail=error_detail("Your sign-in expired. Sign in again.", "token_invalid"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 	
@@ -139,7 +139,7 @@ async def get_current_user(
 	if user is None:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail=error_detail("User not found or inactive", "unauthorized"),
+			detail=error_detail("That operator account is not active.", "unauthorized"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 
@@ -241,7 +241,7 @@ def ensure_permissions(user: User, permissions: str | List[str]) -> None:
 	user_permissions = user.role.permissions or []
 	for permission in permissions:
 		if not has_permission(user_permissions, permission):
-			raise api_error(status.HTTP_403_FORBIDDEN, "forbidden", f"Missing required permission: {permission}")
+			raise api_error(status.HTTP_403_FORBIDDEN, "forbidden", "You do not have permission to do that.", permission=permission)
 
 
 def require_permissions(permissions: str | List[str]) -> Callable:
@@ -291,7 +291,7 @@ async def require_relay_or_admin(
 	if getattr(request.state, "relay_service_authenticated", False):
 		return current_user
 	if current_user.role.name != "admin":
-		raise api_error(status.HTTP_403_FORBIDDEN, "forbidden", "Only the relay or an administrator can do this")
+		raise api_error(status.HTTP_403_FORBIDDEN, "forbidden", "Only an administrator can do that.")
 	return current_user
 
 

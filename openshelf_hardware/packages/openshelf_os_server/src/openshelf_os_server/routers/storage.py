@@ -442,7 +442,7 @@ async def _load_item_with_locations(
 ) -> ItemWithLocations:
     item = await storage_service.get_item(barcode)
     if item is None:
-        raise api_error(404, "unknown_item", "Item not found")
+        raise api_error(404, "unknown_item", "That item could not be found.")
 
     locations = await storage_service.get_item_locations(barcode)
     return await _build_item_payload_with_bin(
@@ -862,11 +862,11 @@ async def create_bin_workflow(
         raise _tray_config_error(exc) from exc
     item = await storage.get_item(request.barcode)
     if item is None:
-        raise api_error(404, "unknown_item", "Item not found")
+        raise api_error(404, "unknown_item", "That item could not be found.")
 
     direct_locations = await storage.get_item_locations(item.barcode)
     if request.operation == "store" and direct_locations:
-        raise api_error(409, "item_already_stored", "Item is already stored")
+        raise api_error(409, "item_already_stored", "This item is already stored. Retrieve it before storing it again.")
     if request.operation == "store" and request.storage_mode == "direct":
         return {"storage_mode": "direct", "workflow": None}
     if request.operation == "retrieve" and await service.item_bin(item.id) is None:
@@ -1164,7 +1164,7 @@ async def lookup_item(
 
     item = await storage_service.get_item(barcode)
     if not item:
-        raise api_error(404, "unknown_item", "Item not found")
+        raise api_error(404, "unknown_item", "That item could not be found.")
 
     locations = await storage_service.get_item_locations(barcode)
     return await _build_item_payload_with_bin(item, locations, current_user, session)
@@ -1311,7 +1311,7 @@ async def update_item(
     )
 
     if not updated_item:
-        raise api_error(404, "unknown_item", "Item not found")
+        raise api_error(404, "unknown_item", "That item could not be found.")
 
     fresh_item = await storage_service.get_item(barcode)
     if fresh_item is None:
@@ -1354,7 +1354,7 @@ async def delete_item(
         raise api_error(
             409,
             "bin_workflow_conflict",
-            "This item has a bin task in progress. Finish it before deleting the item.",
+            "Finish the bin task for this item before deleting it.",
         )
     if in_bin and _is_admin(current_user) is False:
         raise api_error(
@@ -1374,7 +1374,7 @@ async def delete_item(
     deleted = await storage_service.delete_item(barcode)
 
     if deleted is False:
-        raise api_error(404, "unknown_item", "Item not found")
+        raise api_error(404, "unknown_item", "That item could not be found.")
 
     _clear_grid_item(barcode, locations)
     return {"message": "Item deleted successfully"}
@@ -1433,7 +1433,7 @@ async def add_item_location(
 
     db_item = await storage_service.get_item(barcode)
     if db_item is None:
-        raise api_error(404, "unknown_item", "Item not found")
+        raise api_error(404, "unknown_item", "That item could not be found.")
     bin_service = BinStorageService(session)
     if await bin_service.item_bin(db_item.id) is not None:
         raise api_error(409, "reserved_tray_item", "This item is in a bin.")
@@ -1467,7 +1467,7 @@ async def _remove_item_location_impl(
 ) -> None:
     item = await storage_service.get_item(barcode)
     if item is None:
-        raise api_error(404, "unknown_item", "Item not found")
+        raise api_error(404, "unknown_item", "That item could not be found.")
     bin_service = BinStorageService(storage_service.session)
     if await bin_service.item_bin(item.id) is not None:
         raise api_error(409, "reserved_tray_item", "This item is in a bin.")

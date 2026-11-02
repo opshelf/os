@@ -104,7 +104,7 @@ async def test_non_demo_store_rejects_too_small_explicit_location() -> None:
     result = await robot.store(item_payload("ordinary-item", location))
 
     assert isinstance(result, RobotCommandError)
-    assert result.error == "Item does not fit the requested storage cell"
+    assert result.error == "The item does not fit that cell."
     robot.io_pick.assert_not_awaited()
 
 

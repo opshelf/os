@@ -252,7 +252,7 @@ async def validate_direct_store_reservation(
     barcode = item_data.get("barcode")
     if isinstance(barcode, str) and await is_reserved_bin_barcode(barcode, session):
         raise DirectStoreReservationError(
-            "Storage bin barcodes cannot be stored with a direct robot command",
+            "This barcode belongs to a bin.",
             "reserved_bin_barcode",
         )
 
@@ -1068,7 +1068,7 @@ class BinStorageService:
             if (workflow.resolution or {}).get("physical_return_completed"):
                 await self.complete_return(workflow)
             elif workflow.state in {"retrieving_bin", "returning_bin"}:
-                await self.fail(workflow, "Robot process restarted during bin motion")
+                await self.fail(workflow, "The bin move was interrupted. Check the robot before continuing.")
 
     async def serialize_workflow(self, row: StorageBinWorkflow) -> dict[str, Any]:
         tray = await self.session.get(StorageBin, row.bin_id)

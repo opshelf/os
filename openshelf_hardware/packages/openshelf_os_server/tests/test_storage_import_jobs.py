@@ -586,7 +586,7 @@ async def test_no_free_tray_refuses_the_fetch_and_leaves_the_skip_to_the_operato
 
         step = await service.next_step(job)
         assert step["phase"] == "start"
-        assert step["reason"] == "No multi-item bin with a free compartment fits this item; skip it to continue"
+        assert step["reason"] == "No multi-item bin with a free compartment fits this item. Skip it to continue."
         with pytest.raises(ImportJobError) as refused:
             await service.start_tray(job, None)
         assert refused.value.code == "no_tray_free"

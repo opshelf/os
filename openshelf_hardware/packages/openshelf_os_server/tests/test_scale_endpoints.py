@@ -31,7 +31,7 @@ def _mock_worker():
 async def test_scale_endpoint_distinguishes_disabled_scale_from_broken_config() -> None:
 	"""The feature-off state and a real config failure must not share a code."""
 	worker = _mock_worker()
-	worker.get_scale_data.side_effect = ConfigError("Scale is not enabled")
+	worker.get_scale_data.side_effect = ConfigError("The scale is not available on this machine.")
 
 	with patch("openshelf_os_server.routers.robot.get_operating_mode", return_value=OperatingMode.production):
 		with pytest.raises(HTTPException) as disabled:

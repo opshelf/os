@@ -379,14 +379,14 @@ class MockRobotRuntime:
 				).scalars().first()
 				if existing is not None:
 					raise MockCommandExecutionError(
-						"Item is already stored; retrieve it before storing again"
+						"This item is already stored. Retrieve it before storing it again."
 					)
 				dimensions = item.dimensions
 			else:
 				dimensions = item_payload.get("dimensions")
 
 			if not isinstance(dimensions, dict) or not mock_cell_fits(dimensions):
-				raise MockCommandExecutionError("No suitable storage location found")
+				raise MockCommandExecutionError("No open cell fits this item.")
 
 			occupied_result = await session.execute(
 				select(ItemLocation.side, ItemLocation.shelf_idx, ItemLocation.cell_idx)
@@ -414,7 +414,7 @@ class MockRobotRuntime:
 					if location is not None:
 						break
 			if location is None:
-				raise MockCommandExecutionError("No suitable storage location found")
+				raise MockCommandExecutionError("No open cell fits this item.")
 
 			weight = item.weight if item is not None else item_payload.get("weight")
 			if (item is not None and item.tare_weight is not None) or (item is None and item_payload.get("tare_weight") is not None):

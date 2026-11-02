@@ -102,7 +102,7 @@ class ErrorResponse(BaseModel):
 
     detail: str | dict[str, Any] | list[Any] = Field(
         description="Text, an operation-specific error object, or request validation errors.",
-        examples=[{"message": "Home required before robot commands.", "code": "home_required"}],
+        examples=[{"message": "The robot needs to be reset before this can continue.", "code": "home_required"}],
     )
 
 

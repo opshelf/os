@@ -172,7 +172,7 @@ async def stream_login_scans() -> EventSourceResponse:
 	)
 
 
-LOGIN_FAILED_DETAIL = "Invalid credentials"
+LOGIN_FAILED_DETAIL = "That sign-in did not work. Try again."
 
 @router.post(
     "/login/json",
@@ -272,7 +272,7 @@ async def refresh_token(
 	
 	payload = auth_service.decode_token(request.refresh_token)
 	if payload is None or payload.get("type") != "refresh":
-		raise api_error(status.HTTP_401_UNAUTHORIZED, "refresh_token_invalid", "Invalid refresh token")
+		raise api_error(status.HTTP_401_UNAUTHORIZED, "refresh_token_invalid", "Your sign-in expired. Sign in again.")
 	
 	result = await db.execute(
 		select(User)
@@ -285,7 +285,7 @@ async def refresh_token(
 	user = result.scalar_one_or_none()
 	
 	if user is None:
-		raise api_error(status.HTTP_401_UNAUTHORIZED, "unauthorized", "User not found or inactive")
+		raise api_error(status.HTTP_401_UNAUTHORIZED, "unauthorized", "That operator account is not active.")
 	
 	access_token = auth_service.create_access_token(
 		user_id=user.id,
