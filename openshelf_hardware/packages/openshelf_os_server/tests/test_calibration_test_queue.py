@@ -220,3 +220,37 @@ async def test_abort_stops_the_queue_before_the_next_cell(client) -> None:
 
 	events = published_queue_events(worker)
 	assert events[-1]['state'] == 'cancelled'
+
+
+@pytest.mark.asyncio
+async def test_abort_during_failure_publish_hides_error_debug_from_operators(client) -> None:
+	# _finish_test_queue sets error_debug before awaiting the terminal publish, so the
+	# task is still running and abort returns the snapshot with the detail attached.
+	gate = asyncio.Event()
+	worker = build_worker(build_grid(), AsyncMock(side_effect=MotorError('Alarm 24 on motor 3')))
+
+	async def slow_publish(payload):
+		if payload.get('debug') is not None:
+			await asyncio.wait_for(gate.wait(), timeout=5)
+
+	worker.publish_event = AsyncMock(side_effect=slow_publish)
+
+	with patch_worker(worker)[0], patch_worker(worker)[1]:
+		await client.post(
+			'/api/calibration/test/queue',
+			json={'side': 'front_module', 'mode': 'quick', 'cells': [{'shelf_idx': 0, 'cell_idx': 0}]},
+		)
+		while calibration._test_queue_snapshot.error_debug is None:
+			await asyncio.sleep(0.01)
+		assert calibration._test_queue_task.done() is False
+
+		operator = await client.post('/api/calibration/test/queue/abort', headers=_bearer('admin@opshelf.com'))
+		developer = await client.post('/api/calibration/test/queue/abort', headers=_bearer(DEVELOPER_SYSTEM_USER_EMAIL))
+
+		gate.set()
+		await await_test_queue()
+
+	assert operator.status_code == 200
+	assert operator.json()['error_debug'] is None
+	assert 'motor 3' not in operator.text
+	assert developer.json()['error_debug']['chain'] == ['MotorError: Alarm 24 on motor 3']

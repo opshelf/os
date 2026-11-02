@@ -1671,7 +1671,7 @@ async def get_cell_test_queue(request: Request) -> TestQueueSnapshot:
     summary="Abort the calibration test queue",
     responses=response_docs(model=TestQueueSnapshot, errors=(401, 403, 409)),
 )
-async def abort_cell_test_queue() -> TestQueueSnapshot:
+async def abort_cell_test_queue(request: Request) -> TestQueueSnapshot:
 	"""Abort the calibration test queue.
 
 	Requests cancellation before the next cell; the cell currently moving finishes first,
@@ -1684,7 +1684,12 @@ async def abort_cell_test_queue() -> TestQueueSnapshot:
 		raise api_error(status.HTTP_409_CONFLICT, "calibration_test_not_running", "No calibration test queue is running.")
 
 	_test_queue_abort_requested = True
-	return _test_queue_snapshot.model_copy(deep=True)
+	# A failed queue sets error_debug before its terminal publish completes, so the task
+	# can still be running here.
+	snapshot = _test_queue_snapshot.model_copy(deep=True)
+	if debug_allowed(request) is False:
+		snapshot.error_debug = None
+	return snapshot
 
 
 def _validate_saved_dimensions(dimensions: Dimensions) -> None:
