@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 from openshelf_os.common import ConfigError
 from openshelf_os.config.settings import BARCODE_MAX_LENGTH
+from openshelf_os.exceptions import RotationClearanceError
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.storage import CellItem, CellStatus, Dimensions, StorageModuleCellLocation
 from openshelf_os.robot.commands import (
@@ -329,6 +330,17 @@ class MotorProbeResponse(BaseModel):
     results: List[MotorProbeResult] = Field(default_factory=list)
     busy: bool = False
     reason: Optional[str] = None
+
+
+class MotorLimitSwitchState(BaseModel):
+    motor_name: str
+    enabled: bool
+    min_engaged: Optional[bool] = None
+    error: Optional[str] = None
+
+
+class MotorLimitSwitchesResponse(BaseModel):
+    results: List[MotorLimitSwitchState] = Field(default_factory=list)
 
 
 class MotorMoveRequest(BaseModel):
@@ -1713,24 +1725,15 @@ async def home_motor(
 
     try:
         async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker, allow_tray_on_tool=True):
+            await motor.clear_alarm()
             if motor_name == "rotate":
-                original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
-                try:
-                    await worker._robot._tool.ensure_safe_rotation_stage_extension()
-                    await motor.clear_alarm()
-                    await motor.home()
-                finally:
-                    await worker._robot._tool.restore_safe_rotation_x_position(original_x)
+                # The full sequence also recovers an unhomed X: a provisional X home gives the
+                # clearance move coordinates, and X re-homes verified once the tool is straight.
+                await worker._robot._tool._home_rotate_sequence()
+            elif skip_pre_home_approach is True:
+                await motor.home(skip_pre_home_approach=True)
             else:
-                await motor.clear_alarm()
-                if skip_pre_home_approach is True:
-                    await motor.home(skip_pre_home_approach=True)
-                else:
-                    await motor.home()
-            if motor_name == "rotate":
-                await worker._robot._tool.rotate_to_home_orientation(
-                    should_ensure_safe_stage_extension=False,
-                )
+                await motor.home()
             worker.clear_needs_home_axes([motor_name])
             if worker.needs_home() and worker.needs_home_axes() == []:
                 if _reason_matches_motor(worker.needs_home_reason(), motor_name, motor):
@@ -1740,6 +1743,13 @@ async def home_motor(
             return {"success": True, "motor": motor_name}
     except HTTPException:
         raise
+    except RotationClearanceError as exc:
+        logging.warning("Motor home refused", exc_info=exc)
+        raise api_error(
+            status.HTTP_409_CONFLICT,
+            "rotation_blocked",
+            "The tool is not clear to move. Retract the tool and home the rotation, then try again.",
+        ) from exc
     except Exception as exc:
         logger.error("Motor home failed: %s", exc, exc_info=exc)
         raise hardware_api_error(
@@ -1900,6 +1910,70 @@ async def probe_motors(
         return MotorProbeResponse(busy=True, reason=reason)
 
 
+def _read_motor_limit_switch(worker: RobotWorker, motor_name: str) -> Optional[MotorLimitSwitchState]:
+    motor = worker._robot._get_motor_by_name(motor_name)
+    if motor is None:
+        return None
+
+    try:
+        engaged = motor.read_home_limit()
+    except Exception as exc:
+        logging.warning("Limit switch read failed for %s", motor_name, exc_info=exc)
+        return MotorLimitSwitchState(motor_name=motor_name, enabled=True, error="read failed")
+
+    return MotorLimitSwitchState(motor_name=motor_name, enabled=engaged is not None, min_engaged=engaged)
+
+
+@router.get(
+    "/debug/motors/limit_switches",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Read motor limit switches",
+    responses=response_docs(model=MotorLimitSwitchesResponse, errors=(401, 503)),
+)
+async def get_motor_limit_switches(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> MotorLimitSwitchesResponse:
+    """Read motor limit switches.
+
+    Reads each configured motor's min (home) limit switch without commanding motion.
+    `min_engaged` is the logical state (true when engaged); `enabled=false` means the motor
+    has no limit switch or its limit switches are disabled in config.
+    """
+    results: List[MotorLimitSwitchState] = []
+    for section_motors in worker.get_motor_names().values():
+        for motor_name in section_motors:
+            state = _read_motor_limit_switch(worker, motor_name)
+            if state is not None:
+                results.append(state)
+
+    return MotorLimitSwitchesResponse(results=results)
+
+
+@router.get(
+    "/debug/motors/{motor_name}/limit_switches",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Read one motor's limit switches",
+    responses=response_docs(model=MotorLimitSwitchState, errors=(401, 404, 503)),
+)
+async def get_motor_limit_switch(
+    motor_name: str,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> MotorLimitSwitchState:
+    """Read one motor's limit switches.
+
+    Same reading as the list endpoint for a single motor. Unknown names return `404`.
+    """
+    state = _read_motor_limit_switch(worker, motor_name)
+    if state is None:
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            "motor_not_configured",
+            "That motor is not configured on this machine.",
+        )
+
+    return state
+
+
 @router.post(
     "/debug/motors/{motor_name}/move",
     dependencies=[Depends(require_permissions("robot:control")), Depends(check_robot_enabled)],
@@ -1945,6 +2019,13 @@ async def move_motor(
             return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
     except HTTPException:
         raise
+    except RotationClearanceError as exc:
+        logging.warning("Motor move refused", exc_info=exc)
+        raise api_error(
+            status.HTTP_409_CONFLICT,
+            "rotation_blocked",
+            "The tool is not clear to move. Retract the tool and home the rotation, then try again.",
+        ) from exc
     except Exception as exc:
         logger.warning("Motor move failed: %s", exc, exc_info=exc)
         raise hardware_api_error(

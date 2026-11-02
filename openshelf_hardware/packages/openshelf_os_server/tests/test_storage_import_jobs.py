@@ -253,6 +253,38 @@ async def test_a_tray_return_is_only_moved_once(mock_mode, trays):
         assert stale.stage == "returning" and stale.request_id == first.id
 
 
+@pytest.mark.anyio
+async def test_a_return_the_crash_dialog_recovered_finishes_the_import(mock_mode, trays, client):
+    # lb4a-3: the IO box grip failed, the operator shelved the tray as the crash dialog asked,
+    # and the import kept asking for the tray in the IO box.
+    job_id = await create([row("Vial", small=True)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        await bins.transition(workflow, "awaiting_operator")
+        placed = await service.place_in_tray(job, (await units(job_id))[0].id, 30)
+        returning = await service.begin_tray_return(job)
+        failure = {
+            "request_id": returning.id, "command": "store_item", "message": "failed",
+            "error": "Bin grip failed", "code": bin_storage.GRIP_IO_BOX_FAILED_CODE,
+        }
+        await bins.handle_robot_result(failure, mock_mode)
+        await service.handle_command_result(returning.id, failure)
+        assert (await service.next_step(job))["phase"] == "return_failed"
+
+    recovered = await client.post("/api/storage/bin-workflows/interrupted/recover")
+    assert recovered.status_code == 200, recovered.text
+    assert [w["id"] for w in recovered.json()["recovered"]] == [returning.id]
+
+    assert [(unit.status, unit.stage) for unit in await units(job_id)] == [("loaded", None)]
+    assert await job_state(job_id) == "completed"
+    async with AsyncSessionLocal() as db:
+        member = await db.scalar(select(StorageBinItem).where(StorageBinItem.item_id == placed.item_id))
+        assert member is not None and (await db.get(StorageBin, member.bin_id)).status == "at_home"
+
+
 async def fill_and_return(service, bins, job, workflow):
     if workflow.state == "retrieving_bin":
         await bins.transition(workflow, "awaiting_operator")

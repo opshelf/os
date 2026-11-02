@@ -30,7 +30,15 @@ from openshelf_os.storage import (
 )
 from openshelf_os.laser_calibration.grip_edge import probe_grip_at
 from openshelf_os.faults import exception_debug
-from openshelf_os.exceptions import ConfigError, GripVerificationError, IOBoxError, MotorError, MovementError, ToolError
+from openshelf_os.exceptions import (
+	ConfigError,
+	GripVerificationError,
+	IOBoxError,
+	MotorError,
+	MovementError,
+	RotationClearanceError,
+	ToolError,
+)
 from hardware.exceptions import MotorError as HardwareMotorError
 
 from openshelf_os_server.core.robot import get_robot_worker
@@ -61,6 +69,10 @@ class StageMoveResponse(BaseModel):
 
 
 logger = logging.getLogger(__name__)
+
+ROTATION_JOG_BLOCKED_MESSAGE = (
+	"The tool is not clear to move. Retract the tool and home the rotation, then try again."
+)
 
 # Router-level auth gates every route here, so it cannot be scoped per route, and
 # /laser/stream answers with an EventSourceResponse that stays open for the whole
@@ -1199,7 +1211,10 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 				await _clear_motors_for_move(tool, stage=True)
 				new_slide = _clamp_value(new_slide + request.delta, stage_limit, "Stage", warnings)
 				await tool._ms.move_to_position(new_slide)
-	except (MotorError, HardwareMotorError) as e:
+	except (MotorError, HardwareMotorError, RotationClearanceError) as e:
+		if isinstance(e, RotationClearanceError):
+			logger.warning("Calibration jog refused", exc_info=e)
+			await _raise_motor_error(worker, ROTATION_JOG_BLOCKED_MESSAGE, e)
 		axes: Optional[list[str]] = None
 		if request.axis == "z":
 			axes = ["z_axis"]
@@ -2211,7 +2226,10 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				new_value = _round_iobox_calibration_value(new_value)
 				await tool._ms.move_to_position(new_value)
 			setattr(iobox_current, field, new_value)
-	except (MotorError, HardwareMotorError) as e:
+	except (MotorError, HardwareMotorError, RotationClearanceError) as e:
+		if isinstance(e, RotationClearanceError):
+			logger.warning("Calibration IO box jog refused", exc_info=e)
+			await _raise_motor_error(worker, ROTATION_JOG_BLOCKED_MESSAGE, e)
 		axes: Optional[list[str]] = None
 		if request.axis == "z":
 			axes = ["z_axis"]

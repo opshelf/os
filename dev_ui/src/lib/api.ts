@@ -1360,6 +1360,21 @@ export async function probeMotors(): Promise<MotorProbeResponse> {
 	});
 }
 
+export interface MotorLimitSwitchState {
+	motor_name: string;
+	enabled: boolean;
+	min_engaged: boolean | null;
+	error: string | null;
+}
+
+export async function getMotorLimitSwitches(): Promise<{ results: MotorLimitSwitchState[] }> {
+	return apiFetch<{ results: MotorLimitSwitchState[] }>('/robot/debug/motors/limit_switches');
+}
+
+export async function getMotorLimitSwitch(motorName: string): Promise<MotorLimitSwitchState> {
+	return apiFetch<MotorLimitSwitchState>(`/robot/debug/motors/${motorName}/limit_switches`);
+}
+
 export async function moveMotor(
 	motorName: string,
 	positionMm: number
