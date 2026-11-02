@@ -225,7 +225,8 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
     angle_results: list[LaserAutoCalibrationAngleResult] = Field(default_factory=list)
     reference_offset_results: list[LaserAutoCalibrationReferenceOffset] = Field(default_factory=list)
-    stage_detail: dict[str, Any] = Field(default_factory=dict)
+    # Internal progress state (e.g. run_dir for failure metadata); not part of the API payload.
+    stage_detail: dict[str, Any] = Field(default_factory=dict, exclude=True)
     error: str | None = None
     error_detail: LaserAutoCalibrationError | None = None
 

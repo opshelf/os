@@ -626,33 +626,6 @@
 
 		return formatNumber(snapshot?.back_stage_extension_mm);
 	}
-
-	function formatStageDetailValue(value: unknown): string {
-		if (value === null || value === undefined) {
-			return '-';
-		}
-
-		if (typeof value === 'number') {
-			return formatNumber(value);
-		}
-
-		if (typeof value === 'string' || typeof value === 'boolean') {
-			return String(value);
-		}
-
-		return JSON.stringify(value);
-	}
-
-	function getStageDetailRows(): { key: string; value: string }[] {
-		if (snapshot === null) {
-			return [];
-		}
-
-		return Object.entries(snapshot.stage_detail).map(([key, value]) => ({
-			key,
-			value: formatStageDetailValue(value)
-		}));
-	}
 </script>
 
 {#if isLoading === true}
@@ -843,30 +816,6 @@
 		</div>
 	{/if}
 
-	{#if snapshot && snapshot.session_id !== null}
-		<div class="scroll-x result-table">
-			<table>
-				<thead>
-					<tr>
-						<th colspan="2">stage detail</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each getStageDetailRows() as row}
-						<tr>
-							<td>{row.key}</td>
-							<td class="detail-value">{row.value}</td>
-						</tr>
-					{:else}
-						<tr>
-							<td colspan="2">-</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-	{/if}
-
 	{#if message !== ''}
 		<StatusMessage {message} />
 	{/if}
@@ -879,11 +828,6 @@
 <style>
 	.result-table {
 		margin-top: 1.5em;
-	}
-
-	/* long stage values wrap instead of widening the table */
-	.detail-value {
-		overflow-wrap: anywhere;
 	}
 
 	.actions {

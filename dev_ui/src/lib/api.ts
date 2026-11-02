@@ -893,7 +893,6 @@ export interface LaserAutoCalibrationSnapshot {
 	detected_cells: LaserAutoCalibrationCell[];
 	angle_results: LaserAutoCalibrationAngleResult[];
 	reference_offset_results: LaserAutoCalibrationReferenceOffset[];
-	stage_detail: Record<string, unknown>;
 	error: string | null;
 	error_detail?: {
 		error_type: string;
