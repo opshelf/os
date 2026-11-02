@@ -173,7 +173,7 @@ async def get_audit_log(
 	log = log_result.scalar_one_or_none()
 	
 	if log is None:
-		raise api_error(status.HTTP_404_NOT_FOUND, "audit_log_not_found", "That audit entry no longer exists.")
+		raise api_error(status.HTTP_404_NOT_FOUND, "audit_log_not_found", "")
 	
 	return AuditLogResponse(
 		id=int(log.id),

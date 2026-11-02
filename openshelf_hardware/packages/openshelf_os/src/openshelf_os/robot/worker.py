@@ -14,10 +14,9 @@ from typing import Optional, List, Any, Dict
 from openshelf_os import SIMULATED_FAULT_CONTEXT_KEY, SIMULATED_MOTOR_FAULT_PREFIX
 from openshelf_os.faults import (
     EXECUTION_ERROR_CODE,
-    FAULT_MESSAGES,
     WORKER_ERROR_CODE,
     exception_debug,
-    fault_code,
+    fault_failure,
 )
 from openshelf_os.robot.core import Robot
 from openshelf_os.robot.commands import (
@@ -61,7 +60,7 @@ SCALE_POLL_INTERVAL_SECONDS = 1.0
 SCALE_STATUS_FRESH_SECONDS = 3.0
 SCALE_WEIGHT_PUBLISH_DELTA_GRAMS = 1.0
 SCALE_PRE_RETRIEVE_READ_TIMEOUT_SECONDS = 2.0
-IO_BOX_OCCUPIED_ERROR = "Please remove the item from the IO box before retrieving another"
+IO_BOX_OCCUPIED_ERROR = "The IO box is not empty. Take the item off the scale and wait for it to read empty."
 ESTOP_POLL_INTERVAL_SECONDS = 0.05
 ESTOP_UNAVAILABLE_REASON = "The emergency stop could not be read. Check the robot before continuing."
 PHYSICAL_ESTOP_REASON = "The emergency stop was pressed. Release it, then reset the robot."
@@ -1535,12 +1534,12 @@ class RobotWorker:
                 and not is_rotation_clearance_refusal(err)
             )
             failure_code = err.failure_code if is_grip_fault else EXECUTION_ERROR_CODE
-            cause = fault_code(err) or failure_code
+            cause, message = fault_failure(err, failure_code)
 
             try:
                 await self._publish_command_failure(
                     command,
-                    FAULT_MESSAGES[cause],
+                    message,
                     operation,
                     code=failure_code,
                     fault_code=cause,
@@ -1922,10 +1921,10 @@ class RobotWorker:
                         pass
 
                 self._clear_robot_operation_context()
-                cause = fault_code(err) or WORKER_ERROR_CODE
+                cause, message = fault_failure(err, WORKER_ERROR_CODE)
                 await self._publish_command_failure(
                     self._current_command,
-                    FAULT_MESSAGES[cause],
+                    message,
                     self._current_operation,
                     code=WORKER_ERROR_CODE,
                     fault_code=cause,

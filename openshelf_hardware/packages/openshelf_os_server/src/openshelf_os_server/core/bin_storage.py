@@ -146,11 +146,7 @@ async def is_io_box_occupied(worker: RobotWorker) -> bool:
 def ensure_worker_homed_for_bin_motion(worker: RobotWorker) -> None:
     """Reject bin motion until an explicitly requested reset has completed."""
     if worker.needs_reset():
-        reason = worker.needs_home_reason() or getattr(worker, "_crash_reason", None)
-        message = "The robot needs to be reset before the bin can move"
-        if reason:
-            message = f"{message}: {reason}"
-        raise BinWorkflowConflict(message)
+        raise BinWorkflowConflict("The robot needs to be reset before the bin can move.")
 
 
 def _utc_now() -> datetime:

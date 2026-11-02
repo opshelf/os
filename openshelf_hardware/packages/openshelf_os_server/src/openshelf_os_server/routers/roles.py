@@ -93,7 +93,7 @@ async def create_role(
 	existing_result = await db.execute(select(Role).filter(Role.name == request.name))
 	existing = existing_result.scalar_one_or_none()
 	if existing is not None:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "role_name_in_use", "That role name is already in use.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "role_name_in_use", "")
 	
 	role = Role(
 		name=request.name,
@@ -125,7 +125,7 @@ async def get_role(
 	role_result = await db.execute(select(Role).filter(Role.id == role_id))
 	role = role_result.scalar_one_or_none()
 	if role is None:
-		raise api_error(status.HTTP_404_NOT_FOUND, "role_not_found", "That role no longer exists.")
+		raise api_error(status.HTTP_404_NOT_FOUND, "role_not_found", "")
 	
 	return await _build_role_response(db, role)
 
@@ -150,7 +150,7 @@ async def update_role(
 	role_result = await db.execute(select(Role).filter(Role.id == role_id))
 	role = role_result.scalar_one_or_none()
 	if role is None:
-		raise api_error(status.HTTP_404_NOT_FOUND, "role_not_found", "That role no longer exists.")
+		raise api_error(status.HTTP_404_NOT_FOUND, "role_not_found", "")
 	
 	if request.name is not None:
 		existing_result = await db.execute(
@@ -161,7 +161,7 @@ async def update_role(
 		)
 		existing = existing_result.scalar_one_or_none()
 		if existing is not None:
-			raise api_error(status.HTTP_400_BAD_REQUEST, "role_name_in_use", "That role name is already in use.")
+			raise api_error(status.HTTP_400_BAD_REQUEST, "role_name_in_use", "")
 		role.name = request.name
 	
 	if request.permissions is not None:
@@ -191,11 +191,11 @@ async def delete_role(
 	role_result = await db.execute(select(Role).filter(Role.id == role_id))
 	role = role_result.scalar_one_or_none()
 	if role is None:
-		raise api_error(status.HTTP_404_NOT_FOUND, "role_not_found", "That role no longer exists.")
+		raise api_error(status.HTTP_404_NOT_FOUND, "role_not_found", "")
 	
 	user_count = await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role_id))
 	if user_count is not None and user_count > 0:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "role_in_use", "This role still has operators assigned to it. Reassign them first.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "role_in_use", "")
 	
 	await db.delete(role)
 	await db.commit()

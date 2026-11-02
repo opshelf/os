@@ -104,12 +104,12 @@ async def get_current_user(
 					email=settings.auth.dev_auto_user,
 					action="answering 503 for unauthenticated requests",
 				)
-			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "dev_user_missing", "The developer user is missing on this machine.")
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "dev_user_missing", "")
 	
 	if not token:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail=error_detail("Your sign-in expired. Sign in again.", "unauthorized"),
+			detail=error_detail("", "unauthorized"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 	
@@ -122,7 +122,7 @@ async def get_current_user(
 	if payload is None or payload.get("type") != "access":
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail=error_detail("Your sign-in expired. Sign in again.", "token_invalid"),
+			detail=error_detail("", "token_invalid"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 	
@@ -202,7 +202,7 @@ async def _get_relay_system_user(db: AsyncSession) -> User:
 	)
 	user = result.scalars().first()
 	if user is None:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "relay_identity_unavailable", "The relay service identity is not available.")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "relay_identity_unavailable", "")
 	return user
 
 
@@ -241,7 +241,7 @@ def ensure_permissions(user: User, permissions: str | List[str]) -> None:
 	user_permissions = user.role.permissions or []
 	for permission in permissions:
 		if not has_permission(user_permissions, permission):
-			raise api_error(status.HTTP_403_FORBIDDEN, "forbidden", "You do not have permission to do that.", permission=permission)
+			raise api_error(status.HTTP_403_FORBIDDEN, "forbidden", "", permission=permission)
 
 
 def require_permissions(permissions: str | List[str]) -> Callable:

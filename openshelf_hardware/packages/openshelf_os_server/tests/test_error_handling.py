@@ -3,6 +3,7 @@ import ast
 import errno
 import logging
 import pathlib
+import re
 
 import pytest
 from fastapi import HTTPException
@@ -606,6 +607,30 @@ def test_every_http_error_carries_a_code() -> None:
 			if coded is False:
 				uncoded.append(f"{path.relative_to(source_dir)}:{node.lineno}")
 	assert uncoded == []
+
+
+def test_route_messages_do_not_restate_their_code_sentence() -> None:
+	"""CODE_MESSAGES is the one copy per code; a route that has nothing to add passes ""
+	and gets it. A restated copy drifts from the served sentence on the next edit, so a
+	route literal must add a word its code sentence lacks (a name, a reason, a step)."""
+	source_dir = pathlib.Path(__file__).resolve().parents[1] / "src" / "openshelf_os_server"
+	positions = {"api_error": (1, 2), "hardware_api_error": (2, 3), "error_detail": (1, 0)}
+
+	def words(text: str) -> set[str]:
+		return set(re.findall(r"[a-z0-9']+", text.lower()))
+
+	restated = []
+	for path in sorted(source_dir.rglob("*.py")):
+		for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
+			name = getattr(node, "func", None) and getattr(node.func, "id", getattr(node.func, "attr", None))
+			if name not in positions or len(node.args) <= max(positions[name]):
+				continue
+			code, message = (node.args[index] for index in positions[name])
+			if not (isinstance(code, ast.Constant) and isinstance(message, ast.Constant) and isinstance(message.value, str)):
+				continue
+			if message.value != "" and words(message.value) <= words(CODE_MESSAGES.get(code.value, "")):
+				restated.append(f"{path.relative_to(source_dir)}:{node.lineno} {code.value}")
+	assert restated == []
 
 
 def test_every_router_emitted_code_has_a_code_message() -> None:

@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator, Callable, cast
 
 from fastapi import HTTPException, status
 
-from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR
+from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE
 from openshelf_os_server.errors import api_error
 
 _motion_lock = asyncio.Lock()
@@ -114,7 +114,7 @@ async def ensure_no_tray_on_tool(worker, *, read_gripper: bool = True) -> None:
 		await worker.get_status_snapshot(force_refresh=True)
 	if is_held is False:
 		return
-	raise api_error(status.HTTP_409_CONFLICT, TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR)
+	raise api_error(status.HTTP_409_CONFLICT, TRAY_ON_TOOL_CODE, "")
 
 
 @asynccontextmanager

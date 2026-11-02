@@ -194,7 +194,7 @@ def _is_scale_not_enabled(exc: Exception) -> bool:
 def _scale_not_enabled_exception() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail=error_detail(_SCALE_NOT_ENABLED_MESSAGE, "scale_not_enabled"),
+        detail=error_detail("", "scale_not_enabled"),
     )
 
 
@@ -214,7 +214,7 @@ async def _ensure_laser_auto_calibration_not_running() -> None:
     if await is_laser_auto_calibration_running() is False:
         return
 
-    raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "The robot is calibrating.")
+    raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "")
 
 
 def _reason_matches_motor(reason: Optional[str], motor_name: str, motor) -> bool:
@@ -376,14 +376,14 @@ class CommandLifecycleResponse(BaseModel):
 async def check_robot_enabled() -> None:
     settings = get_settings()
     if not settings.robot.enabled:
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_disabled", "The robot is not set up to move. Check its settings.")
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_disabled", "")
 
 
 async def get_robot_worker_or_error() -> RobotWorker:
     try:
         return await get_robot_worker()
     except ValueError as e:
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot has not started. Check the robot status.") from e
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from e
 
 
 async def get_command_worker_for_mode() -> RobotWorker | None:
@@ -456,7 +456,7 @@ def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: Rob
         raise api_error(
             status.HTTP_409_CONFLICT,
             "reset_required",
-            "Reset the cabinet before running another command.",
+            "",
         )
 
     raise HTTPException(
@@ -481,7 +481,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
     item_data = command.item or {}
     barcode = item_data.get("barcode")
     if not isinstance(barcode, str) or barcode.strip() == "" or len(barcode) > BARCODE_MAX_LENGTH:
-        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "barcode_required", "Enter the item barcode.")
+        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "barcode_required", "")
 
     _parse_requested_store_location(item_data)
     await _validate_direct_store_reservation(item_data, db)
@@ -492,19 +492,19 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
             await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
         ).scalar_one_or_none()
         if bin_membership is not None:
-            raise api_error(status.HTTP_409_CONFLICT, "reserved_tray_item", "This item is in a bin. Retrieve it before storing it again.")
+            raise api_error(status.HTTP_409_CONFLICT, "reserved_tray_item", "")
         existing = (
             await db.execute(select(ItemLocation).where(ItemLocation.item_id == item.id))
         ).scalars().first()
         if existing is not None:
-            raise api_error(status.HTTP_409_CONFLICT, "item_already_stored", "This item is already stored. Retrieve it before storing it again.")
+            raise api_error(status.HTTP_409_CONFLICT, "item_already_stored", "")
         await _validate_mock_store_location(item_data, item.dimensions, db)
         return
 
     name = item_data.get("name")
     dimensions = item_data.get("dimensions")
     if not isinstance(name, str) or name.strip() == "" or not isinstance(dimensions, dict):
-        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "item_details_required", "This item needs a name and size before it can be stored.")
+        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "item_details_required", "")
     try:
         if any(
             isinstance(dimensions.get(key), bool)
@@ -527,7 +527,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
 
     access_level_id = item_data.get("access_level_id")
     if access_level_id is not None and await db.get(AccessLevel, access_level_id) is None:
-        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "access_level_invalid", "Choose an access level and try again.")
+        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "access_level_invalid", "")
 
 
 async def _validate_direct_store_reservation(item_data: dict[str, Any], db: AsyncSession) -> None:
@@ -598,14 +598,14 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("Requested storage cell is reserved", "cell_unavailable"),
+            detail=error_detail("That cell is reserved. Choose another one.", "cell_unavailable"),
         )
 
     cell = grid.get_cell_if_present(location)
     if cell is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=error_detail("That cell does not exist.", "cell_not_found"),
+            detail=error_detail("", "cell_not_found"),
         )
     if cell.status != CellStatus.AVAILABLE:
         logger.info("Requested storage cell is %s", cell.status.value)
@@ -627,7 +627,7 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
     if grid.cell_fits_item(cell, item) is False:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("The item does not fit that cell.", "cell_too_small"),
+            detail=error_detail("", "cell_too_small"),
         )
 
 
@@ -650,7 +650,7 @@ async def _validate_mock_store_location(
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=error_detail("That cell does not exist.", "cell_not_found"),
+            detail=error_detail("", "cell_not_found"),
         )
 
     occupied = (
@@ -665,7 +665,7 @@ async def _validate_mock_store_location(
     if occupied is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("Requested storage cell is occupied", "cell_unavailable"),
+            detail=error_detail("That cell is occupied. Choose another one.", "cell_unavailable"),
         )
 
     # A live bin home is unavailable for explicit stores, as in production; automatic
@@ -673,13 +673,13 @@ async def _validate_mock_store_location(
     if await is_reserved_bin_location((side, shelf_idx, cell_idx), db):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("Requested storage cell is reserved", "cell_unavailable"),
+            detail=error_detail("That cell is reserved. Choose another one.", "cell_unavailable"),
         )
 
     if isinstance(dimensions, dict) and mock_cell_fits(dimensions) is False:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail("The item does not fit that cell.", "cell_too_small"),
+            detail=error_detail("", "cell_too_small"),
         )
 
 
@@ -687,7 +687,7 @@ def _target_in_flight_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail=error_detail(
-            "Another queued or running command already targets this item or cell",
+            "",
             "target_in_flight",
         ),
     )
@@ -726,9 +726,9 @@ async def _validate_mock_retrieve(
     ).scalar_one_or_none()
     if item is None:
         logger.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
-        raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that cell.")
+        raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "")
     if can_user_retrieve_item(current_user, item) is False:
-        raise api_error(status.HTTP_403_FORBIDDEN, "item_access_denied", "You do not have permission to retrieve this item")
+        raise api_error(status.HTTP_403_FORBIDDEN, "item_access_denied", "")
 
 
 @router.post(
@@ -795,7 +795,7 @@ async def robot_commands(
     request_id = getattr(command, "request_id", None)
     if operating_mode == OperatingMode.mock:
         if not isinstance(command, (StoreItemCommand, RetrieveItemCommand)):
-            raise api_error(status.HTTP_400_BAD_REQUEST, "mock_mode_unsupported", "Mock mode supports only store and retrieve.")
+            raise api_error(status.HTTP_400_BAD_REQUEST, "mock_mode_unsupported", "")
         runtime = get_mock_robot_runtime()
         payload = submission_payload
         try:
@@ -804,7 +804,7 @@ async def robot_commands(
             raise api_error(
                 status.HTTP_409_CONFLICT,
                 "request_replay",
-                "That request was already sent. Reload and try again.",
+                "",
             ) from exc
         if replay is not None:
             return CommandAcceptedResponse.model_validate(
@@ -827,7 +827,7 @@ async def robot_commands(
                 raise api_error(
                     status.HTTP_409_CONFLICT,
                     "request_replay",
-                    "That request was already sent. Reload and try again.",
+                    "",
                 ) from exc
             except CommandTargetInFlightError as exc:
                 raise _target_in_flight_error() from exc
@@ -854,7 +854,7 @@ async def robot_commands(
         raise api_error(
             status.HTTP_409_CONFLICT,
             "request_replay",
-            "That request was already sent. Reload and try again.",
+            "",
         ) from exc
     if replay is not None:
         return CommandAcceptedResponse(
@@ -866,7 +866,7 @@ async def robot_commands(
     await _ensure_laser_auto_calibration_not_running()
     if worker is None:
         await check_robot_enabled()
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot has not started. Check the robot status.")
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "")
     _ensure_command_allowed_while_needs_home(command, worker)
     await _ensure_command_allowed_while_tray_on_tool(command, worker)
 
@@ -904,12 +904,12 @@ async def robot_commands(
                 )
                 existing_location = location_result.scalars().first()
                 if existing_location is not None:
-                    raise api_error(status.HTTP_409_CONFLICT, "item_already_stored", "This item is already stored. Retrieve it before storing it again.")
+                    raise api_error(status.HTTP_409_CONFLICT, "item_already_stored", "")
                 bin_membership = (
                     await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
                 ).scalar_one_or_none()
                 if bin_membership is not None:
-                    raise api_error(status.HTTP_409_CONFLICT, "reserved_tray_item", "This item is in a bin.")
+                    raise api_error(status.HTTP_409_CONFLICT, "reserved_tray_item", "")
                 item_data["tare_weight"] = item.tare_weight
                 item_data["full_net_weight"] = item.full_net_weight
                 command = StoreItemCommand(item=item_data, request_id=request_id)
@@ -922,7 +922,7 @@ async def robot_commands(
                     or not 0 < dimensions[key] < math.inf
                     for key in ("width", "height", "length")
                 ):
-                    raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "dimension_invalid", "New items require finite positive width, height, and length")
+                    raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "dimension_invalid", "")
                 try:
                     ItemValidator.validate_weight(item_data.get("weight"))
                     validate_mass(item_data)
@@ -963,7 +963,7 @@ async def robot_commands(
                 )
             ).scalar_one_or_none()
             if binned_item is not None:
-                raise api_error(status.HTTP_409_CONFLICT, "reserved_tray_item", "This item is in a bin.")
+                raise api_error(status.HTTP_409_CONFLICT, "reserved_tray_item", "")
         if worker.get_safety_status().get("bypassed") is not True:
             try:
                 scale_status = worker.get_cached_scale_status()
@@ -972,7 +972,7 @@ async def robot_commands(
                         raise api_error(
                             409,
                             "io_box_occupied",
-                            "The IO box is not empty. Take the item off the scale and wait for it to read empty.",
+                            "",
                         )
                 else:
                     scale_data = await worker.get_scale_data()
@@ -981,7 +981,7 @@ async def robot_commands(
                         raise api_error(
                             409,
                             "io_box_occupied",
-                            "The IO box is not empty. Take the item off the scale and wait for it to read empty.",
+                            "",
                         )
             except HTTPException:
                 raise
@@ -1009,10 +1009,10 @@ async def robot_commands(
 
         if item is None:
             logger.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
-            raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that cell.")
+            raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "")
 
         if can_user_retrieve_item(current_user, item) is False:
-            raise api_error(status.HTTP_403_FORBIDDEN, "item_access_denied", "You do not have permission to retrieve this item")
+            raise api_error(status.HTTP_403_FORBIDDEN, "item_access_denied", "")
 
     async with robot_command_enqueue_guard():
         if isinstance(command, StoreItemCommand):
@@ -1028,7 +1028,7 @@ async def robot_commands(
             raise api_error(
                 status.HTTP_409_CONFLICT,
                 "request_replay",
-                "That request was already sent. Reload and try again.",
+                "",
             ) from exc
         except CommandTargetInFlightError as exc:
             raise _target_in_flight_error() from exc
@@ -1073,7 +1073,7 @@ async def get_robot_command(command_id: str, request: Request) -> CommandLifecyc
     """
     row = await get_lifecycle_command(command_id)
     if row is None:
-        raise api_error(status.HTTP_404_NOT_FOUND, "command_not_found", "That robot command does not exist.")
+        raise api_error(status.HTTP_404_NOT_FOUND, "command_not_found", "")
     command = serialize_command(row)
     command["result"] = public_payload(command["result"], debug_allowed(request))
     return CommandLifecycleResponse.model_validate(command)
@@ -1305,7 +1305,7 @@ async def emit_scanner_scan_event(
             await worker.publish_event(payload)
     except Exception as exc:
         logger.error("Failed to publish label_scanned event: %s", exc, exc_info=exc)
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "label_scan_failed", "The label scan could not be sent. Try again.") from exc
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "label_scan_failed", "") from exc
     return SuccessResponse()
 
 
@@ -1327,7 +1327,7 @@ async def simulate_io_box(request: IoBoxSimulationRequest) -> SuccessResponse:
     clears it when it takes the item for a store. Hardware modes return `409`.
     """
     if get_operating_mode() != OperatingMode.mock:
-        raise api_error(status.HTTP_409_CONFLICT, "mock_mode_only", "IO-box simulation is available only in mock mode")
+        raise api_error(status.HTTP_409_CONFLICT, "mock_mode_only", "")
     runtime = get_mock_robot_runtime()
     runtime.set_bin_io_box_occupied(request.occupied)
     await runtime.publish_status()
@@ -1374,7 +1374,7 @@ async def get_scale_reading(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_read_failed",
-            "Could not read the scale. Try again.",
+            "",
         ) from exc
 
 
@@ -1404,7 +1404,7 @@ async def get_scale_calibration_status(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_read_failed",
-            "Could not read the scale. Try again.",
+            "",
         ) from exc
 
 
@@ -1434,7 +1434,7 @@ async def get_scale_calibration_params(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_read_failed",
-            "Could not read the scale. Try again.",
+            "",
         ) from exc
 
 
@@ -1475,7 +1475,7 @@ async def set_scale_calibration_params(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_settings_failed",
-            "The scale settings could not be saved. Try again.",
+            "",
         ) from exc
 
 
@@ -1509,7 +1509,7 @@ async def calibrate_scale_zero(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_calibration_failed",
-            "The scale could not be calibrated. Check that it is steady and holds only the reference weight, then calibrate again.",
+            "",
         ) from exc
 
 
@@ -1543,7 +1543,7 @@ async def calibrate_scale_weight(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_calibration_failed",
-            "The scale could not be calibrated. Check that it is steady and holds only the reference weight, then calibrate again.",
+            "",
         ) from exc
 
 
@@ -1578,7 +1578,7 @@ async def scale_tare(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_tare_failed",
-            "The scale could not be zeroed. Check that it is empty and steady, then zero it again.",
+            "",
         ) from exc
 
 
@@ -1631,7 +1631,7 @@ async def simulate_motor_crash(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
-            "That motor is not configured on this machine.",
+            "",
         )
 
     return {"success": True, "motor": motor_name}
@@ -1660,7 +1660,7 @@ async def clear_motor_alarm(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
-            "That motor is not configured on this machine.",
+            "",
         )
 
     try:
@@ -1684,7 +1684,7 @@ async def clear_motor_alarm(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_alarm_clear_failed",
-            "The robot's alarm could not be cleared. Find the cause on the drive before clearing it again.",
+            "",
         ) from exc
 
 
@@ -1709,7 +1709,7 @@ async def home_motor(
     """
     if skip_pre_home_approach is True:
         if get_operating_mode() != OperatingMode.development:
-            raise api_error(status.HTTP_403_FORBIDDEN, "development_mode_only", "Skipping the pre-home approach is only available in development mode")
+            raise api_error(status.HTTP_403_FORBIDDEN, "development_mode_only", "")
         if motor_name != "y_axis":
             raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "Skipping the pre-home approach is only supported for the Y axis.")
 
@@ -1720,7 +1720,7 @@ async def home_motor(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
-            "That motor is not configured on this machine.",
+            "",
         )
 
     try:
@@ -1756,7 +1756,7 @@ async def home_motor(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_home_failed",
-            "The robot could not be reset. Check the robot status before resetting it again.",
+            "",
         ) from exc
 
 
@@ -1821,7 +1821,7 @@ async def power_cycle_rail(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "power_rail_not_configured",
-            "That power rail is not configured on this machine.",
+            "",
         )
 
     try:
@@ -1844,7 +1844,7 @@ async def power_cycle_rail(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "power_cycle_failed",
-            "The machine could not power cycle that part. Check its power rail settings.",
+            "",
         ) from exc
 
 
@@ -1968,7 +1968,7 @@ async def get_motor_limit_switch(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
-            "That motor is not configured on this machine.",
+            "",
         )
 
     return state
@@ -1999,7 +1999,7 @@ async def move_motor(
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
-            "That motor is not configured on this machine.",
+            "",
         )
 
     try:
@@ -2032,7 +2032,7 @@ async def move_motor(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_move_failed",
-            "The robot could not move. Check the robot status before moving it again.",
+            "",
         ) from exc
 
 
@@ -2071,7 +2071,7 @@ async def control_door(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "door_control_failed",
-            "The machine's door did not move. Check that nothing blocks it before moving it again.",
+            "",
         ) from exc
 
 

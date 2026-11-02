@@ -28,6 +28,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.exceptions import ConfigError as HardwareConfigError
 from openshelf_os.faults import FAULT_MESSAGES, exception_debug, fault_code
+from openshelf_os.robot.worker import IO_BOX_OCCUPIED_ERROR, TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR
 from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
 from openshelf_os_server.core.command_lifecycle import (
@@ -178,7 +179,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"home_required": "The robot needs to be reset before this can continue.",
 	"internal_error": "The machine could not complete the action. Check the machine status before trying again.",
 	"invalid_location": "That cell is not valid.",
-	"io_box_occupied": "The IO box is not empty. Take the item off the scale and wait for it to read empty.",
+	"io_box_occupied": IO_BOX_OCCUPIED_ERROR,
 	"iobox_sizer_unavailable": "The IO box measure tool is not available. Try again.",
 	"item_access_denied": "You do not have permission to retrieve this item.",
 	"item_already_stored": "This item is already stored. Retrieve it before storing it again.",
@@ -193,7 +194,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"laser_scope_invalid": "The laser calibration cannot start with these settings. Check the scope and the robot settings.",
 	"location_add_failed": "The location could not be added.",
 	"location_not_found": "That location does not exist.",
-	"login_failed": "The sign-in details are not valid.",
+	"login_failed": "That sign-in did not work. Try again.",
 	"login_rate_limited": "Too many sign-in attempts. Wait a moment and try again.",
 	"method_not_allowed": "The machine could not do what you asked. Reload and try again.",
 	"mock_mode_only": "That is available only in mock mode.",
@@ -207,7 +208,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"not_found": "The machine could not find what you asked for. Reload and try again.",
 	"offsets_incomplete": "Enter the X, Y and Z offset values together.",
 	"onboarding_completed": "Setup is already finished.",
-	"onboarding_state_unavailable": "The robot onboarding state is not available. Try again.",
+	"onboarding_state_unavailable": "The robot could not read its setup state. Try again.",
 	"power_cycle_failed": "The machine could not power cycle that part. Check its power rail settings.",
 	"power_rail_not_configured": "That power rail is not configured on this machine.",
 	"queue_full": "The robot is busy. Wait for the current move to finish.",
@@ -240,7 +241,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"token_invalid": "Your sign-in expired. Sign in again.",
 	"tray_config_conflict": "The bin's settings conflict with the stored items. Check the bin's barcode and settings.",
 	"tray_fetch_failed": "The bin could not be fetched. Check the robot status before fetching it again.",
-	"tray_on_tool": "The gripper is still holding a tray or bin. Release it and take it off the tool.",
+	TRAY_ON_TOOL_CODE: TRAY_ON_TOOL_ERROR,
 	"tray_return_failed": "The bin could not be returned. Check the robot status before returning it again.",
 	"unauthorized": "Your sign-in expired. Sign in again.",
 	"unknown_item": "That item could not be found.",
