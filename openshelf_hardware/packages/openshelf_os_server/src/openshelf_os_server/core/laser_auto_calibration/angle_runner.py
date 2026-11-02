@@ -761,11 +761,5 @@ class AngleRunnerMixin:
             current_side=side_name,
             current_stage="angle-calibration",
             state="running",
-            stage_detail={
-                "side": side_name,
-                "phase": "angle-applied",
-                "alpha_deg": result.alpha_deg,
-                "updated_rotation_deg": result.updated_rotation_deg,
-            },
         )
 

@@ -350,3 +350,33 @@ def test_scan_bounds_are_clamped_to_the_axis_travel() -> None:
     # Without motor limits the configured bounds stand.
     untouched = ScanBounds(x_min=5.0, x_max=950.0, y_min=0.0, y_max=1250.0)
     assert _clamp_bounds_to_axis_travel(untouched, SimpleNamespace()) == untouched
+
+
+@pytest.mark.asyncio
+async def test_persist_failure_metadata_marks_active_scan_run_failed(tmp_path) -> None:
+    import json
+
+    from openshelf_os_server.core.laser_auto_calibration.models import LaserAutoCalibrationError
+
+    manager = LaserAutoCalibrationManager()
+    metadata_path = tmp_path / 'metadata.json'
+    metadata_path.write_text(json.dumps({'run_id': 'scan-run', 'status': 'running'}), encoding='utf-8')
+    error_detail = LaserAutoCalibrationError(error_type='RuntimeError', error='boom')
+
+    await manager._persist_failure_metadata(error_detail)
+    assert json.loads(metadata_path.read_text(encoding='utf-8'))['status'] == 'running'
+
+    manager._run_dir = tmp_path
+    await manager._persist_failure_metadata(error_detail)
+
+    data = json.loads(metadata_path.read_text(encoding='utf-8'))
+    assert data['status'] == 'failed'
+    assert data['error'] == 'boom'
+    assert data['error_type'] == 'RuntimeError'
+
+
+def test_snapshot_does_not_expose_stage_detail() -> None:
+    snapshot = LaserAutoCalibrationSnapshot()
+
+    assert 'stage_detail' not in snapshot.model_dump()
+    assert 'stage_detail' not in LaserAutoCalibrationSnapshot.model_json_schema()['properties']

@@ -47,40 +47,15 @@ AUTO_SCAN_X_MIN_MM = 5.0
 BACK_AUTO_SCAN_X_MAX_MM = 945.0
 ANGLE_DEBUG_DIR_NAME = "laser_auto_calibration_debug"
 
-ANGLE_CAPTURE_RE = re.compile(
-    r"phase=capture x=(?P<x_idx>\d+)/(?P<x_count>\d+) z=(?P<z_offset>-?\d+(?:\.\d+)?) rotation=(?P<rotation_idx>\d+)/(?P<rotation_count>\d+)"
-)
-ANGLE_SAMPLE_RE = re.compile(
-    r"sample=(?P<status>ok|invalid) x=(?P<x>-?\d+(?:\.\d+)?) z=(?P<z>-?\d+(?:\.\d+)?) rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?)(?: distance_mm=(?P<distance>-?\d+(?:\.\d+)?))?"
-)
-STAGE_STALL_CAPTURE_RE = re.compile(
-    r"phase=stage-stall (?:pass=(?P<pass_name>[a-z_]+) )?"
-    r"rotation=(?P<rotation_idx>\d+)/(?P<rotation_count>\d+) "
-    r"absolute_rotation_deg=(?P<absolute>-?\d+(?:\.\d+)?)"
-)
-STAGE_STALL_PROBE_RE = re.compile(
-    r"stage_probe=(?P<status>stall|skip) (?:pass=(?P<pass_name>[a-z_]+) )?"
-    r"rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?) "
-    r"absolute_rotation_deg=(?P<absolute>-?\d+(?:\.\d+)?) "
-    r"(?:status=(?P<probe_status>[a-z_]+) )?stage_position_mm=(?P<stage>-?\d+(?:\.\d+)?)"
-    r"(?: alarm_code=(?P<alarm_code>none|-?\d+))?"
-)
-ANGLE_SCOUT_SAMPLE_RE = re.compile(
-    r"(?P<label>shelf_scout_\d+)=(?P<sample_idx>\d+)/(?P<sample_count>\d+) x=(?P<x>-?\d+(?:\.\d+)?) y=(?P<y>-?\d+(?:\.\d+)?) depth=(?P<depth>none|-?\d+(?:\.\d+)?)"
-)
 SCAN_SHELF_SCOUT_RE = re.compile(r"phase=shelf-scout scout=(?P<idx>\d+)/(?P<count>\d+) x=(?P<x>-?\d+(?:\.\d+)?)")
 SCAN_SHELF_HOLE_RE = re.compile(
     r"phase=shelf-hole-scan shelf=(?P<shelf_idx>\d+)/(?P<shelf_count>\d+) offset=(?P<offset_idx>\d+)/(?P<offset_count>\d+) y=(?P<y>-?\d+(?:\.\d+)?)"
-)
-SCAN_PROGRESS_SAMPLE_RE = re.compile(
-    r"(?P<label>[a-zA-Z0-9_]+)=(?P<sample_idx>\d+)/(?P<sample_count>\d+) x=(?P<x>-?\d+(?:\.\d+)?) y=(?P<y>-?\d+(?:\.\d+)?) depth=(?P<depth>none|-?\d+(?:\.\d+)?)"
 )
 SHELF_EDGES_RE = re.compile(r"shelf_edges=(?P<count>\d+)")
 COARSE_CANDIDATES_RE = re.compile(r"coarse_candidates=(?P<count>\d+)")
 SCAN_FINE_RE = re.compile(r"phase=fine-scan candidate=(?P<idx>\d+)/(?P<count>\d+)")
 SCAN_FINE_RETRY_RE = re.compile(r"phase=fine-scan-retry candidate=(?P<idx>\d+)/(?P<count>\d+)")
 FINE_DETECTED_CELLS_RE = re.compile(r"fine_detected_cells=(?P<count>\d+)")
-ANGLE_RESULT_RE = re.compile(r"alpha_deg=(?P<alpha>-?\d+(?:\.\d+)?)")
 STAGE_EXTENSION_PROBE_START_MM = 0.0
 STAGE_EXTENSION_PROBE_Y_OFFSET_MM = 25.0
 STAGE_EXTENSION_PROBE_STEP_MM = 0.5
@@ -225,8 +200,6 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
     angle_results: list[LaserAutoCalibrationAngleResult] = Field(default_factory=list)
     reference_offset_results: list[LaserAutoCalibrationReferenceOffset] = Field(default_factory=list)
-    # Internal progress state (e.g. run_dir for failure metadata); not part of the API payload.
-    stage_detail: dict[str, Any] = Field(default_factory=dict, exclude=True)
     error: str | None = None
     error_detail: LaserAutoCalibrationError | None = None
 
@@ -532,20 +505,13 @@ __all__ = [
     "AUTO_SCAN_X_MIN_MM",
     "BACK_AUTO_SCAN_X_MAX_MM",
     "ANGLE_DEBUG_DIR_NAME",
-    "STAGE_STALL_CAPTURE_RE",
-    "STAGE_STALL_PROBE_RE",
-    "ANGLE_CAPTURE_RE",
-    "ANGLE_SAMPLE_RE",
-    "ANGLE_SCOUT_SAMPLE_RE",
     "SCAN_SHELF_SCOUT_RE",
     "SCAN_SHELF_HOLE_RE",
-    "SCAN_PROGRESS_SAMPLE_RE",
     "SHELF_EDGES_RE",
     "COARSE_CANDIDATES_RE",
     "SCAN_FINE_RE",
     "SCAN_FINE_RETRY_RE",
     "FINE_DETECTED_CELLS_RE",
-    "ANGLE_RESULT_RE",
     "STAGE_EXTENSION_PROBE_START_MM",
     "STAGE_EXTENSION_PROBE_Y_OFFSET_MM",
     "STAGE_EXTENSION_PROBE_STEP_MM",
