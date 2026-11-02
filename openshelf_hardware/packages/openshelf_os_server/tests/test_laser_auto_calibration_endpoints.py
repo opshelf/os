@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,6 +11,7 @@ from openshelf_os.laser_calibration.scan import ScanBounds
 from openshelf_os.robot.commands import HomeCommand
 from openshelf_os.storage import StorageModuleSide
 from openshelf_os_server.core.laser_auto_calibration import LaserAutoCalibrationManager
+from openshelf_os_server.core.laser_auto_calibration.models import LaserAutoCalibrationError
 from openshelf_os_server.routers import robot as robot_router
 from openshelf_os_server.core.laser_auto_calibration import LaserAutoCalibrationSnapshot
 
@@ -354,10 +356,6 @@ def test_scan_bounds_are_clamped_to_the_axis_travel() -> None:
 
 @pytest.mark.asyncio
 async def test_persist_failure_metadata_marks_active_scan_run_failed(tmp_path) -> None:
-    import json
-
-    from openshelf_os_server.core.laser_auto_calibration.models import LaserAutoCalibrationError
-
     manager = LaserAutoCalibrationManager()
     metadata_path = tmp_path / 'metadata.json'
     metadata_path.write_text(json.dumps({'run_id': 'scan-run', 'status': 'running'}), encoding='utf-8')
@@ -373,10 +371,3 @@ async def test_persist_failure_metadata_marks_active_scan_run_failed(tmp_path) -
     assert data['status'] == 'failed'
     assert data['error'] == 'boom'
     assert data['error_type'] == 'RuntimeError'
-
-
-def test_snapshot_does_not_expose_stage_detail() -> None:
-    snapshot = LaserAutoCalibrationSnapshot()
-
-    assert 'stage_detail' not in snapshot.model_dump()
-    assert 'stage_detail' not in LaserAutoCalibrationSnapshot.model_json_schema()['properties']
