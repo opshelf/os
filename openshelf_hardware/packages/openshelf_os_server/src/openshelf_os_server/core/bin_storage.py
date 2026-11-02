@@ -173,8 +173,10 @@ class NoCompatibleBinError(BinWorkflowConflict):
 
 
 class DirectStoreReservationError(ValueError):
-    def __init__(self, message: str, code: str):
-        super().__init__(message)
+    """A direct store hit a bin identity or member; the route sends the code's served sentence."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
         self.code = code
 
 
@@ -247,20 +249,14 @@ async def validate_direct_store_reservation(
     """
     barcode = item_data.get("barcode")
     if isinstance(barcode, str) and await is_reserved_bin_barcode(barcode, session):
-        raise DirectStoreReservationError(
-            "This barcode belongs to a bin.",
-            "reserved_bin_barcode",
-        )
+        raise DirectStoreReservationError("reserved_bin_barcode")
 
     if isinstance(barcode, str):
         item_id = await session.scalar(select(Item.id).where(Item.barcode == barcode))
         if item_id is not None:
             service = BinStorageService(session)
             if await service.item_bin(item_id) is not None:
-                raise DirectStoreReservationError(
-                    "This item is in a bin.",
-                    "reserved_tray_item",
-                )
+                raise DirectStoreReservationError("reserved_tray_item")
 
 
 class BinStorageService:

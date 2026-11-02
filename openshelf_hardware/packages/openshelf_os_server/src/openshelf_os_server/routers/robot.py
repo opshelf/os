@@ -533,10 +533,7 @@ async def _validate_direct_store_reservation(item_data: dict[str, Any], db: Asyn
     try:
         await validate_direct_store_reservation(item_data, db)
     except DirectStoreReservationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=error_detail(str(exc), exc.code),
-        ) from exc
+        raise api_error(status.HTTP_409_CONFLICT, exc.code, "") from exc
 
 
 def _fold_store_location_into_item(command: StoreItemCommand) -> StoreItemCommand:

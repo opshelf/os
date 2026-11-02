@@ -7,16 +7,14 @@ from typing import Any, AsyncIterator, Callable, cast
 from fastapi import HTTPException, status
 
 from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE
-from openshelf_os_server.errors import api_error
+from openshelf_os_server.errors import api_error, error_detail
 
 _motion_lock = asyncio.Lock()
 _current_operation: str | None = None
 
-def _conflict_detail(message: str, *, reason: str | None = None) -> dict[str, str]:
-	detail = {"message": message, "code": "movement_in_progress"}
-	if reason is not None:
-		detail["reason"] = reason
-	return detail
+def _conflict_detail(message: str, *, reason: str | None = None) -> dict[str, Any]:
+	extra = {} if reason is None else {"reason": reason}
+	return error_detail(message, "movement_in_progress", **extra)
 
 
 def get_manual_motion_operation() -> str | None:

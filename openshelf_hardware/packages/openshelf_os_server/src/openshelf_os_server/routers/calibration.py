@@ -1554,7 +1554,7 @@ def _test_queue_error_message(detail: Any) -> str:
 	if reason and reason != message:
 		return f"{message} ({reason})"
 	if detail.get("needs_home") and reason is None:
-		return f"{message} (home required)"
+		return f"{message} Home required."
 	return message
 
 

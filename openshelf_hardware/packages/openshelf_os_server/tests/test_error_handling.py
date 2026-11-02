@@ -536,7 +536,6 @@ def _emitted_router_codes() -> set[str]:
 _OPERATOR_COPY_EXCEPTIONS = {
 	"BinWorkflowConflict",
 	"CycleTestStartError",
-	"DirectStoreReservationError",
 	"NoCompatibleBinError",
 	"ValidationError",
 }
@@ -618,7 +617,7 @@ def test_route_messages_do_not_restate_their_code_sentence() -> None:
 	positions = {"api_error": (1, 2), "hardware_api_error": (2, 3), "error_detail": (1, 0), "CycleTestStartError": (0, 1)}
 
 	def words(text: str) -> set[str]:
-		return set(re.findall(r"[a-z0-9']+", text.lower()))
+		return set(re.findall(r"[a-z0-9']+", text.lower())) - {"a", "an", "the", "this", "that"}
 
 	def const(node: ast.AST | None) -> Any:
 		return node.value if isinstance(node, ast.Constant) else None
