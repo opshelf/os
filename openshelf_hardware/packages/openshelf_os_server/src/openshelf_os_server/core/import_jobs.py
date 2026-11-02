@@ -448,6 +448,9 @@ class ImportJobService:
                     changed = True
                 elif workflow.state in ("failed", "cancelled"):
                     self._mark_return_failed(unit, workflow.error)
+                    # Crash recovery may have put the tray home before this result was applied.
+                    if unit.bin_id is not None and await self._recovered_home(unit.bin_id):
+                        self._mark_loaded(unit)
                     changed = True
         if changed:
             await self.session.commit()
@@ -558,15 +561,26 @@ class ImportJobService:
             f"{unit.name} ({size} mm) does not fit any multi-item bin compartment, so it is stored on its own."
         )
 
-    async def _no_tray(self) -> ImportJobError:
+    async def _no_tray(self, first: ImportJobUnit) -> ImportJobError:
         """Why no home tray can be fetched for the next small items."""
-        outside = await self.session.scalar(
-            select(StorageBin.id).where(StorageBin.active.is_(True), StorageBin.status != "at_home").limit(1)
-        )
-        if outside is not None:
-            # A tray that is out may be the one these items need; the operator returns it first.
+        outside = (
+            await self.session.scalars(
+                select(StorageBin)
+                .where(StorageBin.active.is_(True), StorageBin.status != "at_home")
+                .order_by(StorageBin.barcode)
+            )
+        ).all()
+        for tray in outside:
+            if not self.bins.batch_fits(tray, first.planned_dimensions):
+                continue
+            # Room and access level as the plan would count them once the tray is home again.
+            if not any(row.id == tray.id for row, _, _ in await self.bins.batch_trays(first.access_level_id, tray.id)):
+                continue
+            # This tray could take the item; the operator returns it with a scan, then fetches again.
             return ImportJobError(
-                409, "trays_outside", "A bin is outside the machine. Return it, then fetch a bin again."
+                409,
+                "trays_outside",
+                f"Bin {tray.barcode} is outside the machine. Put it in the IO box and scan it to return it, then fetch a bin again.",
             )
         return ImportJobError(
             409, "no_tray_free", "No multi-item bin with a free compartment fits this item. Skip it to continue."
@@ -634,7 +648,7 @@ class ImportJobService:
                         "workflow": None,
                         "units": [self.serialize_unit(unit) for unit in offered],
                         "error": None,
-                        "reason": None if tray is not None else (await self._no_tray()).message,
+                        "reason": None if tray is not None else (await self._no_tray(first)).message,
                     }
                 return {"kind": "unit", "unit": self.serialize_unit(first)}
         storing = [unit for unit in in_progress if unit.stage == "storing"]
@@ -648,11 +662,15 @@ class ImportJobService:
         workflow = await self._tray_workflow(job)
         placed = [unit for unit in in_progress if unit.stage == "placed"]
         returning = [unit for unit in in_progress if unit.stage == "returning"]
-        if workflow is not None and workflow.state in ("retrieving_bin", "awaiting_operator", "failed"):
+        # A delivery the robot refused before moving is cancelled with the tray still home; the
+        # operator still needs to see why the bin did not come.
+        refused = workflow is not None and workflow.state == "cancelled" and workflow.error is not None
+        if workflow is not None and (workflow.state in ("retrieving_bin", "awaiting_operator", "failed") or refused):
             phase = {
                 "retrieving_bin": "fetching",
                 "awaiting_operator": "filling",
                 "failed": "failed",
+                "cancelled": "failed",
             }[workflow.state]
             members = [unit for unit in placed if unit.bin_id == workflow.bin_id]
             group: list[ImportJobUnit] = []
@@ -982,7 +1000,7 @@ class ImportJobService:
             unit.dimensions = measured
             unit.request_id = self._request_id(job, unit)
             workflow = await self._tray_workflow(job)
-            if workflow is not None and workflow.state == "failed":
+            if workflow is not None and workflow.state in ("failed", "cancelled"):
                 # The operator moved on from the failed delivery; a moved bin is recovered by the
                 # existing failed/interrupted bin task handling.
                 job.tray_workflow_id = None
@@ -1062,7 +1080,7 @@ class ImportJobService:
             raise ImportJobError(409, "not_current", "That item does not belong in the bin.")
         tray, _ = await self._batch_tray(await self._small_group(job, first, trays))
         if tray is None:
-            raise await self._no_tray()
+            raise await self._no_tray(first)
         try:
             workflow = await self.bins.begin_batch(tray, user_id, job.id)
         except BinWorkflowConflict as exc:
@@ -1326,6 +1344,27 @@ async def notify_command_result(
         logger.exception("Failed to apply robot result to import job: %s", exc)
 
 
+async def import_holds_bin(session: AsyncSession, barcode: str) -> bool:
+    """Whether an open import still has to return this tray from its own screen.
+
+    Its placed items are confirmed only by the import's return; an ordinary return would put the
+    tray home behind the import's back and leave it asking for the tray in the IO box.
+    """
+    unit = await session.scalar(
+        select(ImportJobUnit.id)
+        .join(StorageBin, StorageBin.id == ImportJobUnit.bin_id)
+        .join(ImportJob, ImportJob.id == ImportJobUnit.job_id)
+        .where(
+            StorageBin.barcode == barcode,
+            ImportJobUnit.status == "in_progress",
+            ImportJobUnit.stage.in_(("placed", "returning")),
+            ImportJob.state.in_(OPEN_STATES),
+        )
+        .limit(1)
+    )
+    return unit is not None
+
+
 def mutation_lock() -> asyncio.Lock:
     return _lock
 
@@ -1338,6 +1377,7 @@ __all__ = [
     "MAX_UNITS",
     "event_publisher",
     "generate_barcode",
+    "import_holds_bin",
     "is_mock_mode",
     "mutation_lock",
     "notify_command_result",

@@ -128,6 +128,19 @@ async def _has_active_bin_workflow() -> bool:
         return await bin_storage.has_unfinished_motion()
 
 
+async def _interrupted_bin_crash_reason() -> Optional[str]:
+    """Why the robot starts stopped: a tray motion was cut short and its tray is unaccounted for.
+
+    The worker's crash state lives in memory, so a restart would otherwise drop the crash dialog
+    that lists these trays, and nothing else lets the operator confirm them back on their shelves.
+    """
+    async with AsyncSessionLocal() as session:
+        interrupted = await BinStorageService(session).crash_interrupted_workflows()
+    if not interrupted:
+        return None
+    return "A bin move was interrupted. Check that every bin is on its shelf before resetting."
+
+
 async def init_robot_worker() -> None:
     """Bring up the robot in the background, reporting progress into the init tracker.
 
@@ -234,6 +247,14 @@ async def init_robot_worker() -> None:
         elif failed_motor_components:
             reason = "Startup failed for motion components: " + ", ".join(failed_motor_components)
             worker.set_needs_home(reason, axes=failed_motor_components)
+        try:
+            interrupted_reason = await _interrupted_bin_crash_reason()
+        except Exception as e:
+            # The trays can still be returned by scanning; never fail startup over the dialog.
+            interrupted_reason = None
+            logger.warning("interrupted_bin_query_failed: %s", e, exc_info=True)
+        if interrupted_reason is not None:
+            worker.set_crash_state(interrupted_reason)
         logger.info("Got Instance")
         await worker.connect()
         logger.info("Robot worker connected")

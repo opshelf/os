@@ -417,7 +417,8 @@ async def start_import_tray(
     Delivers the tray planned for the next unit to the IO box; the step offers the units planned
     for that tray, and the rest wait for a later tray. Requires an empty IO box and an idle,
     homed robot. When the plan leaves the next unit without a tray, nothing moves or is
-    skipped: `409 trays_outside` when a tray is out, else `409 no_tray_free`; the step's
+    skipped: `409 trays_outside` naming a tray that is out and could take it once returned (the
+    operator scans it back), else `409 no_tray_free`; the step's
     `reason` says the same, and the operator skips the unit to continue. A small
     unit no tray compartment takes at all is offered as a `unit` step instead.
     """

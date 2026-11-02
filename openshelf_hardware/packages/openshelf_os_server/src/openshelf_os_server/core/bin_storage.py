@@ -89,11 +89,20 @@ CRASH_FAILURE_CODES = {
     GRIP_RELEASE_FAILED_CODE,
 }
 
+# The worker refuses a retrieve before any motion when the IO box is not empty.
+IO_BOX_OCCUPIED_CODE = "io_box_occupied"
+# What startup records for a tray motion the restart cut short: like an emergency stop, the tray
+# may be anywhere between its shelf and the IO box, so the crash dialog asks the operator.
+RESTART_INTERRUPTED_CODE = "command_interrupted"
+
+# Retrieves the worker refused up front: the gripper still holds a tray, or the IO box is not
+# empty. Nothing started, so the tray is still on its shelf. A return refused the same way still
+# has its tray in the IO box, so for a return these codes do not mean the tray never left.
+RETRIEVE_REFUSED_CODES = {TRAY_ON_TOOL_CODE, IO_BOX_OCCUPIED_CODE}
 # A pick whose grip check failed before anything was lifted: the tray never left its shelf, so
-# cancelling the command leaves inventory as it was and no tray needs operator recovery. A
-# retrieve the worker refused up front because the gripper holds a tray never started either; a
-# return refused the same way still has its tray in the IO box, so it is not in this class.
-TRAY_NEVER_LEFT_CODES = {GRIP_PICK_FAILED_CODE, TRAY_ON_TOOL_CODE}
+# cancelling the command leaves inventory as it was and no tray needs operator recovery. The
+# refused retrieves above never started either.
+TRAY_NEVER_LEFT_CODES = {GRIP_PICK_FAILED_CODE, *RETRIEVE_REFUSED_CODES}
 
 logger = logging.getLogger(__name__)
 
@@ -1068,7 +1077,13 @@ class BinStorageService:
             if (workflow.resolution or {}).get("physical_return_completed"):
                 await self.complete_return(workflow)
             elif workflow.state in {"retrieving_bin", "returning_bin"}:
-                await self.fail(workflow, "The bin move was interrupted. Check the robot before continuing.")
+                # Coded like an interrupted command, so the crash dialog lists the tray and the
+                # operator can confirm it home; without a code it would stay outside for good.
+                await self.fail(
+                    workflow,
+                    "The bin move was interrupted. Check the robot before continuing.",
+                    code=RESTART_INTERRUPTED_CODE,
+                )
 
     async def serialize_workflow(self, row: StorageBinWorkflow) -> dict[str, Any]:
         tray = await self.session.get(StorageBin, row.bin_id)
@@ -1751,7 +1766,7 @@ class BinStorageService:
             code = payload.get("code")
             error = str(payload.get("error") or "Bin motion failed")
             if code in TRAY_NEVER_LEFT_CODES and (
-                code != TRAY_ON_TOOL_CODE or workflow.state == "retrieving_bin"
+                code not in RETRIEVE_REFUSED_CODES or workflow.state == "retrieving_bin"
             ):
                 # Nothing was lifted, so the command is cancelled: the tray stays home and the
                 # workflow leaves no unfinished motion behind.

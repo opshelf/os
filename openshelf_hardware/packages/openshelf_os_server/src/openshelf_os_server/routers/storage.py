@@ -35,7 +35,7 @@ from ..database.models import (
     User,
 )
 from ..core.bin_storage import ACTIVE_STATES, BATCH_OPERATION, BinStorageService, BinWorkflowConflict, NoCompatibleBinError, ensure_worker_homed_for_bin_motion, ensure_worker_queue_empty_for_bin_start, is_io_box_occupied, is_reserved_bin_barcode
-from ..core.import_jobs import ImportJobService, mutation_lock
+from ..core.import_jobs import ImportJobService, import_holds_bin, mutation_lock
 from ..core.mock_robot import get_mock_robot_runtime
 from ..core.storage import StorageService
 from ..core.validation import CellOccupiedError, ValidationError
@@ -1020,8 +1020,10 @@ async def _tray_workflow(session: AsyncSession, workflow_id: str) -> StorageBinW
 @router.post("/bin-workflows/returns", responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422)), dependencies=[Depends(require_permissions("storage:write"))])
 async def begin_tray_return(request: TrayBarcode, session: AsyncSession = Depends(get_db),
                             current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
-    """Resolve a tray barcode and open contents selection without moving hardware. Known contents are selected by default; an item just taken out is listed but unselected. An already stored tray returns 409."""
+    """Resolve a tray barcode and open contents selection without moving hardware. Known contents are selected by default; an item just taken out is listed but unselected. An already stored tray returns 409, and so does a tray a running import still has to return from its own screen."""
     service = BinStorageService(session)
+    if await import_holds_bin(session, request.barcode):
+        raise api_error(409, "bin_workflow_conflict", "This bin is in use by an import. Finish it on the import screen.")
     try:
         workflow = await service.begin_return(request.barcode, current_user.id)
     except BinWorkflowConflict as exc:
