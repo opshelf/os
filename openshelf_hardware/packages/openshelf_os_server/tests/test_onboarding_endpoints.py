@@ -229,7 +229,7 @@ async def test_pending_admin_user_email_conflict_returns_typed_409(
     )
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
-    assert (detail["message"], detail["code"]) == ("Administrator account is already created.", "conflict")
+    assert (detail["message"], detail["code"]) == ("Administrator account is already created.", "admin_already_created")
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(User).filter(User.email == "admin@opshelf.com"))

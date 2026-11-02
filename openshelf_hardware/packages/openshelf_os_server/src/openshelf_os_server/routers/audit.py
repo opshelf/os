@@ -3,7 +3,7 @@ from openshelf_os_server.documentation import response_docs
 from datetime import datetime
 from typing import Optional, List, Any, cast
 
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, select, func
 from sqlalchemy.orm import selectinload
@@ -14,6 +14,7 @@ from ..database.models import AuditLog, User
 from .auth_deps import get_current_user, require_permissions
 from ..utils.audit_constants import LEGACY_COMMAND_RECORDS_FIELD
 from ..utils.audit_integrity import canonicalize_payload, sha256_hex, build_binding_message, verify_binding_hmac
+from openshelf_os_server.errors import api_error
 
 router = APIRouter(
 	prefix="/api/audit",
@@ -172,10 +173,7 @@ async def get_audit_log(
 	log = log_result.scalar_one_or_none()
 	
 	if log is None:
-		raise HTTPException(
-			status_code=status.HTTP_404_NOT_FOUND,
-			detail="Audit log not found"
-		)
+		raise api_error(status.HTTP_404_NOT_FOUND, "audit_log_not_found", "Audit log not found")
 	
 	return AuditLogResponse(
 		id=int(log.id),

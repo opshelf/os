@@ -98,20 +98,14 @@ async def ensure_laser_auto_calibration_not_running() -> None:
 	if await manager.is_active() is False:
 		return
 
-	raise HTTPException(
-		status_code=status.HTTP_409_CONFLICT,
-		detail="The robot is calibrating.",
-	)
+	raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "The robot is calibrating.")
 
 
 async def get_robot_worker_or_503():
 	try:
 		return await get_robot_worker()
 	except ValueError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized") from exc
 _DEFAULT_CELL_HEIGHT = 200.0
 _DEFAULT_CELL_WIDTH = 480.0
 _DEFAULT_DIVIDER_WIDTH = 12.0
@@ -173,10 +167,7 @@ async def _ensure_cell_is_testable(
 		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_found", "") from exc
 
 	if cell.status in UNTESTABLE_CELL_STATUSES:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"cell is {cell.status.value} and cannot be used for calibration tests",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_unavailable", f"cell is {cell.status.value} and cannot be used for calibration tests")
 
 	if not allow_tray_home:
 		# Grip tests exercise the tray in its home; single-item transfers would record a fake
@@ -185,10 +176,7 @@ async def _ensure_cell_is_testable(
 			if await is_reserved_bin_location(
 				(location.side.value, location.shelf_idx, location.cell_idx), session
 			):
-				raise HTTPException(
-					status_code=status.HTTP_400_BAD_REQUEST,
-					detail="cell is a bin home and cannot be used for this calibration test",
-				)
+				raise api_error(status.HTTP_400_BAD_REQUEST, "cell_unavailable", "cell is a bin home and cannot be used for this calibration test")
 
 	return cell
 
@@ -202,23 +190,14 @@ def _build_laser_auto_calibration_scope(
 	include_extension_calibration: bool | None,
 ) -> LaserAutoCalibrationScope:
 	if shelf_idx is not None and shelf_idx < 0:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="shelf_idx must be non-negative",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "shelf_idx must be non-negative")
 
 	if cell_idx is not None and cell_idx < 0:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="cell_idx must be non-negative",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "cell_idx must be non-negative")
 
 	if mode == "both":
 		if side is not None or shelf_idx is not None or cell_idx is not None:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail="side, shelf_idx, and cell_idx cannot be used with both mode",
-			)
+			raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "side, shelf_idx, and cell_idx cannot be used with both mode")
 
 		return LaserAutoCalibrationScope(
 			mode="both",
@@ -228,10 +207,7 @@ def _build_laser_auto_calibration_scope(
 
 	if side is None:
 		if shelf_idx is not None or cell_idx is not None:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail="side is required when shelf_idx or cell_idx is provided",
-			)
+			raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "side is required when shelf_idx or cell_idx is provided")
 
 		return LaserAutoCalibrationScope(
 			mode="all",
@@ -240,10 +216,7 @@ def _build_laser_auto_calibration_scope(
 		)
 
 	if cell_idx is not None and shelf_idx is None:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="shelf_idx is required when cell_idx is provided",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "shelf_idx is required when cell_idx is provided")
 
 	if shelf_idx is None:
 		return LaserAutoCalibrationScope(
@@ -596,28 +569,19 @@ def _get_shelf(grid, side: StorageModuleSide, shelf_idx: int):
 	try:
 		return grid.get_shelf(side, shelf_idx)
 	except IndexError as e:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid shelf_idx: {shelf_idx}",
-		) from e
+		raise api_error(status.HTTP_400_BAD_REQUEST, "shelf_not_found", f"Invalid shelf_idx: {shelf_idx}") from e
 
 
 def _get_cell(shelf, cell_idx: int):
 	try:
 		return shelf.get_cell(cell_idx)
 	except IndexError as e:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid cell_idx: {cell_idx}",
-		) from e
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_found", f"Invalid cell_idx: {cell_idx}") from e
 
 
 def _validate_non_negative_index(index: int, label: str) -> None:
 	if index < 0:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid {label}: {index}",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", f"Invalid {label}: {index}")
 
 
 def _find_shelf(grid, side: StorageModuleSide, shelf_idx: int):
@@ -802,10 +766,7 @@ async def _build_clamped_manual_coordinate(tool, request: MovePositionRequest) -
 
 def _get_stage_limit(tool) -> float:
 	if tool._ms is None:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Stage motor not configured",
-		)
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor not configured")
 	return tool._ms._params.lim
 
 
@@ -819,10 +780,7 @@ def _get_stage_limit_from_config(config) -> Optional[float]:
 
 def _validate_stage_target(value: float, limit: float, label: str) -> None:
 	if value < 0 or value > limit:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"{label} must be between 0 and {limit} (got {value})",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", f"{label} must be between 0 and {limit} (got {value})")
 
 
 @router.get(
@@ -927,10 +885,7 @@ async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
 	try:
 		return await manager.abort()
 	except RuntimeError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail=str(exc),
-		) from exc
+		raise api_error(status.HTTP_409_CONFLICT, "laser_calibration_running", str(exc)) from exc
 
 
 class LaserZStallSetting(BaseModel):
@@ -1040,47 +995,29 @@ async def stream_laser_auto_calibration(
 		try:
 			worker = await get_robot_worker()
 		except ValueError as exc:
-			raise HTTPException(
-				status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-				detail="Robot is not initialized",
-			) from exc
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized") from exc
 
 		_ensure_ready(worker)
 
 		if getattr(worker, "_current_command", None) is not None:
-			raise HTTPException(
-				status_code=status.HTTP_409_CONFLICT,
-				detail="The robot is busy with another task.",
-			)
+			raise api_error(status.HTTP_409_CONFLICT, "robot_busy", "The robot is busy with another task.")
 
 		if getattr(worker, "_demo_cycling", False) is True:
-			raise HTTPException(
-				status_code=status.HTTP_409_CONFLICT,
-				detail="The robot is running the demo cycle.",
-			)
+			raise api_error(status.HTTP_409_CONFLICT, "demo_running", "The robot is running the demo cycle.")
 
 		try:
 			# Reserve laser motion under the same gate as bin workflow creation.
 			# The manager records its task synchronously before this gate is released.
 			await manager.ensure_session_started(worker, requested_scope)
 		except RuntimeError as exc:
-			raise HTTPException(
-				status_code=status.HTTP_409_CONFLICT,
-				detail=str(exc),
-			) from exc
+			raise api_error(status.HTTP_409_CONFLICT, "laser_calibration_running", str(exc)) from exc
 		except ValueError as exc:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail=str(exc),
-			) from exc
+			raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", str(exc)) from exc
 	else:
 		snapshot = await manager.get_snapshot()
 
 		if snapshot.requested_scope.model_dump() != requested_scope.model_dump():
-			raise HTTPException(
-				status_code=status.HTTP_409_CONFLICT,
-				detail="Laser auto calibration is already running with a different scope",
-			)
+			raise api_error(status.HTTP_409_CONFLICT, "laser_calibration_running", "Laser auto calibration is already running with a different scope")
 
 	queue, initial_snapshot = await manager.subscribe()
 
@@ -1146,10 +1083,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	cell = _get_cell(shelf, request.cell_idx)
 
 	if cell.calibration_point is None:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="Cell has no calibration point",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_calibrated", "Cell has no calibration point")
 
 	cal_point = cell.calibration_point
 
@@ -1210,10 +1144,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 	await ensure_laser_auto_calibration_not_running()
 
 	if _current_position is None:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="No active calibration session. Move to a cell first.",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "calibration_session_required", "No active calibration session. Move to a cell first.")
 
 	worker = await get_robot_worker_or_503()
 
@@ -1235,32 +1166,23 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 		async with manual_motion_guard("calibration_jog", worker=worker):
 			if request.axis == "x":
 				if tool._mx is None:
-					raise HTTPException(
-						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-						detail="X motor not configured",
-					)
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "X motor not configured")
 				await _clear_motors_for_move(tool, gantry=True)
 				new_x = _clamp_value(new_x + request.delta, x_limit, "X axis", warnings)
 				await tool._mx.move_to_position(new_x)
 			elif request.axis == "y":
 				if tool._my is None:
-					raise HTTPException(
-						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-						detail="Y motor not configured",
-					)
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Y motor not configured")
 				await _clear_motors_for_move(tool, gantry=True)
 				new_y = _clamp_value(new_y + request.delta, y_limit, "Y axis", warnings)
 				await tool._my.move_to_position(new_y)
 			elif request.axis == "z":
 				if tool._mg is None:
-					raise HTTPException(
-						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-						detail="Gripper motor not configured",
-					)
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Gripper motor not configured")
 				await _clear_motors_for_move(tool, gripper=True)
 				grip_ext = await tool.get_param("Z_EXTENSION_PLACE")
 				if grip_ext is None:
-					raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Z_EXTENSION_PLACE not configured")
+					raise api_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "config_error", "Z_EXTENSION_PLACE not configured")
 				current_gripper_pos = grip_ext + _current_position.z_offset
 				z_limit = tool._mg._params.lim
 				new_gripper_pos = _clamp_value(current_gripper_pos + request.delta, z_limit, "Z axis", warnings)
@@ -1270,10 +1192,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 				await tool._mg.move_to_position(new_gripper_pos, rpm=grip_rpm, accel=grip_accel)
 			elif request.axis == "stage":
 				if tool._ms is None:
-					raise HTTPException(
-						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-						detail="Stage motor not configured",
-					)
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor not configured")
 				await _clear_motors_for_move(tool, stage=True)
 				new_slide = _clamp_value(new_slide + request.delta, stage_limit, "Stage", warnings)
 				await tool._ms.move_to_position(new_slide)
@@ -1419,10 +1338,7 @@ async def grip_probe(request: GripProbeRequest) -> list[GripProbePoint]:
 	far = [z for z in request.z_offsets if abs(float(z) - float(coordinate.z_offset)) > GRIP_PROBE_MAX_DEVIATION_MM]
 
 	if far:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"z offsets {far} are more than {GRIP_PROBE_MAX_DEVIATION_MM:.0f}mm from the cell's {coordinate.z_offset:.2f}",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", f"z offsets {far} are more than {GRIP_PROBE_MAX_DEVIATION_MM:.0f}mm from the cell's {coordinate.z_offset:.2f}")
 
 	tool = worker._robot._tool
 	target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
@@ -1685,10 +1601,7 @@ async def start_cell_test_queue(request: TestQueueRequest) -> TestQueueSnapshot:
 
 	async with _test_queue_lock:
 		if _test_queue_task is not None and _test_queue_task.done() is False:
-			raise HTTPException(
-				status_code=status.HTTP_409_CONFLICT,
-				detail="a calibration test queue is already running",
-			)
+			raise api_error(status.HTTP_409_CONFLICT, "calibration_test_running", "a calibration test queue is already running")
 
 		_test_queue_abort_requested = False
 		now = _test_queue_now_iso()
@@ -1750,10 +1663,7 @@ async def abort_cell_test_queue() -> TestQueueSnapshot:
 	global _test_queue_abort_requested
 
 	if _test_queue_task is None or _test_queue_task.done() is True:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="no calibration test queue is running",
-		)
+		raise api_error(status.HTTP_409_CONFLICT, "calibration_test_not_running", "no calibration test queue is running")
 
 	_test_queue_abort_requested = True
 	return _test_queue_snapshot.model_copy(deep=True)
@@ -1766,10 +1676,7 @@ def _validate_saved_dimensions(dimensions: Dimensions) -> None:
 		("length", dimensions.length),
 	):
 		if not value > 0:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail=f"Dimension {field} must be greater than zero",
-			)
+			raise api_error(status.HTTP_400_BAD_REQUEST, "dimension_invalid", f"Dimension {field} must be greater than zero")
 
 
 @router.post(
@@ -1798,10 +1705,7 @@ async def save_calibration(request: SaveRequest):
 		try:
 			new_status = CellStatus(request.status)
 		except ValueError:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail=f"Invalid status: {request.status}. Must be one of: available, occupied, maintenance, disabled",
-			)
+			raise api_error(status.HTTP_400_BAD_REQUEST, "cell_status_invalid", f"Invalid status: {request.status}. Must be one of: available, occupied, maintenance, disabled")
 
 	# Read tray homes while the caller's request session is open, so a coordinate save
 	# cannot silently change the cell a checked-out tray returns to.
@@ -1813,7 +1717,7 @@ async def save_calibration(request: SaveRequest):
 				side=request.side, shelf_idx=request.shelf_idx, cell_idx=request.cell_idx
 			))
 		except (IndexError, ValueError) as exc:
-			raise HTTPException(status_code=409, detail="Bin home cell is missing from storage") from exc
+			raise api_error(409, "bin_home_missing", "Bin home cell is missing from storage") from exc
 
 	side_enum = request.side
 	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)
@@ -1875,10 +1779,7 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 	tool = worker._robot._tool
 
 	if tool._ms is None or tool._mg is None:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Tool motors not configured",
-		)
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Tool motors not configured")
 
 	try:
 		async with manual_motion_guard("calibration_home_tool_motors", worker=worker, allow_tray_on_tool=True):
@@ -1990,18 +1891,12 @@ def _get_iobox_door_config(config):
 	try:
 		return config.robot.io.motors.by_name("door")
 	except KeyError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="IO door motor is not configured",
-		) from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "IO door motor is not configured") from exc
 
 
 def _validate_iobox_door_positions(close: float, open: float) -> None:
 	if close >= open:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="IO door close position must be less than open position",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "door_positions_invalid", "IO door close position must be less than open position")
 
 
 def _with_iobox_door_positions(door_config, close: float, open: float):
@@ -2062,10 +1957,7 @@ async def move_iobox_door(request: IOBoxDoorMoveRequest):
 	io = worker._robot._io
 	motor = io._md
 	if motor is None:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="IO door motor is not configured",
-		)
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "IO door motor is not configured")
 
 	temporary_config = _with_iobox_door_positions(motor._params, request.close, request.open)
 	target = request.close if request.position == "close" else request.open
@@ -2267,27 +2159,21 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 		async with manual_motion_guard("calibration_iobox_jog", worker=worker):
 			if request.axis == "x":
 				if tool._mx is None:
-					raise HTTPException(
-						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-						detail="X motor not configured",
-					)
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "X motor not configured")
 				await _clear_motors_for_move(tool, gantry=True)
 				new_value = _clamp_value(current_value + request.delta, tool._mx._params.lim, "X axis", warnings)
 				new_value = _round_iobox_calibration_value(new_value)
 				await tool._mx.move_to_position(new_value)
 			elif request.axis == "y":
 				if tool._my is None:
-					raise HTTPException(
-						status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-						detail="Y motor not configured",
-					)
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Y motor not configured")
 				await _clear_motors_for_move(tool, gantry=True)
 				new_value = _clamp_value(current_value + request.delta, tool._my._params.lim, "Y axis", warnings)
 				new_value = _round_iobox_calibration_value(new_value)
 				await tool._my.move_to_position(new_value)
 			elif request.axis == "z":
 				if tool._mg is None:
-					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gripper motor not configured")
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Gripper motor not configured")
 				await _clear_motors_for_move(tool, gripper=True)
 				new_value = _clamp_value(current_value + request.delta, tool._mg._params.lim, "Z axis", warnings)
 				new_value = _round_iobox_calibration_value(new_value)
@@ -2296,7 +2182,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				await tool._mg.move_to_position(new_value, rpm=grip_rpm, accel=grip_accel)
 			else:
 				if tool._ms is None:
-					raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stage motor not configured")
+					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor not configured")
 				await _clear_motors_for_move(tool, stage=True)
 				new_value = _clamp_value(current_value + request.delta, tool._ms._params.lim, "Stage", warnings)
 				new_value = _round_iobox_calibration_value(new_value)
@@ -2367,10 +2253,10 @@ async def test_iobox_sequence(with_gripper: bool = False):
 		stage_nudge = await tool.get_param("STAGE_NUDGE")
 
 		if tool._ms is None or tool._mg is None:
-			raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Motors not configured")
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Motors not configured")
 
 		if stage_nudge is None:
-			raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="STAGE_NUDGE not configured")
+			raise api_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "config_error", "STAGE_NUDGE not configured")
 
 		stage_limit = _get_stage_limit(tool)
 		_validate_stage_target(stage_ext, stage_limit, "STAGE_EXTENSION_IO_BOX")
@@ -2420,7 +2306,7 @@ async def test_iobox_multi_item_cycle():
 	io = worker._robot._io
 
 	if tool._ms is None or tool._mg is None:
-		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Motors not configured")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Motors not configured")
 
 	stage_ext = iobox_current.multi_item_stage_extension
 	grip_ext = iobox_current.multi_item_z_extension
@@ -2594,7 +2480,7 @@ async def rotate_to_angle(angle: float):
 
 	tool = worker._robot._tool
 	if tool._mr is None:
-		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Rotation motor not configured")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Rotation motor not configured")
 
 	rotation_limit = tool._mr._params.lim
 	clamped_angle = max(0, min(rotation_limit, angle))
@@ -2715,10 +2601,7 @@ async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 		stage_limit = _get_stage_limit_from_config(config)
 
 	if stage_limit is None:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Stage motor limit unavailable",
-		)
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor limit unavailable")
 
 	_validate_stage_target(request.front, stage_limit, "STAGE_EXTENSION_SHELF_FRONT")
 	_validate_stage_target(request.back, stage_limit, "STAGE_EXTENSION_SHELF_BACK")
@@ -2765,10 +2648,7 @@ async def move_stage(request: StageMoveRequest):
 	tool = worker._robot._tool
 
 	if tool._ms is None:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Stage motor not configured",
-		)
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "Stage motor not configured")
 
 	stage_limit = tool._ms._params.lim
 

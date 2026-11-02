@@ -26,6 +26,7 @@ from ..database.models import User
 from ..database.session import get_db
 from ..settings import get_settings
 from .auth_deps import get_current_user
+from openshelf_os_server.errors import api_error, error_detail
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -125,7 +126,7 @@ async def get_public_users(
 	)
 	users = list(result.scalars().all())
 	if len(users) > 3:
-		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+		raise api_error(status.HTTP_404_NOT_FOUND, "not_found", "Not found")
 
 	return [
 		PublicUserResponse(
@@ -211,7 +212,7 @@ async def login_json(
 	if retry_after > 0:
 		raise HTTPException(
 			status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-			detail=LOGIN_FAILED_DETAIL,
+			detail=error_detail(LOGIN_FAILED_DETAIL, "login_rate_limited"),
 			headers={"Retry-After": str(retry_after)},
 		)
 
@@ -219,7 +220,7 @@ async def login_json(
 		retry_after = login_backoff.record_failure(backoff_key)
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail=LOGIN_FAILED_DETAIL,
+			detail=error_detail(LOGIN_FAILED_DETAIL, "login_failed"),
 			headers={"Retry-After": str(retry_after)},
 		)
 
@@ -271,10 +272,7 @@ async def refresh_token(
 	
 	payload = auth_service.decode_token(request.refresh_token)
 	if payload is None or payload.get("type") != "refresh":
-		raise HTTPException(
-			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Invalid refresh token"
-		)
+		raise api_error(status.HTTP_401_UNAUTHORIZED, "refresh_token_invalid", "Invalid refresh token")
 	
 	result = await db.execute(
 		select(User)
@@ -287,10 +285,7 @@ async def refresh_token(
 	user = result.scalar_one_or_none()
 	
 	if user is None:
-		raise HTTPException(
-			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="User not found or inactive"
-		)
+		raise api_error(status.HTTP_401_UNAUTHORIZED, "unauthorized", "User not found or inactive")
 	
 	access_token = auth_service.create_access_token(
 		user_id=user.id,

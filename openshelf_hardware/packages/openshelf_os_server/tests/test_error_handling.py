@@ -510,6 +510,27 @@ def test_router_messages_never_carry_raw_exception_text() -> None:
 	assert found == []
 
 
+def test_every_http_error_carries_a_code() -> None:
+	"""A string detail gets only its status default code, so clients fall back to
+	matching the sentence, which breaks on the next copy edit. Raise api_error, or
+	build the detail with error_detail."""
+	source_dir = pathlib.Path(__file__).resolve().parents[1] / "src" / "openshelf_os_server"
+	uncoded = []
+	for path in sorted(source_dir.rglob("*.py")):
+		if path.name == "errors.py":
+			continue
+		for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
+			if not (isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", None)) == "HTTPException"):
+				continue
+			detail = next((k.value for k in node.keywords if k.arg == "detail"), node.args[1] if len(node.args) > 1 else None)
+			coded = isinstance(detail, ast.Call) or (
+				isinstance(detail, ast.Dict) and any(isinstance(k, ast.Constant) and k.value == "code" for k in detail.keys)
+			)
+			if coded is False:
+				uncoded.append(f"{path.relative_to(source_dir)}:{node.lineno}")
+	assert uncoded == []
+
+
 def test_every_router_emitted_code_has_a_code_message() -> None:
 	"""A code a router raises must carry its own sentence, or a code-first
 	client falls back to a status default that is wrong advice for a 409 or

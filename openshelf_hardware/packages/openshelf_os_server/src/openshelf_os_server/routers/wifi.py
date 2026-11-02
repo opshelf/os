@@ -8,7 +8,7 @@ import socket
 import struct
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 
 from openshelf_os_server.core.logging_config import get_logger
@@ -277,7 +277,7 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 	ssid = requested_ssid.strip()
 
 	if ssid == "":
-		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Choose a network to connect to.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "wifi_network_required", "Choose a network to connect to.")
 	previous_connection = await _active_connection_name()
 	logger.info("wifi_connect_requested", ssid=ssid, previous=previous_connection)
 

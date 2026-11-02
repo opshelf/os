@@ -440,7 +440,7 @@ async def _load_item_with_locations(
 ) -> ItemWithLocations:
     item = await storage_service.get_item(barcode)
     if item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise api_error(404, "unknown_item", "Item not found")
 
     locations = await storage_service.get_item_locations(barcode)
     return await _build_item_payload_with_bin(
@@ -581,7 +581,7 @@ async def update_tray_layout(
         None,
     )
     if entry is None:
-        raise HTTPException(status_code=404, detail="No bin is assigned to this cell.")
+        raise api_error(404, "bin_not_assigned", "No bin is assigned to this cell.")
 
     current = entry.compartment_layout
     changed = current is None or current.rows != payload.rows or current.columns != payload.columns
@@ -610,10 +610,7 @@ async def update_tray_layout(
                 .limit(1)
             )
             if row.status != "at_home" or await service._member_count(row.id) or unfinished is not None:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Empty the bin and return it before changing its compartment layout.",
-                )
+                raise api_error(409, "bin_not_empty", "Empty the bin and return it before changing its compartment layout.")
 
     next_config = config.model_copy(deep=True)
     for bin_setting in next_config.storage.bins:
@@ -668,13 +665,10 @@ async def assign_tray(
         StorageModuleCellLocation(side=side, shelf_idx=shelf_idx, cell_idx=cell_idx)
     )
     if cell is None:
-        raise HTTPException(status_code=404, detail="Cell does not exist in the grid")
+        raise api_error(404, "cell_not_found", "Cell does not exist in the grid")
     # Laser calibration leaves cells unsized; the tray inherits the cell's dimensions.
     if min(cell.dimensions.width, cell.dimensions.height, cell.dimensions.length) <= 0:
-        raise HTTPException(
-            status_code=409,
-            detail="Set the cell's size before assigning a bin.",
-        )
+        raise api_error(409, "cell_size_required", "Set the cell's size before assigning a bin.")
 
     config = get_root_config()
     home = (side, shelf_idx, cell_idx)
@@ -687,19 +681,19 @@ async def assign_tray(
         == home
         for bin_setting in config.storage.bins
     ):
-        raise HTTPException(status_code=409, detail="This cell is already assigned to a bin.")
+        raise api_error(409, "cell_assigned", "This cell is already assigned to a bin.")
 
     active_barcodes = (
         await session.execute(select(StorageBin.barcode).where(StorageBin.active.is_(True)))
     ).scalars()
     reserved = {bin_setting.barcode for bin_setting in config.storage.bins} | set(active_barcodes)
     if payload.barcode in reserved:
-        raise HTTPException(status_code=409, detail="That barcode is already in use")
+        raise api_error(409, "barcode_in_use", "That barcode is already in use")
     existing_item = (
         await session.execute(select(Item).where(Item.barcode == payload.barcode))
     ).scalar_one_or_none()
     if existing_item is not None:
-        raise HTTPException(status_code=409, detail="That barcode belongs to an item")
+        raise api_error(409, "barcode_in_use", "That barcode belongs to an item")
 
     stale_row = (
         (
@@ -716,17 +710,14 @@ async def assign_tray(
     )
     if stale_row is not None:
         if stale_row.active:
-            raise HTTPException(status_code=409, detail="This cell is already assigned to a bin.")
+            raise api_error(409, "cell_assigned", "This cell is already assigned to a bin.")
         other_holder_ids = (
             await session.execute(
                 select(StorageBin.id).where(StorageBin.barcode == payload.barcode)
             )
         ).scalars().all()
         if any(row_id != stale_row.id for row_id in other_holder_ids):
-            raise HTTPException(
-                status_code=409,
-                detail="That barcode is already used by another bin.",
-            )
+            raise api_error(409, "barcode_in_use", "That barcode is already used by another bin.")
         # A prior, removed tray left a deactivated row occupying this home cell. Re-point it
         # at the new barcode so the re-sync updates it in place instead of colliding with
         # the unique home-cell constraint.
@@ -793,7 +784,7 @@ async def unassign_tray(
         None,
     )
     if entry is None:
-        raise HTTPException(status_code=404, detail="No bin is assigned to this cell.")
+        raise api_error(404, "bin_not_assigned", "No bin is assigned to this cell.")
 
     row = (
         (await session.execute(select(StorageBin).where(StorageBin.barcode == entry.barcode)))
@@ -811,10 +802,7 @@ async def unassign_tray(
             .limit(1)
         )
         if row.status != "at_home" or await service._member_count(row.id) or unfinished is not None:
-            raise HTTPException(
-                status_code=409,
-                detail="Empty the bin and return it before removing it.",
-            )
+            raise api_error(409, "bin_not_empty", "Empty the bin and return it before removing it.")
 
     next_config = config.model_copy(deep=True)
     next_config.storage.bins = [
@@ -873,11 +861,11 @@ async def create_bin_workflow(
         raise _tray_config_error(exc) from exc
     item = await storage.get_item(request.barcode)
     if item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise api_error(404, "unknown_item", "Item not found")
 
     direct_locations = await storage.get_item_locations(item.barcode)
     if request.operation == "store" and direct_locations:
-        raise HTTPException(status_code=409, detail="Item is already stored")
+        raise api_error(409, "item_already_stored", "Item is already stored")
     if request.operation == "store" and request.storage_mode == "direct":
         return {"storage_mode": "direct", "workflow": None}
     if request.operation == "retrieve" and await service.item_bin(item.id) is None:
@@ -926,7 +914,7 @@ async def create_bin_workflow(
                 return {"storage_mode": "direct", "workflow": None}
             raise api_error(409, "no_compatible_bin", str(exc)) from exc
         except BinWorkflowConflict as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
         if workflow is None:
             return {"storage_mode": "direct", "workflow": None}
         mock_runtime = get_mock_robot_runtime()
@@ -943,7 +931,7 @@ async def create_bin_workflow(
                 return {"storage_mode": "direct", "workflow": None}
             raise api_error(409, "no_compatible_bin", str(exc)) from exc
         except BinWorkflowConflict as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
         if workflow is None:
             return {"storage_mode": "direct", "workflow": None}
         workflow.error = "The robot is not running."
@@ -976,7 +964,7 @@ async def create_bin_workflow(
                 return {"storage_mode": "direct", "workflow": None}
             raise api_error(409, "no_compatible_bin", str(exc)) from exc
         except BinWorkflowConflict as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
         except HTTPException:
             raise
         except Exception as exc:
@@ -1015,7 +1003,7 @@ async def recover_crash_interrupted_bin_workflows(session: AsyncSession = Depend
 async def _tray_workflow(session: AsyncSession, workflow_id: str) -> StorageBinWorkflow:
     workflow = await session.get(StorageBinWorkflow, workflow_id)
     if workflow is None:
-        raise HTTPException(status_code=404, detail="This bin task no longer exists.")
+        raise api_error(404, "bin_workflow_not_found", "This bin task no longer exists.")
     return workflow
 
 
@@ -1027,9 +1015,9 @@ async def begin_tray_return(request: TrayBarcode, session: AsyncSession = Depend
     try:
         workflow = await service.begin_return(request.barcode, current_user.id)
     except BinWorkflowConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
     if workflow is None:
-        raise HTTPException(status_code=404, detail="That barcode is not a bin.")
+        raise api_error(404, "bin_not_found", "That barcode is not a bin.")
     if get_operating_mode() == common.OperatingMode.mock:
         runtime = get_mock_robot_runtime()
         runtime.set_bin_io_box_occupied(True)
@@ -1047,7 +1035,7 @@ async def close_tray_workflow(workflow_id: str, session: AsyncSession = Depends(
     try:
         await service.close(workflow)
     except BinWorkflowConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
     if get_operating_mode() == common.OperatingMode.mock:
         runtime = get_mock_robot_runtime()
         runtime.set_bin_io_box_occupied(False)
@@ -1094,7 +1082,7 @@ async def store_returned_tray(workflow_id: str, request: BinWorkflowReturn,
                         await service.fail(workflow, failure_detail(exc, "tray_return_failed")[1])
                         raise
     except BinWorkflowConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
     if worker is not None:
         await service.publish_workflow(worker, workflow)
     return {"workflow": await service.serialize_workflow(workflow)}
@@ -1175,7 +1163,7 @@ async def lookup_item(
 
     item = await storage_service.get_item(barcode)
     if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise api_error(404, "unknown_item", "Item not found")
 
     locations = await storage_service.get_item_locations(barcode)
     return await _build_item_payload_with_bin(item, locations, current_user, session)
@@ -1211,7 +1199,7 @@ async def create_item(
     storage_service = StorageService(session)
 
     if await is_reserved_bin_barcode(item.barcode, session):
-        raise HTTPException(status_code=409, detail="This barcode belongs to a bin.")
+        raise api_error(409, "reserved_bin_barcode", "This barcode belongs to a bin.")
     existing = await storage_service.get_item(item.barcode)
     bin_service = BinStorageService(session)
     dimensions = item.dimensions
@@ -1253,7 +1241,7 @@ async def create_item(
             mass_values={k: v for k, v in item.model_dump(exclude_unset=True).items() if k in (*MASS_FIELDS, "weight")},
         )
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise api_error(422, "validation_failed", str(exc)) from exc
 
     locations = await storage_service.get_item_locations(item.barcode)
 
@@ -1309,7 +1297,7 @@ async def update_item(
     try:
         validate_mass(item.model_dump(exclude_unset=True), existing.tare_weight if existing else None)
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise api_error(422, "validation_failed", str(exc)) from exc
 
     updated_item = await storage_service.update_item(
         barcode=barcode,
@@ -1322,7 +1310,7 @@ async def update_item(
     )
 
     if not updated_item:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise api_error(404, "unknown_item", "Item not found")
 
     fresh_item = await storage_service.get_item(barcode)
     if fresh_item is None:
@@ -1385,7 +1373,7 @@ async def delete_item(
     deleted = await storage_service.delete_item(barcode)
 
     if deleted is False:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise api_error(404, "unknown_item", "Item not found")
 
     _clear_grid_item(barcode, locations)
     return {"message": "Item deleted successfully"}
@@ -1444,10 +1432,10 @@ async def add_item_location(
 
     db_item = await storage_service.get_item(barcode)
     if db_item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise api_error(404, "unknown_item", "Item not found")
     bin_service = BinStorageService(session)
     if await bin_service.item_bin(db_item.id) is not None:
-        raise HTTPException(status_code=409, detail="This item is in a bin.")
+        raise api_error(409, "reserved_tray_item", "This item is in a bin.")
 
     try:
         storage_location = await storage_service.add_item_location(
@@ -1464,7 +1452,7 @@ async def add_item_location(
         raise api_error(422, "invalid_location", "") from exc
 
     if not storage_location:
-        raise HTTPException(status_code=400, detail="Failed to add location")
+        raise api_error(400, "location_add_failed", "Failed to add location")
 
     return await _load_item_with_locations(barcode, storage_service, current_user)
 
@@ -1478,10 +1466,10 @@ async def _remove_item_location_impl(
 ) -> None:
     item = await storage_service.get_item(barcode)
     if item is None:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise api_error(404, "unknown_item", "Item not found")
     bin_service = BinStorageService(storage_service.session)
     if await bin_service.item_bin(item.id) is not None:
-        raise HTTPException(status_code=409, detail="This item is in a bin.")
+        raise api_error(409, "reserved_tray_item", "This item is in a bin.")
     success = await storage_service.remove_item_location(
         barcode=barcode,
         side=side,
@@ -1490,7 +1478,7 @@ async def _remove_item_location_impl(
     )
 
     if not success:
-        raise HTTPException(status_code=404, detail="Location not found")
+        raise api_error(404, "location_not_found", "Location not found")
 
 
 @router.post(
@@ -1587,11 +1575,11 @@ async def update_storage_cell(
     )
 
     if not success:
-        raise HTTPException(status_code=404, detail="Storage cell not found")
+        raise api_error(404, "cell_not_found", "Storage cell not found")
 
     cells = await storage_service.get_storage_cells(shelf_idx=shelf_idx, cell_idx=cell_idx)
     if not cells:
-        raise HTTPException(status_code=404, detail="Storage cell not found")
+        raise api_error(404, "cell_not_found", "Storage cell not found")
 
     cell = cells[0]
     return StorageCellResponse(
@@ -1698,10 +1686,7 @@ async def delete_shelf(
         )
     ).first()
     if bin_ref is not None or item_ref is not None:
-        raise HTTPException(
-            status_code=409,
-            detail="This shelf, or one above it, holds a bin or a stored item. Move or remove them first.",
-        )
+        raise api_error(409, "shelf_occupied", "This shelf, or one above it, holds a bin or a stored item. Move or remove them first.")
 
     try:
         grid = _get_robot_grid()
@@ -1776,10 +1761,7 @@ async def delete_cell(
         )
     ).first()
     if bin_ref is not None or item_ref is not None:
-        raise HTTPException(
-            status_code=409,
-            detail="This cell holds a bin or a stored item. Move or remove it first.",
-        )
+        raise api_error(409, "cell_occupied", "This cell holds a bin or a stored item. Move or remove it first.")
 
     try:
         grid = _get_robot_grid()
@@ -1836,10 +1818,7 @@ def _validate_grid_cell_update(payload: GridCellUpdate) -> None:
     ) != (payload.y is None) or (
         payload.x is None
     ) != (payload.z_offset is None):
-        raise HTTPException(
-            status_code=400,
-            detail="Enter the X, Y and Z offset values together.",
-        )
+        raise api_error(400, "offsets_incomplete", "Enter the X, Y and Z offset values together.")
 
     if payload.status is not None:
         try:
@@ -1897,7 +1876,7 @@ async def update_grid_cells(
         raise _grid_load_error(exc) from exc
 
     if len(payload.cells) == 0:
-        raise HTTPException(status_code=400, detail="No cells to update")
+        raise api_error(400, "cells_required", "No cells to update")
 
     resolved: list[tuple[Cell, GridCellBatchItem]] = []
 

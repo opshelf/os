@@ -15,6 +15,7 @@ from ..database.session import AsyncSessionLocal, get_db
 from ..database.models import User, Item, Role
 from ..core.auth import AuthService
 from ..core.permissions import has_permission
+from openshelf_os_server.errors import api_error, error_detail
 
 # Retain the existing header extraction behavior while documenting JSON login
 # accurately: this API does not implement an OAuth password grant.
@@ -103,15 +104,12 @@ async def get_current_user(
 					email=settings.auth.dev_auto_user,
 					action="answering 503 for unauthenticated requests",
 				)
-			raise HTTPException(
-				status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-				detail=f"Dev auto-user {settings.auth.dev_auto_user} not found in database"
-			)
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "dev_user_missing", f"Dev auto-user {settings.auth.dev_auto_user} not found in database")
 	
 	if not token:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Not authenticated",
+			detail=error_detail("Not authenticated", "unauthorized"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 	
@@ -124,7 +122,7 @@ async def get_current_user(
 	if payload is None or payload.get("type") != "access":
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Invalid token",
+			detail=error_detail("Invalid token", "token_invalid"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 	
@@ -141,7 +139,7 @@ async def get_current_user(
 	if user is None:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="User not found or inactive",
+			detail=error_detail("User not found or inactive", "unauthorized"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 
@@ -204,10 +202,7 @@ async def _get_relay_system_user(db: AsyncSession) -> User:
 	)
 	user = result.scalars().first()
 	if user is None:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Relay service identity is unavailable",
-		)
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "relay_identity_unavailable", "Relay service identity is unavailable")
 	return user
 
 
@@ -246,10 +241,7 @@ def ensure_permissions(user: User, permissions: str | List[str]) -> None:
 	user_permissions = user.role.permissions or []
 	for permission in permissions:
 		if not has_permission(user_permissions, permission):
-			raise HTTPException(
-				status_code=status.HTTP_403_FORBIDDEN,
-				detail=f"Missing required permission: {permission}"
-			)
+			raise api_error(status.HTTP_403_FORBIDDEN, "forbidden", f"Missing required permission: {permission}")
 
 
 def require_permissions(permissions: str | List[str]) -> Callable:
@@ -299,10 +291,7 @@ async def require_relay_or_admin(
 	if getattr(request.state, "relay_service_authenticated", False):
 		return current_user
 	if current_user.role.name != "admin":
-		raise HTTPException(
-			status_code=status.HTTP_403_FORBIDDEN,
-			detail="Only the relay or an administrator can do this",
-		)
+		raise api_error(status.HTTP_403_FORBIDDEN, "forbidden", "Only the relay or an administrator can do this")
 	return current_user
 
 

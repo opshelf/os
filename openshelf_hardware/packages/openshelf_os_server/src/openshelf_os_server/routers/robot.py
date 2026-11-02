@@ -211,10 +211,7 @@ async def _ensure_laser_auto_calibration_not_running() -> None:
     if await is_laser_auto_calibration_running() is False:
         return
 
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail="The robot is calibrating.",
-    )
+    raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "The robot is calibrating.")
 
 
 def _reason_matches_motor(reason: Optional[str], motor_name: str, motor) -> bool:
@@ -365,20 +362,14 @@ class CommandLifecycleResponse(BaseModel):
 async def check_robot_enabled() -> None:
     settings = get_settings()
     if not settings.robot.enabled:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Robot is not enabled or configured",
-        )
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_disabled", "Robot is not enabled or configured")
 
 
 async def get_robot_worker_or_error() -> RobotWorker:
     try:
         return await get_robot_worker()
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Robot is not initialized or failed to start",
-        ) from e
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized or failed to start") from e
 
 
 async def get_command_worker_for_mode() -> RobotWorker | None:
@@ -476,7 +467,7 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
     item_data = command.item or {}
     barcode = item_data.get("barcode")
     if not isinstance(barcode, str) or barcode.strip() == "" or len(barcode) > BARCODE_MAX_LENGTH:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Enter the item barcode.")
+        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "barcode_required", "Enter the item barcode.")
 
     _parse_requested_store_location(item_data)
     await _validate_direct_store_reservation(item_data, db)
@@ -487,28 +478,19 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
             await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
         ).scalar_one_or_none()
         if bin_membership is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="This item is in a bin. Retrieve it before storing it again.",
-            )
+            raise api_error(status.HTTP_409_CONFLICT, "reserved_tray_item", "This item is in a bin. Retrieve it before storing it again.")
         existing = (
             await db.execute(select(ItemLocation).where(ItemLocation.item_id == item.id))
         ).scalars().first()
         if existing is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Item is already stored; retrieve it before storing again",
-            )
+            raise api_error(status.HTTP_409_CONFLICT, "item_already_stored", "Item is already stored; retrieve it before storing again")
         await _validate_mock_store_location(item_data, item.dimensions, db)
         return
 
     name = item_data.get("name")
     dimensions = item_data.get("dimensions")
     if not isinstance(name, str) or name.strip() == "" or not isinstance(dimensions, dict):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="A new item requires barcode, name, and complete dimensions",
-        )
+        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "item_details_required", "A new item requires barcode, name, and complete dimensions")
     try:
         if any(
             isinstance(dimensions.get(key), bool)
@@ -520,21 +502,18 @@ async def _validate_mock_store(command: StoreItemCommand, db: AsyncSession) -> N
         if item_data.get("weight") is not None and float(item_data["weight"]) <= 0:
             raise ValueError
     except (KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Item dimensions and weight must be positive numbers",
-        ) from exc
+        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "dimension_invalid", "Item dimensions and weight must be positive numbers") from exc
 
     await _validate_mock_store_location(item_data, dimensions, db)
 
     try:
         validate_mass(item_data)
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise api_error(422, "validation_failed", str(exc)) from exc
 
     access_level_id = item_data.get("access_level_id")
     if access_level_id is not None and await db.get(AccessLevel, access_level_id) is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid access level")
+        raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "access_level_invalid", "Invalid access level")
 
 
 async def _validate_direct_store_reservation(item_data: dict[str, Any], db: AsyncSession) -> None:
@@ -735,10 +714,7 @@ async def _validate_mock_retrieve(
         logging.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
         raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that cell.")
     if can_user_retrieve_item(current_user, item) is False:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to retrieve this item",
-        )
+        raise api_error(status.HTTP_403_FORBIDDEN, "item_access_denied", "You do not have permission to retrieve this item")
 
 
 @router.post(
@@ -805,10 +781,7 @@ async def robot_commands(
     request_id = getattr(command, "request_id", None)
     if operating_mode == OperatingMode.mock:
         if not isinstance(command, (StoreItemCommand, RetrieveItemCommand)):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only store and retrieve are available in mock mode.",
-            )
+            raise api_error(status.HTTP_400_BAD_REQUEST, "mock_mode_unsupported", "Only store and retrieve are available in mock mode.")
         runtime = get_mock_robot_runtime()
         payload = submission_payload
         try:
@@ -879,10 +852,7 @@ async def robot_commands(
     await _ensure_laser_auto_calibration_not_running()
     if worker is None:
         await check_robot_enabled()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Robot is not initialized or failed to start",
-        )
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized or failed to start")
     _ensure_command_allowed_while_needs_home(command, worker)
     await _ensure_command_allowed_while_tray_on_tool(command, worker)
 
@@ -894,10 +864,7 @@ async def robot_commands(
         if any(key in item_data for key in MASS_FIELDS) and (
             not isinstance(barcode, str) or not barcode.strip() or len(barcode) > BARCODE_MAX_LENGTH
         ):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Enter the item barcode before entering container weights.",
-            )
+            raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "barcode_required", "Enter the item barcode before entering container weights.")
         _parse_requested_store_location(item_data)
         await _validate_direct_store_reservation(item_data, db)
         human_dimensions_source = "command_payload" if item_data.get("dimensions") is not None else "none"
@@ -923,18 +890,12 @@ async def robot_commands(
                 )
                 existing_location = location_result.scalars().first()
                 if existing_location is not None:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail="Item is already stored; retrieve it before storing again",
-                    )
+                    raise api_error(status.HTTP_409_CONFLICT, "item_already_stored", "Item is already stored; retrieve it before storing again")
                 bin_membership = (
                     await db.execute(select(StorageBinItem).where(StorageBinItem.item_id == item.id))
                 ).scalar_one_or_none()
                 if bin_membership is not None:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail="This item is in a bin.",
-                    )
+                    raise api_error(status.HTTP_409_CONFLICT, "reserved_tray_item", "This item is in a bin.")
                 item_data["tare_weight"] = item.tare_weight
                 item_data["full_net_weight"] = item.full_net_weight
                 command = StoreItemCommand(item=item_data, request_id=request_id)
@@ -947,15 +908,12 @@ async def robot_commands(
                     or not 0 < dimensions[key] < math.inf
                     for key in ("width", "height", "length")
                 ):
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail="New items require finite positive width, height, and length",
-                    )
+                    raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "dimension_invalid", "New items require finite positive width, height, and length")
                 try:
                     ItemValidator.validate_weight(item_data.get("weight"))
                     validate_mass(item_data)
                 except ValidationError as exc:
-                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                    raise api_error(422, "validation_failed", str(exc)) from exc
                 # Prepare enrollment for the command admission transaction, so
                 # rejected submissions cannot establish an operator baseline.
                 item = Item(barcode=str(barcode), name=str(item_data.get("name") or barcode),
@@ -991,10 +949,7 @@ async def robot_commands(
                 )
             ).scalar_one_or_none()
             if binned_item is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="This item is in a bin.",
-                )
+                raise api_error(status.HTTP_409_CONFLICT, "reserved_tray_item", "This item is in a bin.")
         if worker.get_safety_status().get("bypassed") is not True:
             try:
                 scale_status = worker.get_cached_scale_status()
@@ -1043,10 +998,7 @@ async def robot_commands(
             raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that cell.")
 
         if can_user_retrieve_item(current_user, item) is False:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to retrieve this item"
-            )
+            raise api_error(status.HTTP_403_FORBIDDEN, "item_access_denied", "You do not have permission to retrieve this item")
 
     async with robot_command_enqueue_guard():
         if isinstance(command, StoreItemCommand):
@@ -1107,7 +1059,7 @@ async def get_robot_command(command_id: str, request: Request) -> CommandLifecyc
     """
     row = await get_lifecycle_command(command_id)
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Robot command not found")
+        raise api_error(status.HTTP_404_NOT_FOUND, "command_not_found", "Robot command not found")
     command = serialize_command(row)
     command["result"] = public_payload(command["result"], debug_allowed(request))
     return CommandLifecycleResponse.model_validate(command)
@@ -1339,10 +1291,7 @@ async def emit_scanner_scan_event(
             await worker.publish_event(payload)
     except Exception as exc:
         logging.error("Failed to publish label_scanned event: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The label scan could not be sent. Try again.",
-        ) from exc
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "label_scan_failed", "The label scan could not be sent. Try again.") from exc
     return SuccessResponse()
 
 
@@ -1364,10 +1313,7 @@ async def simulate_io_box(request: IoBoxSimulationRequest) -> SuccessResponse:
     clears it when it takes the item for a store. Hardware modes return `409`.
     """
     if get_operating_mode() != OperatingMode.mock:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="IO-box simulation is available only in mock mode",
-        )
+        raise api_error(status.HTTP_409_CONFLICT, "mock_mode_only", "IO-box simulation is available only in mock mode")
     runtime = get_mock_robot_runtime()
     runtime.set_bin_io_box_occupied(request.occupied)
     await runtime.publish_status()
@@ -1749,15 +1695,9 @@ async def home_motor(
     """
     if skip_pre_home_approach is True:
         if get_operating_mode() != OperatingMode.development:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Skipping the pre-home approach is only available in development mode",
-            )
+            raise api_error(status.HTTP_403_FORBIDDEN, "development_mode_only", "Skipping the pre-home approach is only available in development mode")
         if motor_name != "y_axis":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Skipping the pre-home approach is only supported for the Y axis.",
-            )
+            raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "Skipping the pre-home approach is only supported for the Y axis.")
 
     motor = worker._robot._get_motor_by_name(motor_name)
 

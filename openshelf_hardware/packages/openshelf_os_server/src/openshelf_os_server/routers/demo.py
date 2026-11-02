@@ -5,7 +5,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 
 from openshelf_os.common import AxisCoordinate
@@ -21,6 +21,7 @@ from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 from openshelf_os_server.routers.calibration import _ensure_ready, _clear_motors_for_move
+from openshelf_os_server.errors import api_error
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +30,14 @@ async def ensure_laser_auto_calibration_not_running() -> None:
 	if await is_laser_auto_calibration_running() is False:
 		return
 
-	raise HTTPException(
-		status_code=status.HTTP_409_CONFLICT,
-		detail="The robot is calibrating.",
-	)
+	raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "The robot is calibrating.")
 
 
 async def get_robot_worker_or_503():
 	try:
 		return await get_robot_worker()
 	except ValueError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized") from exc
 
 router = APIRouter(prefix="/api/demo", tags=["demo"], dependencies=[Depends(get_current_user)])
 
@@ -138,10 +133,7 @@ async def start_demo_cycle() -> SuccessResponse:
 	await ensure_laser_auto_calibration_not_running()
 
 	if _is_running is True:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="The robot is running the demo cycle.",
-		)
+		raise api_error(status.HTTP_409_CONFLICT, "demo_running", "The robot is running the demo cycle.")
 
 	worker = await get_robot_worker_or_503()
 
@@ -150,10 +142,7 @@ async def start_demo_cycle() -> SuccessResponse:
 	robot = worker._robot
 
 	if robot._demo_cell_map is None or len(robot._demo_cell_map) == 0:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="No demo cell map configured",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "demo_not_configured", "No demo cell map configured")
 
 	cells = _build_cell_list(robot)
 
@@ -203,10 +192,7 @@ async def stop_demo_cycle() -> SuccessResponse:
 	demo status for completion; this is not a physical emergency stop.
 	"""
 	if _is_running is False:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Demo cycle is not running",
-		)
+		raise api_error(status.HTTP_409_CONFLICT, "demo_not_running", "Demo cycle is not running")
 
 	_stop_event.set()
 

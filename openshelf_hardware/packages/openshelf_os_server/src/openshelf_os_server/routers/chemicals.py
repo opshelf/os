@@ -1,6 +1,7 @@
 """Authenticated chemical reference lookups; optional upstream availability."""
 from openshelf_os_server.documentation import response_docs
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
+from openshelf_os_server.errors import api_error
 
 from ..core.chemicals import (
     ChemicalDetail, ChemicalSearch, CommonChemistry, get_common_chemistry, normalize_cas,
@@ -28,7 +29,7 @@ async def search_chemicals(
     authentication. Upstream failure returns `503` with `Retry-After: 5`.
     """
     if len(q.strip()) < 2:
-        raise HTTPException(422, "Enter at least two characters")
+        raise api_error(422, "chemical_query_too_short", "Enter at least two characters.")
     return await service.search(q, offset)
 
 
@@ -50,5 +51,5 @@ async def chemical_detail(
     try:
         cas_number = normalize_cas(cas_number)
     except ValueError:
-        raise HTTPException(422, "Invalid CAS number") from None
+        raise api_error(422, "cas_number_invalid", "That CAS number is not valid.") from None
     return await service.detail(cas_number)

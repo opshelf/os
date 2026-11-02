@@ -53,30 +53,21 @@ async def check_robot_enabled() -> None:
     if settings.robot.enabled is True:
         return
 
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Robot is not enabled or configured",
-    )
+    raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_disabled", "Robot is not enabled or configured")
 
 
 async def get_robot_worker_or_error() -> RobotWorker:
     try:
         return await get_robot_worker()
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Robot is not initialized or failed to start",
-        ) from exc
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "Robot is not initialized or failed to start") from exc
 
 
 async def ensure_laser_auto_calibration_not_running() -> None:
     if await is_laser_auto_calibration_running() is False:
         return
 
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail="The robot is calibrating.",
-    )
+    raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "The robot is calibrating.")
 
 
 @router.get(
