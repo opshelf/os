@@ -5,8 +5,9 @@ active job after unlock and drives each step: measure, print, scan, and store a 
 unit through the IO box, or fetch one tray and place several small units in it.
 
 A unit is `pending` until the kiosk begins it, `in_progress` while its item exists but is
-not yet stored, then `loaded` once its store or tray return succeeds, or `skipped`. When
-the machine skips a unit itself, the call that did it explains why in its `notice`.
+not yet stored, then `loaded` once its store succeeds or the robot puts its tray back (also when
+the bin then holds the return for an administrator because its inventory checks failed), or
+`skipped`. When the machine skips a unit itself, the call that did it explains why in its `notice`.
 In-progress units carry a stage: `measured` (item created, label not yet stored),
 `storing` (its `store_item` command was admitted), `placed` (in a tray outside the system),
 and `returning` (that tray's return is running).
@@ -443,7 +444,7 @@ class ImportJobService:
                 workflow = await self.session.get(StorageBinWorkflow, unit.request_id)
                 if workflow is None:
                     continue
-                if workflow.state == "completed":
+                if self._returned_home(workflow):
                     self._mark_loaded(unit)
                     changed = True
                 elif workflow.state in ("failed", "cancelled"):
@@ -469,6 +470,12 @@ class ImportJobService:
             .limit(1)
         )
         return latest is not None and bool((latest.resolution or {}).get("crash_recovered"))
+
+    @staticmethod
+    def _returned_home(workflow: StorageBinWorkflow) -> bool:
+        """Whether the robot put the tray back, also when the bin keeps the return held because
+        its inventory checks failed: the import's items are on the shelf in it either way."""
+        return workflow.state == "completed" or bool((workflow.resolution or {}).get("physical_return_completed"))
 
     def _mark_loaded(self, unit: ImportJobUnit) -> None:
         unit.status = "loaded"
@@ -572,6 +579,16 @@ class ImportJobService:
         ).all()
         for tray in outside:
             if not self.bins.batch_fits(tray, first.planned_dimensions):
+                continue
+            # A tray on the move, or one back home whose return is held, cannot be scanned back.
+            if await self.session.scalar(
+                select(StorageBinWorkflow.id)
+                .where(
+                    StorageBinWorkflow.bin_id == tray.id,
+                    StorageBinWorkflow.state.in_(("retrieving_bin", "returning_bin")),
+                )
+                .limit(1)
+            ) is not None:
                 continue
             # Room and access level as the plan would count them once the tray is home again.
             if not any(row.id == tray.id for row, _, _ in await self.bins.batch_trays(first.access_level_id, tray.id)):
@@ -708,19 +725,22 @@ class ImportJobService:
                     "error": workflow.error,
                 }
         if returning or (
-            # An empty tray going back has no returning units; its return workflow tracks it.
+            # An empty tray going back has no returning units; its return workflow tracks it,
+            # until the robot has put it back (a held return is not waited on).
             workflow is not None
             and workflow.state == "completed"
-            and await self.session.scalar(
-                select(StorageBinWorkflow.id)
-                .where(
-                    StorageBinWorkflow.bin_id == workflow.bin_id,
-                    StorageBinWorkflow.operation == "return",
-                    StorageBinWorkflow.state == "returning_bin",
-                )
-                .limit(1)
+            and any(
+                not self._returned_home(moving)
+                for moving in (
+                    await self.session.scalars(
+                        select(StorageBinWorkflow).where(
+                            StorageBinWorkflow.bin_id == workflow.bin_id,
+                            StorageBinWorkflow.operation == "return",
+                            StorageBinWorkflow.state == "returning_bin",
+                        )
+                    )
+                ).all()
             )
-            is not None
         ):
             return {
                 "kind": "tray",
@@ -1251,7 +1271,7 @@ class ImportJobService:
                 )
             )
         ).all():
-            if returning.state == "completed":
+            if self._returned_home(returning):
                 self._mark_loaded(unit)
             else:
                 self._mark_return_failed(unit, returning.error)
@@ -1289,14 +1309,12 @@ class ImportJobService:
                     self._mark_store_failed(job, unit, payload.get("error"))
             elif unit.stage == "returning":
                 workflow = await self.session.get(StorageBinWorkflow, request_id)
-                if workflow is not None and workflow.state == "completed":
+                if workflow is not None and self._returned_home(workflow):
+                    # Also a return the bin keeps held because its inventory checks failed: the
+                    # import must not wait on a record only an administrator can fix.
                     self._mark_loaded(unit)
                 elif workflow is not None and workflow.state == "failed":
                     self._mark_return_failed(unit, workflow.error or payload.get("error"))
-                elif succeeded:
-                    # The bin workflow keeps its return reserved when inventory checks fail;
-                    # the unit stays returning until that resolves.
-                    continue
         if job is None:
             job = await self.session.scalar(
                 select(ImportJob).where(

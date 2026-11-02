@@ -16,7 +16,7 @@ from openshelf_os_server.core.bin_storage import BinStorageService
 from openshelf_os_server.core.robot import _interrupted_bin_crash_reason
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.import_jobs import ImportJobError, ImportJobService, ImportRowInput, notify_command_result
-from openshelf_os_server.database.models import ImportJob, ImportJobUnit, Item, RobotCommand, StorageBin, StorageBinItem, StorageBinWorkflow
+from openshelf_os_server.database.models import ImportJob, ImportJobUnit, Item, ItemLocation, RobotCommand, StorageBin, StorageBinItem, StorageBinWorkflow
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.main import _ensure_developer_user
 from openshelf_os_server.routers import import_jobs as import_jobs_router
@@ -871,3 +871,57 @@ async def test_a_delivery_refused_before_moving_leaves_the_tray_home(mock_mode, 
         )
         again = await service.start_tray(job, None)
         assert again.bin_id == workflow.bin_id and again.state == "retrieving_bin"
+
+
+async def hold_the_return(db, service, bins, job, job_id):
+    """Fill the import tray, then let the robot put it back while its inventory check fails."""
+    workflow = await service.start_tray(job, None)
+    await bins.transition(workflow, "awaiting_operator")
+    await service.place_in_tray(job, (await units(job_id))[0].id, 30)
+    returning = await service.begin_tray_return(job)
+    home = await db.get(StorageBin, returning.bin_id)
+    # A record for something in the tray's home cell appeared while the tray was out.
+    other = await StorageService(db).create_item("CELL-1", "Cell", {"width": 10, "length": 10, "height": 10})
+    db.add(ItemLocation(item_id=other.id, side=home.side, shelf_idx=home.shelf_idx, cell_idx=home.cell_idx))
+    await db.commit()
+    await bins.complete_return(returning)
+    assert returning.state == "returning_bin"
+    assert returning.error == "The bin's cell has an item stored in it."
+    return returning
+
+
+@pytest.mark.anyio
+async def test_a_return_held_by_the_inventory_check_still_finishes_the_import(mock_mode, trays):
+    # The robot put the tray back, but the bin kept its return held for an administrator. The
+    # import waited on it for good: no step to take, a stop that never finished, and the relay
+    # refused every new import.
+    job_id = await create([row("Vial", small=True), row("Next", small=True)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        returning = await hold_the_return(db, service, bins, job, job_id)
+        await service.handle_command_result(
+            returning.id, {"request_id": returning.id, "command": "store_item", "message": "success"}
+        )
+        assert [(unit.status, unit.stage) for unit in await units(job_id)][0] == ("loaded", None)
+        # The held tray cannot be scanned back, so it is not offered as the way forward.
+        step = await service.next_step(job)
+        assert step["reason"] == (
+            "No multi-item bin with a free compartment fits this item. Skip it to continue."
+        )
+        await service.cancel(job, "kiosk")
+        assert job.state == "cancelled"
+    assert await create([row("Another")])
+
+
+@pytest.mark.anyio
+async def test_a_held_return_whose_result_was_missed_is_applied_on_the_next_read(mock_mode, trays):
+    job_id = await create([row("Vial", small=True)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        await hold_the_return(db, service, bins, job, job_id)
+        assert await service.reconcile(job)
+        assert job.state == "completed"
