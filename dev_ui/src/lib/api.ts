@@ -157,6 +157,16 @@ function formatErrorMessage(message: string, detail?: ApiErrorDetail, request?: 
 	return output;
 }
 
+/** The sentence headline plus the developer detail line for a failed response to `request` ("METHOD /path"). */
+export async function describeFailedResponse(
+	headline: string,
+	response: Response,
+	request: string
+): Promise<string> {
+	const { detail } = await readErrorDetail(response);
+	return formatErrorMessage(headline, detail, `${request} → ${response.status}`);
+}
+
 /** A failed robot event or command result, with the developer detail the server attached. */
 export function formatFailure(data: Record<string, unknown>): string {
 	const error = typeof data.error === 'string' ? data.error : 'The robot command failed.';

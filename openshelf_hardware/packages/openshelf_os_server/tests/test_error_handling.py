@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from hardware.exceptions import ModbusConnectionError, MotorError
+from hardware.exceptions import ModbusConnectionError, MotorConfigError, MotorError
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.faults import fault_code
 from openshelf_os_server.core.auth import AuthService
@@ -449,6 +449,30 @@ def test_bus_disconnect_beats_fault_context_on_the_outer_error() -> None:
 		assert fault_code(outer_alarm) == "motor_alarm"
 
 
+def test_root_cause_beats_config_wrapper() -> None:
+	"""Homing and configure wrap motion faults in MotorConfigError; the root cause wins."""
+	stall = MotorError("Movement failed for motor 3")
+	setattr(stall, "fault_context", {"alarm_code": 0, "stall_detected": True, "no_progress": False})
+	try:
+		try:
+			raise stall
+		except MotorError as inner:
+			raise MotorConfigError("Homing failed for motor 3") from inner
+	except MotorConfigError as wrapped_stall:
+		assert fault_code(wrapped_stall) == "motor_stalled"
+
+	try:
+		try:
+			raise ModbusConnectionError("laser port lost")
+		except ModbusConnectionError as inner:
+			raise MotorConfigError("Configure failed") from inner
+	except MotorConfigError as wrapped_bus:
+		assert fault_code(wrapped_bus) == "motor_bus_disconnected"
+
+	assert fault_code(MotorConfigError("bad register value")) == "config_error"
+	assert "device on the machine bus" in CODE_MESSAGES["motor_bus_disconnected"]
+
+
 def test_every_derived_code_has_its_own_sentence() -> None:
 	"""A code without copy would ship the generic sentence instead of its own."""
 	derived = {code for _, code in SAFE_500_TYPES} | set(DEFAULT_STATUS_CODES.values())
@@ -505,7 +529,8 @@ def _emitted_router_codes() -> set[str]:
 
 
 # Exceptions whose text is hand-written operator copy (the kiosk matches some of
-# these sentences exactly), and routes whose manager raises only such sentences.
+# these sentences exactly), and route handlers whose manager raises only such
+# sentences as that exception type.
 _OPERATOR_COPY_EXCEPTIONS = {
 	"BinWorkflowConflict",
 	"CycleTestStartError",
@@ -513,7 +538,10 @@ _OPERATOR_COPY_EXCEPTIONS = {
 	"NoCompatibleBinError",
 	"ValidationError",
 }
-_OPERATOR_COPY_ROUTES = {"abort_laser_auto_calibration", "stream_laser_auto_calibration"}
+_OPERATOR_COPY_ROUTES = {
+	"abort_laser_auto_calibration": {"RuntimeError"},
+	"stream_laser_auto_calibration": {"RuntimeError"},
+}
 # Call name -> position of its client-visible message argument.
 _MESSAGE_ARGUMENT = {
 	"api_error": 2,
@@ -530,9 +558,9 @@ def _raw_exception_messages(tree: ast.AST) -> list[str]:
 	def visit(node: ast.AST, function: str) -> None:
 		if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
 			function = node.name
-		if isinstance(node, ast.ExceptHandler) and node.name is not None and function not in _OPERATOR_COPY_ROUTES:
+		if isinstance(node, ast.ExceptHandler) and node.name is not None:
 			caught = {n.id if isinstance(n, ast.Name) else getattr(n, "attr", "") for n in ast.walk(node.type)} if node.type else set()
-			if caught.isdisjoint(_OPERATOR_COPY_EXCEPTIONS):
+			if caught.isdisjoint(_OPERATOR_COPY_EXCEPTIONS | _OPERATOR_COPY_ROUTES.get(function, set())):
 				for call in (n for statement in node.body for n in ast.walk(statement) if isinstance(n, ast.Call)):
 					name = call.func.id if isinstance(call.func, ast.Name) else getattr(call.func, "attr", "")
 					messages = [k.value for k in call.keywords if k.arg == "detail"] if name == "HTTPException" else []

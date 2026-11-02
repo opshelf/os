@@ -1015,7 +1015,7 @@ async def stream_laser_auto_calibration(
 		except RuntimeError as exc:
 			raise api_error(status.HTTP_409_CONFLICT, "laser_calibration_running", str(exc)) from exc
 		except ValueError as exc:
-			raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", str(exc)) from exc
+			raise api_error(status.HTTP_400_BAD_REQUEST, "laser_scope_invalid", "") from exc
 	else:
 		snapshot = await manager.get_snapshot()
 

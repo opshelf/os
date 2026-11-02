@@ -1,4 +1,4 @@
-import { getApiBase } from './api';
+import { describeFailedResponse, getApiBase } from './api';
 
 interface TokenResponse {
 	access_token: string;
@@ -32,11 +32,15 @@ export async function login(email: string, pin: string): Promise<void> {
 	});
 
 	if (response.status === 401) {
-		throw new LoginRejectedError('The developer sign-in was rejected.');
+		throw new LoginRejectedError(
+			await describeFailedResponse('The developer sign-in was rejected.', response, 'POST /auth/login/json')
+		);
 	}
 
 	if (response.ok === false) {
-		throw new Error('Developer sign-in failed.');
+		throw new Error(
+			await describeFailedResponse('Developer sign-in failed.', response, 'POST /auth/login/json')
+		);
 	}
 
 	const data = (await response.json()) as TokenResponse;
@@ -64,7 +68,9 @@ export async function refreshAccessToken(): Promise<void> {
 		accessToken = null;
 		refreshToken = null;
 		tokenExpiresAt = null;
-		throw new Error('The session could not be refreshed.');
+		throw new Error(
+			await describeFailedResponse('The session could not be refreshed.', response, 'POST /auth/refresh')
+		);
 	}
 
 	const data = (await response.json()) as TokenResponse;

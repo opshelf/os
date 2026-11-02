@@ -190,6 +190,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"laser_calibration_not_running": "No laser auto calibration is running.",
 	"laser_calibration_running": "Laser auto calibration is already running.",
 	"laser_read_failed": "The laser distance could not be read. Check that the laser is connected and its path is clear.",
+	"laser_scope_invalid": "The laser calibration cannot start with these settings. Check the scope and the robot settings.",
 	"location_add_failed": "The location could not be added.",
 	"location_not_found": "That location does not exist.",
 	"login_failed": "The sign-in details are not valid.",
