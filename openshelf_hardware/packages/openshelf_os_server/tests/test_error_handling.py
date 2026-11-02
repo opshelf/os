@@ -392,11 +392,11 @@ def test_motor_fault_behind_a_catch_all_gets_its_own_code() -> None:
 		except MotorError as inner:
 			raise MotorError("Failed to move motor 3") from inner
 	except MotorError as outer:
-		error = hardware_api_error(outer, 503, "motor_move_failed", "The robot could not move. Try again.")
+		error = hardware_api_error(outer, 503, "motor_move_failed", "The robot could not move. Check the robot status before moving it again.")
 	assert error.detail["code"] == "motor_alarm"
 	assert "try again" not in error.detail["message"].lower()
 
-	plain = hardware_api_error(RuntimeError("boom"), 503, "motor_move_failed", "The robot could not move. Try again.")
+	plain = hardware_api_error(RuntimeError("boom"), 503, "motor_move_failed", "The robot could not move. Check the robot status before moving it again.")
 	assert plain.detail["code"] == "motor_move_failed"
 
 

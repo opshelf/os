@@ -844,7 +844,7 @@ async def read_laser() -> LaserReadingResponse:
 			exc,
 			status.HTTP_503_SERVICE_UNAVAILABLE,
 			"laser_read_failed",
-			"The laser distance could not be read. Try again.",
+			"The laser distance could not be read. Check that the laser is connected and its path is clear.",
 		) from exc
 
 	return LaserReadingResponse(distance_mm=float(distance_mm))
@@ -1977,7 +1977,7 @@ async def move_iobox_door(request: IOBoxDoorMoveRequest):
 			exc,
 			status.HTTP_503_SERVICE_UNAVAILABLE,
 			"door_control_failed",
-			"The machine door did not move. Try again.",
+			"The machine's door did not move. Check that nothing blocks it before moving it again.",
 		) from exc
 
 	return {"success": True, "position": request.position, "position_mm": target}

@@ -1497,7 +1497,7 @@ async def calibrate_scale_zero(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_calibration_failed",
-            "The scale could not be calibrated. Try again.",
+            "The scale could not be calibrated. Check that it is steady and holds only the reference weight, then calibrate again.",
         ) from exc
 
 
@@ -1531,7 +1531,7 @@ async def calibrate_scale_weight(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_calibration_failed",
-            "The scale could not be calibrated. Try again.",
+            "The scale could not be calibrated. Check that it is steady and holds only the reference weight, then calibrate again.",
         ) from exc
 
 
@@ -1566,7 +1566,7 @@ async def scale_tare(
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_tare_failed",
-            "The scale could not be zeroed. Try again.",
+            "The scale could not be zeroed. Check that it is empty and steady, then zero it again.",
         ) from exc
 
 
@@ -1672,7 +1672,7 @@ async def clear_motor_alarm(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_alarm_clear_failed",
-            "The robot alarm could not be cleared. Try again.",
+            "The robot's alarm could not be cleared. Find the cause on the drive before clearing it again.",
         ) from exc
 
 
@@ -1746,7 +1746,7 @@ async def home_motor(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_home_failed",
-            "The robot could not be reset. Try again.",
+            "The robot could not be reset. Check the robot status before resetting it again.",
         ) from exc
 
 
@@ -1834,7 +1834,7 @@ async def power_cycle_rail(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "power_cycle_failed",
-            "The robot could not power cycle that part. Try again.",
+            "The machine could not power cycle that part. Check its power rail settings.",
         ) from exc
 
 
@@ -1951,7 +1951,7 @@ async def move_motor(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_move_failed",
-            "The robot could not move. Try again.",
+            "The robot could not move. Check the robot status before moving it again.",
         ) from exc
 
 
@@ -1990,7 +1990,7 @@ async def control_door(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "door_control_failed",
-            "The machine door did not move. Try again.",
+            "The machine's door did not move. Check that nothing blocks it before moving it again.",
         ) from exc
 
 
