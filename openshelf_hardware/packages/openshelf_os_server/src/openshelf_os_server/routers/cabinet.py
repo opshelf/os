@@ -15,6 +15,8 @@ from openshelf_os_server.errors import api_error
 from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 from openshelf_os_server.settings import get_settings
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["cabinet"])
 
 
@@ -99,7 +101,7 @@ async def get_cabinet_status(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Cabinet status read failed: %s", exc)
+        logger.error("Cabinet status read failed: %s", exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "cabinet_status_failed",
@@ -150,7 +152,7 @@ async def control_cabinet_release(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Cabinet release %s failed: %s", action, exc)
+        logger.error("Cabinet release %s failed: %s", action, exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "cabinet_release_control_failed",

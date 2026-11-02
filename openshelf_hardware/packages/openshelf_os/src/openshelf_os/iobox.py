@@ -151,7 +151,7 @@ class IOBox:
             try:
                 await step()
             except Exception as e:
-                self._logger.warning("init iobox %s failed: %s", label, e)
+                self._logger.warning("init iobox %s failed: %s", label, e, exc_info=e)
 
     async def configure(self, isolate: bool = False, scale_bus_ready: bool = True, home_on_init: bool = True):
         self._scale_bus_ready = scale_bus_ready
@@ -165,7 +165,7 @@ class IOBox:
                 self._status = IOBoxStatus.ERROR
                 if isolate is False:
                     raise IOBoxError(f"IOBox configuration failed: {str(e)}") from e
-                self._logger.warning("init door config failed: %s", e)
+                self._logger.warning("init door config failed: %s", e, exc_info=e)
         else:
             self._logger.info("Door motor disabled via config")
 
@@ -271,8 +271,7 @@ class IOBox:
         except Exception as e:
             elapsed = time.monotonic() - start_time
             self._logger.error(
-                "Scale read failed after %.3fs: %s", elapsed, e, extra={"elapsed_s": round(elapsed, 3)}
-            )
+                "Scale read failed after %.3fs: %s", elapsed, e, extra={"elapsed_s": round(elapsed, 3)}, exc_info=e)
             sentry_sdk.capture_exception(e)
             return None
 
@@ -325,8 +324,7 @@ class IOBox:
         except Exception as alarm_exc:
             self._logger.warning(
                 "Could not classify door movement fault for retry: %s",
-                alarm_exc,
-            )
+                alarm_exc, exc_info=alarm_exc)
             return False
 
         return (
@@ -475,8 +473,7 @@ class IOBox:
         except Exception as exc:
             self._logger.warning(
                 "Door home after IO cycle failed; homing before the next cycle",
-                extra={"error": str(exc)},
-            )
+                extra={"error": str(exc)}, exc_info=exc)
             return False
 
     async def ensure_door_homed(self) -> None:
@@ -520,7 +517,7 @@ class IOBox:
             try:
                 self._curtain_listener(state)
             except Exception as exc:
-                self._logger.warning("Curtain listener failed: %s", exc)
+                self._logger.warning("Curtain listener failed: %s", exc, exc_info=exc)
 
     def get_curtain_state(self) -> Optional[bool]:
         return self._curtain_state
@@ -660,7 +657,7 @@ class IOBox:
                             await self._home_door_and_cache_closed()
                             self._logger.info("Door motor homed successfully after bad readings")
                     except Exception as home_exc:
-                        self._logger.error("Door motor recovery failed: %s", home_exc)
+                        self._logger.error("Door motor recovery failed: %s", home_exc, exc_info=home_exc)
                     finally:
                         self._door_motion_lock.release()
 
@@ -718,7 +715,7 @@ class IOBox:
             try:
                 self._curtain_listener(self._curtain_state)
             except Exception as exc:
-                self._logger.warning("Curtain listener failed: %s", exc)
+                self._logger.warning("Curtain listener failed: %s", exc, exc_info=exc)
 
 
     async def stop(self) -> None:

@@ -33,6 +33,8 @@ from openshelf_os_server.settings import (
     save_root_config,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class PrinterFeedConfig(BaseModel):
     feed_dots: int = Field(ge=0, le=128)
@@ -221,7 +223,7 @@ def _print_payload(payload: str) -> bool:
 
     settings = get_settings()
     if settings.printer.enabled is False:
-        logging.info("Printer disabled; skipping label print for %s", payload)
+        logger.info("Printer disabled; skipping label print for %s", payload)
         return False
 
     with printer_io_lock:

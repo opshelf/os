@@ -60,6 +60,8 @@ from openshelf_os_server.core.storage_module import StorageModuleSideDto, side_t
 from openshelf_os_server.errors import api_error, failure_detail
 from openshelf_os_server.settings import clear_config_cache, get_operating_mode, get_root_config, save_root_config
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["storage"])
 
 
@@ -460,23 +462,22 @@ def monitor_performance(func: Callable) -> Callable:
         try:
             result = await func(*args, **kwargs)
             duration = time.time() - start_time
-            logging.info(f"Storage operation {func.__name__} completed in {duration:.3f}s")
+            logger.info(f"Storage operation {func.__name__} completed in {duration:.3f}s")
             return result
         except Exception as exc:  # pragma: no cover - defensive logging
             duration = time.time() - start_time
-            logging.error(
+            logger.error(
                 "Storage operation %s failed after %.3fs: %s",
                 func.__name__,
                 duration,
-                str(exc),
-            )
+                str(exc), exc_info=exc)
             raise
 
     return wrapper
 
 
 def _tray_config_error(exc: ValueError) -> HTTPException:
-    logging.warning("Storage bin config sync rejected: %s", exc)
+    logger.warning("Storage bin config sync rejected: %s", exc)
     return api_error(
         409,
         "tray_config_conflict",
@@ -485,17 +486,17 @@ def _tray_config_error(exc: ValueError) -> HTTPException:
 
 
 def _grid_load_error(exc: Exception) -> HTTPException:
-    logging.error("Storage grid load failed: %s", exc)
+    logger.error("Storage grid load failed: %s", exc)
     return api_error(500, "grid_load_failed", "The shelf layout could not be read. Try again.")
 
 
 def _grid_update_error(exc: Exception) -> HTTPException:
-    logging.error("Storage grid update failed: %s", exc)
+    logger.error("Storage grid update failed: %s", exc)
     return api_error(500, "grid_update_failed", "The shelf layout could not be saved. Try again.")
 
 
 def _grid_location_error(exc: IndexError) -> HTTPException:
-    logging.info("Storage grid location not found: %s", exc)
+    logger.info("Storage grid location not found: %s", exc)
     return api_error(404, "cell_not_found", "")
 
 
@@ -957,7 +958,7 @@ async def create_bin_workflow(
             try:
                 await service.publish_workflow(worker, workflow)
             except Exception as publish_error:
-                logging.warning("Failed to publish bin workflow start: %s", publish_error)
+                logger.warning("Failed to publish bin workflow start: %s", publish_error, exc_info=publish_error)
         except NoCompatibleBinError as exc:
             # Without an explicit bin request the item may still go to its own cell.
             if request.storage_mode != "bin":
@@ -1445,10 +1446,10 @@ async def add_item_location(
             cell_idx=location.cell_idx,
         )
     except CellOccupiedError as exc:
-        logging.info("Item location rejected: %s", exc)
+        logger.info("Item location rejected: %s", exc)
         raise api_error(409, "cell_unavailable", "") from exc
     except (ValidationError, ValueError) as exc:
-        logging.info("Item location rejected: %s", exc)
+        logger.info("Item location rejected: %s", exc)
         raise api_error(422, "invalid_location", "") from exc
 
     if not storage_location:

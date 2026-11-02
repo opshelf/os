@@ -37,7 +37,7 @@ async def _refresh_status_after_commit(worker: Optional[RobotEventPublisher]) ->
     try:
         await snapshot(force_refresh=True)
     except Exception as err:
-        logger.warning("Failed to refresh robot status after commit: %s", err)
+        logger.warning("Failed to refresh robot status after commit: %s", err, exc_info=err)
 
 
 async def flush_telemetry(is_cycle: bool) -> None:
@@ -64,7 +64,7 @@ async def flush_telemetry(is_cycle: bool) -> None:
 
             await session.commit()
     except Exception as err:
-        logger.warning("Failed to flush telemetry: %s", err)
+        logger.warning("Failed to flush telemetry: %s", err, exc_info=err)
 
 
 async def process_robot_event(
@@ -288,7 +288,7 @@ class RobotEventListener:
             try:
                 await self._worker.unsubscribe_events(self._queue)
             except Exception as err:
-                logger.warning("Failed to unsubscribe from robot events: %s", err)
+                logger.warning("Failed to unsubscribe from robot events: %s", err, exc_info=err)
             self._queue = None
 
         if self._task is not None:
@@ -299,7 +299,7 @@ class RobotEventListener:
             except asyncio.CancelledError:
                 pass
             except Exception as err:
-                logger.warning("Failed to stop robot event listener task: %s", err)
+                logger.warning("Failed to stop robot event listener task: %s", err, exc_info=err)
 
             self._task = None
 

@@ -304,7 +304,7 @@ class Tool:
             await motor.configure()
             return True
         except Exception as e:
-            self._logger.warning("init motor configure failed: %s", e)
+            self._logger.warning("init motor configure failed: %s", e, exc_info=e)
             return False
 
     def _mark_configured_motors_ready(self, failed_config_motors: List[Motor]) -> None:
@@ -330,7 +330,7 @@ class Tool:
                     try:
                         await self._gs.configure()
                     except Exception as e:
-                        self._logger.warning("init gripper configure failed: %s", e)
+                        self._logger.warning("init gripper configure failed: %s", e, exc_info=e)
                 else:
                     await self._gs.configure()
 
@@ -385,7 +385,7 @@ class Tool:
             try:
                 state = await self._gs.read_state()
             except Exception as e:
-                self._logger.warning("tray_on_tool gripper read failed; using the last grip command: %s", e)
+                self._logger.warning("tray_on_tool gripper read failed; using the last grip command: %s", e, exc_info=e)
             else:
                 if state.activated is True:
                     self._gs.holding = state.holding
@@ -1569,8 +1569,7 @@ class Tool:
             self._logger.warning(
                 "Failed to clear %s alarm before retract recovery home",
                 axis_name,
-                extra={"error": str(clear_error)},
-            )
+                extra={"error": str(clear_error)}, exc_info=clear_error)
 
         await motor.home()
         position_mm = float(await motor.get_position())
@@ -1695,7 +1694,7 @@ class Tool:
                 )
             return True
         except Exception as e:
-            self._logger.warning("init home step failed: %s", e)
+            self._logger.warning("init home step failed: %s", e, exc_info=e)
             return False
 
     async def _home_rotate_isolated(
@@ -1720,7 +1719,7 @@ class Tool:
             return True
         except Exception as e:
             self._emit_init("rotate", "failed", "home", str(e))
-            self._logger.warning("init rotate home failed: %s", e)
+            self._logger.warning("init rotate home failed: %s", e, exc_info=e)
             return False
 
     async def home(

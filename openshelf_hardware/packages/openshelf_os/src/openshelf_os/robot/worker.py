@@ -440,7 +440,7 @@ class RobotWorker:
             try:
                 done_task.result()
             except Exception as exc:
-                logging.warning("Background robot worker task failed: %s", exc, exc_info=True)
+                logger.warning("Background robot worker task failed: %s", exc, exc_info=True)
 
         task.add_done_callback(_discard_task)
         return task
@@ -542,7 +542,7 @@ class RobotWorker:
             data = await asyncio.wait_for(self.get_scale_data(), SCALE_PRE_RETRIEVE_READ_TIMEOUT_SECONDS)
             weight = abs(float(data["weight"]))
         except Exception as err:
-            logging.warning("Scale read failed before retrieve; proceeding: %s", err)
+            logger.warning("Scale read failed before retrieve; proceeding: %s", err, exc_info=err)
             return False
         return weight > SCALE_OCCUPIED_THRESHOLD_GRAMS
 
@@ -637,7 +637,7 @@ class RobotWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                logging.warning("Scale poll failed: %s", err)
+                logger.warning("Scale poll failed: %s", err)
 
             await asyncio.sleep(SCALE_POLL_INTERVAL_SECONDS)
 
@@ -730,7 +730,7 @@ class RobotWorker:
             try:
                 await self._publish_status()
             except Exception as err:
-                logging.warning("Failed to refresh robot status payload: %s", err)
+                logger.warning("Failed to refresh robot status payload: %s", err, exc_info=err)
         return self._latest_status_payload
 
     def _add_error(self, error: WorkerError) -> None:
@@ -812,7 +812,7 @@ class RobotWorker:
             try:
                 cancel_capture()
             except Exception as capture_error:
-                logging.warning("Failed to cancel prepared motion crash capture: %s", capture_error)
+                logger.warning("Failed to cancel prepared motion crash capture: %s", capture_error, exc_info=capture_error)
 
     def _report_cancelled_motion_crash_handoff(
         self,
@@ -920,7 +920,7 @@ class RobotWorker:
                     "error": str(artifact_error),
                     "error_type": type(artifact_error).__name__,
                 }
-                logging.warning(
+                logger.warning(
                     "Motion crash artifact capture failed: %s",
                     artifact_error,
                     exc_info=True,
@@ -938,7 +938,7 @@ class RobotWorker:
                     "error": str(artifact_error),
                     "error_type": type(artifact_error).__name__,
                 }
-                logging.warning(
+                logger.warning(
                     "Motion crash artifact capture failed: %s",
                     artifact_error,
                     exc_info=True,
@@ -1019,9 +1019,9 @@ class RobotWorker:
                     self._run_barcode_bridge(),
                     name="barcode-bridge",
                 )
-                logging.info("Barcode bridge started on %s", port)
+                logger.info("Barcode bridge started on %s", port)
             except Exception as exc:  # pragma: no cover - hardware dependent
-                logging.warning("Barcode service disabled: %s", exc)
+                logger.warning("Barcode service disabled: %s", exc, exc_info=exc)
                 self._barcode = None
                 self._barcode_task = None
 
@@ -1054,7 +1054,7 @@ class RobotWorker:
         try:
             await self._publish_status()
         except Exception as exc:
-            logging.warning("Failed to publish queued command status: %s", exc)
+            logger.warning("Failed to publish queued command status: %s", exc, exc_info=exc)
 
     async def subscribe_status(self) -> tuple[asyncio.Queue[str], Optional[str]]:
         queue: asyncio.Queue[str] = asyncio.Queue()
@@ -1170,7 +1170,7 @@ class RobotWorker:
         # during the stop cleanup window.
         self.set_needs_home(reason)
         await self._publish_status()
-        logging.info("Emergency stop triggered: %s", reason)
+        logger.info("Emergency stop triggered: %s", reason)
 
         async def _cleanup_after_stop() -> None:
             interruption_reason = f"Emergency stop: {reason}"
@@ -1207,7 +1207,7 @@ class RobotWorker:
 
     async def _start_estop_monitor(self) -> None:
         if self._is_estop_monitor_enabled() is False:
-            logging.info("Emergency stop monitor disabled: emergency_stop.enabled is false")
+            logger.info("Emergency stop monitor disabled: emergency_stop.enabled is false")
             self._is_estop_active = False
             return
 
@@ -1216,17 +1216,17 @@ class RobotWorker:
 
         gpio = getattr(self._robot, "_gpio", None)
         if gpio is None:
-            logging.info("Emergency stop monitor disabled: GPIO is not configured")
+            logger.info("Emergency stop monitor disabled: GPIO is not configured")
             return
 
         try:
             has_pin = getattr(gpio, "has_pin", None)
             if callable(has_pin) is True and has_pin("estop") is False:
-                logging.info("Emergency stop monitor disabled: GPIO pin 'estop' is not configured")
+                logger.info("Emergency stop monitor disabled: GPIO pin 'estop' is not configured")
                 return
             estop_input = gpio.input("estop")
         except Exception as exc:
-            logging.warning("Emergency stop input unavailable: %s", exc)
+            logger.warning("Emergency stop input unavailable: %s", exc, exc_info=exc)
             self._is_estop_active = True
             await self.emergency_stop(ESTOP_UNAVAILABLE_REASON)
             return
@@ -1240,7 +1240,7 @@ class RobotWorker:
             )
         except Exception:
             self._estop_subscription = None
-            logging.warning(
+            logger.warning(
                 "Emergency stop interrupt subscription failed; continuing with polling",
                 exc_info=True,
             )
@@ -1249,7 +1249,7 @@ class RobotWorker:
             self._monitor_estop(estop_input),
             name="emergency-stop-monitor",
         )
-        logging.info(
+        logger.info(
             "Emergency stop monitor started",
             extra={
                 "poll_interval_s": ESTOP_POLL_INTERVAL_SECONDS,
@@ -1263,7 +1263,7 @@ class RobotWorker:
             try:
                 self._estop_subscription.close()
             except Exception:
-                logging.warning("Emergency stop subscription cleanup failed", exc_info=True)
+                logger.warning("Emergency stop subscription cleanup failed", exc_info=True)
             self._estop_subscription = None
 
         if self._estop_monitor_task is not None:
@@ -1303,7 +1303,7 @@ class RobotWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logging.warning("Emergency stop input read failed: %s", exc)
+                logger.warning("Emergency stop input read failed: %s", exc)
                 self._is_estop_active = True
                 if previous_active is not True or self._is_emergency_stopped is False:
                     await self.emergency_stop(ESTOP_UNAVAILABLE_REASON)
@@ -1338,11 +1338,11 @@ class RobotWorker:
             return
         try:
             async for code in self._barcode:
-                logging.info("Received barcode: %s", code)
+                logger.info("Received barcode: %s", code)
                 try:
                     await self.publish_event({"kind": "label_scanned", "payload": code})
                 except Exception as publish_error:  # pragma: no cover - hardware dependent
-                    logging.warning("Barcode event publish error: %s", publish_error)
+                    logger.warning("Barcode event publish error: %s", publish_error, exc_info=publish_error)
                     self._report_error(
                         WorkerError(
                             error_type="EventPublishError",
@@ -1354,7 +1354,7 @@ class RobotWorker:
         except asyncio.CancelledError:
             pass
         except Exception as bridge_error:  # pragma: no cover - hardware dependent
-            logging.error("Barcode bridge crashed: %s", bridge_error)
+            logger.error("Barcode bridge crashed: %s", bridge_error, exc_info=bridge_error)
             self._report_error(
                 WorkerError(
                     error_type="BarcodeBridgeError",
@@ -1468,7 +1468,7 @@ class RobotWorker:
         try:
             await self._command_lifecycle_callback(status, operation, result)
         except Exception as exc:
-            logging.exception("Failed to persist command lifecycle %s: %s", status, exc)
+            logger.exception("Failed to persist command lifecycle %s: %s", status, exc)
 
     async def _publish_completed_command_result(
         self,
@@ -1479,7 +1479,7 @@ class RobotWorker:
         """Publish a completed command using the normal worker-loop semantics."""
         try:
             result: RobotResponse = task.result()
-            logging.info("Command result: %s", type(result).__name__)
+            logger.info("Command result: %s", type(result).__name__)
 
             if (
                 isinstance(command, (HomeCommand, InitializeCommand, RecoverCommand))
@@ -1490,21 +1490,21 @@ class RobotWorker:
                     homed_axes = list(command.axes or [])
                 if self._is_crashed:
                     self.clear_crash_state(homed_axes)
-                    logging.info("Crash state cleared after successful %s", command.command)
+                    logger.info("Crash state cleared after successful %s", command.command)
 
                 if self._is_emergency_stopped:
                     if self._is_estop_active is True:
-                        logging.info("Emergency stop state retained while button is active")
+                        logger.info("Emergency stop state retained while button is active")
                     else:
                         self.clear_emergency_stop_state()
-                        logging.info("Emergency stop state cleared after successful %s", command.command)
+                        logger.info("Emergency stop state cleared after successful %s", command.command)
 
                 if self.needs_home() and isinstance(command, (HomeCommand, RecoverCommand)):
                     if command.axes is not None:
                         self.clear_needs_home_axes(list(command.axes))
                     else:
                         self.clear_needs_home()
-                    logging.info("Needs-home flag cleared after successful homing")
+                    logger.info("Needs-home flag cleared after successful homing")
             if isinstance(result, RobotCommandSuccessful):
                 payload = result.model_dump(mode="json")
                 payload["command_id"] = operation.command_id if operation is not None else None
@@ -1521,9 +1521,9 @@ class RobotWorker:
                     code="execution_failed",
                     debug=result.debug,
                 )
-            logging.info("Published command result to event queue")
+            logger.info("Published command result to event queue")
         except Exception as err:
-            logging.warning("Command execution error: %s", err)
+            logger.warning("Command execution error: %s", err, exc_info=err)
 
             # Gripper feedback that did not confirm its object is a failed pick, not a broken
             # machine: the gantry never lost position, so only the tool (plus the IO box door when
@@ -1546,14 +1546,14 @@ class RobotWorker:
                     debug=exception_debug(err),
                 )
             except Exception as publish_error:
-                logging.warning("Failed to publish command failure: %s", publish_error)
+                logger.warning("Failed to publish command failure: %s", publish_error, exc_info=publish_error)
 
             if is_grip_fault:
                 self.set_needs_home(str(err), axes=fault_needs_home_axes(self._robot, err))
-                logging.warning("Gripper feedback fault - tool needs recovery: %s", err)
+                logger.warning("Gripper feedback fault - tool needs recovery: %s", err, exc_info=err)
             elif is_hardware_fault:
                 self.set_needs_home(str(err), axes=fault_needs_home_axes(self._robot, err))
-                logging.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__)
+                logger.warning("Hardware fault detected - robot in crash state: %s", type(err).__name__, exc_info=err)
             elif is_rotation_clearance_refusal(err):
                 # Nothing moved; only a sibling motor this run cancelled has to home ([] is a no-op).
                 self.set_needs_home(str(err), axes=fault_needs_home_axes(self._robot, err))
@@ -1658,14 +1658,14 @@ class RobotWorker:
             elif interruption_reason is None:
                 return None
             else:
-                logging.info("Cancelling current command task during %s", interruption_reason)
+                logger.info("Cancelling current command task during %s", interruption_reason)
                 task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:
                     pass
                 except Exception as exc:
-                    logging.warning("Cancelled task failed during cleanup: %s", exc)
+                    logger.warning("Cancelled task failed during cleanup: %s", exc, exc_info=exc)
                 await self._publish_command_failure(command, interruption_reason, operation)
 
             self._clear_current_command_state(task, command, operation)
@@ -1878,12 +1878,12 @@ class RobotWorker:
 
                         if isinstance(command, (HomeCommand, RecoverCommand)) and (self._is_crashed is True or self._is_emergency_stopped is True):
                             if self._is_estop_active is True:
-                                logging.info("Keeping motion safety engaged while emergency stop is active")
+                                logger.info("Keeping motion safety engaged while emergency stop is active")
                             elif self._safety_motion_blocked is False:
                                 self._robot.release_motion_safety()
-                                logging.info("Released motion safety for homing in stopped state")
+                                logger.info("Released motion safety for homing in stopped state")
 
-                        logging.info("Starting command execution: %s", command.command)
+                        logger.info("Starting command execution: %s", command.command)
                         self._command_started_at = time.monotonic()
                         self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
@@ -1892,7 +1892,7 @@ class RobotWorker:
                         await self._publish_status()
 
                     if self._current_task.done():
-                        logging.info("Command task completed, processing result")
+                        logger.info("Command task completed, processing result")
                         await self._terminalize_current_command()
                         await self._publish_status()
 
@@ -1900,7 +1900,7 @@ class RobotWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                logging.exception("Unexpected robot worker error: %s", err)
+                logger.exception("Unexpected robot worker error: %s", err)
                 self._report_error(
                     WorkerError(
                         error_type="UnexpectedError",
@@ -1912,7 +1912,7 @@ class RobotWorker:
                 )
 
                 if self._current_task is not None and self._current_task.done() is False:
-                    logging.warning("Cancelling command task due to unexpected error")
+                    logger.warning("Cancelling command task due to unexpected error")
                     self._current_task.cancel()
 
                     try:
@@ -1935,7 +1935,7 @@ class RobotWorker:
                     await self.refresh_tray_on_tool()
                     await self._publish_status()
                 except Exception as publish_err:
-                    logging.warning("Failed to publish error status: %s", publish_err)
+                    logger.warning("Failed to publish error status: %s", publish_err)
 
                 self._remove_current_operation()
                 self._current_task = None
@@ -1977,11 +1977,11 @@ class RobotWorker:
         logger.info("RobotWorker.start() complete")
 
     async def shutdown(self) -> None:
-        logging.info("Shutting down robot worker")
+        logger.info("Shutting down robot worker")
         self._running = False
 
         if self._scale_poll_task:
-            logging.info("Stopping scale poll")
+            logger.info("Stopping scale poll")
             self._scale_poll_task.cancel()
             try:
                 await self._scale_poll_task
@@ -1994,7 +1994,7 @@ class RobotWorker:
         await self._robot.stop_weight_guard()
 
         if self._barcode_task:
-            logging.info("Stopping barcode bridge")
+            logger.info("Stopping barcode bridge")
             self._barcode_task.cancel()
             try:
                 await self._barcode_task
@@ -2005,7 +2005,7 @@ class RobotWorker:
             try:
                 await self._barcode.stop()
             except Exception as exc:  # pragma: no cover - hardware dependent
-                logging.warning("Error stopping barcode service: %s", exc)
+                logger.warning("Error stopping barcode service: %s", exc, exc_info=exc)
             self._barcode = None
 
         if self._worker_task:
@@ -2111,7 +2111,7 @@ class RobotWorker:
             )
             self._logger.debug("Safety event published", extra=safety_status)
         except Exception as err:  # pragma: no cover - observability
-            logging.warning("Failed to publish safety event: %s", err)
+            logger.warning("Failed to publish safety event: %s", err, exc_info=err)
 
     def _is_io_door_opening(self) -> bool:
         try:
@@ -2231,7 +2231,7 @@ class RobotWorker:
         try:
             self._curtain_blocked = self._robot.get_curtain_state()
         except Exception as exc:  # pragma: no cover - robustness
-            logging.debug("Light curtain state refresh failed: %s", exc)
+            logger.debug("Light curtain state refresh failed: %s", exc)
 
         if self._curtain_blocked != previous_curtain:
             self._logger.debug(
@@ -2243,7 +2243,7 @@ class RobotWorker:
         try:
             self._door_open = await self._robot.refresh_door_state()
         except Exception as exc:  # pragma: no cover - robustness
-            logging.debug("Door state refresh failed: %s", exc)
+            logger.debug("Door state refresh failed: %s", exc)
 
         if self._door_open != previous_door:
             self._logger.debug(
@@ -2254,7 +2254,7 @@ class RobotWorker:
         try:
             self._cabinet_doors = self._robot.get_cabinet_door_state()
         except Exception as exc:  # pragma: no cover - robustness
-            logging.debug("Cabinet door state refresh failed: %s", exc)
+            logger.debug("Cabinet door state refresh failed: %s", exc)
 
     def _apply_safety_state(self, active_sources: list[str], sources: dict[str, dict[str, Any]]) -> bool:
         previous_active_sources = list(self._safety_active_sources)
@@ -2316,7 +2316,7 @@ class RobotWorker:
         it on its next pass; the safety bookkeeping and the event follow.
         """
         if self._safety_guard_bypassed is True or self._component_bypasses[WEIGHT_CHANGE_SOURCE] is True:
-            logging.warning("Weight change interruption bypassed", extra=info)
+            logger.warning("Weight change interruption bypassed", extra=info)
 
             return
 

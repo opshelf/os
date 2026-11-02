@@ -226,8 +226,7 @@ class PreparedCrashCapture(Awaitable[CrashReportArtifacts]):
             logger.warning(
                 "crash_video_encoding_failed_after_consumer_cancelled",
                 error=str(exc),
-                error_type=type(exc).__name__,
-            )
+                error_type=type(exc).__name__, exc_info=exc)
 
     def _release_pending(self) -> None:
         if self._released is False:
@@ -313,8 +312,7 @@ class CrashVideoRecorder:
                     "crash_recorder_camera_start_failed",
                     camera_id=camera_id,
                     error=str(exc),
-                    error_type=type(exc).__name__,
-                )
+                    error_type=type(exc).__name__, exc_info=exc)
                 continue
             self._owned_managers[camera_id] = manager
             self._buffers.setdefault(camera_id, deque())
@@ -337,8 +335,7 @@ class CrashVideoRecorder:
                 logger.warning(
                     "crash_recorder_camera_stop_failed",
                     error=str(exc),
-                    error_type=type(exc).__name__,
-                )
+                    error_type=type(exc).__name__, exc_info=exc)
 
     async def _sample_loop(self) -> None:
         sample_interval = 1.0 / self.config.sample_fps
@@ -524,8 +521,7 @@ class CrashVideoRecorder:
                             "crash_video_encoding_failed",
                             camera_id=camera_id,
                             error=str(exc),
-                            error_type=type(exc).__name__,
-                        )
+                            error_type=type(exc).__name__, exc_info=exc)
                         continue
 
                     if len(video_bytes) > self.config.max_attachment_bytes:

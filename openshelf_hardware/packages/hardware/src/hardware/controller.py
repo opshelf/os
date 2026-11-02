@@ -110,8 +110,7 @@ class SharedModbusController:
                             "attempt": attempt + 1,
                             "max_attempts": attempts,
                             "error": str(e),
-                        },
-                    )
+                        }, exc_info=e)
 
                     await asyncio.sleep(0.05 * (attempt + 1))
 

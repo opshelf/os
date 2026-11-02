@@ -50,8 +50,7 @@ async def append_robot_event(payload: dict[str, Any]) -> Optional[int]:
                 logger.error(
                     "Failed to append robot event after %d attempts: %s",
                     APPEND_ATTEMPTS,
-                    err,
-                )
+                    err, exc_info=err)
                 return None
             await asyncio.sleep(APPEND_RETRY_DELAY_S)
     return None

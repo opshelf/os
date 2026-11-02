@@ -2110,7 +2110,7 @@ async def move_to_iobox_position(position: IOBoxPositionName) -> IOBoxPositionRe
 		try:
 			await io.open_door()
 		except (IOBoxError, MotorError, HardwareMotorError) as e:
-			logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
+			logger.warning(f"Door open failed (continuing): {e}", exc_info=e)
 
 		try:
 			await tool.move(AxisCoordinate(x, y))
@@ -2239,7 +2239,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 		try:
 			await io.open_door()
 		except (IOBoxError, MotorError, HardwareMotorError) as e:
-			logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
+			logger.warning(f"Door open failed (continuing): {e}", exc_info=e)
 
 		try:
 			await tool.move(AxisCoordinate(iobox_current.pickup_low_x, iobox_current.pickup_low_y))
@@ -2329,7 +2329,7 @@ async def test_iobox_multi_item_cycle():
 		try:
 			await io.open_door()
 		except (IOBoxError, MotorError, HardwareMotorError) as e:
-			logging.getLogger(__name__).warning(f"Door open failed (continuing): {e}")
+			logger.warning(f"Door open failed (continuing): {e}", exc_info=e)
 
 		try:
 			await tool.release("multi-item test start release")

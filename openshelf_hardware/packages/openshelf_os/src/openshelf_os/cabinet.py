@@ -265,7 +265,7 @@ class Cabinet:
         try:
             self._door_listener(state)
         except Exception as exc:
-            self._logger.warning("Cabinet door listener failed: %s", exc)
+            self._logger.warning("Cabinet door listener failed: %s", exc, exc_info=exc)
 
     async def _monitor_doors(self) -> None:
         poll_failed = False

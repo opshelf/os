@@ -195,7 +195,7 @@ async def stream_camera(
 	try:
 		await start_camera_stream_by_id(camera_id)
 	except ValueError as e:
-		logger.warning("camera_stream_start_failed", camera_id=camera_id, error=str(e))
+		logger.warning("camera_stream_start_failed", camera_id=camera_id, error=str(e), exc_info=e)
 		raise api_error(
 			status.HTTP_503_SERVICE_UNAVAILABLE,
 			"camera_unavailable",
@@ -324,7 +324,7 @@ async def stream_camera_h264(websocket: WebSocket, camera_id: str) -> None:
 	try:
 		await start_nalu_stream_by_id(camera_id)
 	except Exception as e:
-		logger.warning("h264_stream_start_failed", camera_id=camera_id, error=str(e))
+		logger.warning("h264_stream_start_failed", camera_id=camera_id, error=str(e), exc_info=e)
 		await websocket.close(code=4503)
 		return
 
@@ -397,7 +397,6 @@ async def stream_camera_h264(websocket: WebSocket, camera_id: str) -> None:
 			"h264_stream_error",
 			camera_id=camera_id,
 			error=str(e),
-			error_type=type(e).__name__,
-		)
+			error_type=type(e).__name__, exc_info=e)
 	finally:
 		await stop_nalu_stream_by_id(camera_id)

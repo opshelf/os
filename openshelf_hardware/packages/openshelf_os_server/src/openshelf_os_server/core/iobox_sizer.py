@@ -356,8 +356,7 @@ async def capture_store_observer_measurement(
 			"iobox_sizer_observer_capture_timed_out",
 			barcode=barcode,
 			error=str(exc),
-			error_type=type(exc).__name__,
-		)
+			error_type=type(exc).__name__, exc_info=exc)
 		await record_store_sizer_measurement(
 			barcode=barcode,
 			item_name=item_name,
@@ -377,8 +376,7 @@ async def capture_store_observer_measurement(
 			"iobox_sizer_observer_capture_failed",
 			barcode=barcode,
 			error=str(exc),
-			error_type=type(exc).__name__,
-		)
+			error_type=type(exc).__name__, exc_info=exc)
 		await record_store_sizer_measurement(
 			barcode=barcode,
 			item_name=item_name,

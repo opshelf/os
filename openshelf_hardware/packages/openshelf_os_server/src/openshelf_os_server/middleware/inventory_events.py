@@ -29,7 +29,7 @@ async def publish_inventory_changed() -> None:
 		if worker is not None:
 			await worker.publish_event(INVENTORY_CHANGED_EVENT)
 	except Exception as exc:
-		logger.warning("Failed to publish inventory change: %s", exc)
+		logger.warning("Failed to publish inventory change: %s", exc, exc_info=exc)
 
 
 def is_inventory_mutation(request: Request, response: Response) -> bool:

@@ -79,7 +79,7 @@ async def _run_nmcli(*args: str) -> _NmcliResult:
 			env=env,
 		)
 	except FileNotFoundError as exc:
-		logger.error("wifi_nmcli_missing", error=str(exc))
+		logger.error("wifi_nmcli_missing", error=str(exc), exc_info=exc)
 		raise api_error(
 			status.HTTP_500_INTERNAL_SERVER_ERROR,
 			"wifi_unavailable",
@@ -172,7 +172,7 @@ def _write_config(ssid: str, password: str) -> None:
 		CONFIG_FILE.write_text(f"ssid={ssid}\npassword={password}\n", encoding="utf-8")
 		os.chmod(CONFIG_FILE, 0o600)
 	except OSError as exc:
-		logger.warning("wifi_config_write_failed", error=str(exc))
+		logger.warning("wifi_config_write_failed", error=str(exc), exc_info=exc)
 
 
 async def _bring_up_pending(ssid: str, password: str) -> _NmcliResult:

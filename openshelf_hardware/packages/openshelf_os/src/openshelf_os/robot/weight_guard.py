@@ -182,8 +182,7 @@ class WeightChangeGuard:
         except Exception as exc:  # pragma: no cover - a dead task must not break shutdown
             logger.warning(
                 "Weight change guard task failed during stop",
-                extra={"axis": self._axis_name, "error": str(exc)},
-            )
+                extra={"axis": self._axis_name, "error": str(exc)}, exc_info=exc)
         finally:
             self._task = None
             # A trip queued just before stopping still has to reach the disk, even
@@ -533,8 +532,7 @@ class WeightChangeGuard:
                 self._record_path = None
             logger.warning(
                 "Failed to write weight change record",
-                extra={"error": str(exc), "axis": self._axis_name},
-            )
+                extra={"error": str(exc), "axis": self._axis_name}, exc_info=exc)
 
             return None
 

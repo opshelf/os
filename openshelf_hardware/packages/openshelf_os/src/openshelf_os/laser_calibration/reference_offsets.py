@@ -331,8 +331,7 @@ def _load_candidates(analysis: Any) -> list[Any]:
 	except Exception as error:
 		logger.warning(
 			"reference_offset_candidates_unavailable",
-			extra={"metadata_path": str(metadata_path), "error": str(error)},
-		)
+			extra={"metadata_path": str(metadata_path), "error": str(error)}, exc_info=error)
 		return []
 
 

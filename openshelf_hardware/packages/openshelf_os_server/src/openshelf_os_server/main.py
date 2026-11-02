@@ -753,7 +753,7 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 				logger.info("tool_camera_url_from_config", config_path=str(config_path), url=url)
 				return str(url)
 		except Exception as e:
-			logger.warning("failed_to_read_config", config_path=str(config_path), error=str(e))
+			logger.warning("failed_to_read_config", config_path=str(config_path), error=str(e), exc_info=e)
 
 	return None
 

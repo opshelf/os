@@ -96,6 +96,8 @@ from .auth_deps import (
 
 from openshelf_os.robot.status import SafetyStatus
 
+logger = logging.getLogger(__name__)
+
 class ScannerStatusResponse(BaseModel):
     connected: bool
     enabled: bool
@@ -199,7 +201,7 @@ def _raise_scale_config_error(exc: ConfigError) -> NoReturn:
     if _is_scale_not_enabled(exc):
         raise _scale_not_enabled_exception() from exc
 
-    logging.warning("Scale configuration error: %s", exc)
+    logger.warning("Scale configuration error: %s", exc)
     raise api_error(
         status.HTTP_503_SERVICE_UNAVAILABLE,
         "scale_config_failed",
@@ -594,7 +596,7 @@ def _validate_requested_store_location(item_data: dict[str, Any], worker: Any) -
             detail=error_detail("Requested storage cell does not exist", "cell_not_found"),
         )
     if cell.status != CellStatus.AVAILABLE:
-        logging.info("Requested storage cell is %s", cell.status.value)
+        logger.info("Requested storage cell is %s", cell.status.value)
         raise api_error(status.HTTP_409_CONFLICT, "cell_unavailable", "")
 
     dimensions = item_data.get("dimensions")
@@ -711,7 +713,7 @@ async def _validate_mock_retrieve(
         )
     ).scalar_one_or_none()
     if item is None:
-        logging.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
+        logger.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
         raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that cell.")
     if can_user_retrieve_item(current_user, item) is False:
         raise api_error(status.HTTP_403_FORBIDDEN, "item_access_denied", "You do not have permission to retrieve this item")
@@ -824,7 +826,7 @@ async def robot_commands(
                     headers={"Retry-After": "1"},
                 ) from exc
             except ValueError as exc:
-                logging.info("Mock robot command rejected: %s", exc)
+                logger.info("Mock robot command rejected: %s", exc)
                 raise api_error(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "request_invalid",
@@ -858,7 +860,7 @@ async def robot_commands(
 
     enrollment_item: Item | None = None
     if isinstance(command, StoreItemCommand):
-        logging.info("Processing StoreItemCommand: item=%s", command.item)
+        logger.info("Processing StoreItemCommand: item=%s", command.item)
         item_data = deepcopy(command.item or {})
         barcode = item_data.get("barcode")
         if any(key in item_data for key in MASS_FIELDS) and (
@@ -870,12 +872,12 @@ async def robot_commands(
         human_dimensions_source = "command_payload" if item_data.get("dimensions") is not None else "none"
 
         if barcode is not None:
-            logging.info("Looking up item by barcode: %s", barcode)
+            logger.info("Looking up item by barcode: %s", barcode)
             result = await db.execute(select(Item).where(Item.barcode == barcode))
             item = result.scalar_one_or_none()
 
             if item is not None:
-                logging.info("Found item in db: name=%s, dimensions=%s", item.name, item.dimensions)
+                logger.info("Found item in db: name=%s, dimensions=%s", item.name, item.dimensions)
                 item_data["dimensions"] = item.dimensions
                 item_data["name"] = item.name
                 human_dimensions_source = "db"
@@ -900,7 +902,7 @@ async def robot_commands(
                 item_data["full_net_weight"] = item.full_net_weight
                 command = StoreItemCommand(item=item_data, request_id=request_id)
             else:
-                logging.info("Item not found in db for barcode: %s", barcode)
+                logger.info("Item not found in db for barcode: %s", barcode)
                 dimensions = item_data.get("dimensions")
                 if not isinstance(dimensions, dict) or any(
                     isinstance(dimensions.get(key), bool)
@@ -923,7 +925,7 @@ async def robot_commands(
                 apply_mass(item, item_data, enrollment=True)
                 enrollment_item = item
 
-        logging.info("Final StoreItemCommand: item=%s", command.item)
+        logger.info("Final StoreItemCommand: item=%s", command.item)
         final_item_data = command.item or {}
         _validate_requested_store_location(final_item_data, worker)
         try:
@@ -937,7 +939,7 @@ async def robot_commands(
                 human_dimensions_source=human_dimensions_source,
             )
         except Exception as exc:
-            logging.warning("IO box sizer observer capture failed: %s", exc)
+            logger.warning("IO box sizer observer capture failed: %s", exc, exc_info=exc)
 
     if isinstance(command, RetrieveItemCommand):
         if command.barcode:
@@ -972,7 +974,7 @@ async def robot_commands(
             except HTTPException:
                 raise
             except Exception as exc:
-                logging.warning("Scale read failed during retrieve check: %s", exc)
+                logger.warning("Scale read failed during retrieve check: %s", exc, exc_info=exc)
 
         location_data = command.location or {}
         side = location_data.get("side")
@@ -994,7 +996,7 @@ async def robot_commands(
         item = result.scalar_one_or_none()
 
         if item is None:
-            logging.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
+            logger.info("No item at location side=%s shelf=%s cell=%s", side, shelf_idx, cell_idx)
             raise api_error(status.HTTP_404_NOT_FOUND, "item_not_found", "There is no item in that cell.")
 
         if can_user_retrieve_item(current_user, item) is False:
@@ -1025,7 +1027,7 @@ async def robot_commands(
                 headers={"Retry-After": "1"},
             ) from exc
         except ValueError as exc:
-            logging.info("Robot command rejected: %s", exc)
+            logger.info("Robot command rejected: %s", exc)
             raise api_error(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "request_invalid",
@@ -1290,7 +1292,7 @@ async def emit_scanner_scan_event(
                 raise RuntimeError("Robot worker is unavailable")
             await worker.publish_event(payload)
     except Exception as exc:
-        logging.error("Failed to publish label_scanned event: %s", exc)
+        logger.error("Failed to publish label_scanned event: %s", exc, exc_info=exc)
         raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "label_scan_failed", "The label scan could not be sent. Try again.") from exc
     return SuccessResponse()
 
@@ -1356,7 +1358,7 @@ async def get_scale_reading(
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
 
-        logging.error("Failed to read scale: %s", exc)
+        logger.error("Failed to read scale: %s", exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_read_failed",
@@ -1386,7 +1388,7 @@ async def get_scale_calibration_status(
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
 
-        logging.error("Failed to read scale calibration status: %s", exc)
+        logger.error("Failed to read scale calibration status: %s", exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_read_failed",
@@ -1416,7 +1418,7 @@ async def get_scale_calibration_params(
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
 
-        logging.error("Failed to read scale calibration params: %s", exc)
+        logger.error("Failed to read scale calibration params: %s", exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_read_failed",
@@ -1457,7 +1459,7 @@ async def set_scale_calibration_params(
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
 
-        logging.error("Failed to set scale calibration params: %s", exc)
+        logger.error("Failed to set scale calibration params: %s", exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_settings_failed",
@@ -1491,7 +1493,7 @@ async def calibrate_scale_zero(
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
 
-        logging.error("Failed to calibrate scale zero: %s", exc)
+        logger.error("Failed to calibrate scale zero: %s", exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_calibration_failed",
@@ -1525,7 +1527,7 @@ async def calibrate_scale_weight(
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
 
-        logging.error("Failed to calibrate scale weight: %s", exc)
+        logger.error("Failed to calibrate scale weight: %s", exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_calibration_failed",
@@ -1560,7 +1562,7 @@ async def scale_tare(
         if _is_scale_not_enabled(exc):
             raise _scale_not_enabled_exception() from exc
 
-        logging.error("Failed to tare scale: %s", exc)
+        logger.error("Failed to tare scale: %s", exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "scale_tare_failed",
@@ -1613,7 +1615,7 @@ async def simulate_motor_crash(
     success = await worker.simulate_motor_crash(motor_name)
 
     if success is False:
-        logging.info("Motor %s not found", motor_name)
+        logger.info("Motor %s not found", motor_name)
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
@@ -1642,7 +1644,7 @@ async def clear_motor_alarm(
     motor = worker._robot._get_motor_by_name(motor_name)
 
     if motor is None:
-        logging.info("Motor %s not found", motor_name)
+        logger.info("Motor %s not found", motor_name)
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
@@ -1665,7 +1667,7 @@ async def clear_motor_alarm(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Motor alarm clear failed: %s", exc)
+        logger.error("Motor alarm clear failed: %s", exc, exc_info=exc)
         raise hardware_api_error(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1702,7 +1704,7 @@ async def home_motor(
     motor = worker._robot._get_motor_by_name(motor_name)
 
     if motor is None:
-        logging.info("Motor %s not found", motor_name)
+        logger.info("Motor %s not found", motor_name)
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
@@ -1739,7 +1741,7 @@ async def home_motor(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Motor home failed: %s", exc)
+        logger.error("Motor home failed: %s", exc, exc_info=exc)
         raise hardware_api_error(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1805,7 +1807,7 @@ async def power_cycle_rail(
     steps does not block the cycle.
     """
     if rail not in POWER_RAILS:
-        logging.info("Power rail %s not found", rail)
+        logger.info("Power rail %s not found", rail)
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "power_rail_not_configured",
@@ -1827,7 +1829,7 @@ async def power_cycle_rail(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Power cycle failed: %s", exc)
+        logger.error("Power cycle failed: %s", exc, exc_info=exc)
         raise hardware_api_error(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1919,7 +1921,7 @@ async def move_motor(
     motor = worker._robot._get_motor_by_name(motor_name)
 
     if motor is None:
-        logging.info("Motor %s not found", motor_name)
+        logger.info("Motor %s not found", motor_name)
         raise api_error(
             status.HTTP_404_NOT_FOUND,
             "motor_not_configured",
@@ -1944,7 +1946,7 @@ async def move_motor(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.warning("Motor move failed: %s", exc)
+        logger.warning("Motor move failed: %s", exc, exc_info=exc)
         raise hardware_api_error(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1983,7 +1985,7 @@ async def control_door(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Door %s failed: %s", action, exc)
+        logger.error("Door %s failed: %s", action, exc, exc_info=exc)
         raise hardware_api_error(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2187,7 +2189,7 @@ async def stream_events(request: Request) -> EventSourceResponse:
     # another device) would sit above every row and the stream would go
     # silent, so fall back to live at the top.
     if last_event_id is not None and last_event_id > latest_seq:
-        logging.warning(
+        logger.warning(
             "Last-Event-ID %d is above the robot event log top %d; "
             "falling back to live at the top",
             last_event_id,
@@ -2261,7 +2263,7 @@ async def stream_events(request: Request) -> EventSourceResponse:
                             # The row has not committed yet: warn and continue;
                             # a late row is delivered by the next forward
                             # read and the next message gates independently.
-                            logging.warning(
+                            logger.warning(
                                 "Robot event log row not committed within %.1fs; "
                                 "the stream continues and the gap is visible in the log",
                                 EVENT_FORWARD_WAIT_TIMEOUT_S,

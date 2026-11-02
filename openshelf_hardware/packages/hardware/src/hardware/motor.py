@@ -390,13 +390,13 @@ class Motor():
         try:
             await self.stop()
         except Exception as e:
-            self._logger.warning("Failed to idle motor: %s", e)
+            self._logger.warning("Failed to idle motor: %s", e, exc_info=e)
 
     async def ready(self) -> None:
         try:
             await self.clear_alarm()
         except Exception as e:
-            self._logger.warning("Failed to ready motor: %s", e)
+            self._logger.warning("Failed to ready motor: %s", e, exc_info=e)
 
     # ------------------------------------------------------------------ #
     #  Low-level register I/O
@@ -603,8 +603,7 @@ class Motor():
         except Exception as exc:
             self._logger.warning(
                 "Failed to dump motion flight recorder",
-                extra={"motor_id": self._motor_id, "reason": reason, "error": str(exc)},
-            )
+                extra={"motor_id": self._motor_id, "reason": reason, "error": str(exc)}, exc_info=exc)
             return None
 
     async def _read_bounded_position_registers(
@@ -1186,8 +1185,7 @@ class Motor():
                     "motor_id": self._motor_id,
                     "motor_name": getattr(self._params, "motor_name", None),
                     "error": str(e),
-                },
-            )
+                }, exc_info=e)
 
     # ------------------------------------------------------------------ #
     #  Alarm / fault management
@@ -1864,8 +1862,7 @@ class Motor():
         except Exception as alarm_exc:
             self._logger.warning(
                 "Failed to read motor alarm register",
-                extra={"motor_id": self._motor_id, "error": str(alarm_exc)},
-            )
+                extra={"motor_id": self._motor_id, "error": str(alarm_exc)}, exc_info=alarm_exc)
 
             raise
 

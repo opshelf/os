@@ -181,7 +181,7 @@ def _robot_grid() -> Any:
         config = common.load_config_file(common.CONFIG_PATH)
         return StorageGrid.load_from_file(common.resolve_grid_path(config, common.CONFIG_PATH))
     except Exception as exc:  # pragma: no cover - depends on device files
-        logger.warning("import_fit_check_grid_unavailable: %s", exc)
+        logger.warning("import_fit_check_grid_unavailable: %s", exc, exc_info=exc)
         return None
 
 
@@ -1287,7 +1287,7 @@ class ImportJobService:
                 }
             )
         except Exception as exc:
-            logger.warning("Failed to publish import job update: %s", exc)
+            logger.warning("Failed to publish import job update: %s", exc, exc_info=exc)
 
 
 async def notify_command_result(

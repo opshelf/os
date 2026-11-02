@@ -293,7 +293,7 @@ def _auto_migrate_config(path: Path) -> None:
     try:
         changed, changes, backup = migrate_config_file(path)
     except (OSError, ValueError) as exc:
-        logger.error("Config auto-migration failed: %s", exc)
+        logger.error("Config auto-migration failed: %s", exc, exc_info=exc)
         raise ConfigError(str(exc)) from None
     if changed:
         logger.info(
@@ -345,7 +345,7 @@ def get_root_config() -> RootConfig:
     try:
         _cached_config = load_and_validate_config(data, str(found_path))
     except ConfigValidationError as e:
-        logger.error("Config validation failed: %s", e)
+        logger.error("Config validation failed: %s", e, exc_info=e)
         raise
 
     return _cached_config

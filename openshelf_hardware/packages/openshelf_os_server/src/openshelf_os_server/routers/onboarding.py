@@ -148,7 +148,7 @@ async def ensure_onboarding_state(db: AsyncSession) -> str:
 			return state
 	except (RuntimeError, ValueError, OSError) as exc:
 		# A corrupt, unreadable, or unwritable state file is a device fault, not a client error.
-		logger.error(f"Onboarding state unavailable: {exc}")
+		logger.error(f"Onboarding state unavailable: {exc}", exc_info=exc)
 		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "Onboarding state unavailable") from exc
 
 
@@ -322,6 +322,6 @@ async def complete_onboarding() -> OnboardingStatus:
 		_write_onboarding_state(ONBOARDING_COMPLETED)
 	except (RuntimeError, ValueError, OSError) as exc:
 		# A corrupt, unreadable, or unwritable state file is a device fault, not a client error.
-		logger.error(f"Onboarding state unavailable: {exc}")
+		logger.error(f"Onboarding state unavailable: {exc}", exc_info=exc)
 		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "Onboarding state unavailable") from exc
 	return OnboardingStatus(needs_onboarding=False)

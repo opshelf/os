@@ -7,6 +7,8 @@ import sentry_sdk
 from openshelf_os.device import get_device_id
 from openshelf_os.operating_mode import get_operating_mode, is_service_process, is_sentry_reporting_enabled
 
+logger = logging.getLogger(__name__)
+
 try:
 	from sentry_sdk.integrations.logging import LoggingIntegration
 except Exception:  # pragma: no cover - optional dependency guard for tests
@@ -21,11 +23,11 @@ def _configure_sentry() -> bool:
 	# Initialized in every mode so the runtime toggle can turn reporting on; the
 	# before_send hooks drop everything while it is off.
 	if is_service_process() is False:
-		logging.debug("Sentry disabled for openshelf_os: not the service process")
+		logger.debug("Sentry disabled for openshelf_os: not the service process")
 		return False
 
 	if sentry_dsn == "":
-		logging.warning("Sentry enabled for openshelf_os but SENTRY_DSN_HARDWARE is not set")
+		logger.warning("Sentry enabled for openshelf_os but SENTRY_DSN_HARDWARE is not set")
 		return False
 
 	integrations: List[Any] = []
@@ -53,7 +55,7 @@ def _configure_sentry() -> bool:
 	)
 	sentry_sdk.set_tag("device_id", device_id)
 	sentry_sdk.set_context("opshelf_device", {"id": device_id})
-	logging.info("Sentry initialized for openshelf_os", extra={"mode": mode.value})
+	logger.info("Sentry initialized for openshelf_os", extra={"mode": mode.value})
 	return True
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}

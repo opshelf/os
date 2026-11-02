@@ -30,6 +30,10 @@
 - `test_router_messages_never_carry_raw_exception_text` fails when a router puts a caught exception into a message; an exception whose text is hand-written operator copy (e.g. `BinWorkflowConflict`) belongs in its allowlist, anything else gets a code sentence.
 - `CODE_MESSAGES` (with `openshelf_os.faults.FAULT_MESSAGES`) is the one source of operator copy per code: the kiosk loads it from `GET /api/system/error-messages` at startup and prefers it over its built-in table, which only covers older devices and kiosk-raised codes; `dev_ui/` toasts `detail.message`. Change a code's wording here, not in `../ui`. Copy stays sentence case with a terminal period, no "please", no raw identifiers.
 
+## Logging
+- Log through the module logger (`logger = logging.getLogger(__name__)`, or `get_logger` where the module uses structlog), never the root `logging.` functions: the logger name is how a correlation id leads to the right module.
+- A warning or error about a caught exception carries `exc_info=exc`, so the line a client's `ref` points at has the traceback. Leave it off only for a warning repeated on every tick of a polling loop.
+
 ## Dev UI
 - Report errors through the toast system (`postToast('error', …)` from `$lib/toasts`), not inline error text in pages, dialogs, or components.
 - Keep a button's label unchanged while its action is busy or queued — only disable it; do not swap in "homing…"/"queued"-style titles.

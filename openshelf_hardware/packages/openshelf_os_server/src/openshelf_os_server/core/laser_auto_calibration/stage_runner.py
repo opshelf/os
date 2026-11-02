@@ -297,7 +297,7 @@ class StageRunnerMixin:
                     )
                     angle_module.print_status(f"shelf_scout=debug path={debug_path}")
                 except Exception as debug_exc:
-                    logger.warning("Failed to write stage-extension shelf-scout debug document: %s", debug_exc)
+                    logger.warning("Failed to write stage-extension shelf-scout debug document: %s", debug_exc, exc_info=debug_exc)
 
                 raise
 

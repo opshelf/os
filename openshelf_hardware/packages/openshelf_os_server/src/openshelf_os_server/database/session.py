@@ -92,7 +92,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 	except Exception as exc:
 		if _is_pool_exhausted_error(exc):
 			# WARNING: the re-raised error is already reported; this adds the pool status.
-			logger.warning("database_connection_pool_exhausted", error=str(exc), **_pool_status())
+			logger.warning("database_connection_pool_exhausted", error=str(exc), **_pool_status(), exc_info=exc)
 		raise
 	finally:
 		await _close_session(session)

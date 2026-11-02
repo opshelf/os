@@ -135,7 +135,7 @@ class Robot:
         try:
             self._grid = StorageGrid.load_from_file(self._grid_path)
         except StorageValidationError as e:
-            self._logger.warning("storage_load_failed: %s - %s", self._grid_path, str(e))
+            self._logger.warning("storage_load_failed: %s - %s", self._grid_path, str(e), exc_info=e)
             self._grid = StorageGrid()
 
         self._init_reporter: Optional[InitProgressReporter] = None
@@ -443,8 +443,7 @@ class Robot:
             except Exception as e:
                 self._logger.error(
                     "failed to reconfigure after power cycle",
-                    extra={"motor_name": name, "error": str(e)},
-                )
+                    extra={"motor_name": name, "error": str(e)}, exc_info=e)
                 failed_axes.append(name)
 
         if failed_axes:
@@ -954,8 +953,7 @@ class Robot:
             except (ValueError, IndexError) as e:
                 self._logger.warning(
                     "sync_occupied_cells_skip: side=%s shelf=%d cell=%d error=%s",
-                    side, shelf_idx, cell_idx, str(e)
-                )
+                    side, shelf_idx, cell_idx, str(e), exc_info=e)
 
     def set_reserved_cell_locations(self, locations: Iterable[tuple[str, int, int]]) -> None:
         """Replace the bin homes that ordinary stores and allocation must avoid.
