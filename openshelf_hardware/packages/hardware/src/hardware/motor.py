@@ -40,6 +40,9 @@ DEFAULT_HOME_APPROACH_BACKOFF_MM = 5.0
 # since lifts at speed lag well past 10 mm.
 HOME_FOLLOWING_ERROR_MM = 10.0
 Y_HOME_SETTLE_LIFT_MM = 5.0
+# lb4a-5 stalls Y on the next move after returning to 0 from the settle lift; 2 mm holds.
+# Only homing takes Y below this.
+Y_MIN_TARGET_MM = 2.0
 ALARM_DETECT_FOLLOWING_ERROR_BIT = 2
 # Control word 0x1122 resets the alarm history, an EEPROM write that leaves the drive
 # deaf for ~0.5 s (the next frame is answered late or dropped). Homing keeps it;
@@ -1266,6 +1269,8 @@ class Motor():
         original_value = value
 
         lower_lim = getattr(self._params, "lower_lim", 0)
+        if getattr(self._params, "motor_name", None) == "y_axis":
+            lower_lim = max(lower_lim, Y_MIN_TARGET_MM)
 
         if value < lower_lim:
             value = lower_lim
@@ -2331,15 +2336,15 @@ class Motor():
         return restore_errors
 
     async def _settle_after_home(self) -> None:
-        """Lift Y off its home stop and return to zero before the first real move.
+        """Lift Y off its home stop and leave it there.
 
         On lb4a-4 the first climb after a home tripped alarm 32 at 75-101 mm
         whenever it went straight from the homed zero; any upward move first
-        (1 mm was enough) cleared it, a downward one did not.
+        (1 mm was enough) cleared it, a downward one did not. On lb4a-5 returning
+        to 0 after the lift still stalled the next move, so Y stays lifted.
         """
         rpm = self._params.home_rpm or self._params.ret_rpm
         await self.move_to_position(Y_HOME_SETTLE_LIFT_MM, rpm=rpm)
-        await self.move_to_position(0.0, rpm=rpm)
 
     async def _verify_home_limit_engaged(self) -> None:
         if self._home_limit_input is None:

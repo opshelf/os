@@ -836,7 +836,7 @@ async def test_y_axis_home_fails_when_the_drive_drops_the_zero(mock_controller, 
 
 
 @pytest.mark.asyncio
-async def test_y_axis_home_lifts_off_the_stop_after_restoring_overrides(mock_controller):
+async def test_y_axis_home_lifts_off_the_stop_and_stays_after_restoring_overrides(mock_controller):
     # lb4a-4: the first climb straight from the homed zero tripped alarm 32 at ~90 mm.
     motor = y_home_motor(mock_controller)
     echo_registers(mock_controller, {0x0159: 0x24})
@@ -846,9 +846,35 @@ async def test_y_axis_home_lifts_off_the_stop_after_restoring_overrides(mock_con
     await motor.home(homing_peak_current=30)
 
     calls = mock_controller.write_single_register.await_args_list
-    assert targets == [5.0, 0.0]
+    # lb4a-5: returning to 0 after the lift stalled the next move, so Y stays lifted.
+    assert targets == [5.0]
     assert motor.is_homed() is True
     # The lift runs at running current and limit, and before the park.
-    assert motor.move_to_position.await_count == 2
     assert call(1, 0x0191, 10) in calls and call(1, 0x000B, 4000) in calls
     assert calls.index(call(1, 0x000F, 0)) > calls.index(call(1, 0x000B, 4000))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("motor_name", "requested", "expected"),
+    [("y_axis", 0.0, 2.0), ("y_axis", 1.0, 2.0), ("y_axis", 3.0, 3.0), ("x_axis", 0.5, 0.5)],
+)
+async def test_absolute_move_keeps_y_at_least_2mm_off_home(
+    mock_controller, motor_name, requested, expected
+):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(
+            motor_name=motor_name,
+            lower_lim=0.0,
+            physical_to_logical=lambda value: value,
+            logical_to_physical=lambda value: value,
+        ),
+    )
+    motor._cur_pos = 50.0
+    motor.set_param = AsyncMock()
+    motor._verify_brake_output_before_motion_trigger = AsyncMock()
+    motor._enable_for_motion = AsyncMock()
+
+    assert await motor._start_absolute_move(requested) is True
+    assert motor._target_pos == expected
