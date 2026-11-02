@@ -341,3 +341,23 @@ async def test_retract_homes_stage_when_zero_move_stops_outside_clearance() -> N
     stage_motor.clear_alarm.assert_awaited_once()
     stage_motor.home.assert_awaited_once()
     stage_motor.idle.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_home_rotate_sequence_refuses_extended_z_before_any_x_motion() -> None:
+    tool = Tool.__new__(Tool)
+    tool._mx = _mock_x_motor(position=0.0)
+    tool._mx._is_homed = False
+    tool._mx._is_home_provisional = False
+    tool._mg = AsyncMock()
+    tool._mg.get_position = AsyncMock(return_value=120.0)
+    tool._mr = AsyncMock()
+    tool._ms = None
+    tool.get_param = AsyncMock(return_value=2.7)
+
+    with pytest.raises(RotationClearanceError, match="z_axis"):
+        await tool._home_rotate_sequence()
+
+    tool._mx.home.assert_not_awaited()
+    tool._mx.move_to_position.assert_not_awaited()
+    tool._mr.home.assert_not_awaited()

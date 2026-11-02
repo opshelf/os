@@ -2402,9 +2402,10 @@ class Motor():
         homing_peak_current: Optional[int] = None,
         provisional: bool = False,
     ) -> None:
-        """`provisional` homes where the axis may stop short on an obstruction: it skips the
-        motion guard and the home limit check, and the caller must home again verified."""
-        if self._motion_guard is not None and provisional is False:
+        """`provisional` homes where the axis may stop short on an obstruction: it skips the home
+        limit check, and the caller must home again verified. It also skips the motion guard, but
+        only while the axis is unhomed (no coordinates to trust); a homed axis still runs it."""
+        if self._motion_guard is not None and (provisional is False or self._is_homed is True):
             await self._motion_guard(None)
 
         self._simulated_fault = False

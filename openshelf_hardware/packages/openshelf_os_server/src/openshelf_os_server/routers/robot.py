@@ -1803,7 +1803,7 @@ async def home_motor(
         raise api_error(
             status.HTTP_409_CONFLICT,
             "rotation_blocked",
-            "The tool is turned away from its front or back position. Home the rotation and try again.",
+            "The tool is not clear to move. Retract the tool and home the rotation, then try again.",
         ) from exc
     except Exception as exc:
         logging.error("Motor home failed: %s", exc)
@@ -2077,7 +2077,7 @@ async def move_motor(
         raise api_error(
             status.HTTP_409_CONFLICT,
             "rotation_blocked",
-            "The tool is turned away from its front or back position. Home the rotation and try again.",
+            "The tool is not clear to move. Retract the tool and home the rotation, then try again.",
         ) from exc
     except Exception as exc:
         logging.warning("Motor move failed: %s", exc)

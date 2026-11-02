@@ -1138,7 +1138,10 @@ class Tool:
         *,
         stage_position: float | None = None,
         stage_extension_enabled: bool | None = None,
+        before_x_motion: bool = False,
     ) -> None:
+        # before_x_motion: only check that Z and the stage are retracted enough for X to move
+        # sideways; the stage may sit anywhere up to its safe extension and X is not checked.
         unsafe: list[str] = []
 
         if self._ms is not None:
@@ -1151,7 +1154,14 @@ class Tool:
                     False,
                 )
 
-            if stage_extension_enabled is True:
+            if stage_extension_enabled is True and before_x_motion:
+                maximum_stage_mm = float(self._ms._params.rotation_safe_stage_extension_mm)
+                if stage_position > maximum_stage_mm:
+                    unsafe.append(
+                        f"stage={stage_position:.3f}mm exceeds maximum "
+                        f"{maximum_stage_mm:.3f}mm"
+                    )
+            elif stage_extension_enabled is True:
                 minimum_stage_mm = float(self._ms._params.rotation_safe_stage_extension_mm)
                 if stage_position < minimum_stage_mm:
                     unsafe.append(
@@ -1183,7 +1193,7 @@ class Tool:
 
         # The tool only clears the gantry uprights while X is ROTATION_SAFE_X_MARGIN_MM from both
         # ends of its travel; ensure_safe_rotation_x_position moves it there before rotating.
-        x_motor = getattr(self, "_mx", None)
+        x_motor = None if before_x_motion else getattr(self, "_mx", None)
         if x_motor is not None:
             if getattr(x_motor, "_is_homed", True) is False:
                 unsafe.append("x_axis is not homed")
@@ -1648,6 +1658,8 @@ class Tool:
         original_x = None
 
         if self._mx is not None:
+            # Z and the stage must be clear before X moves sideways, homed or not.
+            await self._assert_rotation_clearance(before_x_motion=True)
             # The clearance move below is in X coordinates; after a power cycle the drive
             # reads 0 wherever the carriage stands, so X must be homed before it moves. With the
             # tool at an unknown angle that home can stop on a gantry upright short of the limit
@@ -1689,18 +1701,15 @@ class Tool:
         # X homes around rotate. A first, provisional home only gives the rotate clearance move
         # real coordinates (after a power loss the drive reads 0 wherever the carriage stands);
         # with the tool at an unknown angle it can stop on a gantry upright short of the hard
-        # stop. It runs only while X is unhomed: a homed X already has coordinates, and a verified
-        # home with the tool rotated is what the X guard refuses. The home that runs with the tool
-        # straight sets the zero every later move uses.
+        # stop. It runs even when X is homed, since a stale _is_homed (drive power dropped after an
+        # emergency stop) leaves wrong coordinates; the X guard still refuses it for a homed X with
+        # the tool rotated. The home that runs with the tool straight sets the zero every later
+        # move uses.
         will_home_rotate = should_home("rotate") and self._mr is not None
         for motor, axis in ((self._mg, "z_axis"), (self._ms, "stage"), (self._mx, "x_axis")):
             if motor is None or should_home(axis) is False:
                 continue
-            provisional = False
-            if axis == "x_axis" and will_home_rotate:
-                if getattr(motor, "_is_homed", True) is not False:
-                    continue
-                provisional = True
+            provisional = axis == "x_axis" and will_home_rotate
             if isolate is True:
                 if await self._home_step_isolated(
                     motor, failed_config_motors, provisional=provisional

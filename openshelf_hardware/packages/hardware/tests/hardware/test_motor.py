@@ -812,7 +812,9 @@ async def test_motion_guard_refuses_move_and_home_before_any_motion(mock_control
 
 
 @pytest.mark.asyncio
-async def test_provisional_home_skips_the_guard_and_the_limit_check(mock_controller, monkeypatch):
+async def test_provisional_home_of_an_unhomed_axis_skips_the_guard_and_the_limit_check(
+    mock_controller, monkeypatch
+):
     # Rotate homing needs X coordinates even when the tool angle holds X off its switch;
     # without this an unhomed X and a rotated tool block each other for good.
     monkeypatch.setattr("hardware.motor.HOME_LIMIT_VERIFY_TIMEOUT_S", 0.0)
@@ -824,6 +826,20 @@ async def test_provisional_home_skips_the_guard_and_the_limit_check(mock_control
     guard.assert_not_awaited()
     assert motor.is_homed() is True
     assert motor._is_home_provisional is True
+
+
+@pytest.mark.asyncio
+async def test_provisional_home_of_a_homed_axis_runs_the_guard_and_is_refused(mock_controller):
+    # A homed X has coordinates, so a rotated tool must not be allowed to drive it onto a stop.
+    guard = AsyncMock(side_effect=RuntimeError("tool rotated"))
+    motor = _limit_checked_home_motor(mock_controller, guard)
+    motor._is_homed = True
+
+    with pytest.raises(RuntimeError, match="tool rotated"):
+        await motor.home(provisional=True)
+
+    guard.assert_awaited_once_with(None)
+    motor._move_near_home.assert_not_awaited()
 
 
 @pytest.mark.asyncio

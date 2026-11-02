@@ -52,8 +52,8 @@ async def test_tool_only_home_leaves_the_gantry_where_it_is():
 
 
 @pytest.mark.asyncio
-async def test_home_all_does_not_home_an_already_homed_x_provisionally():
-    """lb4a-3: a provisional X home skips the rotation guard, so it must not run once X has coordinates."""
+async def test_home_all_rehomes_an_already_homed_x_provisionally_before_rotate():
+    """An emergency stop can leave _is_homed True with stale coordinates; the clearance move needs a fresh X home."""
     tool = _make_tool()
     tool._mr = AsyncMock()
     tool._mx._is_homed = True
@@ -61,8 +61,8 @@ async def test_home_all_does_not_home_an_already_homed_x_provisionally():
 
     await tool.home()
 
-    assert events == ["z_axis", "stage", "rotate", "x_axis", "y_axis"]
-    tool._mx.home.assert_awaited_once_with()
+    assert events == ["z_axis", "stage", "x_axis", "rotate", "y_axis"]
+    tool._mx.home.assert_awaited_once_with(provisional=True)
 
 
 @pytest.mark.asyncio
