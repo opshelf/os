@@ -184,7 +184,7 @@ export function formatLaserFailure(snapshot: LaserAutoCalibrationSnapshot): stri
 	return `${error}${TOAST_DETAIL_SEPARATOR}${detail}`;
 }
 
-function formatDeveloperDetail(detail?: ApiErrorDetail, request?: string): string {
+export function formatDeveloperDetail(detail?: ApiErrorDetail, request?: string): string {
 	const lines = [...(detail?.debug?.chain ?? []), ...(detail?.debug?.fields ?? [])];
 	const fault = Object.entries(detail?.debug?.fault_context ?? {})
 		.filter(([, value]) => value !== null && value !== false)
@@ -569,6 +569,8 @@ export type CalibrationTestQueueSnapshot = {
 	current: CalibrationTestQueueCell | null;
 	failed: CalibrationTestQueueCell | null;
 	error: string | null;
+	// Developer-only exception detail behind `error`; null for other users.
+	error_debug?: ApiErrorDetail['debug'] | null;
 	started_at: string | null;
 	updated_at: string | null;
 };
@@ -619,6 +621,8 @@ export type CycleTestCellResult = {
 	steps: Record<string, boolean>;
 	passed: boolean;
 	error: string | null;
+	// Developer-only exception detail behind `error`; null for other users.
+	debug?: ApiErrorDetail['debug'] | null;
 	duration_s: number;
 };
 

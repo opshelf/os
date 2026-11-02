@@ -113,7 +113,7 @@
 			robotStatusLastUpdate.set(new Date().toLocaleString());
 			setApiState('up');
 		} catch {
-			robotStatusError.set('failed to parse robot status payload');
+			robotStatusError.set('Failed to parse the robot status payload.');
 		}
 	}
 
@@ -154,7 +154,7 @@
 					}
 
 					setApiState('down');
-					robotStatusError.set('lost connection to robot status stream');
+					robotStatusError.set('Lost connection to the robot status stream.');
 				},
 				events: {
 					init_progress: (event) => {

@@ -202,7 +202,7 @@ async def _get_relay_system_user(db: AsyncSession) -> User:
 	)
 	user = result.scalars().first()
 	if user is None:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "relay_identity_unavailable", "Relay service identity is unavailable")
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "relay_identity_unavailable", "The relay service identity is not available.")
 	return user
 
 

@@ -154,6 +154,9 @@ async def test_rotate_to_angle_marks_failed_safe_axis(client: AsyncClient) -> No
 	assert response.status_code == 409
 	worker.set_needs_home.assert_called_once()
 	assert worker.set_needs_home.call_args.kwargs["axes"] == ["x_axis"]
+	reason = worker.set_needs_home.call_args.args[0]
+	assert "motor 11" in reason
+	assert "could not" not in reason
 	assert response.json()["detail"]["needs_home_axes"] == ["x_axis"]
 
 

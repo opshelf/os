@@ -67,7 +67,7 @@
 				setCalibrationInputs(result.config);
 				message = 'Calibration parameters applied.';
 			} else {
-				configError = 'failed to apply calibration parameters';
+				configError = 'Failed to apply calibration parameters.';
 			}
 		} catch (err) {
 			configError = err instanceof Error ? err.message : 'Failed to apply calibration parameters.';
@@ -110,7 +110,7 @@
 
 	function buildConfig(): SizerConfig | null {
 		if (config === null) {
-			configError = 'sizer config not loaded';
+			configError = 'Sizer config is not loaded.';
 			return null;
 		}
 

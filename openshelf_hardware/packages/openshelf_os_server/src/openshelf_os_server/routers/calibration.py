@@ -29,6 +29,7 @@ from openshelf_os.storage import (
 	StorageModuleSide,
 )
 from openshelf_os.laser_calibration.grip_edge import probe_grip_at
+from openshelf_os.faults import exception_debug
 from openshelf_os.exceptions import ConfigError, GripVerificationError, IOBoxError, MotorError, MovementError, ToolError
 from hardware.exceptions import MotorError as HardwareMotorError
 
@@ -41,7 +42,7 @@ from openshelf_os_server.core.laser_auto_calibration import (
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.bin_storage import is_reserved_bin_location, reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.errors import CODE_MESSAGES, api_error, classify_hardware_error, error_detail, hardware_api_error, internal_error_detail
+from openshelf_os_server.errors import CODE_MESSAGES, api_error, classify_hardware_error, debug_allowed, error_detail, hardware_api_error, internal_error_detail
 from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, require_permissions_for_stream
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
@@ -105,7 +106,7 @@ async def get_robot_worker_or_503():
 	try:
 		return await get_robot_worker()
 	except ValueError as exc:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot is not ready. Try again in a moment.") from exc
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot has not started. Check the robot status.") from exc
 _DEFAULT_CELL_HEIGHT = 200.0
 _DEFAULT_CELL_WIDTH = 480.0
 _DEFAULT_DIVIDER_WIDTH = 12.0
@@ -530,7 +531,8 @@ async def _raise_motor_error(
 			message = f"{action} {CODE_MESSAGES['rotation_blocked']}"
 			refusal_axes = fault_needs_home_axes(worker._robot, exc)
 			if refusal_axes:
-				worker.set_needs_home(message, axes=refusal_axes)
+				# Recovery parses the reason for motor names, so it stays exception text, not operator copy.
+				worker.set_needs_home(f"Calibration motion failed: {exc}", axes=refusal_axes)
 				await worker.get_status_snapshot(force_refresh=True)
 			raise HTTPException(
 				status_code=status.HTTP_409_CONFLICT,
@@ -548,7 +550,8 @@ async def _raise_motor_error(
 	classified = classify_hardware_error(exc)
 	code = "motor_fault" if classified is None else classified[1]
 	message = f"{action} {CODE_MESSAGES[code]}"
-	worker.set_needs_home(message, axes=axes)
+	# Recovery parses the reason for motor names, so it stays exception text, not operator copy.
+	worker.set_needs_home(f"Calibration motion failed: {exc}", axes=axes)
 	await worker.get_status_snapshot(force_refresh=True)
 	raise HTTPException(
 		status_code=status.HTTP_409_CONFLICT,
@@ -885,7 +888,7 @@ async def abort_laser_auto_calibration() -> LaserAutoCalibrationSnapshot:
 	try:
 		return await manager.abort()
 	except RuntimeError as exc:
-		raise api_error(status.HTTP_409_CONFLICT, "laser_calibration_running", str(exc)) from exc
+		raise api_error(status.HTTP_409_CONFLICT, "laser_calibration_not_running", str(exc)) from exc
 
 
 class LaserZStallSetting(BaseModel):
@@ -995,7 +998,7 @@ async def stream_laser_auto_calibration(
 		try:
 			worker = await get_robot_worker()
 		except ValueError as exc:
-			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot is not ready. Try again in a moment.") from exc
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot has not started. Check the robot status.") from exc
 
 		_ensure_ready(worker)
 
@@ -1083,7 +1086,7 @@ async def move_to_cell(request: MoveRequest) -> PositionResponse:
 	cell = _get_cell(shelf, request.cell_idx)
 
 	if cell.calibration_point is None:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_calibrated", "Cell has no calibration point")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_calibrated", "That cell has no calibration point. Calibrate it first.")
 
 	cal_point = cell.calibration_point
 
@@ -1144,7 +1147,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 	await ensure_laser_auto_calibration_not_running()
 
 	if _current_position is None:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "calibration_session_required", "No active calibration session. Move to a cell first.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "calibration_session_required", "No calibration session is active. Move to a cell first.")
 
 	worker = await get_robot_worker_or_503()
 
@@ -1467,6 +1470,8 @@ class TestQueueSnapshot(BaseModel):
 	current: Optional[TestQueueCell] = None
 	failed: Optional[TestQueueCell] = None
 	error: Optional[str] = None
+	# Developer-only exception detail behind `error`; GET drops it for other callers.
+	error_debug: Optional[dict[str, Any]] = None
 	started_at: Optional[str] = None
 	updated_at: Optional[str] = None
 
@@ -1492,8 +1497,11 @@ async def _publish_test_queue_event(
 ) -> None:
 	payload: dict[str, Any] = {
 		"kind": "calibration_test_queue",
-		"payload": snapshot.model_dump(),
+		"payload": snapshot.model_dump(exclude={"error_debug"}),
 	}
+	if snapshot.error_debug is not None:
+		# Top level, where errors.public_payload strips it for non-developer readers.
+		payload["debug"] = snapshot.error_debug
 	if cell is not None:
 		payload["payload"]["cell"] = cell.model_dump()
 		payload["payload"]["ok"] = ok
@@ -1511,11 +1519,13 @@ async def _finish_test_queue(
 	state: Literal["completed", "failed", "cancelled"],
 	failed: Optional[TestQueueCell] = None,
 	error: Optional[str] = None,
+	error_debug: Optional[dict[str, Any]] = None,
 ) -> None:
 	snapshot.state = state
 	snapshot.current = None
 	snapshot.failed = failed
 	snapshot.error = error
+	snapshot.error_debug = error_debug
 	snapshot.updated_at = _test_queue_now_iso()
 	await _publish_test_queue_event(worker, snapshot)
 
@@ -1550,6 +1560,7 @@ async def _run_cell_test_queue(
 		snapshot.current = cell
 
 		error: Optional[str] = None
+		error_debug: Optional[dict[str, Any]] = None
 		try:
 			if snapshot.mode == "quick":
 				async with _calibration_state_lock:
@@ -1560,16 +1571,20 @@ async def _run_cell_test_queue(
 				await _perform_cycle_test(worker, location)
 		except HTTPException as exc:
 			error = _test_queue_error_message(exc.detail)
+			# The route helpers raise the HTTP error `from` the motor failure.
+			if exc.__cause__ is not None:
+				error_debug = exception_debug(exc.__cause__)
 		except Exception as exc:
 			logger.error("calibration test queue cell failed", exc_info=True)
 			_, error = internal_error_detail(exc)
+			error_debug = exception_debug(exc)
 
 		snapshot.completed += 1
 		snapshot.current = None
 		snapshot.updated_at = _test_queue_now_iso()
 
 		if error is not None:
-			await _finish_test_queue(worker, snapshot, "failed", failed=cell, error=error)
+			await _finish_test_queue(worker, snapshot, "failed", failed=cell, error=error, error_debug=error_debug)
 			return
 
 		await _publish_test_queue_event(worker, snapshot, cell, True)
@@ -1636,14 +1651,17 @@ async def start_cell_test_queue(request: TestQueueRequest) -> TestQueueSnapshot:
     summary="Read the calibration test queue state",
     responses=response_docs(model=TestQueueSnapshot, errors=(401, 403)),
 )
-async def get_cell_test_queue() -> TestQueueSnapshot:
+async def get_cell_test_queue(request: Request) -> TestQueueSnapshot:
 	"""Read the calibration test queue state.
 
 	Returns the current or most recent queue snapshot; `state` is `idle` until the first
 	queue starts on this process. Clients resuming a backgrounded or reloaded page use this
 	to catch up between `calibration_test_queue` events.
 	"""
-	return _test_queue_snapshot.model_copy(deep=True)
+	snapshot = _test_queue_snapshot.model_copy(deep=True)
+	if debug_allowed(request) is False:
+		snapshot.error_debug = None
+	return snapshot
 
 
 @router.post(
@@ -1717,7 +1735,7 @@ async def save_calibration(request: SaveRequest):
 				side=request.side, shelf_idx=request.shelf_idx, cell_idx=request.cell_idx
 			))
 		except (IndexError, ValueError) as exc:
-			raise api_error(409, "bin_home_missing", "Bin home cell is missing from storage") from exc
+			raise api_error(409, "bin_home_missing", "The bin's home cell is missing from storage.") from exc
 
 	side_enum = request.side
 	shelf = _ensure_shelf(grid, side_enum, request.shelf_idx)

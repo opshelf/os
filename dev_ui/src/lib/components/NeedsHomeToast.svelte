@@ -11,7 +11,7 @@
 	const motors = $derived(needsHome ? [...($robotStatus?.needs_home_axes ?? [])].sort() : []);
 	const reason = $derived($robotStatus?.needs_home_reason ?? '');
 	const motorsKey = $derived(motors.length > 0 ? motors.join(':') : `reason:${reason}`);
-	const message = $derived(motors.length === 1 ? 'motor needs homing' : 'motors need homing');
+	const message = $derived(motors.length === 1 ? 'A motor needs homing.' : 'Motors need homing.');
 
 	// Each motor set is announced once, under its own queue key, and the queue remembers
 	// a dismissal or an expiry while that key and wording are unchanged.

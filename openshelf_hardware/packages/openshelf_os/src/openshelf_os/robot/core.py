@@ -87,6 +87,8 @@ POWER_CYCLE_BOOT_POLL_S = 0.25
 
 STARTUP_HOME_SKIPPED_CABINET_OPEN = "Startup homing skipped because the cabinet doors were open"
 STARTUP_HOME_SKIPPED_TRAY_ON_TOOL = "Startup homing skipped because the gripper holds a tray"
+# Tail of the refusal for a barcode missing from the demo cell map; callers match on it, so edit it here only.
+DEMO_MAP_MISSING_SUFFIX = " is not in the demo cell map."
 
 
 class Robot:
@@ -1408,7 +1410,7 @@ class Robot:
             if demo_location is None:
                 return RobotCommandError(
                     command=command_name,
-                    error=f"Barcode {resolved_barcode} is not in the demo cell map.",
+                    error=f"Barcode {resolved_barcode}{DEMO_MAP_MISSING_SUFFIX}",
                 )
             if (
                 demo_location.side.value,

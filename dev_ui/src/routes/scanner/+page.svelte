@@ -44,7 +44,7 @@
 
 	async function didClickSend(): Promise<void> {
 		if (simulatedCode.length === 0) {
-			scanError = 'enter a code to send';
+			scanError = 'Enter a code to send.';
 			return;
 		}
 

@@ -12,10 +12,11 @@ from openshelf_os_server.core.cycle_test import (
 	CycleTestSnapshot,
 	CycleTestStartError,
 	get_cycle_test_manager,
+	public_snapshot_json,
 )
 from openshelf_os_server.database.models import User
 from openshelf_os_server.documentation import response_docs, stream_docs
-from openshelf_os_server.errors import api_error
+from openshelf_os_server.errors import api_error, debug_allowed
 from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, require_permissions_for_stream
 
 # Stream-safe auth for the same reason as the calibration router: /stream stays open for the run.
@@ -61,13 +62,15 @@ async def start_cycle_test(
 	summary="Read the cycle test state",
 	responses=response_docs(errors=(401,)),
 )
-async def get_cycle_test() -> CycleTestSnapshot:
+async def get_cycle_test(request: Request) -> CycleTestSnapshot:
 	"""Read the cycle test state.
 
 	Returns the current or most recent run with its configuration, per-cell results of the
 	current loop and the log tail; `state` is `idle` until the first run on this process.
 	"""
-	return CycleTestSnapshot.model_validate_json(get_cycle_test_manager().serialize())
+	return CycleTestSnapshot.model_validate_json(
+		public_snapshot_json(get_cycle_test_manager().serialize(), debug_allowed(request))
+	)
 
 
 @router.get(
@@ -90,10 +93,11 @@ async def stream_cycle_test(request: Request) -> EventSourceResponse:
 	"""
 	manager = get_cycle_test_manager()
 	queue, initial = manager.subscribe()
+	show_debug = debug_allowed(request)
 
 	async def event_generator():
 		try:
-			yield {"event": "snapshot", "data": initial}
+			yield {"event": "snapshot", "data": public_snapshot_json(initial, show_debug)}
 			if manager.is_active() is False:
 				return
 			while True:
@@ -103,7 +107,7 @@ async def stream_cycle_test(request: Request) -> EventSourceResponse:
 					payload = await asyncio.wait_for(queue.get(), timeout=1.0)
 				except asyncio.TimeoutError:
 					continue
-				yield {"event": "snapshot", "data": payload}
+				yield {"event": "snapshot", "data": public_snapshot_json(payload, show_debug)}
 				if CycleTestSnapshot.model_validate_json(payload).state in TERMINAL_STATES and manager.is_active() is False:
 					break
 		finally:
@@ -119,7 +123,7 @@ async def stream_cycle_test(request: Request) -> EventSourceResponse:
 	summary="Continue a paused cycle test",
 	responses=response_docs(errors=(401, 403, 409)),
 )
-async def continue_cycle_test() -> CycleTestSnapshot:
+async def continue_cycle_test(request: Request) -> CycleTestSnapshot:
 	"""Continue a paused cycle test.
 
 	Step mode pauses after every cell; this moves on to the next one. Returns `409` when the
@@ -128,7 +132,7 @@ async def continue_cycle_test() -> CycleTestSnapshot:
 	manager = get_cycle_test_manager()
 	if manager.resume() is False:
 		raise api_error(status.HTTP_409_CONFLICT, "cycle_test_not_paused", "The cycle test is not paused.")
-	return CycleTestSnapshot.model_validate_json(manager.serialize())
+	return CycleTestSnapshot.model_validate_json(public_snapshot_json(manager.serialize(), debug_allowed(request)))
 
 
 @router.post(
@@ -138,7 +142,7 @@ async def continue_cycle_test() -> CycleTestSnapshot:
 	summary="Abort the cycle test",
 	responses=response_docs(errors=(401, 403, 409)),
 )
-async def abort_cycle_test() -> CycleTestSnapshot:
+async def abort_cycle_test(request: Request) -> CycleTestSnapshot:
 	"""Abort the cycle test.
 
 	Stops before the next cell; the cell in progress finishes its current command first so
@@ -147,4 +151,4 @@ async def abort_cycle_test() -> CycleTestSnapshot:
 	manager = get_cycle_test_manager()
 	if manager.abort() is False:
 		raise api_error(status.HTTP_409_CONFLICT, "cycle_test_not_running", "No cycle test is running.")
-	return CycleTestSnapshot.model_validate_json(manager.serialize())
+	return CycleTestSnapshot.model_validate_json(public_snapshot_json(manager.serialize(), debug_allowed(request)))

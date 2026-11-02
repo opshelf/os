@@ -201,7 +201,7 @@ def _raise_scale_config_error(exc: ConfigError) -> NoReturn:
     if _is_scale_not_enabled(exc):
         raise _scale_not_enabled_exception() from exc
 
-    logger.warning("Scale configuration error: %s", exc)
+    logger.warning("Scale configuration error: %s", exc, exc_info=exc)
     raise api_error(
         status.HTTP_503_SERVICE_UNAVAILABLE,
         "scale_config_failed",
@@ -371,7 +371,7 @@ async def get_robot_worker_or_error() -> RobotWorker:
     try:
         return await get_robot_worker()
     except ValueError as e:
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot is not ready. Try again in a moment.") from e
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot has not started. Check the robot status.") from e
 
 
 async def get_command_worker_for_mode() -> RobotWorker | None:
@@ -783,7 +783,7 @@ async def robot_commands(
     request_id = getattr(command, "request_id", None)
     if operating_mode == OperatingMode.mock:
         if not isinstance(command, (StoreItemCommand, RetrieveItemCommand)):
-            raise api_error(status.HTTP_400_BAD_REQUEST, "mock_mode_unsupported", "Only store and retrieve are available in mock mode.")
+            raise api_error(status.HTTP_400_BAD_REQUEST, "mock_mode_unsupported", "Mock mode supports only store and retrieve.")
         runtime = get_mock_robot_runtime()
         payload = submission_payload
         try:
@@ -854,7 +854,7 @@ async def robot_commands(
     await _ensure_laser_auto_calibration_not_running()
     if worker is None:
         await check_robot_enabled()
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot is not ready. Try again in a moment.")
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot has not started. Check the robot status.")
     _ensure_command_allowed_while_needs_home(command, worker)
     await _ensure_command_allowed_while_tray_on_tool(command, worker)
 
@@ -1061,7 +1061,7 @@ async def get_robot_command(command_id: str, request: Request) -> CommandLifecyc
     """
     row = await get_lifecycle_command(command_id)
     if row is None:
-        raise api_error(status.HTTP_404_NOT_FOUND, "command_not_found", "Robot command not found")
+        raise api_error(status.HTTP_404_NOT_FOUND, "command_not_found", "That robot command does not exist.")
     command = serialize_command(row)
     command["result"] = public_payload(command["result"], debug_allowed(request))
     return CommandLifecycleResponse.model_validate(command)

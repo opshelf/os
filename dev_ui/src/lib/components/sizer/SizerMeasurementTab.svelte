@@ -18,7 +18,7 @@
 		try {
 			const result = await measureSizer();
 			measurement = result.measurement;
-			message = result.success === true ? 'measurement complete' : '';
+			message = result.success === true ? 'Measurement complete.' : '';
 		} catch (err) {
 			measurementError = err instanceof Error ? err.message : 'Failed to measure.';
 		} finally {

@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 
 from openshelf_os.operating_mode import OperatingMode
+from openshelf_os.robot.core import DEMO_MAP_MISSING_SUFFIX
 from openshelf_os.tool import MAX_PICK_LIFT_MM
 from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.core.robot import get_robot_worker
@@ -132,6 +133,8 @@ class CellResult(BaseModel):
 	steps: dict[str, bool] = Field(default_factory=dict)
 	passed: bool = False
 	error: Optional[str] = None
+	# Developer-only exception detail behind `error`; served only to errors.debug_allowed callers.
+	debug: Optional[dict[str, Any]] = None
 	duration_s: float = 0.0
 
 
@@ -179,6 +182,23 @@ def _detail(resp: httpx.Response) -> str:
 	if detail is not None:
 		return str(detail)
 	return resp.text.strip()
+
+
+def _detail_debug(resp: httpx.Response) -> Optional[dict[str, Any]]:
+	try:
+		data = resp.json()
+	except ValueError:
+		return None
+	detail = data.get("detail") if isinstance(data, dict) else None
+	debug = detail.get("debug") if isinstance(detail, dict) else None
+	return debug if isinstance(debug, dict) else None
+
+
+def public_snapshot_json(payload: str, show_debug: bool) -> str:
+	"""A serialized snapshot as a client may see it: cell failure `debug` is developer-only."""
+	if show_debug is True:
+		return payload
+	return CycleTestSnapshot.model_validate_json(payload).model_dump_json(exclude={"results": {"__all__": {"debug"}}})
 
 
 def _describe_fault(status: dict[str, Any]) -> Optional[str]:
@@ -235,10 +255,16 @@ class CycleTestRunner:
 			timeout=COMMAND_TIMEOUT_S + 10,
 		)
 		self.barcode_counter: Optional[int] = None
+		# Developer detail for the failure the last step returned.
+		self.error_debug: Optional[dict[str, Any]] = None
 		self.is_mock = get_operating_mode() == OperatingMode.mock
 
 	def log(self, line: str) -> None:
 		self.manager.log(line)
+
+	def failed(self, resp: httpx.Response) -> str:
+		self.error_debug = _detail_debug(resp)
+		return f"{resp.status_code} {_detail(resp)}"
 
 	# -- robot state -------------------------------------------------------
 
@@ -343,7 +369,7 @@ class CycleTestRunner:
 			if resp.status_code in (200, 201):
 				return barcode, None
 			if resp.status_code != 409:
-				return None, f"{resp.status_code} {_detail(resp)}"
+				return None, self.failed(resp)
 		return None, "barcode collided 100 times"
 
 	async def seed_location(self, barcode: str, side: str, shelf: int, cell: int) -> Optional[str]:
@@ -353,7 +379,7 @@ class CycleTestRunner:
 		)
 		if resp.status_code in (200, 201):
 			return None
-		return f"{resp.status_code} {_detail(resp)}"
+		return self.failed(resp)
 
 	# -- robot commands ----------------------------------------------------
 
@@ -361,7 +387,7 @@ class CycleTestRunner:
 		"""Submit a command and wait for its durable result; returns an error or None."""
 		resp = await self.client.post("/api/robot/commands", json=payload)
 		if resp.status_code != 200:
-			return f"{resp.status_code} {_detail(resp)}"
+			return self.failed(resp)
 		command_id = resp.json().get("command_id")
 		start = time.monotonic()
 		last_fault_check = start
@@ -382,9 +408,11 @@ class CycleTestRunner:
 					return None
 				if data["status"] == "failed":
 					result = data.get("result") or {}
+					debug = result.get("debug")
+					self.error_debug = debug if isinstance(debug, dict) else None
 					error = str(result.get("error") or result.get("message") or "command failed")
-					if "not in demo mapping" in error:
-						error += ". Disable demo.enabled in data/config.json and restart the API for arbitrary cycle-test barcodes."
+					if DEMO_MAP_MISSING_SUFFIX in error:
+						error += " Disable demo.enabled in data/config.json and restart the API for arbitrary cycle-test barcodes."
 					return error
 			await asyncio.sleep(COMMAND_POLL_S)
 
@@ -411,7 +439,7 @@ class CycleTestRunner:
 			params=params,
 			json={"side": side, "shelf_idx": shelf, "cell_idx": cell},
 		)
-		return None if resp.status_code == 200 else f"{resp.status_code} {_detail(resp)}"
+		return None if resp.status_code == 200 else self.failed(resp)
 
 	# -- cells -------------------------------------------------------------
 
@@ -511,6 +539,8 @@ class CycleTestRunner:
 			result.steps[name] = error is None
 			if error is not None:
 				result.error = error
+				result.debug = self.error_debug
+				self.error_debug = None
 				self.log(f"  - {label}: FAIL - {error}")
 				return False
 			self.log(f"  - {label}: OK")

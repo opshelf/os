@@ -504,7 +504,7 @@
 	<ErrorMessage message={homeMessage} />
 {:else if needsHome === true}
 	<ErrorMessage message={homeMessage} />
-	<StatusMessage message="other motors require homing; use the motors page" />
+	<StatusMessage message="Other motors require homing. Use the motors page." />
 {/if}
 
 <style>

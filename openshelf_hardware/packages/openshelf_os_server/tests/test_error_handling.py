@@ -6,12 +6,13 @@ import pathlib
 
 import pytest
 from fastapi import HTTPException
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from hardware.exceptions import MotorError
+from hardware.exceptions import ModbusConnectionError, MotorError
 from openshelf_os.config.exceptions import ConfigError
+from openshelf_os.faults import fault_code
 from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
 from openshelf_os_server.core.validation import CellOccupiedError, ValidationError
@@ -26,6 +27,7 @@ from openshelf_os_server.errors import (
 	standardize_http_detail,
 )
 from openshelf_os_server.main import app
+from openshelf_os_server.middleware import audit
 from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings
 
 TEST_PATH = "/api/test/error-handling"
@@ -381,6 +383,31 @@ async def test_exception_detail_reaches_only_the_developer_user(
 	assert "not-an-int" not in str(invalid)
 
 
+@pytest.mark.anyio
+async def test_unhandled_500_on_audit_excluded_route_keeps_correlation_id_and_debug(
+	unauthenticated_client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""Routes AuditMiddleware skips (health, laser stream, motor probe) fall through to
+	the app-level handler, which must build the same body as the middleware."""
+	await _client_with_test_route(unauthenticated_client, monkeypatch)
+	monkeypatch.setattr(audit, "ALWAYS_EXCLUDED_ENDPOINTS", frozenset({TEST_PATH}))
+	transport = ASGITransport(app=app, raise_app_exceptions=False)
+
+	async with AsyncClient(transport=transport, base_url="http://test") as client:
+		anonymous = await client.get(TEST_PATH, params={"kind": "runtime_error"})
+		assert anonymous.status_code == 500
+		assert anonymous.json()["detail"]["correlation_id"]
+		assert "debug" not in anonymous.json()["detail"]
+
+		developer = await client.get(
+			TEST_PATH, params={"kind": "runtime_error"}, headers=_bearer(DEVELOPER_SYSTEM_USER_EMAIL)
+		)
+	detail = developer.json()["detail"]
+	assert detail["correlation_id"]
+	assert detail["debug"]["chain"] == ["RuntimeError: boom"]
+
+
 def test_motor_fault_behind_a_catch_all_gets_its_own_code() -> None:
 	"""A drive alarm is not cleared by retrying, so the route's "Try again"
 	fallback must give way to the code that says what to do."""
@@ -398,6 +425,28 @@ def test_motor_fault_behind_a_catch_all_gets_its_own_code() -> None:
 
 	plain = hardware_api_error(RuntimeError("boom"), 503, "motor_move_failed", "The robot could not move. Check the robot status before moving it again.")
 	assert plain.detail["code"] == "motor_move_failed"
+
+
+def test_bus_disconnect_beats_fault_context_on_the_outer_error() -> None:
+	"""A move attaches fault_context to the outer MotorError even when the cause
+	is a lost bus; the operator must be told to check the cable, not a motor fault."""
+	context = {"alarm_code": 24, "stall_detected": True, "no_progress": False}
+	try:
+		try:
+			raise ModbusConnectionError("bus lost")
+		except ModbusConnectionError as inner:
+			outer = MotorError("Movement failed for motor 3")
+			setattr(outer, "fault_context", context)
+			raise outer from inner
+	except MotorError as disconnected:
+		assert fault_code(disconnected) == "motor_bus_disconnected"
+
+	alarm = MotorError("Movement failed for motor 3 (status=FAULT)")
+	setattr(alarm, "fault_context", context)
+	try:
+		raise MotorError("Failed to move motor 3") from alarm
+	except MotorError as outer_alarm:
+		assert fault_code(outer_alarm) == "motor_alarm"
 
 
 def test_every_derived_code_has_its_own_sentence() -> None:

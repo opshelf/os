@@ -696,7 +696,7 @@
 
 	{#if selectedCamera !== null && isCameraOnline === false}
 		<ErrorMessage
-			message={`camera '${selectedCamera.id}' is offline. verify it is powered and reachable, then refresh.`}
+			message={`Camera '${selectedCamera.id}' is offline. Verify it is powered and reachable, then refresh.`}
 		/>
 	{:else if streamUrl !== '' && streamError === false && isPageVisible === true}
 		<div class="stream-container" class:webcodecs={h264Ready}>
@@ -728,7 +728,7 @@
 			></canvas>
 		</div>
 	{:else if streamError === true}
-		<ErrorMessage message="unable to display the camera stream. verify the camera is running." />
+		<ErrorMessage message="Unable to display the camera stream. Verify the camera is running." />
 	{/if}
 {/if}
 

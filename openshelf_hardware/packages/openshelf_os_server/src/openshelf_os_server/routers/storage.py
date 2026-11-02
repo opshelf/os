@@ -477,7 +477,7 @@ def monitor_performance(func: Callable) -> Callable:
 
 
 def _tray_config_error(exc: ValueError) -> HTTPException:
-    logger.warning("Storage bin config sync rejected: %s", exc)
+    logger.warning("Storage bin config sync rejected: %s", exc, exc_info=exc)
     return api_error(
         409,
         "tray_config_conflict",
@@ -486,12 +486,12 @@ def _tray_config_error(exc: ValueError) -> HTTPException:
 
 
 def _grid_load_error(exc: Exception) -> HTTPException:
-    logger.error("Storage grid load failed: %s", exc)
+    logger.error("Storage grid load failed: %s", exc, exc_info=exc)
     return api_error(500, "grid_load_failed", "The shelf layout could not be read. Try again.")
 
 
 def _grid_update_error(exc: Exception) -> HTTPException:
-    logger.error("Storage grid update failed: %s", exc)
+    logger.error("Storage grid update failed: %s", exc, exc_info=exc)
     return api_error(500, "grid_update_failed", "The shelf layout could not be saved. Try again.")
 
 
@@ -689,12 +689,12 @@ async def assign_tray(
     ).scalars()
     reserved = {bin_setting.barcode for bin_setting in config.storage.bins} | set(active_barcodes)
     if payload.barcode in reserved:
-        raise api_error(409, "barcode_in_use", "That barcode is already in use")
+        raise api_error(409, "barcode_taken", "That barcode is already in use")
     existing_item = (
         await session.execute(select(Item).where(Item.barcode == payload.barcode))
     ).scalar_one_or_none()
     if existing_item is not None:
-        raise api_error(409, "barcode_in_use", "That barcode belongs to an item")
+        raise api_error(409, "barcode_taken", "That barcode belongs to an item")
 
     stale_row = (
         (
@@ -718,7 +718,7 @@ async def assign_tray(
             )
         ).scalars().all()
         if any(row_id != stale_row.id for row_id in other_holder_ids):
-            raise api_error(409, "barcode_in_use", "That barcode is already used by another bin.")
+            raise api_error(409, "barcode_taken", "That barcode is already used by another bin.")
         # A prior, removed tray left a deactivated row occupying this home cell. Re-point it
         # at the new barcode so the re-sync updates it in place instead of colliding with
         # the unique home-cell constraint.
@@ -970,7 +970,8 @@ async def create_bin_workflow(
             raise
         except Exception as exc:
             if workflow is not None:
-                workflow.error = str(exc)
+                logger.warning("Bin workflow start failed: %s", exc, exc_info=exc)
+                workflow.error = failure_detail(exc, "tray_fetch_failed")[1]
                 await service.fail(workflow, workflow.error, tray_moved=False)
             else:
                 raise
@@ -1453,7 +1454,7 @@ async def add_item_location(
         raise api_error(422, "invalid_location", "") from exc
 
     if not storage_location:
-        raise api_error(400, "location_add_failed", "Failed to add location")
+        raise api_error(400, "location_add_failed", "The location could not be added.")
 
     return await _load_item_with_locations(barcode, storage_service, current_user)
 
@@ -1479,7 +1480,7 @@ async def _remove_item_location_impl(
     )
 
     if not success:
-        raise api_error(404, "location_not_found", "Location not found")
+        raise api_error(404, "location_not_found", "That location does not exist.")
 
 
 @router.post(
@@ -1877,7 +1878,7 @@ async def update_grid_cells(
         raise _grid_load_error(exc) from exc
 
     if len(payload.cells) == 0:
-        raise api_error(400, "cells_required", "No cells to update")
+        raise api_error(400, "cells_required", "Choose at least one cell to update.")
 
     resolved: list[tuple[Cell, GridCellBatchItem]] = []
 

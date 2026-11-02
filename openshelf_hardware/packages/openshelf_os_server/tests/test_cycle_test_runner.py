@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from openshelf_os.exceptions import ToolError
 from openshelf_os.operating_mode import OperatingMode
+from openshelf_os.robot.core import DEMO_MAP_MISSING_SUFFIX
 from openshelf_os_server.core import cycle_test, robot as robot_core
 from openshelf_os_server.database.models import Item
 from openshelf_os_server.database.session import AsyncSessionLocal
@@ -78,6 +79,45 @@ async def test_create_item_skips_past_many_leftover_test_items(client) -> None:
 
 	assert error is None
 	assert barcode == f"{cycle_test.BARCODE_PREFIX}000151"
+
+
+@pytest.mark.asyncio
+async def test_demo_map_refusal_gets_the_disable_demo_hint() -> None:
+	# The hint keys off the robot's refusal text; a reworded refusal must not silently drop it.
+	refusal = f"Barcode 999900000001{DEMO_MAP_MISSING_SUFFIX}"
+	runner = object.__new__(cycle_test.CycleTestRunner)
+	runner.client = AsyncMock()
+	runner.client.post.return_value = SimpleNamespace(status_code=200, json=lambda: {"command_id": "c1"})
+	runner.client.get.return_value = SimpleNamespace(
+		status_code=200, json=lambda: {"status": "failed", "result": {"error": refusal}}
+	)
+
+	error = await runner.run_command({"command": "store_item"})
+
+	assert error.startswith(f"{refusal} Disable demo.enabled in data/config.json")
+
+
+@pytest.mark.asyncio
+async def test_failed_command_debug_is_recorded_and_stripped_for_non_developers() -> None:
+	debug = {"chain": ["MotorError: Alarm 24 on motor 3"]}
+	runner = object.__new__(cycle_test.CycleTestRunner)
+	runner.error_debug = None
+	runner.client = AsyncMock()
+	runner.client.post.return_value = SimpleNamespace(status_code=200, json=lambda: {"command_id": "c1"})
+	runner.client.get.return_value = SimpleNamespace(
+		status_code=200,
+		json=lambda: {"status": "failed", "result": {"error": "The robot could not move.", "debug": debug}},
+	)
+
+	error = await runner.run_command({"command": "store_item"})
+
+	assert error == "The robot could not move."
+	assert runner.error_debug == debug
+
+	snapshot = cycle_test.CycleTestSnapshot(results=[cycle_test.CellResult(cell="F:0:0", error=error, debug=debug)])
+	payload = snapshot.model_dump_json()
+	assert "motor 3" in cycle_test.public_snapshot_json(payload, True)
+	assert "motor 3" not in cycle_test.public_snapshot_json(payload, False)
 
 
 @pytest.mark.asyncio

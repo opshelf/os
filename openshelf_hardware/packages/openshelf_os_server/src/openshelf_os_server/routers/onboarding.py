@@ -154,7 +154,7 @@ async def ensure_onboarding_state(db: AsyncSession) -> str:
 
 async def require_first_run(db: AsyncSession = Depends(get_db)) -> None:
 	if await ensure_onboarding_state(db) == ONBOARDING_COMPLETED:
-		raise api_error(status.HTTP_403_FORBIDDEN, "onboarding_completed", "Onboarding is already completed")
+		raise api_error(status.HTTP_403_FORBIDDEN, "onboarding_completed", "Setup is already finished.")
 
 
 @router.get(
@@ -242,7 +242,7 @@ async def create_admin_user(
 	"""
 	async with _admin_user_lock:
 		if await ensure_onboarding_state(db) == ONBOARDING_COMPLETED:
-			raise api_error(status.HTTP_403_FORBIDDEN, "onboarding_completed", "Onboarding is already completed")
+			raise api_error(status.HTTP_403_FORBIDDEN, "onboarding_completed", "Setup is already finished.")
 
 		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
 		admin_role = role_result.scalar_one_or_none()

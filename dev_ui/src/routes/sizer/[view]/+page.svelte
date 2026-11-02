@@ -19,7 +19,7 @@
 		const view = viewParam ? views[viewParam] : undefined;
 
 		if (view === undefined) {
-			error(404, 'sizer tab not found');
+			error(404, 'Sizer tab not found.');
 		}
 
 		return view;

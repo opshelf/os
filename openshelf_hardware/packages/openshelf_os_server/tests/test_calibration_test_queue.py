@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from openshelf_os.exceptions import MotorError
 from openshelf_os.storage import (
 	CalibrationCoordinate,
 	Cell,
@@ -14,7 +15,10 @@ from openshelf_os.storage import (
 	Shelf,
 	StorageGrid,
 )
+from openshelf_os_server.core.auth import AuthService
+from openshelf_os_server.errors import public_payload
 from openshelf_os_server.routers import calibration
+from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings
 
 
 def build_grid(*, second_cell_status: CellStatus = CellStatus.AVAILABLE) -> StorageGrid:
@@ -111,6 +115,42 @@ async def test_queue_stops_at_the_first_failing_cell(client) -> None:
 	events = published_queue_events(worker)
 	assert events[-1]['state'] == 'failed'
 	assert events[-1]['job_id'] == start.json()['job_id']
+
+
+def _bearer(email: str) -> dict[str, str]:
+	settings = get_settings()
+	token = AuthService(settings.auth.jwt_secret, settings.auth.jwt_algorithm).create_access_token(
+		user_id=1, email=email, role='admin', permissions=[], expires_minutes=5,
+	)
+	return {'Authorization': f'Bearer {token}'}
+
+
+@pytest.mark.asyncio
+async def test_queue_failure_carries_motor_detail_only_for_the_developer(client) -> None:
+	# The operator sentence stays in `error`; the motor text rides `error_debug`/`debug`
+	# so the developer sees what failed and every other reader does not.
+	worker = build_worker(build_grid(), AsyncMock(side_effect=MotorError('Alarm 24 on motor 3')))
+
+	with patch_worker(worker)[0], patch_worker(worker)[1]:
+		await client.post(
+			'/api/calibration/test/queue',
+			json={'side': 'front_module', 'mode': 'quick', 'cells': [{'shelf_idx': 0, 'cell_idx': 0}]},
+		)
+		await await_test_queue()
+		developer = await client.get('/api/calibration/test/queue', headers=_bearer(DEVELOPER_SYSTEM_USER_EMAIL))
+		operator = await client.get('/api/calibration/test/queue', headers=_bearer('admin@opshelf.com'))
+
+	assert developer.json()['state'] == 'failed'
+	assert 'motor 3' not in developer.json()['error']
+	assert developer.json()['error_debug']['chain'] == ['MotorError: Alarm 24 on motor 3']
+	assert operator.json()['error'] == developer.json()['error']
+	assert operator.json()['error_debug'] is None
+	assert 'motor 3' not in operator.text
+
+	event = worker.publish_event.await_args_list[-1].args[0]
+	assert 'error_debug' not in event['payload']
+	assert event['debug']['chain'] == ['MotorError: Alarm 24 on motor 3']
+	assert 'debug' not in public_payload(event, False)
 
 
 @pytest.mark.asyncio

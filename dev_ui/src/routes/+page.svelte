@@ -150,7 +150,7 @@
 			await acknowledgeSafety();
 		} catch (err) {
 			if (err instanceof ApiError && err.status === 409 && err.detail?.active_sources?.length) {
-				safetyAckError = `cannot acknowledge: ${err.detail.active_sources.join(', ')}`;
+				safetyAckError = `Cannot acknowledge while these sources are active: ${err.detail.active_sources.join(', ')}.`;
 			} else {
 				safetyAckError = err instanceof Error ? err.message : 'Acknowledge failed.';
 			}

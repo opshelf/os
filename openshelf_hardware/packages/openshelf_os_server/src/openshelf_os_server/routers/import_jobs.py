@@ -550,7 +550,7 @@ async def return_import_tray(
                         try:
                             await bins.enqueue_return(returning, worker)
                         except Exception as exc:
-                            await service.fail_tray_return(returning, str(exc))
+                            await service.fail_tray_return(returning, failure_detail(exc, "tray_return_failed")[1])
                             logger.warning("Tray return failed: %s", exc, exc_info=exc)
                             raise hardware_api_error(exc, 503, "tray_return_failed", "The bin could not be returned. Check the robot status before returning it again.") from exc
                 if returning is not None:

@@ -920,7 +920,7 @@
 {/if}
 
 {#if needsOtherHome === true}
-	<StatusMessage message="other motors require homing; use the motors page" />
+	<StatusMessage message="Other motors require homing. Use the motors page." />
 {/if}
 
 <style>

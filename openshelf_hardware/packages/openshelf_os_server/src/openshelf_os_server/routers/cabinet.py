@@ -62,7 +62,7 @@ async def get_robot_worker_or_error() -> RobotWorker:
     try:
         return await get_robot_worker()
     except ValueError as exc:
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot is not ready. Try again in a moment.") from exc
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "The robot has not started. Check the robot status.") from exc
 
 
 async def ensure_laser_auto_calibration_not_running() -> None:

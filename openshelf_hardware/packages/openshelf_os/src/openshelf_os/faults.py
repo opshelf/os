@@ -60,11 +60,21 @@ def exception_chain(exc: Optional[BaseException]) -> Iterator[BaseException]:
 
 def fault_code(exc: BaseException) -> Optional[str]:
     """The most specific fault code the exception chain supports, if any."""
-    for current in exception_chain(exc):
+    chain = list(exception_chain(exc))
+    # Typed causes first: a move's fault_context rides on the outer MotorError even
+    # when the cause underneath is a bus disconnect or timeout.
+    for current in chain:
         if isinstance(current, GripVerificationError):
             return current.failure_code
         if isinstance(current, RotationClearanceError):
             return "rotation_blocked"
+        if isinstance(current, ModbusConnectionError):
+            return "motor_bus_disconnected"
+        if isinstance(current, (HardwareMotorTimeoutError, MotorWaitTimeoutError)):
+            return "motor_timeout"
+        if isinstance(current, (HardwareMotorConfigError, ConfigError, RobotConfigError)):
+            return "config_error"
+    for current in chain:
         fault_context = getattr(current, "fault_context", None)
         if isinstance(fault_context, dict):
             if fault_context.get("alarm_code"):
@@ -72,12 +82,6 @@ def fault_code(exc: BaseException) -> Optional[str]:
             if fault_context.get("stall_detected") or fault_context.get("no_progress"):
                 return "motor_stalled"
             return "motor_fault"
-        if isinstance(current, ModbusConnectionError):
-            return "motor_bus_disconnected"
-        if isinstance(current, (HardwareMotorTimeoutError, MotorWaitTimeoutError)):
-            return "motor_timeout"
-        if isinstance(current, (HardwareMotorConfigError, ConfigError, RobotConfigError)):
-            return "config_error"
     return None
 
 

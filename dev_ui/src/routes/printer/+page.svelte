@@ -51,7 +51,7 @@
 
 	async function didClickSave(): Promise<void> {
 		if (Number.isInteger(feedDots) === false || feedDots < 0 || feedDots > 128) {
-			configError = 'feed dots must be a whole number from 0 to 128';
+			configError = 'Feed dots must be a whole number from 0 to 128.';
 			return;
 		}
 
@@ -72,7 +72,7 @@
 
 	async function didClickPrint(): Promise<void> {
 		if (code.length === 0) {
-			printError = 'enter a code to print';
+			printError = 'Enter a code to print.';
 			return;
 		}
 

@@ -77,6 +77,7 @@ from openshelf_os_server.core.mock_robot import (
 from openshelf_os_server.core.command_lifecycle import recover_interrupted_commands
 from openshelf_os_server.errors import (
 	capture_unhandled_exception,
+	client_detail,
 	error_detail,
 	internal_error_detail,
 	register_mapped_handlers,
@@ -1244,10 +1245,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 		exc_info=True,
 	)
 	code, message = internal_error_detail(exc)
-	detail: dict[str, str] = error_detail(message, code)
-	if correlation_id:
-		detail["correlation_id"] = correlation_id
-	return JSONResponse(status_code=500, content={"detail": detail})
+	return JSONResponse(status_code=500, content={"detail": client_detail(request, error_detail(message, code), exc)})
 
 
 @app.get(

@@ -922,7 +922,7 @@
 			bins = (await getBins()).bins;
 			storageGrid = await getStorageGrid();
 		} catch (err) {
-			fail(err, 'failed to save cells');
+			fail(err, 'Failed to save cells.');
 			// The save partially mutated server state (e.g. a barcode swap whose
 			// unassign succeeded but assign was rejected); refresh so the overlay
 			// reflects reality instead of the stale bins.
@@ -940,7 +940,7 @@
 	async function didDeleteSelectedCells(): Promise<void> {
 		const label = selectionCount === 1 ? 'cell' : 'cells';
 		const confirmed = confirm(
-			`are you sure you want to delete the ${selectionCount} selected ${label}?`
+			`Are you sure you want to delete the ${selectionCount} selected ${label}?`
 		);
 		if (confirmed !== true) {
 			return;
@@ -959,7 +959,7 @@
 			clearCurrentSideSelection();
 			closeOverlay();
 		} catch (err) {
-			fail(err, 'failed to delete cells');
+			fail(err, 'Failed to delete cells.');
 			// A partial failure deleted some cells already; reload + prune so the
 			// deleted ones don't linger as ghosts and a retry isn't blocked by them.
 			try {
@@ -1017,7 +1017,7 @@
 			parts.push(`${cellCount} ${cellCount === 1 ? 'cell' : 'cells'}`);
 		}
 
-		const confirmed = confirm(`are you sure you want to delete ${parts.join(' and ')}?`);
+		const confirmed = confirm(`Are you sure you want to delete ${parts.join(' and ')}?`);
 		if (confirmed !== true) {
 			return;
 		}
@@ -1038,13 +1038,13 @@
 				deletedShelves.push(shelfIdx);
 			}
 		} catch (err) {
-			fail(err, 'failed to delete');
+			fail(err, 'Failed to delete.');
 		}
 
 		try {
 			storageGrid = await getStorageGrid();
 		} catch (err) {
-			fail(err, 'failed to load storage grid');
+			fail(err, 'Failed to load storage grid.');
 		}
 		for (const shelfIdx of deletedShelves) {
 			remapSelectionAfterShelfDelete(shelfIdx);
@@ -1146,7 +1146,8 @@
 				try {
 					const data = JSON.parse(event.data);
 					if (data.kind === 'calibration_test_queue') {
-						didReceiveTestQueueEvent(data.payload);
+						// The event carries the developer detail beside the snapshot, where the server can strip it.
+						didReceiveTestQueueEvent({ ...data.payload, error_debug: data.debug });
 						return;
 					}
 					if (data.kind === 'label_scanned' && typeof data.payload === 'string') {
@@ -1207,7 +1208,7 @@
 			setTimeout(() => {
 				if (pendingTestCommand !== null && pendingTestCommand.commandId === commandId) {
 					pendingTestCommand = null;
-					resolve({ ok: false, error: 'timed out waiting for the command result' });
+					resolve({ ok: false, error: 'Timed out waiting for the command result.' });
 			}
 			}, TEST_COMMAND_TIMEOUT_MS);
 		});
@@ -1363,10 +1364,16 @@
 					? sideInitialFor(event.side, vocabulary)
 					: sideInitialLetter;
 			const label = failed ? `${side}:${failed.shelf_idx}:${failed.cell_idx}` : 'test';
-			const reason = typeof event.error === 'string' ? `: ${event.error}` : '';
-			postToast('error', `Failed at ${label}${reason}`);
+			const reason = typeof event.error === 'string' ? `: ${event.error.replace(/\.+$/, '')}` : '';
+			postToast(
+				'error',
+				formatFailure({
+					error: `Failed at ${label}${reason}.`,
+					debug: event.error_debug ?? undefined
+				})
+			);
 		} else {
-			postToast('status', state === 'cancelled' ? 'test aborted' : 'all tests passed');
+			postToast('status', state === 'cancelled' ? 'Test aborted.' : 'All tests passed.');
 		}
 		finalizedTestQueueJobId = jobId;
 		if (jobId === lastFollowedTestQueueJobId) {
@@ -1441,12 +1448,12 @@
 				const cellLabel = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
 				if (result.ok === false) {
-					postToast('error', `Failed at ${cellLabel}${result.error ? `: ${result.error}` : ''}`);
+					postToast('error', `Failed at ${cellLabel}${result.error ? `: ${result.error.replace(/\.+$/, '')}` : ''}.`);
 					return;
 				}
 			}
 			// One summary toast per walk: a failure returned above with its own toast.
-			postToast('status', walkAborting ? 'test aborted' : 'all tests passed');
+			postToast('status', walkAborting ? 'Test aborted.' : 'All tests passed.');
 		} finally {
 			clientWalkRunning = false;
 			walkAborting = false;
@@ -1562,7 +1569,7 @@
 			storageGrid = await getStorageGrid();
 			pruneSelection();
 		} catch (err) {
-			fail(err, 'failed to add shelf');
+			fail(err, 'Failed to add shelf.');
 		} finally {
 			busy = false;
 		}
@@ -1649,7 +1656,7 @@
 			}
 			pruneSelection();
 		} catch (err) {
-			fail(err, 'failed to add cell');
+			fail(err, 'Failed to add cell.');
 		} finally {
 			busy = false;
 		}
@@ -1657,7 +1664,7 @@
 
 	async function didDeleteShelf(shelfIdx: number): Promise<void> {
 		const confirmed = confirm(
-			`are you sure you want to delete shelf ${sideInitialLetter}:${shelfIdx}?`
+			`Are you sure you want to delete shelf ${sideInitialLetter}:${shelfIdx}?`
 		);
 		if (confirmed !== true) {
 			return;
@@ -1670,7 +1677,7 @@
 			storageGrid = await getStorageGrid();
 			remapSelectionAfterShelfDelete(shelfIdx);
 		} catch (err) {
-			fail(err, 'failed to delete shelf');
+			fail(err, 'Failed to delete shelf.');
 		} finally {
 			busy = false;
 		}

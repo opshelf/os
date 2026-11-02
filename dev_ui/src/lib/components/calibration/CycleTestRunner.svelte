@@ -4,6 +4,7 @@
 	import {
 		abortCycleTest,
 		continueCycleTest,
+		formatDeveloperDetail,
 		getCycleTest,
 		startCycleTest,
 		type CycleTestConfig,
@@ -198,21 +199,21 @@
 		}
 
 		// clear is never persisted: it deletes every item on the device, so it must be ticked per run.
-		if (clear === true && confirm('delete every item and item location on this device before the test?') === false) {
+		if (clear === true && confirm('Delete every item and item location on this device before the test?') === false) {
 			return;
 		}
 
 		persistConfig();
-		await request(() => startCycleTest(buildConfig()), 'failed to start cycle test');
+		await request(() => startCycleTest(buildConfig()), 'Failed to start the cycle test.');
 		clear = false;
 	}
 
 	function didClickContinue(): Promise<void> {
-		return request(continueCycleTest, 'failed to continue cycle test');
+		return request(continueCycleTest, 'Failed to continue the cycle test.');
 	}
 
 	function didClickAbort(): Promise<void> {
-		return request(abortCycleTest, 'failed to abort cycle test');
+		return request(abortCycleTest, 'Failed to abort the cycle test.');
 	}
 
 </script>
@@ -361,7 +362,7 @@
 				{#if failedResult !== null}
 					<tr>
 						<td>failed</td>
-						<td class="fail">{failedResult.cell}{failedResult.error !== null ? `: ${failedResult.error}` : ''}</td>
+						<td class="fail">{failedResult.cell}{failedResult.error !== null ? `: ${failedResult.error}` : ''}{#if failedResult.debug}<pre class="detail">{formatDeveloperDetail({ debug: failedResult.debug })}</pre>{/if}</td>
 					</tr>
 				{/if}
 				{#if snapshot.hardware_fault !== null}
@@ -414,5 +415,10 @@
 
 	.fail {
 		color: #c62828;
+	}
+	.detail {
+		margin: 0.25rem 0 0;
+		font-size: 0.8em;
+		white-space: pre-wrap;
 	}
 </style>

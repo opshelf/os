@@ -1935,7 +1935,7 @@ class RobotWorker:
                     await self.refresh_tray_on_tool()
                     await self._publish_status()
                 except Exception as publish_err:
-                    logger.warning("Failed to publish error status: %s", publish_err)
+                    logger.warning("Failed to publish error status: %s", publish_err, exc_info=publish_err)
 
                 self._remove_current_operation()
                 self._current_task = None
