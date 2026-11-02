@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from openshelf_os.exceptions import MovementError
+from openshelf_os.exceptions import MovementError, RotationClearanceError
 from openshelf_os.tool import (
     Tool,
 )
@@ -32,15 +32,34 @@ def _mock_x_motor(
 
 
 @pytest.mark.asyncio
+async def test_home_rotate_sequence_rehomes_x_verified_when_its_home_is_provisional() -> None:
+    # Isolated init left X provisionally homed after rotate failed; a rotate-only home must verify it.
+    tool = Tool.__new__(Tool)
+    tool._mx = _mock_x_motor(position=300.0)
+    tool._mx._is_homed = True
+    tool._mx._is_home_provisional = True
+    tool._mr = AsyncMock()
+    tool._ms = None
+    tool.ensure_safe_rotation_stage_extension = AsyncMock(return_value=False)
+    tool.rotate_to_home_orientation = AsyncMock()
+
+    await tool._home_rotate_sequence()
+
+    tool._mx.home.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
 async def test_home_rotate_sequence_homes_unhomed_x_before_clearance_move() -> None:
     events: list[str] = []
     tool = Tool.__new__(Tool)
     tool._mx = _mock_x_motor(position=0.0)
     tool._mx._is_homed = False
+    tool._mx._is_home_provisional = False
 
-    async def home_x() -> None:
-        events.append("home_x")
+    async def home_x(**kwargs) -> None:
+        events.append("home_x:provisional" if kwargs.get("provisional") else "home_x")
         tool._mx._is_homed = True
+        tool._mx._is_home_provisional = kwargs.get("provisional", False)
 
     tool._mx.home = AsyncMock(side_effect=home_x)
     tool._mx.move_to_position = AsyncMock(side_effect=lambda mm: events.append(f"x:{mm}"))
@@ -54,7 +73,7 @@ async def test_home_rotate_sequence_homes_unhomed_x_before_clearance_move() -> N
 
     await tool._home_rotate_sequence()
 
-    assert events == ["home_x", "x:200.0", "home_rotate", "x:0.0"]
+    assert events == ["home_x:provisional", "x:200.0", "home_rotate", "x:0.0", "home_x"]
 
 
 @pytest.mark.asyncio
@@ -201,6 +220,64 @@ async def test_rotate_to_position_refuses_outside_the_x_window(x_mm: float, is_h
     tool._handle_fault.assert_awaited_once()
 
 
+def _tool_for_x_guard(*, rotate_deg: float, rotate_homed: bool = True) -> Tool:
+    tool = Tool.__new__(Tool)
+    tool._logger = Mock()
+    tool._mx = _mock_x_motor(limit=950.0, position=400.0)
+    tool._mr = AsyncMock()
+    tool._mr._is_homed = rotate_homed
+    tool._mr.get_position = AsyncMock(return_value=rotate_deg)
+    tool.get_param = AsyncMock(side_effect=lambda name: {
+        'ROTATION_FRONT': 2.0,
+        'ROTATION_BACK': 182.0,
+    }[name])
+    return tool
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rotate_deg, rotate_homed, target_mm, is_refused",
+    [
+        pytest.param(20.0, True, 10.0, True, id="rotated_toward_end"),
+        pytest.param(20.0, True, None, True, id="rotated_home"),
+        pytest.param(20.0, True, 400.0, False, id="rotated_inside_window"),
+        pytest.param(4.0, True, 10.0, False, id="near_front"),
+        pytest.param(180.0, True, None, False, id="near_back"),
+        pytest.param(20.0, False, None, False, id="rotate_angle_unknown"),
+    ],
+)
+async def test_x_guard_needs_front_or_back_outside_the_rotation_window(
+    rotate_deg: float, rotate_homed: bool, target_mm: float | None, is_refused: bool
+) -> None:
+    tool = _tool_for_x_guard(rotate_deg=rotate_deg, rotate_homed=rotate_homed)
+
+    if is_refused:
+        with pytest.raises(RotationClearanceError, match="rotated to 20.00 deg"):
+            await tool._assert_rotation_allows_x_motion(target_mm)
+    else:
+        await tool._assert_rotation_allows_x_motion(target_mm)
+
+
+@pytest.mark.asyncio
+async def test_restore_leaves_x_in_the_window_while_the_tool_is_off_its_pose() -> None:
+    # lb4a-3: restoring X to 0.1 mm after a 20 deg rotate move stalled X on a gantry upright.
+    tool = _tool_for_x_guard(rotate_deg=20.0)
+
+    await tool.restore_safe_rotation_x_position(0.1)
+
+    tool._mx.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_leaves_x_in_the_window_while_rotate_is_unhomed() -> None:
+    # A faulted or timed-out rotate move clears its homed flag; the angle is then unknown.
+    tool = _tool_for_x_guard(rotate_deg=60.0, rotate_homed=False)
+
+    await tool.restore_safe_rotation_x_position(0.1)
+
+    tool._mx.move_to_position.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_retract_fails_when_stage_home_recovery_leaves_stage_unsafe() -> None:
     stage_error = RuntimeError('stage fault')
@@ -264,3 +341,23 @@ async def test_retract_homes_stage_when_zero_move_stops_outside_clearance() -> N
     stage_motor.clear_alarm.assert_awaited_once()
     stage_motor.home.assert_awaited_once()
     stage_motor.idle.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_home_rotate_sequence_refuses_extended_z_before_any_x_motion() -> None:
+    tool = Tool.__new__(Tool)
+    tool._mx = _mock_x_motor(position=0.0)
+    tool._mx._is_homed = False
+    tool._mx._is_home_provisional = False
+    tool._mg = AsyncMock()
+    tool._mg.get_position = AsyncMock(return_value=120.0)
+    tool._mr = AsyncMock()
+    tool._ms = None
+    tool.get_param = AsyncMock(return_value=2.7)
+
+    with pytest.raises(RotationClearanceError, match="z_axis"):
+        await tool._home_rotate_sequence()
+
+    tool._mx.home.assert_not_awaited()
+    tool._mx.move_to_position.assert_not_awaited()
+    tool._mr.home.assert_not_awaited()

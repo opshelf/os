@@ -27,6 +27,9 @@ TOOL_OUTER_TIMEOUT = 60.0
 ROTATION_SAFE_X_MARGIN_MM = 200.0
 # The clearance move lands on the window edge; encoder reads settle a few hundredths either side.
 ROTATION_SAFE_X_TOLERANCE_MM = 1.0
+# X may move only while the tool sits this close to its front or back pose. At 10 deg off front
+# X still reached home; at 20 deg it stalled on the gantry ~2 mm short (lb4a-3, 2026-11-02).
+ROTATION_X_MOTION_TOLERANCE_DEG = 5.0
 ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
 ROTATION_POSITION_EPSILON_DEG = 0.05
 DEFAULT_STAGE_RETRACT_TARGET_MM = 3.0
@@ -259,6 +262,9 @@ class Tool:
         self._mr: Optional[Motor] = _create_motor_if_enabled(
             motorcontroller, motors, "rotate", safety, self._logger, gpio, home_limit_pin="r_lim_min"
         )
+
+        if self._mx is not None and self._mr is not None:
+            self._mx.set_motion_guard(self._assert_rotation_allows_x_motion)
 
         self._gpio = gpio
 
@@ -1039,7 +1045,8 @@ class Tool:
         self,
         *,
         should_ensure_safe_stage_extension: bool = True,
-    ) -> None:
+    ) -> bool:
+        """Turn to the home orientation; True when the stage was extended for the turn."""
         if self._mr is None:
             raise MotorError("Rotate motor required for rotation")
 
@@ -1057,18 +1064,20 @@ class Tool:
                 target_angle = float(rotation_back)
 
             if await self.is_rotation_at_position(target_angle):
-                return
-
+                return False
 
             original_x = await self.ensure_safe_rotation_x_position()
+            did_extend_stage = False
 
             try:
                 if should_ensure_safe_stage_extension is True:
-                    await self.ensure_safe_rotation_stage_extension()
+                    did_extend_stage = await self.ensure_safe_rotation_stage_extension()
 
                 await self._mr.move_to_position(target_angle)
             finally:
                 await self.restore_safe_rotation_x_position(original_x)
+
+            return did_extend_stage
 
         except Exception as e:
             await self._handle_fault(e)
@@ -1132,7 +1141,10 @@ class Tool:
         *,
         stage_position: float | None = None,
         stage_extension_enabled: bool | None = None,
+        before_x_motion: bool = False,
     ) -> None:
+        # before_x_motion: only check that Z and the stage are retracted enough for X to move
+        # sideways; the stage may sit anywhere up to its safe extension and X is not checked.
         unsafe: list[str] = []
 
         if self._ms is not None:
@@ -1145,7 +1157,14 @@ class Tool:
                     False,
                 )
 
-            if stage_extension_enabled is True:
+            if stage_extension_enabled is True and before_x_motion:
+                maximum_stage_mm = float(self._ms._params.rotation_safe_stage_extension_mm)
+                if stage_position > maximum_stage_mm:
+                    unsafe.append(
+                        f"stage={stage_position:.3f}mm exceeds maximum "
+                        f"{maximum_stage_mm:.3f}mm"
+                    )
+            elif stage_extension_enabled is True:
                 minimum_stage_mm = float(self._ms._params.rotation_safe_stage_extension_mm)
                 if stage_position < minimum_stage_mm:
                     unsafe.append(
@@ -1177,19 +1196,15 @@ class Tool:
 
         # The tool only clears the gantry uprights while X is ROTATION_SAFE_X_MARGIN_MM from both
         # ends of its travel; ensure_safe_rotation_x_position moves it there before rotating.
-        x_motor = getattr(self, "_mx", None)
+        x_motor = None if before_x_motion else getattr(self, "_mx", None)
         if x_motor is not None:
             if getattr(x_motor, "_is_homed", True) is False:
                 unsafe.append("x_axis is not homed")
             else:
                 x_position = float(await x_motor.get_position())
-                window_min_mm = float(getattr(x_motor._params, "lower_lim", 0.0)) + ROTATION_SAFE_X_MARGIN_MM
-                window_max_mm = float(x_motor._params.lim) - ROTATION_SAFE_X_MARGIN_MM
+                window_min_mm, window_max_mm = self._rotation_x_window(x_motor)
 
-                if (
-                    x_position < window_min_mm - ROTATION_SAFE_X_TOLERANCE_MM
-                    or x_position > window_max_mm + ROTATION_SAFE_X_TOLERANCE_MM
-                ):
+                if self._is_in_rotation_x_window(x_motor, x_position) is False:
                     unsafe.append(
                         f"x_axis={x_position:.3f}mm is outside the rotation window "
                         f"{window_min_mm:.1f}-{window_max_mm:.1f}mm"
@@ -1198,20 +1213,32 @@ class Tool:
         if unsafe:
             raise RotationClearanceError("Unsafe tool clearance for rotation: " + "; ".join(unsafe))
 
+    @staticmethod
+    def _rotation_x_window(x_motor: Motor) -> tuple[float, float]:
+        lower_lim = float(getattr(x_motor._params, "lower_lim", 0.0))
+        return lower_lim + ROTATION_SAFE_X_MARGIN_MM, float(x_motor._params.lim) - ROTATION_SAFE_X_MARGIN_MM
+
+    def _is_in_rotation_x_window(self, x_motor: Motor, x_mm: float) -> bool:
+        window_min_mm, window_max_mm = self._rotation_x_window(x_motor)
+        return (
+            window_min_mm - ROTATION_SAFE_X_TOLERANCE_MM
+            <= x_mm
+            <= window_max_mm + ROTATION_SAFE_X_TOLERANCE_MM
+        )
+
     async def ensure_safe_rotation_x_position(self) -> Optional[float]:
         x_motor = getattr(self, "_mx", None)
 
         if x_motor is None:
             return None
 
-        margin_mm = ROTATION_SAFE_X_MARGIN_MM
-        lower_lim = float(getattr(x_motor._params, "lower_lim", 0.0))
-        upper_lim = float(x_motor._params.lim)
+        window_min_mm, window_max_mm = self._rotation_x_window(x_motor)
 
-        if upper_lim - lower_lim < margin_mm * 2:
+        if window_max_mm < window_min_mm:
+            margin_mm = ROTATION_SAFE_X_MARGIN_MM
             raise ConfigError(
                 "X axis limit is too small for safe rotation margin "
-                f"({upper_lim - lower_lim} < {margin_mm * 2})"
+                f"({window_max_mm - window_min_mm + margin_mm * 2} < {margin_mm * 2})"
             )
 
         if getattr(x_motor, "_is_homed", True) is False:
@@ -1219,12 +1246,12 @@ class Tool:
 
         current_x = await x_motor.get_position()
 
-        if current_x < lower_lim + margin_mm:
-            await x_motor.move_to_position(lower_lim + margin_mm)
+        if current_x < window_min_mm:
+            await x_motor.move_to_position(window_min_mm)
             return current_x
 
-        if current_x > upper_lim - margin_mm:
-            await x_motor.move_to_position(upper_lim - margin_mm)
+        if current_x > window_max_mm:
+            await x_motor.move_to_position(window_max_mm)
             return current_x
 
         return None
@@ -1235,7 +1262,48 @@ class Tool:
         if original_x is None or x_motor is None:
             return
 
+        # A rotate move that faulted or timed out leaves rotate unhomed at an unknown angle.
+        rotate_motor = getattr(self, "_mr", None)
+        is_angle_unknown = rotate_motor is not None and getattr(rotate_motor, "_is_homed", True) is False
+        angle = None if is_angle_unknown else await self._rotation_off_x_pose()
+        if is_angle_unknown or angle is not None:
+            self._logger.warning(
+                "Leaving X in the rotation window; the tool is off its front/back pose",
+                extra={"rotate_deg": angle, "original_x_mm": original_x},
+            )
+            return
+
         await x_motor.move_to_position(original_x)
+
+    async def _rotation_off_x_pose(self) -> Optional[float]:
+        """The rotate angle when it is known and too far from front/back for X to move, else None.
+
+        An unhomed rotate has no trustworthy angle; homing covers that case by homing X
+        provisionally and re-homing it once the tool is straight.
+        """
+        rotate_motor = getattr(self, "_mr", None)
+        if rotate_motor is None or getattr(rotate_motor, "_is_homed", True) is False:
+            return None
+
+        angle = float(await rotate_motor.get_position())
+        for param in ("ROTATION_FRONT", "ROTATION_BACK"):
+            target = await self.get_param(param)
+            if target is not None and abs(angle - float(target)) <= ROTATION_X_MOTION_TOLERANCE_DEG:
+                return None
+
+        return angle
+
+    async def _assert_rotation_allows_x_motion(self, target_mm: Optional[float]) -> None:
+        """X guard: a rotated tool clears the gantry uprights only inside the rotation window, so
+        X may move there at any angle; anywhere else, and a home, needs the front/back pose."""
+        if target_mm is not None and self._is_in_rotation_x_window(self._mx, float(target_mm)):
+            return
+
+        angle = await self._rotation_off_x_pose()
+        if angle is not None:
+            raise RotationClearanceError(
+                f"Tool is rotated to {angle:.2f} deg; rotate it to the front or back position before moving X"
+            )
 
     # ------------------------------------------------------------------ #
     #  Tool extension and retraction
@@ -1593,10 +1661,15 @@ class Tool:
         original_x = None
 
         if self._mx is not None:
+            # Z and the stage must be clear before X moves sideways, homed or not.
+            await self._assert_rotation_clearance(before_x_motion=True)
             # The clearance move below is in X coordinates; after a power cycle the drive
-            # reads 0 wherever the carriage stands, so X must be homed before it moves.
+            # reads 0 wherever the carriage stands, so X must be homed before it moves. With the
+            # tool at an unknown angle that home can stop on a gantry upright short of the limit
+            # switch, so it is provisional and X homes again, verified, once the tool is straight.
+            # A home that is still provisional from an earlier call is verified the same way.
             if getattr(self._mx, "_is_homed", True) is False:
-                await self._mx.home()
+                await self._mx.home(provisional=True)
 
             original_x = await self.ensure_safe_rotation_x_position()
 
@@ -1612,6 +1685,17 @@ class Tool:
         if did_extend_stage is True and self._ms is not None:
             await self._ms.home()
 
+        if self._mx is not None and getattr(self._mx, "_is_home_provisional", False) is True:
+            await self._mx.home()
+
+    async def _straighten_rotate_before_x_home(self) -> None:
+        if await self._rotation_off_x_pose() is None:
+            return
+
+        # The turn may extend the stage; homing it again retracts it.
+        if await self.rotate_to_home_orientation() is True and self._ms is not None:
+            await self._ms.home()
+
     async def _home_sequence(
         self,
         isolate: bool = False,
@@ -1625,33 +1709,37 @@ class Tool:
         def should_home(axis: str) -> bool:
             return axes is None or axis in axes
 
-        # X homes twice around rotate. The first home only gives the rotate clearance move real
-        # coordinates (after a power loss the drive reads 0 wherever the carriage stands), and
+        # X homes around rotate. A first, provisional home only gives the rotate clearance move
+        # real coordinates (after a power loss the drive reads 0 wherever the carriage stands);
         # with the tool at an unknown angle it can stop on a gantry upright short of the hard
-        # stop. The second runs with the tool straight and sets the zero every later move uses.
+        # stop. It runs even when X is homed, since a stale _is_homed (drive power dropped after an
+        # emergency stop) leaves wrong coordinates; the X guard refuses it for a homed X with the
+        # tool rotated, so the tool is straightened first. The rotate sequence then re-homes X
+        # verified with the tool straight, which sets the zero every later move uses.
+        will_home_rotate = should_home("rotate") and self._mr is not None
         for motor, axis in ((self._mg, "z_axis"), (self._ms, "stage"), (self._mx, "x_axis")):
             if motor is None or should_home(axis) is False:
                 continue
+            provisional = axis == "x_axis" and will_home_rotate
+            if provisional is True and getattr(motor, "_is_homed", False) is True:
+                # The X guard refuses even a provisional home of a homed X while the tool is off
+                # its front/back pose (e.g. after an abort); straighten the tool first. Isolated
+                # startup homing never gets here: a fresh Robot has X unhomed.
+                await self._straighten_rotate_before_x_home()
             if isolate is True:
-                if await self._home_step_isolated(motor, failed_config_motors) is False:
+                if await self._home_step_isolated(
+                    motor, failed_config_motors, provisional=provisional
+                ) is False:
                     failed_home_motors.append(motor)
             else:
-                await motor.home()
+                await motor.home(provisional=provisional)
 
-        did_home_rotate = False
-
+        # The rotate sequence re-homes the provisional X itself, verified.
         if should_home("rotate"):
             if isolate is True:
-                did_home_rotate = await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
+                await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
             elif self._mr is not None:
                 await self._home_rotate_sequence()
-                did_home_rotate = True
-
-        if did_home_rotate is True and self._mx is not None and should_home("x_axis"):
-            if isolate is True:
-                await self._home_step_isolated(self._mx, failed_config_motors)
-            else:
-                await self._mx.home()
 
         if should_home("y_axis") and self._my is not None:
             if isolate is True:
@@ -1679,6 +1767,7 @@ class Tool:
         motor: Optional[Motor],
         failed_config_motors: List[Motor],
         pre_home_clearance_mm: Optional[float] = None,
+        provisional: bool = False,
     ) -> bool:
         if motor is None:
             return True
@@ -1686,7 +1775,7 @@ class Tool:
             return True
         try:
             if pre_home_clearance_mm is None:
-                await motor.home()
+                await motor.home(provisional=provisional)
             else:
                 await motor.home(
                     pre_home_clearance_mm=pre_home_clearance_mm,

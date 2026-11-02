@@ -157,3 +157,24 @@ async def test_move_motor_admitted_while_tray_on_tool(client: AsyncClient) -> No
 
 	assert response.status_code == 200
 	mock_worker._robot._get_motor_by_name("x_axis").move_to_position.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_x_motion_guard_refusal_is_a_409_not_a_retry_503(client: AsyncClient) -> None:
+	"""A rotated tool refuses X motion; telling the engineer to retry would repeat the refusal."""
+	from openshelf_os.exceptions import RotationClearanceError
+
+	refusal = RotationClearanceError("Tool is rotated to 20.00 deg; rotate it to the front or back position before moving X")
+	motor = _mock_motor(100.0)
+	motor.move_to_position = AsyncMock(side_effect=refusal)
+	motor.home = AsyncMock(side_effect=refusal)
+	mock_worker = _mock_worker({"x_axis": motor})
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			move = await client.post("/api/robot/debug/motors/x_axis/move", json={"position_mm": 10.0})
+			home = await client.post("/api/robot/debug/motors/x_axis/home")
+
+	for response in (move, home):
+		assert response.status_code == 409
+		assert response.json()["detail"]["code"] == "rotation_blocked"

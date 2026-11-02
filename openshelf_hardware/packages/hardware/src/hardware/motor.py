@@ -269,6 +269,7 @@ class Motor():
         self._controller = controller
         self._params = params
         self._home_limit_input = home_limit_input
+        self._motion_guard: Optional[Callable[[Optional[float]], Awaitable[None]]] = None
         self._cur_pos = None
         self._stall_timeout = float(getattr(params, "stall_timeout_s", DEFAULT_STALL_TIMEOUT_S))
         self._status = MotorStatus.IDLE
@@ -283,6 +284,7 @@ class Motor():
         self._on_move_complete: Optional[Callable[[float], None]] = None
         self._on_init_progress: Optional[Callable[[str, str, Optional[str]], None]] = None
         self._is_homed = False
+        self._is_home_provisional = False
         self._hard_stopped = False
         self._should_skip_pre_home_once = False
         self._flight_recorder: deque[MotionRecordEntry] = deque(maxlen=MOTION_FLIGHT_RECORDER_SIZE)
@@ -448,6 +450,16 @@ class Motor():
 
     def is_homed(self) -> bool:
         return self._is_homed
+
+    def set_motion_guard(self, guard: Optional[Callable[[Optional[float]], Awaitable[None]]]) -> None:
+        """Run `guard(target_mm)` before every move, `guard(None)` before a home; it raises to refuse."""
+        self._motion_guard = guard
+
+    def read_home_limit(self) -> Optional[bool]:
+        """Engaged state of the home limit switch, or None when the motor has none."""
+        if self._home_limit_input is None:
+            return None
+        return self._home_limit_input.read()
 
     def is_hard_stopped(self) -> bool:
         return self._hard_stopped
@@ -1383,6 +1395,19 @@ class Motor():
         *,
         homing: bool = False,
     ) -> None:
+        if self._motion_guard is not None:
+            await self._motion_guard(value)
+
+        await self._move_to_position(value, rpm, accel, homing=homing)
+
+    async def _move_to_position(
+        self,
+        value: float,
+        rpm: Optional[int] = None,
+        accel: Optional[int] = None,
+        *,
+        homing: bool = False,
+    ) -> None:
         try:
             if self._safety:
                 if self._safety.blocked:
@@ -1430,6 +1455,9 @@ class Motor():
         rpm: Optional[int] = None,
         accel: Optional[int] = None,
     ) -> bool:
+        if self._motion_guard is not None:
+            await self._motion_guard(value)
+
         try:
             if self._safety:
                 if self._safety.blocked:
@@ -2284,7 +2312,7 @@ class Motor():
         if self._is_at_home_approach_target(float(current_position_mm)) is True:
             return
 
-        await self.move_to_position(target_mm, rpm=rpm, homing=False)
+        await self._move_to_position(target_mm, rpm=rpm, homing=False)
 
     async def _move_away_from_home(self, distance_mm: float, rpm: int) -> None:
         if distance_mm <= 0:
@@ -2338,8 +2366,8 @@ class Motor():
         (1 mm was enough) cleared it, a downward one did not.
         """
         rpm = self._params.home_rpm or self._params.ret_rpm
-        await self.move_to_position(Y_HOME_SETTLE_LIFT_MM, rpm=rpm)
-        await self.move_to_position(0.0, rpm=rpm)
+        await self._move_to_position(Y_HOME_SETTLE_LIFT_MM, rpm=rpm)
+        await self._move_to_position(0.0, rpm=rpm)
 
     async def _verify_home_limit_engaged(self) -> None:
         if self._home_limit_input is None:
@@ -2372,7 +2400,14 @@ class Motor():
         *,
         skip_pre_home_approach: bool = False,
         homing_peak_current: Optional[int] = None,
+        provisional: bool = False,
     ) -> None:
+        """`provisional` homes where the axis may stop short on an obstruction: it skips the home
+        limit check, and the caller must home again verified. It also skips the motion guard, but
+        only while the axis is unhomed (no coordinates to trust); a homed axis still runs it."""
+        if self._motion_guard is not None and (provisional is False or self._is_homed is True):
+            await self._motion_guard(None)
+
         self._simulated_fault = False
         restore_peak_current: int | None = None
         restore_following_error = False
@@ -2458,7 +2493,8 @@ class Motor():
                     await self._reset_alarm_history()
                     await self.move_config()
 
-                await self._verify_home_limit_engaged()
+                if provisional is False:
+                    await self._verify_home_limit_engaged()
 
                 if is_y_axis:
                     restore_errors = await self._restore_homing_overrides(
@@ -2477,6 +2513,7 @@ class Motor():
                 await self._park()
 
                 self._is_homed = True
+                self._is_home_provisional = provisional
                 self._hard_stopped = False
                 self._should_skip_pre_home_once = False
                 self._emit_init("ready")
