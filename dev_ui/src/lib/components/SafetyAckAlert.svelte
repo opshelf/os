@@ -50,7 +50,7 @@
 			if (err instanceof ApiError && err.status === 409 && err.detail?.active_sources?.length) {
 				ackError = `cannot acknowledge: ${err.detail.active_sources.join(', ')}`;
 			} else {
-				ackError = err instanceof Error ? err.message : 'acknowledge failed';
+				ackError = err instanceof Error ? err.message : 'Acknowledge failed.';
 			}
 		} finally {
 			isAcknowledging = false;

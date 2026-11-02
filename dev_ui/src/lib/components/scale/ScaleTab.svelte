@@ -61,7 +61,7 @@
 			calibrationStatus = await getScaleCalibrationStatus();
 			calibrationError = '';
 		} catch (err) {
-			calibrationError = err instanceof Error ? err.message : 'failed to read calibration status';
+			calibrationError = err instanceof Error ? err.message : 'Failed to read calibration status.';
 		}
 	}
 
@@ -76,7 +76,7 @@
 				division = calibrationParams.division < 1 ? 1 : calibrationParams.division;
 			}
 		} catch (err) {
-			calibrationError = err instanceof Error ? err.message : 'failed to read calibration params';
+			calibrationError = err instanceof Error ? err.message : 'Failed to read calibration params.';
 		}
 	}
 
@@ -93,14 +93,14 @@
 				division
 			);
 			if (result.success === true) {
-				message = 'calibration parameters saved';
+				message = 'Calibration parameters saved.';
 				await fetchCalibrationParams();
 			} else {
-				calibrationError = 'failed to save calibration parameters';
+				calibrationError = 'Failed to save calibration parameters.';
 			}
 		} catch (err) {
 			calibrationError =
-				err instanceof Error ? err.message : 'failed to save calibration parameters';
+				err instanceof Error ? err.message : 'Failed to save calibration parameters.';
 		} finally {
 			isSavingParams = false;
 		}
@@ -114,13 +114,13 @@
 		try {
 			const result = await calibrateScaleZero();
 			if (result.success === true) {
-				message = 'zero calibration successful';
+				message = 'Zero calibration successful.';
 			} else {
-				calibrationError = result.error ?? 'zero calibration failed';
+				calibrationError = result.error ?? 'Zero calibration failed.';
 			}
 			await fetchCalibrationStatus();
 		} catch (err) {
-			calibrationError = err instanceof Error ? err.message : 'failed to calibrate zero';
+			calibrationError = err instanceof Error ? err.message : 'Failed to calibrate zero.';
 		} finally {
 			isCalibrating = false;
 		}
@@ -134,13 +134,13 @@
 		try {
 			const result = await calibrateScaleWeight();
 			if (result.success === true) {
-				message = 'weight calibration successful';
+				message = 'Weight calibration successful.';
 			} else {
-				calibrationError = result.error ?? 'weight calibration failed';
+				calibrationError = result.error ?? 'Weight calibration failed.';
 			}
 			await fetchCalibrationStatus();
 		} catch (err) {
-			calibrationError = err instanceof Error ? err.message : 'failed to calibrate weight';
+			calibrationError = err instanceof Error ? err.message : 'Failed to calibrate weight.';
 		} finally {
 			isCalibrating = false;
 		}
@@ -154,12 +154,12 @@
 		try {
 			const result = await tareScale();
 			if (result.success === true) {
-				message = 'tare successful';
+				message = 'Tare successful.';
 			} else {
-				calibrationError = 'tare failed';
+				calibrationError = 'Tare failed.';
 			}
 		} catch (err) {
-			calibrationError = err instanceof Error ? err.message : 'failed to tare';
+			calibrationError = err instanceof Error ? err.message : 'Failed to tare.';
 		} finally {
 			isTaring = false;
 		}

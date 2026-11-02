@@ -259,7 +259,7 @@ export class H264StreamPlayer {
 				this.pushAccessUnit(unit);
 			}
 		} catch (error) {
-			this.fail(error instanceof Error ? error.message : 'h264 decoder failed to start');
+			this.fail(error instanceof Error ? error.message : 'H264 decoder failed to start.');
 		}
 	}
 
@@ -328,7 +328,7 @@ export class H264StreamPlayer {
 
 			decoder.decode(chunk);
 		} catch (error) {
-			this.fail(error instanceof Error ? error.message : 'h264 decode failed');
+			this.fail(error instanceof Error ? error.message : 'H264 decode failed.');
 		}
 	}
 

@@ -27,7 +27,7 @@
 			status = await getScannerStatus();
 			statusError = '';
 		} catch (err) {
-			statusError = err instanceof Error ? err.message : 'failed to read scanner status';
+			statusError = err instanceof Error ? err.message : 'Failed to read scanner status.';
 		}
 	}
 
@@ -54,9 +54,9 @@
 
 		try {
 			await sendScannerScan(simulatedCode);
-			message = 'scan sent';
+			message = 'Scan sent.';
 		} catch (err) {
-			scanError = err instanceof Error ? err.message : 'failed to send scan';
+			scanError = err instanceof Error ? err.message : 'Failed to send scan.';
 		} finally {
 			isSending = false;
 		}

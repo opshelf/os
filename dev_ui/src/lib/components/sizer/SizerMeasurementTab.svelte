@@ -20,7 +20,7 @@
 			measurement = result.measurement;
 			message = result.success === true ? 'measurement complete' : '';
 		} catch (err) {
-			measurementError = err instanceof Error ? err.message : 'failed to measure';
+			measurementError = err instanceof Error ? err.message : 'Failed to measure.';
 		} finally {
 			isMeasuring = false;
 		}

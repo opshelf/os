@@ -92,6 +92,7 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 		headers.set('Authorization', `Bearer ${token}`);
 	}
 
+	const requestLine = `${(init?.method ?? 'GET').toUpperCase()} ${path}`;
 	let response: Response;
 	try {
 		response = await fetch(buildApiUrl(path), {
@@ -99,7 +100,10 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 			headers
 		});
 	} catch {
-		throw new ApiError('device or API is unreachable', 0);
+		throw new ApiError(
+			formatErrorMessage('The device API did not answer. Check that the device is online.', undefined, requestLine),
+			0
+		);
 	}
 
 	if (response.status === 401) {
@@ -113,7 +117,7 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 
 	if (response.ok === false) {
 		const { message, detail } = await readErrorDetail(response);
-		const finalMessage = formatErrorMessage(message, detail);
+		const finalMessage = formatErrorMessage(message, detail, `${requestLine} → ${response.status}`);
 		throw new ApiError(finalMessage, response.status, detail);
 	}
 
@@ -128,12 +132,16 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 
 	try {
 		return JSON.parse(text) as T;
-	} catch (error) {
-		throw new Error('failed to parse response body as json');
+	} catch {
+		throw new Error(
+			formatErrorMessage('The device API sent a response that is not JSON.', undefined, requestLine)
+		);
 	}
 }
 
-function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
+// request is the "METHOD /path" (and status) the error came from: client-side failures carry
+// nothing else that says which call broke.
+function formatErrorMessage(message: string, detail?: ApiErrorDetail, request?: string): string {
 	let output = message;
 	if (detail?.reason && detail.reason !== message) {
 		output = `${output} (${detail.reason})`;
@@ -141,7 +149,7 @@ function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
 	if (detail?.needs_home && detail.reason === undefined) {
 		output = `${output} (home required)`;
 	}
-	const developerDetail = formatDeveloperDetail(detail);
+	const developerDetail = formatDeveloperDetail(detail, request);
 	if (developerDetail !== '') {
 		output = `${output}${TOAST_DETAIL_SEPARATOR}${developerDetail}`;
 	}
@@ -150,7 +158,7 @@ function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
 
 /** A failed robot event or command result, with the developer detail the server attached. */
 export function formatFailure(data: Record<string, unknown>): string {
-	const error = typeof data.error === 'string' ? data.error : String(data.message ?? 'command failed');
+	const error = typeof data.error === 'string' ? data.error : 'The robot command failed.';
 	const code = [data.fault_code, data.code].find((value) => typeof value === 'string') as
 		| string
 		| undefined;
@@ -160,7 +168,7 @@ export function formatFailure(data: Record<string, unknown>): string {
 
 /** A failed laser auto calibration: its sentence plus the run's error detail. */
 export function formatLaserFailure(snapshot: LaserAutoCalibrationSnapshot): string {
-	const error = snapshot.error ?? 'laser auto calibration failed';
+	const error = snapshot.error ?? 'The laser auto calibration failed.';
 	const failure = snapshot.error_detail;
 	if (failure === null || failure === undefined) {
 		return error;
@@ -175,22 +183,19 @@ export function formatLaserFailure(snapshot: LaserAutoCalibrationSnapshot): stri
 	return `${error}${TOAST_DETAIL_SEPARATOR}${detail}`;
 }
 
-function formatDeveloperDetail(detail?: ApiErrorDetail): string {
-	if (detail === undefined) {
-		return '';
-	}
-	const lines = [...(detail.debug?.chain ?? []), ...(detail.debug?.fields ?? [])];
-	const fault = Object.entries(detail.debug?.fault_context ?? {})
+function formatDeveloperDetail(detail?: ApiErrorDetail, request?: string): string {
+	const lines = [...(detail?.debug?.chain ?? []), ...(detail?.debug?.fields ?? [])];
+	const fault = Object.entries(detail?.debug?.fault_context ?? {})
 		.filter(([, value]) => value !== null && value !== false)
 		.map(([key, value]) => `${key}=${value}`);
 	if (fault.length > 0) {
 		lines.push(fault.join(' '));
 	}
-	const ids = [];
-	if (detail.code !== undefined) {
+	const ids = request === undefined ? [] : [request];
+	if (detail?.code !== undefined) {
 		ids.push(`code ${detail.code}`);
 	}
-	if (detail.correlation_id !== undefined) {
+	if (detail?.correlation_id !== undefined) {
 		ids.push(`ref ${detail.correlation_id}`);
 	}
 	if (ids.length > 0) {
@@ -201,15 +206,15 @@ function formatDeveloperDetail(detail?: ApiErrorDetail): string {
 
 function unreachableMessage(status: number): string {
 	if (status === 502) {
-		return 'device or API is unreachable';
+		return 'The device or its API is unreachable.';
 	}
 	if (status === 503) {
-		return 'device API is unavailable';
+		return 'The device API is not available.';
 	}
 	if (status === 504) {
-		return 'device connection dropped';
+		return 'The connection to the device dropped.';
 	}
-	return `request failed with status ${status}`;
+	return `The request failed with status ${status}.`;
 }
 
 const MAX_ERROR_BODY_LENGTH = 200;
@@ -217,7 +222,7 @@ const MAX_ERROR_BODY_LENGTH = 200;
 async function readErrorDetail(
 	response: Response
 ): Promise<{ message: string; detail?: ApiErrorDetail }> {
-	const fallback = `${response.status} ${response.statusText}`;
+	const fallback = `The request failed with status ${response.status}.`;
 	const contentType = response.headers.get('content-type') ?? '';
 	let text = '';
 
@@ -950,7 +955,11 @@ export async function getLaserAutoCalibrationStreamError(
 	}
 
 	const { message, detail } = await readErrorDetail(response);
-	return new ApiError(formatErrorMessage(message, detail), response.status, detail);
+	return new ApiError(
+		formatErrorMessage(message, detail, `GET /calibration/laser/stream → ${response.status}`),
+		response.status,
+		detail
+	);
 }
 
 export async function getLaserAutoCalibrationStatus(): Promise<LaserAutoCalibrationSnapshot> {

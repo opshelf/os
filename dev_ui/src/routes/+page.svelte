@@ -152,7 +152,7 @@
 			if (err instanceof ApiError && err.status === 409 && err.detail?.active_sources?.length) {
 				safetyAckError = `cannot acknowledge: ${err.detail.active_sources.join(', ')}`;
 			} else {
-				safetyAckError = err instanceof Error ? err.message : 'acknowledge failed';
+				safetyAckError = err instanceof Error ? err.message : 'Acknowledge failed.';
 			}
 		} finally {
 			isAcknowledgingSafety = false;
@@ -179,7 +179,7 @@
 		try {
 			await setBypassSafetyGuard(shouldBypassSafetyGuard);
 		} catch (err) {
-			safetyOverrideError = err instanceof Error ? err.message : 'failed to update safety override';
+			safetyOverrideError = err instanceof Error ? err.message : 'Failed to update safety override.';
 		} finally {
 			isUpdatingSafetyOverride = false;
 		}
@@ -193,7 +193,7 @@
 		try {
 			await setBypassSafetyComponent(component, shouldBypass);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : 'failed to update safety override';
+			const message = err instanceof Error ? err.message : 'Failed to update safety override.';
 			componentErrors = { ...componentErrors, [component]: message };
 		} finally {
 			componentUpdating = { ...componentUpdating, [component]: false };
@@ -224,7 +224,7 @@
 			const data = await apiFetch<{ home_on_init: boolean }>('/system/home-on-init');
 			homeOnInit = data.home_on_init;
 		} catch (err) {
-			homeOnInitError = err instanceof Error ? err.message : 'failed to load homing setting';
+			homeOnInitError = err instanceof Error ? err.message : 'Failed to load homing setting.';
 		} finally {
 			isLoadingHomeOnInit = false;
 		}
@@ -243,7 +243,7 @@
 			});
 			homeOnInit = data.home_on_init;
 		} catch (err) {
-			homeOnInitError = err instanceof Error ? err.message : 'failed to update homing setting';
+			homeOnInitError = err instanceof Error ? err.message : 'Failed to update homing setting.';
 		} finally {
 			isUpdatingHomeOnInit = false;
 		}
@@ -255,7 +255,7 @@
 		try {
 			sentryReporting = await apiFetch<SentryReporting>('/system/sentry-reporting');
 		} catch (err) {
-			sentryReportingError = err instanceof Error ? err.message : 'failed to load sentry setting';
+			sentryReportingError = err instanceof Error ? err.message : 'Failed to load Sentry setting.';
 		}
 	}
 
@@ -271,7 +271,7 @@
 				body: JSON.stringify({ enabled: !sentryReporting.enabled })
 			});
 		} catch (err) {
-			sentryReportingError = err instanceof Error ? err.message : 'failed to update sentry setting';
+			sentryReportingError = err instanceof Error ? err.message : 'Failed to update Sentry setting.';
 		} finally {
 			isUpdatingSentryReporting = false;
 		}
@@ -289,7 +289,7 @@
 				isRestartingApi = false;
 			}, RESTART_BUTTON_RESET_MS);
 		} catch (err) {
-			restartApiError = err instanceof Error ? err.message : 'failed to restart api';
+			restartApiError = err instanceof Error ? err.message : 'Failed to restart API.';
 			isRestartingApi = false;
 		}
 	}

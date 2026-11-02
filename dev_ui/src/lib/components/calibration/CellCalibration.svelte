@@ -102,7 +102,7 @@
 			syncSelection(initialShelf ?? selectedShelf, initialCell ?? selectedCell);
 		} catch (err) {
 			handleNeedsHomeError(err);
-			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
+			loadError = err instanceof Error ? err.message : 'Failed to load storage grid.';
 		} finally {
 			loading = false;
 		}
@@ -284,10 +284,10 @@
 			await loadStageExtensionForSide();
 
 			syncEditValues();
-			message = 'moved to cell';
+			message = 'Moved to cell.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to start calibration';
+			error = err instanceof Error ? err.message : 'Failed to start calibration.';
 		} finally {
 			isMoving = false;
 		}
@@ -316,13 +316,13 @@
 		try {
 			const result = await moveStage(stageExtensionValue);
 
-			message = 'stage extended';
+			message = 'Stage extended.';
 			const warnings = result.warnings ?? [];
 
 			warning = warnings.length > 0 ? warnings.join('; ') : '';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to extend stage';
+			error = err instanceof Error ? err.message : 'Failed to extend stage.';
 		} finally {
 			isExtending = false;
 		}
@@ -336,10 +336,10 @@
 
 		try {
 			await homeMotor('stage');
-			message = 'stage retracted';
+			message = 'Stage retracted.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to retract stage';
+			error = err instanceof Error ? err.message : 'Failed to retract stage.';
 		} finally {
 			isExtending = false;
 		}
@@ -409,7 +409,7 @@
 			warning = warnings.length > 0 ? warnings.join('; ') : '';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to jog axis';
+			error = err instanceof Error ? err.message : 'Failed to jog axis.';
 		} finally {
 			isMoving = false;
 		}
@@ -419,12 +419,12 @@
 	// from auto-calibration. Z is saved as typed, without moving there first.
 	async function didClickSaveAndTest(): Promise<void> {
 		if (currentPosition === null) {
-			error = 'no position to save';
+			error = 'No position to save.';
 			return;
 		}
 
 		if (Number.isFinite(editZ) === false) {
-			error = 'z must be a number';
+			error = 'Z must be a number.';
 			return;
 		}
 
@@ -451,10 +451,10 @@
 			await testGripper(selectedSide, selectedShelf, selectedCell);
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
 			syncEditValues();
-			message = 'saved and test completed';
+			message = 'Saved and test completed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to save and test';
+			error = err instanceof Error ? err.message : 'Failed to save and test.';
 		} finally {
 			isTesting = false;
 		}
@@ -472,10 +472,10 @@
 			currentPosition = await moveToCell(selectedSide, selectedShelf, selectedCell);
 
 			syncEditValues();
-			message = 'position reverted';
+			message = 'Position reverted.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to revert position';
+			error = err instanceof Error ? err.message : 'Failed to revert position.';
 		} finally {
 			isMoving = false;
 		}
@@ -489,10 +489,10 @@
 
 		try {
 			await controlGripper('grip');
-			message = 'gripper closed';
+			message = 'Gripper closed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to grip';
+			error = err instanceof Error ? err.message : 'Failed to grip.';
 		} finally {
 			isMoving = false;
 		}
@@ -506,10 +506,10 @@
 
 		try {
 			await controlGripper('release');
-			message = 'gripper opened';
+			message = 'Gripper opened.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to release gripper';
+			error = err instanceof Error ? err.message : 'Failed to release gripper.';
 		} finally {
 			isMoving = false;
 		}

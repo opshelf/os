@@ -36,7 +36,7 @@
 			setCalibrationInputs(await getSizerConfig());
 			configError = '';
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to read calibration parameters';
+			configError = err instanceof Error ? err.message : 'Failed to read calibration parameters.';
 		}
 	}
 
@@ -65,12 +65,12 @@
 			const result = await setSizerConfig(nextConfig);
 			if (result.success === true) {
 				setCalibrationInputs(result.config);
-				message = 'calibration parameters applied';
+				message = 'Calibration parameters applied.';
 			} else {
 				configError = 'failed to apply calibration parameters';
 			}
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to apply calibration parameters';
+			configError = err instanceof Error ? err.message : 'Failed to apply calibration parameters.';
 		} finally {
 			isApplying = false;
 		}
@@ -84,9 +84,9 @@
 		try {
 			await calibrateSizerTofBlank();
 			await fetchConfig();
-			message = 'tof blank calibrated';
+			message = 'ToF blank calibrated.';
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to calibrate tof blank';
+			configError = err instanceof Error ? err.message : 'Failed to calibrate ToF blank.';
 		} finally {
 			isCalibratingTof = false;
 		}
@@ -100,9 +100,9 @@
 		try {
 			await captureSizerCameraBlank();
 			await fetchConfig();
-			message = 'camera blank captured';
+			message = 'Camera blank captured.';
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to capture camera blank';
+			configError = err instanceof Error ? err.message : 'Failed to capture camera blank.';
 		} finally {
 			isCapturingBlank = false;
 		}

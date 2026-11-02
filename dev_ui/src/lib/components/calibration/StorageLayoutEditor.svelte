@@ -582,12 +582,12 @@
 		try {
 			const result = await printPrinterLabel(trayBarcode.trim());
 			if (result.printed === false) {
-				postToast('error', 'printer is disabled; label was not printed');
+				postToast('error', 'The printer is turned off, so the label was not printed.');
 			} else {
-				postToast('status', `printed ${result.barcode}`);
+				postToast('status', `Printed ${result.barcode}.`);
 			}
 		} catch (err) {
-			postToast('error', err instanceof Error ? err.message : 'failed to print label');
+			postToast('error', err instanceof Error ? err.message : 'Failed to print label.');
 		} finally {
 			isPrintingTrayLabel = false;
 		}
@@ -846,7 +846,7 @@
 			const coordinatesDirty = xDirty || yDirty || zDirty;
 			const hasUncalibratedCell = selectedCells.some((entry) => entry.cell.calibration_point === null);
 			if (coordinatesDirty === true && hasUncalibratedCell && (xDirty && yDirty && zDirty) === false) {
-				error = 'x, y, and z are all required to set a calibration point on a cell without one';
+				error = 'Enter X, Y and Z to give this cell a calibration point.';
 				return;
 			}
 			const statusDirty = isFieldDirty('status') === true;
@@ -1302,7 +1302,7 @@
 		} catch (err) {
 			isStartingTestQueue = false;
 			queueAborting = false;
-			postToast('error', err instanceof Error ? err.message : 'failed to start test queue');
+			postToast('error', err instanceof Error ? err.message : 'Failed to start test queue.');
 			void syncTestQueue();
 		}
 	}
@@ -1321,7 +1321,7 @@
 			// ended unseen; its outcome is unknown.
 			followedQueueJobId = null;
 			queueAborting = false;
-			postToast('error', 'test queue interrupted - api or server restarted');
+			postToast('error', 'The test queue stopped because the API restarted.');
 		}
 		followedQueueJobId = jobId;
 		lastFollowedTestQueueJobId = jobId;
@@ -1364,7 +1364,7 @@
 					: sideInitialLetter;
 			const label = failed ? `${side}:${failed.shelf_idx}:${failed.cell_idx}` : 'test';
 			const reason = typeof event.error === 'string' ? `: ${event.error}` : '';
-			postToast('error', `failed at ${label}${reason}`);
+			postToast('error', `Failed at ${label}${reason}`);
 		} else {
 			postToast('status', state === 'cancelled' ? 'test aborted' : 'all tests passed');
 		}
@@ -1386,7 +1386,7 @@
 			) {
 				// A queue followed before unmounting is gone unreported (server restart or superseded).
 				lastFollowedTestQueueJobId = null;
-				postToast('error', 'test queue interrupted - api or server restarted');
+				postToast('error', 'The test queue stopped because the API restarted.');
 			}
 			if (snapshot.state === 'running') {
 				if (snapshot.job_id !== finalizedTestQueueJobId) {
@@ -1416,7 +1416,7 @@
 			}
 			followedQueueJobId = null;
 			queueAborting = false;
-			postToast('error', 'test queue interrupted - api or server restarted');
+			postToast('error', 'The test queue stopped because the API restarted.');
 		} catch {
 			// A failed read only delays catching up until the next reconnect or reopen.
 		}
@@ -1441,7 +1441,7 @@
 				const cellLabel = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
 				if (result.ok === false) {
-					postToast('error', `failed at ${cellLabel}${result.error ? `: ${result.error}` : ''}`);
+					postToast('error', `Failed at ${cellLabel}${result.error ? `: ${result.error}` : ''}`);
 					return;
 				}
 			}
@@ -1467,7 +1467,7 @@
 
 	function requestTestQueueAbort(): void {
 		abortCalibrationTestQueue().catch((err) => {
-			postToast('error', err instanceof Error ? err.message : 'failed to abort test queue');
+			postToast('error', err instanceof Error ? err.message : 'Failed to abort test queue.');
 			// A 409 usually means the queue already ended; reconcile with the server.
 			queueAborting = false;
 			void syncTestQueue();
@@ -1544,7 +1544,7 @@
 			storageGrid = grid;
 			bins = binList.bins;
 		} catch (err) {
-			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
+			loadError = err instanceof Error ? err.message : 'Failed to load storage grid.';
 		} finally {
 			loading = false;
 		}

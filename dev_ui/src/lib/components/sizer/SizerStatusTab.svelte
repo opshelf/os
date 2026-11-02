@@ -14,7 +14,7 @@
 			status = await getSizerStatus();
 			statusError = '';
 		} catch (err) {
-			statusError = err instanceof Error ? err.message : 'failed to read sizer status';
+			statusError = err instanceof Error ? err.message : 'Failed to read sizer status.';
 		}
 	}
 

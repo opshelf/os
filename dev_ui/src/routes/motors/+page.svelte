@@ -105,7 +105,7 @@
 			motors = await getMotors();
 			error = '';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to load motors';
+			error = err instanceof Error ? err.message : 'Failed to load motors.';
 		}
 	}
 
@@ -144,7 +144,7 @@
 			motorPositions = nextPositions;
 			moveTargets = nextTargets;
 		} catch (err) {
-			pollError = err instanceof Error ? err.message : 'failed to probe motors';
+			pollError = err instanceof Error ? err.message : 'Failed to probe motors.';
 		} finally {
 			isProbing = false;
 		}
@@ -160,12 +160,12 @@
 			const result = await simulateMotorCrash(motorName);
 
 			if (result.success === true) {
-				message = `crash simulated for ${motorName}`;
+				message = `Crash simulated for ${motorName}.`;
 			} else {
-				error = `failed to simulate crash for ${motorName}`;
+				error = `Failed to simulate crash for ${motorName}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `crash failed for ${motorName}`;
+			error = err instanceof Error ? err.message : `Crash failed for ${motorName}.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -182,12 +182,12 @@
 			const result = await clearMotorAlarm(motorName);
 
 			if (result.success === true) {
-				message = `alarm cleared for ${motorName}`;
+				message = `Alarm cleared for ${motorName}.`;
 			} else {
-				error = `failed to clear alarm for ${motorName}`;
+				error = `Failed to clear alarm for ${motorName}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `clear alarm failed for ${motorName}`;
+			error = err instanceof Error ? err.message : `Clear alarm failed for ${motorName}.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -206,10 +206,10 @@
 			if (result.success === true) {
 				message = `${motorName} homed`;
 			} else {
-				error = `failed to home ${motorName}`;
+				error = `Failed to home ${motorName}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `home failed for ${motorName}`;
+			error = err instanceof Error ? err.message : `Home failed for ${motorName}.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -223,9 +223,9 @@
 
 		try {
 			await controlGripper(state);
-			message = `gripper ${state}`;
+			message = `Gripper ${state}.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : `gripper ${state} failed`;
+			error = err instanceof Error ? err.message : `Gripper ${state} failed.`;
 		} finally {
 			gripperAction = null;
 		}
@@ -238,9 +238,9 @@
 
 		try {
 			await controlDoor(action);
-			message = `door ${action} complete`;
+			message = `Door ${action} complete.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : `door ${action} failed`;
+			error = err instanceof Error ? err.message : `Door ${action} failed.`;
 		} finally {
 			doorAction = null;
 		}
@@ -312,7 +312,7 @@
 
 		try {
 			await testGripper();
-			message = 'gripper test complete';
+			message = 'Gripper test complete.';
 		} finally {
 			testingMotor = null;
 			isTesting = false;
@@ -339,7 +339,7 @@
 
 		testingMotor = null;
 		isTesting = false;
-		message = 'test complete';
+		message = 'Test complete.';
 	}
 
 	async function didClickHomeAll(): Promise<void> {
@@ -353,9 +353,9 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ command: 'home' })
 			});
-			message = 'home command sent';
+			message = 'Home command sent.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'home command failed';
+			error = err instanceof Error ? err.message : 'Home command failed.';
 		} finally {
 			isHomingAll = false;
 		}
@@ -376,7 +376,7 @@
 				const result = await homeMotor(motor.name);
 
 				if (result.success !== true) {
-					error = `failed to home ${motor.name}`;
+					error = `Failed to home ${motor.name}.`;
 					return;
 				}
 			}
@@ -405,9 +405,9 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(axes.length > 0 ? { command: 'recover', axes } : { command: 'recover' })
 			});
-			message = 'recover command sent';
+			message = 'Recover command sent.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'recover command failed';
+			error = err instanceof Error ? err.message : 'Recover command failed.';
 		} finally {
 			sectionAction = null;
 		}
@@ -423,14 +423,14 @@
 			const targetValue = moveTargets[motor.name];
 
 			if (targetValue === undefined || targetValue === '') {
-				error = `enter a position for ${motor.name}`;
+				error = `Enter a position for ${motor.name}.`;
 				return;
 			}
 
 			const positionMm = parseFloat(targetValue);
 
 			if (Number.isNaN(positionMm) === true) {
-				error = `invalid position value for ${motor.name}`;
+				error = `Invalid position value for ${motor.name}.`;
 				return;
 			}
 
@@ -460,7 +460,7 @@
 				const result = await moveMotor(target.name, target.positionMm);
 
 				if (result.success !== true) {
-					error = `failed to move ${target.name}`;
+					error = `Failed to move ${target.name}.`;
 					return;
 				}
 			}
@@ -478,14 +478,14 @@
 		const targetValue = moveTargets[motorName];
 
 		if (targetValue === undefined || targetValue === '') {
-			error = `enter a position for ${motorName}`;
+			error = `Enter a position for ${motorName}.`;
 			return;
 		}
 
 		const positionMm = parseFloat(targetValue);
 
 		if (Number.isNaN(positionMm) === true) {
-			error = `invalid position value for ${motorName}`;
+			error = `Invalid position value for ${motorName}.`;
 			return;
 		}
 
@@ -499,10 +499,10 @@
 			if (result.success === true) {
 				message = `${motorName} moved to ${positionMm}${unitForMotor(motorName)}`;
 			} else {
-				error = `failed to move ${motorName}`;
+				error = `Failed to move ${motorName}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `move failed for ${motorName}`;
+			error = err instanceof Error ? err.message : `Move failed for ${motorName}.`;
 		} finally {
 			movingMotor = null;
 		}

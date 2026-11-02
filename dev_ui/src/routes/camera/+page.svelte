@@ -132,7 +132,7 @@
 
 			selectAvailableCamera();
 		} catch (error) {
-			statusError = error instanceof Error ? error.message : 'unable to load cameras';
+			statusError = error instanceof Error ? error.message : 'Unable to load cameras.';
 		} finally {
 			loading = false;
 		}

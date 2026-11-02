@@ -45,7 +45,7 @@
 			frontValue = stageExtension.front;
 			backValue = stageExtension.back;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to load shelf stage extension';
+			error = err instanceof Error ? err.message : 'Failed to load shelf stage extension.';
 		} finally {
 			loading = false;
 		}
@@ -60,9 +60,9 @@
 		try {
 			await saveShelfStageExtension(frontValue, backValue);
 			stageExtension = { front: frontValue, back: backValue };
-			message = 'shelf stage extension saved';
+			message = 'Shelf stage extension saved.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to save shelf stage extension';
+			error = err instanceof Error ? err.message : 'Failed to save shelf stage extension.';
 		} finally {
 			isSaving = false;
 		}
@@ -76,7 +76,7 @@
 		if (stageExtension !== null) {
 			frontValue = stageExtension.front;
 			backValue = stageExtension.back;
-			message = 'values reset';
+			message = 'Values reset.';
 		}
 	}
 
@@ -88,11 +88,11 @@
 
 		try {
 			const result = await moveStage(target);
-			message = 'stage extended';
+			message = 'Stage extended.';
 			warning = result.warnings && result.warnings.length > 0 ? result.warnings.join('; ') : '';
 		} catch (err) {
 			await notifyNeedsHome(err);
-			error = err instanceof Error ? err.message : 'failed to extend stage';
+			error = err instanceof Error ? err.message : 'Failed to extend stage.';
 		} finally {
 			isMovingStage = false;
 		}
@@ -106,10 +106,10 @@
 
 		try {
 			await homeMotor('stage');
-			message = 'stage retracted';
+			message = 'Stage retracted.';
 		} catch (err) {
 			await notifyNeedsHome(err);
-			error = err instanceof Error ? err.message : 'failed to retract stage';
+			error = err instanceof Error ? err.message : 'Failed to retract stage.';
 		} finally {
 			isMovingStage = false;
 		}

@@ -40,7 +40,7 @@
 				// Stop the queue so the operator sees the failure before more motion.
 				postToast(
 					'error',
-					`${err instanceof Error ? err.message : 'home failed'} (during ${next})`
+					`${err instanceof Error ? err.message : 'Home failed.'} (during ${next})`
 				);
 				queuedMotors = [];
 			}

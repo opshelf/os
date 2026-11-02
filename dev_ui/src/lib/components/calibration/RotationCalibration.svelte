@@ -36,7 +36,7 @@
 			frontAngle = angles.front;
 			backAngle = angles.back;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to load rotation angles';
+			error = err instanceof Error ? err.message : 'Failed to load rotation angles.';
 		} finally {
 			loading = false;
 		}
@@ -49,9 +49,9 @@
 
 		try {
 			await rotateToAngle(frontAngle);
-			message = `rotated to front angle ${frontAngle} deg`;
+			message = `Rotated to front angle ${frontAngle} deg.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to rotate';
+			error = err instanceof Error ? err.message : 'Failed to rotate.';
 		} finally {
 			isRotating = false;
 		}
@@ -64,9 +64,9 @@
 
 		try {
 			await rotateToAngle(backAngle);
-			message = `rotated to back angle ${backAngle} deg`;
+			message = `Rotated to back angle ${backAngle} deg.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to rotate';
+			error = err instanceof Error ? err.message : 'Failed to rotate.';
 		} finally {
 			isRotating = false;
 		}
@@ -79,9 +79,9 @@
 
 		try {
 			await saveRotationAngles(frontAngle, backAngle);
-			message = 'rotation angles saved';
+			message = 'Rotation angles saved.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to save rotation angles';
+			error = err instanceof Error ? err.message : 'Failed to save rotation angles.';
 		} finally {
 			isSaving = false;
 		}
@@ -95,9 +95,9 @@
 			angles = await getRotationAngles();
 			frontAngle = angles.front;
 			backAngle = angles.back;
-			message = 'angles reset from config';
+			message = 'Angles reset from config.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to reset angles';
+			error = err instanceof Error ? err.message : 'Failed to reset angles.';
 		}
 	}
 

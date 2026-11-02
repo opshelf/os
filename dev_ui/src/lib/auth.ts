@@ -32,11 +32,11 @@ export async function login(email: string, pin: string): Promise<void> {
 	});
 
 	if (response.status === 401) {
-		throw new LoginRejectedError('login rejected');
+		throw new LoginRejectedError('The developer sign-in was rejected.');
 	}
 
 	if (response.ok === false) {
-		throw new Error('login failed');
+		throw new Error('Developer sign-in failed.');
 	}
 
 	const data = (await response.json()) as TokenResponse;
@@ -48,7 +48,7 @@ export async function login(email: string, pin: string): Promise<void> {
 
 export async function refreshAccessToken(): Promise<void> {
 	if (refreshToken === null) {
-		throw new Error('no refresh token available');
+		throw new Error('No session to refresh. Sign in again.');
 	}
 
 	const apiBase = getApiBase();
@@ -64,7 +64,7 @@ export async function refreshAccessToken(): Promise<void> {
 		accessToken = null;
 		refreshToken = null;
 		tokenExpiresAt = null;
-		throw new Error('token refresh failed');
+		throw new Error('The session could not be refreshed.');
 	}
 
 	const data = (await response.json()) as TokenResponse;
@@ -75,7 +75,7 @@ export async function refreshAccessToken(): Promise<void> {
 
 export async function ensureValidToken(): Promise<string> {
 	if (accessToken === null) {
-		throw new Error('not authenticated');
+		throw new Error('Not signed in.');
 	}
 
 	if (tokenExpiresAt !== null && Date.now() > tokenExpiresAt - 60000) {
@@ -114,7 +114,7 @@ let developerSignIn: Promise<void> | null = null;
 async function signInAsDeveloper(): Promise<void> {
 	const pin = developerPin();
 	if (pin === null) {
-		throw new Error('no developer pin cookie');
+		throw new Error('The developer PIN cookie is missing. Open the dev UI through the relay.');
 	}
 	await login(DEVELOPER_EMAIL, pin);
 }

@@ -29,7 +29,7 @@
 			status = await getPrinterStatus();
 			statusError = '';
 		} catch (err) {
-			statusError = err instanceof Error ? err.message : 'failed to read printer status';
+			statusError = err instanceof Error ? err.message : 'Failed to read printer status.';
 		}
 	}
 
@@ -39,7 +39,7 @@
 			feedDots = config.feed_dots;
 			configError = '';
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to read printer config';
+			configError = err instanceof Error ? err.message : 'Failed to read printer config.';
 		}
 	}
 
@@ -62,9 +62,9 @@
 		try {
 			const config = await setPrinterConfig({ feed_dots: feedDots });
 			feedDots = config.feed_dots;
-			message = `feed set to ${feedDots} dots`;
+			message = `Feed set to ${feedDots} dots.`;
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to save printer config';
+			configError = err instanceof Error ? err.message : 'Failed to save printer config.';
 		} finally {
 			isSaving = false;
 		}
@@ -83,12 +83,12 @@
 		try {
 			const result = await printPrinterLabel(code);
 			if (result.printed === false) {
-				printError = 'printer is disabled; label was not printed';
+				printError = 'The printer is turned off, so the label was not printed.';
 			} else {
-				message = `printed ${result.barcode}`;
+				message = `Printed ${result.barcode}.`;
 			}
 		} catch (err) {
-			printError = err instanceof Error ? err.message : 'failed to print label';
+			printError = err instanceof Error ? err.message : 'Failed to print label.';
 		} finally {
 			isPrinting = false;
 			await fetchStatus();

@@ -158,7 +158,7 @@
 			syncEditValues();
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to load io box calibration';
+			error = err instanceof Error ? err.message : 'Failed to load IO box calibration.';
 		} finally {
 			loading = false;
 		}
@@ -173,7 +173,7 @@
 			editDoorClose = doorPosition.close;
 			editDoorOpen = doorPosition.open;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to load io door position';
+			error = err instanceof Error ? err.message : 'Failed to load IO door position.';
 		} finally {
 			doorLoading = false;
 		}
@@ -187,10 +187,10 @@
 
 		try {
 			await moveIOBoxDoor(position, editDoorClose, editDoorOpen);
-			message = `door moved to ${position} position`;
+			message = `Door moved to ${position} position.`;
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : `failed to move door to ${position} position`;
+			error = err instanceof Error ? err.message : `Failed to move door to ${position} position.`;
 		} finally {
 			isMoving = false;
 		}
@@ -204,7 +204,7 @@
 		if (doorPosition !== null) {
 			editDoorClose = doorPosition.close;
 			editDoorOpen = doorPosition.open;
-			message = 'io door position values reset';
+			message = 'IO door position values reset.';
 		}
 	}
 
@@ -217,9 +217,9 @@
 		try {
 			await saveIOBoxDoorPosition(editDoorClose, editDoorOpen);
 			doorPosition = { close: editDoorClose, open: editDoorOpen };
-			message = 'io door positions saved';
+			message = 'IO door positions saved.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to save io door positions';
+			error = err instanceof Error ? err.message : 'Failed to save IO door positions.';
 		} finally {
 			isSaving = false;
 		}
@@ -295,10 +295,10 @@
 			syncEditValues();
 			restoreEditValues(previousValues, []);
 			isPositioned = true;
-			message = `started ${POSITION_LABELS[selectedPosition]} calibration`;
+			message = `Started ${POSITION_LABELS[selectedPosition]} calibration.`;
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to move to io box position';
+			error = err instanceof Error ? err.message : 'Failed to move to IO box position.';
 		} finally {
 			isMoving = false;
 		}
@@ -322,7 +322,7 @@
 			return true;
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to jog io box axis';
+			error = err instanceof Error ? err.message : 'Failed to jog IO box axis.';
 			return false;
 		} finally {
 			isMoving = false;
@@ -337,10 +337,10 @@
 
 		try {
 			await testIOBoxSequence(false);
-			message = 'io box test sequence completed';
+			message = 'IO box test sequence completed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to run io box test sequence';
+			error = err instanceof Error ? err.message : 'Failed to run IO box test sequence.';
 		} finally {
 			isTesting = false;
 		}
@@ -355,15 +355,15 @@
 		try {
 			if (isMultiItem === true) {
 				await testIOBoxMultiItemCycle();
-				message = 'multi-item bin cycle test completed';
+				message = 'Multi-item bin cycle test completed.';
 			} else {
 				await testIOBoxSequence(true);
-				message = 'io box test sequence with gripper completed';
+				message = 'IO box test sequence with gripper completed.';
 			}
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error =
-				err instanceof Error ? err.message : 'failed to run io box test sequence with gripper';
+				err instanceof Error ? err.message : 'Failed to run IO box test sequence with gripper.';
 		} finally {
 			isTesting = false;
 		}
@@ -371,7 +371,7 @@
 
 	async function didClickSave(): Promise<void> {
 		if (ioboxPosition === null) {
-			error = 'no io box position to save';
+			error = 'No IO box position to save.';
 			return;
 		}
 
@@ -384,10 +384,10 @@
 			await saveIOBoxCalibration(ioboxPosition);
 			await loadCalibrationStatus();
 			isPositioned = false;
-			message = 'io box calibration saved and robot homed';
+			message = 'IO box calibration saved and robot homed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to save io box calibration';
+			error = err instanceof Error ? err.message : 'Failed to save IO box calibration.';
 		} finally {
 			isSaving = false;
 		}
@@ -407,15 +407,15 @@
 			const status = await homeToolMotors();
 			applyNeedsHomeStatus(status);
 			isPositioned = false;
-			message = 'io box position reset from config and tool motors homed';
+			message = 'IO box position reset from config and tool motors homed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
 			if (resetComplete) {
-				message = 'io box position reset from config';
+				message = 'IO box position reset from config.';
 				isPositioned = false;
-				error = err instanceof Error ? err.message : 'failed to home tool motors after reset';
+				error = err instanceof Error ? err.message : 'Failed to home tool motors after reset.';
 			} else {
-				error = err instanceof Error ? err.message : 'failed to reset io box position';
+				error = err instanceof Error ? err.message : 'Failed to reset IO box position.';
 			}
 		} finally {
 			isMoving = false;
@@ -510,7 +510,7 @@
 		}
 
 		warning = moveWarnings.join('; ');
-		message = 'moved all changed values';
+		message = 'Moved all changed values.';
 	}
 
 	async function didClickExtend(): Promise<void> {
@@ -526,10 +526,10 @@
 		try {
 			await moveStage(ioboxPosition[selectedFields.stage]);
 			await moveMotor('z_axis', ioboxPosition[selectedFields.z]);
-			message = 'stage and z extended';
+			message = 'Stage and Z extended.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to extend';
+			error = err instanceof Error ? err.message : 'Failed to extend.';
 		} finally {
 			isMoving = false;
 		}
@@ -546,10 +546,10 @@
 			await homeMotor('z_axis');
 			await loadCalibration();
 			isPositioned = false;
-			message = 'stage and z retracted';
+			message = 'Stage and Z retracted.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to retract';
+			error = err instanceof Error ? err.message : 'Failed to retract.';
 		} finally {
 			isMoving = false;
 		}
@@ -563,9 +563,9 @@
 
 		try {
 			await controlGripper('grip');
-			message = 'gripper gripped';
+			message = 'Gripper gripped.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to grip';
+			error = err instanceof Error ? err.message : 'Failed to grip.';
 		} finally {
 			isMoving = false;
 		}
@@ -579,9 +579,9 @@
 
 		try {
 			await controlGripper('release');
-			message = 'gripper released';
+			message = 'Gripper released.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to release gripper';
+			error = err instanceof Error ? err.message : 'Failed to release gripper.';
 		} finally {
 			isMoving = false;
 		}

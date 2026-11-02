@@ -28,7 +28,7 @@
 			networks = result.networks;
 			prefillFromActiveNetwork();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to scan networks';
+			error = err instanceof Error ? err.message : 'Failed to scan networks.';
 		} finally {
 			isScanning = false;
 		}
@@ -84,12 +84,12 @@
 
 	async function didClickSave(): Promise<void> {
 		if (ssid.trim() === '') {
-			error = 'enter a network name';
+			error = 'Enter a network name.';
 			return;
 		}
 
 		if (password === '' && isSelectedOpenNetwork() === false) {
-			error = 'enter a password';
+			error = 'Enter a password.';
 			return;
 		}
 
@@ -102,7 +102,7 @@
 			message = result.message;
 			password = '';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to connect';
+			error = err instanceof Error ? err.message : 'Failed to connect.';
 		} finally {
 			isConnecting = false;
 			setTimeout(() => {

@@ -60,7 +60,7 @@
 		try {
 			applySnapshot(await getCycleTest());
 		} catch (err) {
-			postToast('error', err instanceof Error ? err.message : 'failed to load cycle test state');
+			postToast('error', err instanceof Error ? err.message : 'Failed to load cycle test state.');
 		}
 	}
 

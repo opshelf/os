@@ -117,7 +117,7 @@
 			persistSelection();
 		} catch (err) {
 			handleNeedsHomeError(err);
-			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
+			loadError = err instanceof Error ? err.message : 'Failed to load storage grid.';
 		} finally {
 			loading = false;
 		}
@@ -344,10 +344,10 @@
 		try {
 			await runCalibrationQuickTest(selectedSide, selectedShelf, selectedCell);
 			await didLoadCalibrationStatus();
-			message = 'quick test completed';
+			message = 'Quick test completed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to run quick test';
+			error = err instanceof Error ? err.message : 'Failed to run quick test.';
 		} finally {
 			isRunningQuick = false;
 		}
@@ -362,10 +362,10 @@
 			await runCalibrationCycleTest(selectedSide, selectedShelf, selectedCell);
 			await didLoadStorage();
 			await didLoadCalibrationStatus();
-			message = 'cycle test completed';
+			message = 'Cycle test completed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to run cycle test';
+			error = err instanceof Error ? err.message : 'Failed to run cycle test.';
 		} finally {
 			isRunningCycle = false;
 		}
@@ -373,7 +373,7 @@
 
 	async function didClickStore(): Promise<void> {
 		if (selectedCellData === null) {
-			error = 'selected cell not found';
+			error = 'Selected cell not found.';
 			return;
 		}
 
@@ -385,10 +385,10 @@
 			await storeItem(selectedSide, selectedShelf, selectedCell, buildMockStoreItem(selectedCellData));
 			await didLoadStorage();
 			await didLoadCalibrationStatus();
-			message = 'store command requested';
+			message = 'Store command requested.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to request store command';
+			error = err instanceof Error ? err.message : 'Failed to request store command.';
 		} finally {
 			isStoring = false;
 		}
@@ -403,10 +403,10 @@
 			await retrieveItem(selectedSide, selectedShelf, selectedCell);
 			await didLoadStorage();
 			await didLoadCalibrationStatus();
-			message = 'retrieve command requested';
+			message = 'Retrieve command requested.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to request retrieve command';
+			error = err instanceof Error ? err.message : 'Failed to request retrieve command.';
 		} finally {
 			isRetrieving = false;
 		}
@@ -420,10 +420,10 @@
 		try {
 			const status = await homeToolMotors();
 			applyNeedsHomeStatus(status);
-			message = 'tool motors homed';
+			message = 'Tool motors homed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to home tool motors';
+			error = err instanceof Error ? err.message : 'Failed to home tool motors.';
 		} finally {
 			isHoming = false;
 		}

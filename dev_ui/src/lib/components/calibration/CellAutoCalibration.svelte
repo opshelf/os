@@ -143,7 +143,7 @@
 				void didConnectStream(true);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to load auto calibration status';
+			error = err instanceof Error ? err.message : 'Failed to load auto calibration status.';
 		} finally {
 			isLoading = false;
 		}
@@ -382,7 +382,7 @@
 		isConnecting = false;
 		isStreamOpen = true;
 		error = '';
-		message = 'auto calibration started';
+		message = 'Auto calibration started.';
 		isStreamSubscribeOnly = true;
 	}
 
@@ -406,13 +406,13 @@
 			isStreamSubscribeOnly = true;
 
 			if (snapshot.state === 'completed') {
-				message = 'laser auto calibration completed';
+				message = 'Laser auto calibration completed.';
 				didCloseStream();
 				return;
 			}
 
 			if (snapshot.state === 'cancelled') {
-				message = 'laser auto calibration cancelled';
+				message = 'Laser auto calibration cancelled.';
 				didCloseStream();
 				return;
 			}
@@ -423,7 +423,7 @@
 				didCloseStream();
 			}
 		} catch {
-			error = 'failed to parse laser auto calibration event';
+			error = 'Failed to parse laser auto calibration event.';
 		}
 	}
 
@@ -445,13 +445,13 @@
 			const streamError = await getLaserAutoCalibrationStreamError(request, {
 				subscribeOnly: shouldSubscribeOnly
 			});
-			error = streamError?.message ?? 'laser auto calibration stream disconnected';
+			error = streamError?.message ?? 'Laser auto calibration stream disconnected.';
 			message = '';
 			return;
 		}
 
 		error = '';
-		message = 'laser auto calibration stream reconnecting';
+		message = 'Laser auto calibration stream reconnecting.';
 	}
 
 	function didChangeAll(event: Event): void {
@@ -527,7 +527,7 @@
 			isZStallEnabled = await saveLaserZStallEnabled(requested);
 		} catch (err) {
 			target.checked = isZStallEnabled;
-			postToast('error', err instanceof Error ? err.message : 'failed to save the grip edge setting');
+			postToast('error', err instanceof Error ? err.message : 'Failed to save the grip edge setting.');
 		} finally {
 			isSavingZStall = false;
 		}
@@ -568,7 +568,7 @@
 	async function didClickAbort(): Promise<void> {
 		isAborting = true;
 		error = '';
-		message = 'abort requested';
+		message = 'Abort requested.';
 
 		if (snapshot !== null) {
 			snapshot = {
@@ -589,7 +589,7 @@
 			}
 		} catch (err) {
 			message = '';
-			error = err instanceof Error ? err.message : 'failed to abort auto calibration';
+			error = err instanceof Error ? err.message : 'Failed to abort auto calibration.';
 		} finally {
 			isAborting = false;
 		}
