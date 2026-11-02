@@ -1404,7 +1404,8 @@ class Motor():
                 self._on_move_complete(elapsed)
 
             if status != MotorStatus.STOPPED:
-                error = MotorError(
+                error_type = MotorTimeoutError if status == MotorStatus.TIMEOUT else MotorError
+                error = error_type(
                     f"Movement failed for motor {self._motor_id} (status={status.name})"
                 )
                 if self._last_fault_context is not None:

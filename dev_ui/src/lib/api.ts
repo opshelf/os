@@ -1,4 +1,5 @@
 import { getAccessToken, loginAsDeveloper, refreshAccessToken } from './auth';
+import { TOAST_DETAIL_SEPARATOR } from './toasts';
 
 export function getApiBase(): string {
 	const override = import.meta.env.VITE_API_BASE_URL;
@@ -63,6 +64,12 @@ export type ApiErrorDetail = {
 	reason?: string;
 	warnings?: string[];
 	correlation_id?: string;
+	// Sent only to the developer user: the exception chain behind the sentence.
+	debug?: {
+		chain?: string[];
+		fault_context?: Record<string, unknown>;
+		fields?: string[];
+	};
 };
 
 export class ApiError extends Error {
@@ -134,7 +141,35 @@ function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
 	if (detail?.needs_home && detail.reason === undefined) {
 		output = `${output} (home required)`;
 	}
+	const developerDetail = formatDeveloperDetail(detail);
+	if (developerDetail !== '') {
+		output = `${output}${TOAST_DETAIL_SEPARATOR}${developerDetail}`;
+	}
 	return output;
+}
+
+function formatDeveloperDetail(detail?: ApiErrorDetail): string {
+	if (detail === undefined) {
+		return '';
+	}
+	const lines = [...(detail.debug?.chain ?? []), ...(detail.debug?.fields ?? [])];
+	const fault = Object.entries(detail.debug?.fault_context ?? {})
+		.filter(([, value]) => value !== null && value !== false)
+		.map(([key, value]) => `${key}=${value}`);
+	if (fault.length > 0) {
+		lines.push(fault.join(' '));
+	}
+	const ids = [];
+	if (detail.code !== undefined) {
+		ids.push(`code ${detail.code}`);
+	}
+	if (detail.correlation_id !== undefined) {
+		ids.push(`ref ${detail.correlation_id}`);
+	}
+	if (ids.length > 0) {
+		lines.push(ids.join(' · '));
+	}
+	return lines.join('\n');
 }
 
 function unreachableMessage(status: number): string {

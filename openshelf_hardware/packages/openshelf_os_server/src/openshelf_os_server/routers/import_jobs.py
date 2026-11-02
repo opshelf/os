@@ -31,7 +31,7 @@ from openshelf_os_server.core.mock_robot import get_mock_robot_runtime
 from openshelf_os_server.database.models import ImportJob, User
 from openshelf_os_server.database.session import get_db
 from openshelf_os_server.documentation import response_docs
-from openshelf_os_server.errors import api_error
+from openshelf_os_server.errors import api_error, hardware_api_error
 from openshelf_os_server.routers.auth_deps import (
     require_permissions,
     require_relay_or_admin,
@@ -454,7 +454,7 @@ async def start_import_tray(
                     except Exception as exc:
                         await bins.fail(workflow, str(exc), tray_moved=False)
                         logger.warning("Tray fetch failed: %s", exc)
-                        raise api_error(503, "tray_fetch_failed", "The bin could not be fetched. Try again.") from exc
+                        raise hardware_api_error(exc, 503, "tray_fetch_failed", "The bin could not be fetched. Try again.") from exc
                 await bins.publish_workflow(worker, workflow)
         except BinWorkflowConflict as exc:
             logger.info("Tray workflow conflict: %s", exc)
@@ -552,7 +552,7 @@ async def return_import_tray(
                         except Exception as exc:
                             await service.fail_tray_return(returning, str(exc))
                             logger.warning("Tray return failed: %s", exc)
-                            raise api_error(503, "tray_return_failed", "The bin could not be returned. Try again.") from exc
+                            raise hardware_api_error(exc, 503, "tray_return_failed", "The bin could not be returned. Try again.") from exc
                 if returning is not None:
                     await bins.publish_workflow(worker, returning)
         except BinWorkflowConflict as exc:

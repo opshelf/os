@@ -81,7 +81,7 @@ from openshelf_os_server.core.bin_storage import (
     validate_direct_store_reservation,
 )
 from openshelf_os_server.routers.common import SuccessResponse
-from openshelf_os_server.errors import api_error, error_detail
+from openshelf_os_server.errors import api_error, error_detail, hardware_api_error
 from openshelf_os_server.settings import get_settings, get_operating_mode
 from openshelf_os_server.database.session import get_db
 from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation, StorageBinItem, User
@@ -1718,7 +1718,8 @@ async def clear_motor_alarm(
         raise
     except Exception as exc:
         logging.error("Motor alarm clear failed: %s", exc)
-        raise api_error(
+        raise hardware_api_error(
+            exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_alarm_clear_failed",
             "The robot alarm could not be cleared. Try again.",
@@ -1797,7 +1798,8 @@ async def home_motor(
         raise
     except Exception as exc:
         logging.error("Motor home failed: %s", exc)
-        raise api_error(
+        raise hardware_api_error(
+            exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_home_failed",
             "The robot could not be reset. Try again.",
@@ -1884,7 +1886,8 @@ async def power_cycle_rail(
         raise
     except Exception as exc:
         logging.error("Power cycle failed: %s", exc)
-        raise api_error(
+        raise hardware_api_error(
+            exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "power_cycle_failed",
             "The robot could not power cycle that part. Try again.",
@@ -2000,7 +2003,8 @@ async def move_motor(
         raise
     except Exception as exc:
         logging.warning("Motor move failed: %s", exc)
-        raise api_error(
+        raise hardware_api_error(
+            exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "motor_move_failed",
             "The robot could not move. Try again.",
@@ -2038,7 +2042,8 @@ async def control_door(
         raise
     except Exception as exc:
         logging.error("Door %s failed: %s", action, exc)
-        raise api_error(
+        raise hardware_api_error(
+            exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "door_control_failed",
             "The machine door did not move. Try again.",

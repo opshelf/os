@@ -24,10 +24,16 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from hardware.exceptions import ModbusConnectionError
+from hardware.exceptions import MotorConfigError as HardwareMotorConfigError
+from hardware.exceptions import MotorTimeoutError as HardwareMotorTimeoutError
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.exceptions import ConfigError as HardwareConfigError
+from openshelf_os.exceptions import MotorWaitTimeoutError, RotationClearanceError
+from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
 from openshelf_os_server.core.validation import CellOccupiedError, ValidationError
+from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -147,11 +153,15 @@ CODE_MESSAGES: dict[str, str] = {
 	"io_box_occupied": "The IO box is not empty. Take the item off the scale and wait for it to read empty.",
 	"item_not_found": "There is no item in that cell.",
 	"method_not_allowed": "That request is not supported.",
+	"motor_alarm": "A motor drive raised an alarm and stopped. Clear the alarm, then reset the robot.",
 	"motor_alarm_clear_failed": "The robot alarm could not be cleared. Try again.",
+	"motor_bus_disconnected": "The motor drives are not connected. Check the motor cable and power.",
 	"motor_fault": "The robot stopped with a motor fault. Reset the robot and try again.",
 	"motor_home_failed": "The robot could not be reset. Try again.",
 	"motor_move_failed": "The robot could not move. Try again.",
 	"motor_not_configured": "That motor is not configured on this machine.",
+	"motor_stalled": "A motor stalled before reaching its target. Check for an obstruction, then reset the robot.",
+	"motor_timeout": "A motor did not reach its target in time. Check for an obstruction, then reset the robot.",
 	"movement_in_progress": "The robot is moving. Wait for the move to finish.",
 	"no_compatible_bin": "No bin can take that item right now.",
 	"not_found": "That entry is no longer there.",
@@ -276,6 +286,109 @@ def normalize_operator_message(message: str, code: str) -> str:
 	return text
 
 
+_DEBUG_CHAIN_LIMIT = 5
+_DEBUG_TEXT_LIMIT = 500
+
+
+def _raised_from(exc: BaseException) -> BaseException | None:
+	"""The failure a route converted into an HTTP error, `from exc` or not."""
+	if exc.__cause__ is not None:
+		return exc.__cause__
+	return None if exc.__suppress_context__ else exc.__context__
+
+
+def _exception_chain(exc: BaseException | None):
+	"""Yield exc and its explicit causes, outermost first. Implicit context and
+	exception groups are skipped: below the route they are framework wrappers
+	(Starlette re-raises a middleware error from its task group)."""
+	for _ in range(_DEBUG_CHAIN_LIMIT):
+		if exc is None or isinstance(exc, BaseExceptionGroup):
+			return
+		yield exc
+		exc = exc.__cause__
+
+
+def _request_token(request: Request) -> str | None:
+	scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+	if scheme.lower() == "bearer" and token != "":
+		return token
+	return request.query_params.get("token") or None
+
+
+def debug_allowed(request: Request) -> bool:
+	"""True when the caller is the developer system user the dev UI signs in as.
+
+	Only those clients get ``detail.debug``: exception text can carry paths, ids
+	and driver output that the operator copy rule keeps away from the kiosk.
+	"""
+	auth = get_settings().auth
+	token = _request_token(request)
+	if token is None:
+		return (
+			(auth.enabled is False or auth.require_auth is False)
+			and auth.dev_mode is True
+			and auth.dev_auto_user == DEVELOPER_SYSTEM_USER_EMAIL
+		)
+	payload = AuthService(auth.jwt_secret or "", auth.jwt_algorithm).decode_token(token)
+	return payload is not None and payload.get("type") == "access" and payload.get("email") == DEVELOPER_SYSTEM_USER_EMAIL
+
+
+def exception_debug(exc: BaseException) -> dict[str, Any]:
+	"""Developer-facing description of an exception: its chain and motor fault context."""
+	chain: list[str] = []
+	debug: dict[str, Any] = {"chain": chain}
+	for current in _exception_chain(exc):
+		text = str(current)[:_DEBUG_TEXT_LIMIT]
+		chain.append(f"{type(current).__name__}: {text}" if text else type(current).__name__)
+		fault_context = getattr(current, "fault_context", None)
+		if isinstance(fault_context, dict) and "fault_context" not in debug:
+			debug["fault_context"] = {
+				str(key): value if isinstance(value, (str, int, float, bool, type(None))) else str(value)
+				for key, value in fault_context.items()
+			}
+	return debug
+
+
+def client_detail(request: Request, detail: dict[str, Any], exc: BaseException | None) -> dict[str, Any]:
+	"""Add the correlation id, and for developer clients the exception chain, to a body."""
+	correlation_id = request_correlation_id(request)
+	if correlation_id:
+		detail["correlation_id"] = correlation_id
+	if exc is not None and debug_allowed(request):
+		detail["debug"] = exception_debug(exc)
+	return detail
+
+
+def classify_hardware_error(exc: BaseException) -> tuple[int, str] | None:
+	"""Return a (status, code) more specific than a route's catch-all, if the chain has one."""
+	for current in _exception_chain(exc):
+		if isinstance(current, RotationClearanceError):
+			return status.HTTP_409_CONFLICT, "rotation_blocked"
+		fault_context = getattr(current, "fault_context", None)
+		if isinstance(fault_context, dict):
+			if fault_context.get("alarm_code"):
+				return status.HTTP_503_SERVICE_UNAVAILABLE, "motor_alarm"
+			if fault_context.get("stall_detected") or fault_context.get("no_progress"):
+				return status.HTTP_503_SERVICE_UNAVAILABLE, "motor_stalled"
+			return status.HTTP_503_SERVICE_UNAVAILABLE, "motor_fault"
+		if isinstance(current, ModbusConnectionError):
+			return status.HTTP_503_SERVICE_UNAVAILABLE, "motor_bus_disconnected"
+		if isinstance(current, (HardwareMotorTimeoutError, MotorWaitTimeoutError)):
+			return status.HTTP_504_GATEWAY_TIMEOUT, "motor_timeout"
+		if isinstance(current, (HardwareMotorConfigError, ConfigError, HardwareConfigError)):
+			return status.HTTP_503_SERVICE_UNAVAILABLE, "config_error"
+	return None
+
+
+def hardware_api_error(exc: BaseException, status_code: int, code: str, message: str) -> HTTPException:
+	"""``api_error`` for a failed hardware action, under the most specific code the
+	exception chain supports; the route's own code and copy are the fallback."""
+	classified = classify_hardware_error(exc)
+	if classified is None:
+		return api_error(status_code, code, message)
+	return api_error(classified[0], classified[1], CODE_MESSAGES[classified[1]])
+
+
 def error_detail(message: str, code: str, **extra: Any) -> dict[str, Any]:
 	"""Build the structured error body: ``{"message": ..., "code": ...}``."""
 	detail: dict[str, Any] = {"message": normalize_operator_message(message, code), "code": code}
@@ -312,8 +425,12 @@ async def http_exception_handler(request: Request, exc: Exception) -> JSONRespon
 	# Mirrors Starlette's default HTTPException handler, but standardizes
 	# string details into the structured {message, code} form.
 	http_exc = cast(StarletteHTTPException, exc)
+	detail = standardize_http_detail(http_exc)
+	if isinstance(detail, dict):
+		# Routes raise these `from` the real failure, so the chain is the developer detail.
+		detail = client_detail(request, detail, _raised_from(http_exc))
 	return JSONResponse(
-		content={"detail": standardize_http_detail(http_exc)},
+		content={"detail": detail},
 		status_code=http_exc.status_code,
 		headers=http_exc.headers or {},
 	)
@@ -378,7 +495,7 @@ def _make_mapped_handler(status_code: int, code: str):
 			)
 		return JSONResponse(
 			status_code=status_code,
-			content={"detail": error_detail(message, code)},
+			content={"detail": client_detail(request, error_detail(message, code), exc)},
 			headers=MAPPED_HEADERS.get(code, {}),
 		)
 
@@ -388,14 +505,23 @@ def _make_mapped_handler(status_code: int, code: str):
 async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
 	# FastAPI's own handler answers this with a raw list of field problems;
 	# the shared serializer only has a dict form, so the structured problems
-	# stay in the log and the client gets the code's sentence.
+	# stay in the log and the client gets the code's sentence. Developer clients
+	# also get the field paths, never the submitted values (a PIN can be one).
 	logger.warning(
 		f"422 validation_failed: {exc.errors()} "
 		f"(correlation_id={request_correlation_id(request)})",
 	)
+	detail = client_detail(request, error_detail("", "validation_failed"), None)
+	if debug_allowed(request):
+		detail["debug"] = {
+			"fields": [
+				f"{'.'.join(str(part) for part in error.get('loc', ()))}: {error.get('msg', '')}"
+				for error in exc.errors()
+			]
+		}
 	return JSONResponse(
 		status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-		content={"detail": error_detail("", "validation_failed")},
+		content={"detail": detail},
 	)
 
 

@@ -48,6 +48,21 @@ const ACK_TIMEOUT_MS = 60000;
 
 export const toasts = writable<Toast[]>([]);
 
+// API errors carry a developer detail block (exception chain, error code, request id)
+// after this separator. Only the headline identifies a toast: the detail differs on
+// every request, so a fault that keeps failing must not look new each time.
+export const TOAST_DETAIL_SEPARATOR = '\n\n';
+
+export function splitToastMessage(message: string): { headline: string; detail: string } {
+	const at = message.indexOf(TOAST_DETAIL_SEPARATOR);
+
+	if (at === -1) {
+		return { headline: message, detail: '' };
+	}
+
+	return { headline: message.slice(0, at), detail: message.slice(at + TOAST_DETAIL_SEPARATOR.length) };
+}
+
 // What a source last said its state is, kept after the source goes away.
 type Condition = {
 	kind: ToastKind;
@@ -259,9 +274,15 @@ function reportCondition(
 	rememberWithinBudget();
 
 	if (condition.message !== message) {
+		const isNewState =
+			splitToastMessage(condition.message).headline !== splitToastMessage(message).headline;
+
 		condition.message = message;
-		condition.acknowledged = false;
-		clearReshow(condition);
+
+		if (isNewState === true) {
+			condition.acknowledged = false;
+			clearReshow(condition);
+		}
 	}
 
 	condition.actions = actions;
@@ -279,7 +300,12 @@ function reportCondition(
 // own, while errors stay until dismissed. Repeating a visible status toast restarts
 // its timer instead of stacking a copy.
 export function postToast(kind: ToastKind, message: string, actions?: ToastAction[]): number {
-	return upsertToast(kind, `${EVENT_PREFIX}${kind}:${message}`, message, actions);
+	return upsertToast(
+		kind,
+		`${EVENT_PREFIX}${kind}:${splitToastMessage(message).headline}`,
+		message,
+		actions
+	);
 }
 
 // A source reports the state it is currently in, and reports an empty message once
@@ -292,7 +318,13 @@ export function createToastSource(kind: ToastKind): ToastSource {
 		report: (message: string, report?: ToastReport) => {
 			const text = message.trim();
 
-			reportCondition(sourceId, kind, text, (report?.key ?? text).trim(), report?.actions);
+			reportCondition(
+				sourceId,
+				kind,
+				text,
+				(report?.key ?? splitToastMessage(text).headline).trim(),
+				report?.actions
+			);
 		},
 		release: () => {
 			const key = activeKeyOf.get(sourceId);

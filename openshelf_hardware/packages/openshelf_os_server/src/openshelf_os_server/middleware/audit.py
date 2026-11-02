@@ -25,7 +25,7 @@ from ..utils.audit_integrity import (
 from ..utils.audit_constants import AUDIT_RETENTION_DAYS, LEGACY_COMMAND_RECORDS_FIELD
 from ..utils.cors_policy import response_allow_origin, resolve_allowed_origins
 from ..routers.auth_deps import get_current_user_optional
-from ..errors import capture_unhandled_exception, error_detail, internal_error_detail, request_correlation_id
+from ..errors import capture_unhandled_exception, client_detail, error_detail, internal_error_detail, request_correlation_id
 
 command_records_context: ContextVar[List[Dict[str, Any]]] = ContextVar("command_records", default=[])
 
@@ -180,9 +180,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 			correlation_id = request_correlation_id(request)
 			capture_unhandled_exception(e, request.url.path, request.method, correlation_id, enabled=self.sentry_enabled)
 			code, message = internal_error_detail(e)
-			detail = error_detail(message, code)
-			if correlation_id:
-				detail["correlation_id"] = correlation_id
+			detail = client_detail(request, error_detail(message, code), e)
 			response = JSONResponse(status_code=500, content={"detail": detail})
 			# This response never travels back through the CORS middleware, so it carries
 			# the origin header itself, under the same policy as every other response.

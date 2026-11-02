@@ -1,14 +1,15 @@
 <script lang="ts">
-	import { dismissToast, toasts } from '$lib/toasts';
+	import { dismissToast, splitToastMessage, toasts } from '$lib/toasts';
 </script>
 
 {#if $toasts.length > 0}
 	<div class="toast-stack">
 		{#each $toasts as toast (toast.id)}
+			{@const { headline, detail } = splitToastMessage(toast.message)}
 			{#if toast.actions !== undefined && toast.actions.length > 0}
 				<div class="toast {toast.kind} with-actions" role="status">
 					<button type="button" class="toast-body" onclick={() => dismissToast(toast.id)}>
-						{toast.message}
+						{headline}{#if detail !== ''}<span class="toast-detail">{detail}</span>{/if}
 					</button>
 					<div class="toast-actions">
 						{#each toast.actions as action (action.label)}
@@ -24,7 +25,7 @@
 				</div>
 			{:else}
 				<button type="button" class="toast {toast.kind}" onclick={() => dismissToast(toast.id)}>
-					{toast.message}
+					{headline}{#if detail !== ''}<span class="toast-detail">{detail}</span>{/if}
 				</button>
 			{/if}
 		{/each}
@@ -51,6 +52,16 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		text-transform: uppercase;
+	}
+
+	/* exception text and ids are case-sensitive, so the detail is never uppercased */
+	.toast-detail {
+		display: block;
+		margin-top: 0.75em;
+		font-size: 0.8em;
+		text-transform: none;
+		white-space: pre-wrap;
+		opacity: 0.9;
 	}
 
 	.toast-actions {

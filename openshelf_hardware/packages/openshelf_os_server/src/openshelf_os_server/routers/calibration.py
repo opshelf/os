@@ -41,7 +41,7 @@ from openshelf_os_server.core.laser_auto_calibration import (
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.bin_storage import is_reserved_bin_location, reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.errors import error_detail, internal_error_detail
+from openshelf_os_server.errors import classify_hardware_error, error_detail, internal_error_detail
 from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, require_permissions_for_stream
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
@@ -559,11 +559,12 @@ async def _raise_motor_error(
 			axes = None if named_axis is None else [named_axis]
 	worker.set_needs_home(message, axes=axes)
 	await worker.get_status_snapshot(force_refresh=True)
+	classified = classify_hardware_error(exc)
 	raise HTTPException(
 		status_code=status.HTTP_409_CONFLICT,
 		detail=_build_error_detail(
 			message,
-			code="motor_fault",
+			code="motor_fault" if classified is None else classified[1],
 			needs_home=True,
 			needs_home_axes=worker.needs_home_axes(),
 		),

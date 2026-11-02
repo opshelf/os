@@ -10,7 +10,9 @@ from httpx import AsyncClient
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError, OperationalError
 
+from hardware.exceptions import MotorError
 from openshelf_os.config.exceptions import ConfigError
+from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
 from openshelf_os_server.core.validation import CellOccupiedError, ValidationError
 from openshelf_os_server.errors import (
@@ -18,10 +20,13 @@ from openshelf_os_server.errors import (
 	DEFAULT_STATUS_CODES,
 	GENERIC_ERROR_MESSAGE,
 	SAFE_500_TYPES,
+	api_error,
+	hardware_api_error,
 	normalize_operator_message,
 	standardize_http_detail,
 )
 from openshelf_os_server.main import app
+from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings
 
 TEST_PATH = "/api/test/error-handling"
 
@@ -53,6 +58,11 @@ def _raise_for_kind(kind: str) -> None:
 		raise RuntimeError("boom")
 	if kind == "config_error":
 		raise ConfigError("Invalid JSON in /app/config.json")
+	if kind == "chained":
+		try:
+			raise MotorError("Alarm 24 persists after clear attempt on /dev/ttyUSB0")
+		except MotorError as exc:
+			raise api_error(503, "motor_alarm_clear_failed", "") from exc
 	if kind == "string_detail":
 		raise HTTPException(status_code=404, detail="thing not found")
 	if kind == "traceback_detail":
@@ -161,7 +171,7 @@ async def test_client_message_is_one_sentence_without_server_detail(
 	assert unreachable["message"] == CODE_MESSAGES["hardware_io"]
 
 	hand_written = (await client.get(TEST_PATH, params={"kind": "string_detail"})).json()["detail"]
-	assert hand_written == {"message": "Thing not found.", "code": "not_found"}
+	assert {key: hand_written[key] for key in ("message", "code")} == {"message": "Thing not found.", "code": "not_found"}
 
 	route_detail = (await client.get(TEST_PATH, params={"kind": "codeless_dict"})).json()["detail"]
 	assert route_detail["code"] == "conflict"
@@ -285,7 +295,9 @@ async def test_integrity_conflict_logs_constraint_but_body_stays_generic(
 		response = await client.get(TEST_PATH, params={"kind": "integrity"})
 
 	assert response.status_code == 409
-	assert response.json()["detail"] == {"message": CODE_MESSAGES["conflict"], "code": "conflict"}
+	detail = response.json()["detail"]
+	assert (detail["message"], detail["code"]) == (CODE_MESSAGES["conflict"], "conflict")
+	assert set(detail) == {"message", "code", "correlation_id"}
 	assert "UNIQUE constraint failed: user.email" not in response.text
 	records = [r for r in caplog.records if r.name == "openshelf_os_server.errors" and r.levelno == logging.WARNING]
 	assert records and records[-1].exc_info is not None
@@ -317,6 +329,77 @@ def test_bare_code_word_never_reaches_client_as_identifier() -> None:
 		assert message[0].isupper() and message.endswith("."), value
 
 
+def _bearer(email: str) -> dict[str, str]:
+	settings = get_settings()
+	token = AuthService(settings.auth.jwt_secret, settings.auth.jwt_algorithm).create_access_token(
+		user_id=1, email=email, role="admin", permissions=[], expires_minutes=5,
+	)
+	return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.anyio
+async def test_exception_detail_reaches_only_the_developer_user(
+	unauthenticated_client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	"""The dev UI needs the exception chain behind a sentence; the kiosk must never
+	get it, because driver text carries paths and ids the operator copy rule keeps
+	out. Every caller gets the correlation id that ties the body to the log.
+	"""
+	client = await _client_with_test_route(unauthenticated_client, monkeypatch)
+	requests = (
+		("GET", TEST_PATH, {"kind": "chained"}, None),
+		("GET", TEST_PATH, {"kind": "os_error_filename"}, None),
+		("GET", TEST_PATH, {"kind": "runtime_error"}, None),
+		("POST", f"{TEST_PATH}/validate", None, {"barcode": "not-an-int"}),
+	)
+
+	for headers in ({}, _bearer("admin@opshelf.com")):
+		for method, path, params, body in requests:
+			response = await client.request(method, path, params=params, json=body, headers=headers)
+			detail = response.json()["detail"]
+			assert "debug" not in detail, (path, params)
+			assert "/dev/" not in response.text and "not-an-int" not in response.text
+			assert detail["correlation_id"], (path, params)
+
+	developer = _bearer(DEVELOPER_SYSTEM_USER_EMAIL)
+	chained = (await client.get(TEST_PATH, params={"kind": "chained"}, headers=developer)).json()["detail"]
+	assert chained["message"] == CODE_MESSAGES["motor_alarm_clear_failed"]
+	assert chained["debug"]["chain"] == ["MotorError: Alarm 24 persists after clear attempt on /dev/ttyUSB0"]
+
+	mapped = (await client.get(TEST_PATH, params={"kind": "os_error_filename"}, headers=developer)).json()["detail"]
+	assert "/dev/usb/lp0" in mapped["debug"]["chain"][0]
+
+	unhandled = (await client.get(TEST_PATH, params={"kind": "runtime_error"}, headers=developer)).json()["detail"]
+	assert unhandled["debug"]["chain"] == ["RuntimeError: boom"]
+
+	invalid = (
+		await client.post(f"{TEST_PATH}/validate", json={"barcode": "not-an-int"}, headers=developer)
+	).json()["detail"]
+	assert invalid["debug"]["fields"][0].startswith("body.barcode: ")
+	# Field paths only: a submitted value can be a PIN.
+	assert "not-an-int" not in str(invalid)
+
+
+def test_motor_fault_behind_a_catch_all_gets_its_own_code() -> None:
+	"""A drive alarm is not cleared by retrying, so the route's "Try again"
+	fallback must give way to the code that says what to do."""
+	fault = MotorError("Movement failed for motor 3 (status=FAULT)")
+	setattr(fault, "fault_context", {"alarm_code": 24, "stall_detected": False, "no_progress": False})
+	try:
+		try:
+			raise fault
+		except MotorError as inner:
+			raise MotorError("Failed to move motor 3") from inner
+	except MotorError as outer:
+		error = hardware_api_error(outer, 503, "motor_move_failed", "The robot could not move. Try again.")
+	assert error.detail["code"] == "motor_alarm"
+	assert "try again" not in error.detail["message"].lower()
+
+	plain = hardware_api_error(RuntimeError("boom"), 503, "motor_move_failed", "The robot could not move. Try again.")
+	assert plain.detail["code"] == "motor_move_failed"
+
+
 def test_every_derived_code_has_its_own_sentence() -> None:
 	"""A code without copy would ship the generic sentence instead of its own."""
 	derived = {code for _, code, _ in SAFE_500_TYPES} | set(DEFAULT_STATUS_CODES.values())
@@ -344,12 +427,15 @@ def _emitted_router_codes() -> set[str]:
 			if isinstance(node, ast.Call):
 				if (
 					isinstance(node.func, ast.Name)
-					and node.func.id in {"api_error", "error_detail"}
-					and len(node.args) >= 2
-					and isinstance(node.args[1], ast.Constant)
-					and isinstance(node.args[1].value, str)
+					and node.func.id in {"api_error", "error_detail", "hardware_api_error"}
 				):
-					codes.add(node.args[1].value)
+					code_index = 2 if node.func.id == "hardware_api_error" else 1
+					if (
+						len(node.args) > code_index
+						and isinstance(node.args[code_index], ast.Constant)
+						and isinstance(node.args[code_index].value, str)
+					):
+						codes.add(node.args[code_index].value)
 				for keyword in node.keywords:
 					if (
 						keyword.arg == "code"
