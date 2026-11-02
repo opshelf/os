@@ -150,13 +150,8 @@ class ScanRunnerMixin:
             state="running",
             run_id=recorder.run_id,
             bounds=bounds,
-            stage_detail={
-                "side": side_name,
-                "phase": "scan-start",
-                "run_id": recorder.run_id,
-                "run_dir": str(recorder.run_dir),
-            },
         )
+        self._run_dir = recorder.run_dir
 
         scan_correlation_id = get_correlation_id()
 
@@ -204,6 +199,6 @@ class ScanRunnerMixin:
             state="running",
             run_id=analysis.run_id,
             bounds=bounds,
-            stage_detail={"side": side_name, "phase": "completed", "run_id": analysis.run_id},
         )
+        self._run_dir = None
         return analysis

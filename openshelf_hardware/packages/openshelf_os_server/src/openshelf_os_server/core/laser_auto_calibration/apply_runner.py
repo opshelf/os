@@ -622,10 +622,6 @@ class ApplyRunnerMixin:
         await self._update_snapshot(
             state="applying",
             current_stage="apply",
-            stage_detail={
-                "phase": "apply",
-                "side_count": len(completed_results),
-            },
         )
 
         config = get_root_config()
@@ -768,12 +764,6 @@ class ApplyRunnerMixin:
         await self._update_snapshot(
             state="applying",
             current_stage="apply",
-            stage_detail={
-                "phase": "apply",
-                "scope": "shelf",
-                "side": _side_to_module_name(side),
-                "shelf_idx": shelf_idx,
-            },
         )
 
         config = get_root_config()
@@ -845,13 +835,6 @@ class ApplyRunnerMixin:
         await self._update_snapshot(
             state="applying",
             current_stage="apply",
-            stage_detail={
-                "phase": "apply",
-                "scope": "cell",
-                "side": _side_to_module_name(side),
-                "shelf_idx": int(target.shelf_idx),
-                "cell_idx": int(target.cell_idx),
-            },
         )
 
         config = get_root_config()

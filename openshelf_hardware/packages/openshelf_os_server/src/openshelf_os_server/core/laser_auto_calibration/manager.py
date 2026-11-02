@@ -40,6 +40,8 @@ class LaserAutoCalibrationManager(
         self._scans_dir = _build_default_scans_dir()
         self._motion_diagnostic_session_id: str | None = None
         self._motion_diagnostic_correlation_id: str | None = None
+        # Scan run directory, set only while a scan is in progress.
+        self._run_dir: Path | None = None
 
     async def get_snapshot(self) -> LaserAutoCalibrationSnapshot:
         async with self._lock:
@@ -66,6 +68,7 @@ class LaserAutoCalibrationManager(
             self._reference_offset_entries = []
             self._active_worker = worker
             self._abort_requested = False
+            self._run_dir = None
             self._snapshot = LaserAutoCalibrationSnapshot(
                 state="starting",
                 session_id=uuid4().hex,
@@ -268,12 +271,10 @@ class LaserAutoCalibrationManager(
         )
 
     async def _persist_failure_metadata(self, error_detail: LaserAutoCalibrationError) -> None:
-        run_dir_value = self._snapshot.stage_detail.get("run_dir")
+        run_dir = self._run_dir
 
-        if run_dir_value is None:
+        if run_dir is None:
             return
-
-        run_dir = Path(str(run_dir_value))
 
         metadata_path = run_dir / "metadata.json"
         if metadata_path.exists() is False:

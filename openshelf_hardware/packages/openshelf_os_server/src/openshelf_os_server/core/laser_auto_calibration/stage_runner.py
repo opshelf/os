@@ -91,16 +91,6 @@ class StageRunnerMixin:
             current_stage="stage-extension-calibration",
             state="running",
             bounds=bounds,
-            stage_detail={
-                "side": side_module_name,
-                "phase": "stage-extension-calibration",
-                "subphase": "move",
-                "probe_x_mm": probe_x_mm,
-                "probe_y_mm": float(probe_y_mm),
-                "absolute_rotation_deg": absolute_rotation_deg,
-                "probe_rpm": probe_rpm,
-                "stage_target_mm": stage_limit_mm,
-            },
         )
 
         try:
@@ -127,16 +117,6 @@ class StageRunnerMixin:
                 current_stage="stage-extension-calibration",
                 state="running",
                 bounds=bounds,
-                stage_detail={
-                    "side": side_module_name,
-                    "phase": "stage-extension-calibration",
-                    "subphase": "probe",
-                    "probe_x_mm": probe_x_mm,
-                    "probe_y_mm": float(probe_y_mm),
-                    "absolute_rotation_deg": absolute_rotation_deg,
-                    "probe_rpm": probe_rpm,
-                    "stage_target_mm": stage_limit_mm,
-                },
             )
             did_stall, stage_position_mm, status, alarm_code = await angle_module.probe_stage_until_stall(
                 tool,
@@ -159,18 +139,6 @@ class StageRunnerMixin:
                 current_stage="stage-extension-calibration",
                 state="running",
                 bounds=bounds,
-                stage_detail={
-                    "side": side_module_name,
-                    "phase": "stage-extension-calibration",
-                    "subphase": "probe-result",
-                    "probe_x_mm": probe_x_mm,
-                    "probe_y_mm": float(probe_y_mm),
-                    "absolute_rotation_deg": absolute_rotation_deg,
-                    "stall_status": status,
-                    "alarm_code": alarm_code,
-                    "stall_stage_mm": float(stage_position_mm),
-                    "stage_target_mm": stage_limit_mm,
-                },
             )
 
             if status == "timeout":
@@ -194,19 +162,6 @@ class StageRunnerMixin:
                 current_stage="stage-extension-calibration",
                 state="running",
                 bounds=bounds,
-                stage_detail={
-                    "side": side_module_name,
-                    "phase": "stage-extension-calibration",
-                    "subphase": "backoff",
-                    "probe_x_mm": probe_x_mm,
-                    "probe_y_mm": float(probe_y_mm),
-                    "absolute_rotation_deg": absolute_rotation_deg,
-                    "stall_status": status,
-                    "alarm_code": alarm_code,
-                    "stall_stage_mm": float(stage_position_mm),
-                    "stage_backoff_mm": STAGE_EXTENSION_STALL_BACKOFF_MM,
-                    "calibrated_stage_extension_mm": calibrated_stage_extension_mm,
-                },
             )
             return calibrated_stage_extension_mm
         finally:
@@ -260,11 +215,6 @@ class StageRunnerMixin:
                 current_stage="stage-extension-calibration",
                 state="running",
                 bounds=bounds,
-                stage_detail={
-                    "side": side_module_name,
-                    "phase": "stage-extension-calibration",
-                    "subphase": "shelf-scout",
-                },
             )
 
             await tool.retract()
@@ -307,13 +257,6 @@ class StageRunnerMixin:
             current_stage="stage-extension-calibration",
             state="running",
             bounds=bounds,
-            stage_detail={
-                "side": side_module_name,
-                "phase": "stage-extension-calibration",
-                "subphase": "probe-y",
-                "top_shelf_y_mm": float(top_shelf_y_mm),
-                "probe_y_mm": probe_y_mm,
-            },
         )
         return probe_y_mm
 
@@ -332,11 +275,5 @@ class StageRunnerMixin:
             current_side=side_name,
             current_stage="stage-extension-calibration",
             state="running",
-            stage_detail={
-                "side": side_name,
-                "phase": "stage-extension-applied",
-                "stage_extension_param": stage_extension_param,
-                "calibrated_stage_extension_mm": float(stage_extension_mm),
-            },
         )
 
