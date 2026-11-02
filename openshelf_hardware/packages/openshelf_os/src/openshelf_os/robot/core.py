@@ -21,7 +21,7 @@ from openshelf_os.serial_ports import (
     MOTOR_PORT_CANDIDATES,
     SCALE_PORT_CANDIDATES,
 )
-from openshelf_os.faults import exception_debug
+from openshelf_os.faults import FAULT_MESSAGES, exception_debug, fault_code
 from openshelf_os.exceptions import (
     ConfigError as CabinetConfigError, GRIP_DROPPED_CODE, GRIP_IO_BOX_FAILED_CODE, MotorError, MovementError,
     ToolError,
@@ -1460,10 +1460,12 @@ class Robot:
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
             sentry_sdk.capture_exception(exc)
+            cause = fault_code(exc)
             return RobotCommandError(
                 command=command_name,
-                error="The robot could not store the item. Check the robot before continuing.",
+                error=FAULT_MESSAGES[cause] if cause else "The robot could not store the item. Check the robot before continuing.",
                 debug=exception_debug(exc),
+                fault_code=cause,
             )
 
     async def retrieve(self, item_name: str) -> RobotResponse:
@@ -1596,10 +1598,12 @@ class Robot:
                 location.cell_idx,
             )
             sentry_sdk.capture_exception(exc)
+            cause = fault_code(exc)
             return RobotCommandError(
                 command=command_name,
-                error="The robot could not retrieve the item. Check the robot before continuing.",
+                error=FAULT_MESSAGES[cause] if cause else "The robot could not retrieve the item. Check the robot before continuing.",
                 debug=exception_debug(exc),
+                fault_code=cause,
             )
 
     # ------------------------------------------------------------------ #
@@ -1659,10 +1663,12 @@ class Robot:
             self.clear_operation_context()
             self._logger.exception("Unhandled error while processing command %s", command_name)
             sentry_sdk.capture_exception(exc)
+            cause = fault_code(exc)
             return RobotCommandError(
                 command=command_name,
-                error="The robot could not finish the command. Check the robot before continuing.",
+                error=FAULT_MESSAGES[cause] if cause else "The robot could not finish the command. Check the robot before continuing.",
                 debug=exception_debug(exc),
+                fault_code=cause,
             )
 
     # ------------------------------------------------------------------ #

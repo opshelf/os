@@ -1520,6 +1520,7 @@ class RobotWorker:
                     operation,
                     code="execution_failed",
                     debug=result.debug,
+                    fault_code=result.fault_code,
                 )
             logger.info("Published command result to event queue")
         except Exception as err:

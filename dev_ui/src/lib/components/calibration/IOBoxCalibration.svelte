@@ -25,6 +25,7 @@
 		type IOBoxPositionName
 	} from '$lib/api';
 	import { robotStatus } from '$lib/stores';
+	import { splitToastMessage, TOAST_DETAIL_SEPARATOR } from '$lib/toasts';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -119,12 +120,13 @@
 		)
 	);
 	const hasDirtyValues = $derived(dirtyAxes.length > 0);
+	const errorParts = $derived(splitToastMessage(error));
 	const duplicateHomeError = $derived.by(() => {
 		if (needsHome !== true || error === '') {
 			return false;
 		}
 
-		const errorLower = error.toLowerCase();
+		const errorLower = errorParts.headline.toLowerCase();
 		const reasonLower = needsHomeReason.toLowerCase();
 
 		if (needsHomeReason !== '' && errorLower.includes(reasonLower)) {
@@ -133,6 +135,12 @@
 
 		return needsHomeReason === '' && errorLower.includes('home required');
 	});
+	// A duplicate headline is dropped, its developer detail is not: it rides on the home banner.
+	const homeBannerMessage = $derived(
+		duplicateHomeError && errorParts.detail !== ''
+			? `${homeMessage}${TOAST_DETAIL_SEPARATOR}${errorParts.detail}`
+			: homeMessage
+	);
 	const editInputsDisabled = $derived(
 		isMoving === true || needsHome === true || isPositioned === false
 	);
@@ -916,7 +924,7 @@
 {/if}
 
 {#if homeMessage !== ''}
-	<ErrorMessage message={homeMessage} />
+	<ErrorMessage message={homeBannerMessage} />
 {/if}
 
 {#if needsOtherHome === true}

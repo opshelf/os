@@ -42,7 +42,7 @@
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideInitial, sideLabel } from '$lib/side';
 	import type { SideIndex, SideVocabulary } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
-	import { postToast } from '$lib/toasts';
+	import { postToast, withHeadline } from '$lib/toasts';
 	import {
 		createReconnectingEventSource,
 		type ReconnectingEventSource
@@ -1448,7 +1448,14 @@
 				const cellLabel = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
 				if (result.ok === false) {
-					postToast('error', `Failed at ${cellLabel}${result.error ? `: ${result.error.replace(/\.+$/, '')}` : ''}.`);
+					postToast(
+						'error',
+						withHeadline(
+							result.error ?? '',
+							(headline) =>
+								`Failed at ${cellLabel}${headline ? `: ${headline.replace(/\.+$/, '')}` : ''}.`
+						)
+					);
 					return;
 				}
 			}

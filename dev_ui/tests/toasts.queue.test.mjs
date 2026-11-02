@@ -1,7 +1,14 @@
 // Queue semantics for the toast store: node tests/toasts.queue.test.mjs
 // SLOW=1 adds the acknowledgement-window checks, which wait out a real 60s timer.
 import { get } from 'svelte/store';
-import { createToastSource, dismissToast, postToast, toasts } from '../src/lib/toasts.ts';
+import {
+	createToastSource,
+	dismissToast,
+	postToast,
+	splitToastMessage,
+	toasts,
+	withHeadline
+} from '../src/lib/toasts.ts';
 
 const out = [];
 const check = (label, ok) => out.push(`${ok ? 'PASS' : 'FAIL'} ${label}`);
@@ -88,6 +95,25 @@ check(
 );
 needsHome.report('');
 check('clearing the robot flag clears its toast', visible().length === 0);
+
+const withDetail = 'Home failed.\n\nRuntimeError: x\ncode: home_failed';
+check(
+	'withHeadline rewrites the headline and keeps the detail after it',
+	withHeadline(withDetail, (headline) => `${headline} (during x_axis)`) ===
+		'Home failed. (during x_axis)\n\nRuntimeError: x\ncode: home_failed'
+);
+check('withHeadline on a bare message rewrites it whole', withHeadline('Home failed.', (h) => `${h}!`) === 'Home failed.!');
+postToast('error', withHeadline(withDetail, (headline) => `${headline} (during x_axis)`));
+postToast('error', withHeadline(withDetail, (headline) => `${headline} (during y_axis)`));
+postToast('error', withHeadline(withDetail, (headline) => `${headline} (during x_axis)`));
+check(
+	'toasts key on the rewritten headline: two motors, two toasts; same motor dedupes',
+	visible().length === 2 &&
+		get(toasts).every((toast) => splitToastMessage(toast.message).detail === 'RuntimeError: x\ncode: home_failed')
+);
+for (const toast of [...get(toasts)]) {
+	dismissToast(toast.id);
+}
 
 if (process.env.SLOW === '1') {
 	const live = createToastSource('error');

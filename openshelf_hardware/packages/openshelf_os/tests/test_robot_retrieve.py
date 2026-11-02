@@ -4,8 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from hardware.exceptions import ModbusConnectionError
 from openshelf_os.common import AxisCoordinate
+from openshelf_os.faults import FAULT_MESSAGES
 from openshelf_os.robot import Robot
+from openshelf_os.robot.commands import MoveCommand
+from openshelf_os.robot.status import RobotCommandError
 from openshelf_os.storage import CellItem, Dimensions, StorageModuleCellLocation, StorageModuleSide
 
 
@@ -127,3 +131,20 @@ async def test_io_cycle_homes_the_door_first_and_survives_a_failed_final_home(cy
     assert calls[0] == "ensure_door_homed"
     assert calls.index("ensure_door_homed") < calls.index("pick")
     assert calls[-2:] == ["home_door_after_cycle", "clear_alarms"]
+
+
+@pytest.mark.asyncio
+async def test_direct_hardware_bus_loss_returns_classified_command_error() -> None:
+    robot, _, _ = build_robot(weight=None)
+
+    async def move(_coordinate) -> None:
+        raise ModbusConnectionError("device 3 unreachable")
+
+    robot._tool = SimpleNamespace(move=move)
+    result = await robot.handle_command(MoveCommand(coordinate=AxisCoordinate(x=1, y=2, s=0, z_offset=0)))
+
+    assert isinstance(result, RobotCommandError)
+    assert result.fault_code == "motor_bus_disconnected"
+    assert result.error == FAULT_MESSAGES["motor_bus_disconnected"]
+    assert "device 3" not in result.error
+    assert "device 3" in result.debug["chain"][0]

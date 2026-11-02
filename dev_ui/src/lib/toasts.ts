@@ -63,6 +63,15 @@ export function splitToastMessage(message: string): { headline: string; detail: 
 	return { headline: message.slice(0, at), detail: message.slice(at + TOAST_DETAIL_SEPARATOR.length) };
 }
 
+// Text added to an error belongs in its headline: appending to the whole message would
+// land after the developer detail block.
+export function withHeadline(message: string, rewrite: (headline: string) => string): string {
+	const { headline, detail } = splitToastMessage(message);
+	const next = rewrite(headline);
+
+	return detail === '' ? next : `${next}${TOAST_DETAIL_SEPARATOR}${detail}`;
+}
+
 // What a source last said its state is, kept after the source goes away.
 type Condition = {
 	kind: ToastKind;

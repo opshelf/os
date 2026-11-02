@@ -2,7 +2,7 @@
 	import { homeMotor } from '$lib/api';
 	import { devicePath } from '$lib/nav';
 	import { robotStatus } from '$lib/stores';
-	import { createToastSource, postToast, type ToastAction } from '$lib/toasts';
+	import { createToastSource, postToast, withHeadline, type ToastAction } from '$lib/toasts';
 
 	// The global /robot/status stream is the single source of truth: a motor
 	// crash publishes a snapshot with needs_home + needs_home_axes immediately,
@@ -40,7 +40,10 @@
 				// Stop the queue so the operator sees the failure before more motion.
 				postToast(
 					'error',
-					`${err instanceof Error ? err.message : 'Home failed.'} (during ${next})`
+					withHeadline(
+						err instanceof Error ? err.message : 'Home failed.',
+						(headline) => `${headline} (during ${next})`
+					)
 				);
 				queuedMotors = [];
 			}
