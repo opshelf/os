@@ -35,6 +35,7 @@ from ..database.models import (
     User,
 )
 from ..core.bin_storage import ACTIVE_STATES, BATCH_OPERATION, BinStorageService, BinWorkflowConflict, NoCompatibleBinError, ensure_worker_homed_for_bin_motion, ensure_worker_queue_empty_for_bin_start, is_io_box_occupied, is_reserved_bin_barcode
+from ..core.import_jobs import ImportJobService, mutation_lock
 from ..core.mock_robot import get_mock_robot_runtime
 from ..core.storage import StorageService
 from ..core.validation import CellOccupiedError, ValidationError
@@ -1009,6 +1010,13 @@ async def recover_crash_interrupted_bin_workflows(session: AsyncSession = Depend
             unresolved.append({"workflow": payload, "error": error})
         if robot_core.robot_worker is not None:
             await service.publish_workflow(robot_core.robot_worker, workflow)
+    if recovered:
+        # An import waiting to return a recovered tray moves on now that the tray is home.
+        async with mutation_lock():
+            imports = ImportJobService(session)
+            job = await imports.open_job()
+            if job is not None and await imports.reconcile(job):
+                await imports.publish(job)
     return {"recovered": recovered, "unresolved": unresolved}
 
 

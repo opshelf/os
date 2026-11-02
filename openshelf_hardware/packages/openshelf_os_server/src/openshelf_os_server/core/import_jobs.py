@@ -414,6 +414,11 @@ class ImportJobService:
         changed = False
         for unit in await self.units(job, ["in_progress"]):
             if unit.request_id is None:
+                # A failed return the crash dialog resolved: the operator put the tray back on its
+                # shelf with these items, so asking for it in the IO box again would deadlock.
+                if unit.stage == "placed" and unit.bin_id is not None and await self._recovered_home(unit.bin_id):
+                    self._mark_loaded(unit)
+                    changed = True
                 continue
             if unit.stage in ("measured", "storing"):
                 command = await self.session.scalar(
@@ -449,6 +454,18 @@ class ImportJobService:
         if await self.settle(job):
             changed = True
         return changed
+
+    async def _recovered_home(self, bin_id: int) -> bool:
+        tray = await self.session.get(StorageBin, bin_id)
+        if tray is None or tray.status != "at_home":
+            return False
+        latest = await self.session.scalar(
+            select(StorageBinWorkflow)
+            .where(StorageBinWorkflow.bin_id == bin_id)
+            .order_by(StorageBinWorkflow.created_at.desc())
+            .limit(1)
+        )
+        return latest is not None and bool((latest.resolution or {}).get("crash_recovered"))
 
     def _mark_loaded(self, unit: ImportJobUnit) -> None:
         unit.status = "loaded"
