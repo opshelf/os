@@ -57,12 +57,45 @@ async def test_home_all_rehomes_an_already_homed_x_provisionally_before_rotate()
     tool = _make_tool()
     tool._mr = AsyncMock()
     tool._mx._is_homed = True
+    tool._rotation_off_x_pose = AsyncMock(return_value=None)
     events = _record_home_order(tool)
 
     await tool.home()
 
     assert events == ["z_axis", "stage", "x_axis", "rotate", "y_axis"]
     tool._mx.home.assert_awaited_once_with(provisional=True)
+
+
+@pytest.mark.asyncio
+async def test_home_turns_an_off_pose_rotate_straight_before_rehoming_the_homed_x():
+    """After an aborted calibration the X guard refuses a homed X while rotate is ~6 deg off its pose."""
+    tool = _make_tool()
+    tool._mr = AsyncMock()
+    tool._mx._is_homed = True
+    tool._rotation_off_x_pose = AsyncMock(return_value=6.0)
+    events = _record_home_order(tool)
+    tool.rotate_to_home_orientation = AsyncMock(side_effect=lambda: events.append("straighten"))
+
+    await tool.home()
+
+    assert events == ["z_axis", "stage", "straighten", "x_axis", "rotate", "y_axis"]
+
+
+@pytest.mark.asyncio
+async def test_isolated_home_treats_a_failed_straightening_as_an_x_home_failure():
+    tool = _make_tool()
+    tool._mr = AsyncMock()
+    tool._emit_init = lambda *args: None
+    tool._mx._is_homed = True
+    tool._rotation_off_x_pose = AsyncMock(return_value=6.0)
+    events = _record_home_order(tool)
+    tool.rotate_to_home_orientation = AsyncMock(side_effect=RuntimeError("turn fault"))
+
+    await tool.home(isolate=True)
+
+    assert events == ["z_axis", "stage", "y_axis"]
+    tool._mx.home.assert_not_awaited()
+    tool._home_rotate_sequence.assert_not_awaited()
 
 
 @pytest.mark.asyncio

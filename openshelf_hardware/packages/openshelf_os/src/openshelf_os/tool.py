@@ -1685,6 +1685,16 @@ class Tool:
         if self._mx is not None and getattr(self._mx, "_is_home_provisional", False) is True:
             await self._mx.home()
 
+    async def _straighten_rotate_before_x_home(self) -> None:
+        if await self._rotation_off_x_pose() is None:
+            return
+
+        stage_before_mm = None if self._ms is None else float(await self._ms.get_position())
+        await self.rotate_to_home_orientation()
+        # rotate_to_home_orientation may extend the stage for the turn; homing it again retracts it.
+        if self._ms is not None and abs(float(await self._ms.get_position()) - stage_before_mm) > 0.5:
+            await self._ms.home()
+
     async def _home_sequence(
         self,
         isolate: bool = False,
@@ -1703,13 +1713,24 @@ class Tool:
         # with the tool at an unknown angle it can stop on a gantry upright short of the hard
         # stop. It runs even when X is homed, since a stale _is_homed (drive power dropped after an
         # emergency stop) leaves wrong coordinates; the X guard still refuses it for a homed X with
-        # the tool rotated. The home that runs with the tool straight sets the zero every later
-        # move uses.
+        # the tool rotated. The rotate sequence then re-homes X verified with the tool straight,
+        # which sets the zero every later move uses.
         will_home_rotate = should_home("rotate") and self._mr is not None
         for motor, axis in ((self._mg, "z_axis"), (self._ms, "stage"), (self._mx, "x_axis")):
             if motor is None or should_home(axis) is False:
                 continue
             provisional = axis == "x_axis" and will_home_rotate
+            if provisional is True and getattr(motor, "_is_homed", False) is True:
+                # The X guard refuses even a provisional home of a homed X while the tool is off
+                # its front/back pose (e.g. after an abort); straighten the tool first.
+                try:
+                    await self._straighten_rotate_before_x_home()
+                except Exception as e:
+                    if isolate is False:
+                        raise
+                    self._logger.warning("init rotate straightening failed: %s", e)
+                    failed_home_motors.append(motor)
+                    continue
             if isolate is True:
                 if await self._home_step_isolated(
                     motor, failed_config_motors, provisional=provisional
@@ -1718,29 +1739,12 @@ class Tool:
             else:
                 await motor.home(provisional=provisional)
 
-        did_home_rotate = False
-        # A provisional X home is verified at the end of the rotate sequence itself.
-        is_x_verified_by_rotate = (
-            self._mx is not None and getattr(self._mx, "_is_home_provisional", False) is True
-        )
-
+        # The rotate sequence re-homes the provisional X itself, verified.
         if should_home("rotate"):
             if isolate is True:
-                did_home_rotate = await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
+                await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
             elif self._mr is not None:
                 await self._home_rotate_sequence()
-                did_home_rotate = True
-
-        if (
-            did_home_rotate is True
-            and is_x_verified_by_rotate is False
-            and self._mx is not None
-            and should_home("x_axis")
-        ):
-            if isolate is True:
-                await self._home_step_isolated(self._mx, failed_config_motors)
-            else:
-                await self._mx.home()
 
         if should_home("y_axis") and self._my is not None:
             if isolate is True:
