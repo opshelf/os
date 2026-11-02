@@ -41,7 +41,7 @@ from openshelf_os_server.core.laser_auto_calibration import (
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.bin_storage import is_reserved_bin_location, reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.errors import classify_hardware_error, error_detail, internal_error_detail
+from openshelf_os_server.errors import CODE_MESSAGES, api_error, classify_hardware_error, error_detail, hardware_api_error, internal_error_detail
 from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, require_permissions_for_stream
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
@@ -170,10 +170,7 @@ async def _ensure_cell_is_testable(
 	try:
 		cell = grid.get_cell(location)
 	except (IndexError, ValueError) as exc:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=str(exc),
-		) from exc
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_found", "") from exc
 
 	if cell.status in UNTESTABLE_CELL_STATUSES:
 		raise HTTPException(
@@ -284,6 +281,19 @@ def _build_coordinate_for_location(grid, location: StorageModuleCellLocation) ->
 		s=0 if location.side == StorageModuleSide.FRONT else 1,
 		z_offset=calibration_point.z_offset,
 	)
+
+
+def _coordinate_or_400(grid, location: StorageModuleCellLocation) -> AxisCoordinate:
+	try:
+		return _build_coordinate_for_location(grid, location)
+	except IndexError as exc:
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_found", "") from exc
+	except Exception as exc:
+		raise api_error(
+			status.HTTP_400_BAD_REQUEST,
+			"cell_not_calibrated",
+			"That cell has no calibration point. Calibrate it first.",
+		) from exc
 
 
 def _build_cycle_test_item(cell, location: StorageModuleCellLocation) -> CellItem:
@@ -514,32 +524,37 @@ async def _retract_tool_for_move(
 			raise
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
-			detail=_build_error_detail(f"{blocked_message}: {str(e)}", code="rotation_blocked"),
+			detail=_build_error_detail(f"{blocked_message} {CODE_MESSAGES['rotation_blocked']}", code="rotation_blocked"),
 		) from e
 	except (MotorError, HardwareMotorError, ToolError) as e:
-		await _raise_motor_error(worker, f"Failed to retract: {str(e)}", e)
+		await _raise_motor_error(worker, "The tool could not retract.", e)
 
 
 async def _raise_motor_error(
 	worker,
-	message: str,
+	action: str,
 	exc: Exception,
 	*,
 	axes: Optional[list[str]] = None,
 ) -> None:
+	"""Raise the 409 for a motion failure. `action` is the operator sentence for what
+	failed; the cause sentence comes from the classified code, and the exception itself
+	reaches the log and the developer's `detail.debug` through the chain."""
+	logger.warning(action, exc_info=exc)
 	if axes is None:
 		if isinstance(exc, GripVerificationError):
 			# A grip miss keeps every position: open the fingers and withdraw instead of homing.
 			try:
 				await worker._robot.recover(fault_needs_home_axes(worker._robot, exc) or None)
 			except Exception as recover_error:
-				await _raise_motor_error(worker, f"{message}; tool recovery failed: {recover_error}", recover_error)
+				await _raise_motor_error(worker, f"{action} The tool could not recover.", recover_error)
 			raise HTTPException(
 				status_code=status.HTTP_409_CONFLICT,
-				detail=_build_error_detail(message, code=exc.failure_code),
+				detail=_build_error_detail(action, code=exc.failure_code),
 			) from exc
 		if is_rotation_clearance_refusal(exc):
 			# Nothing moved; only a sibling motor the run cancelled has to home.
+			message = f"{action} {CODE_MESSAGES['rotation_blocked']}"
 			refusal_axes = fault_needs_home_axes(worker._robot, exc)
 			if refusal_axes:
 				worker.set_needs_home(message, axes=refusal_axes)
@@ -557,14 +572,16 @@ async def _raise_motor_error(
 		if axes is None:
 			named_axis = axis_named_in(worker._robot, str(exc))
 			axes = None if named_axis is None else [named_axis]
+	classified = classify_hardware_error(exc)
+	code = "motor_fault" if classified is None else classified[1]
+	message = f"{action} {CODE_MESSAGES[code]}"
 	worker.set_needs_home(message, axes=axes)
 	await worker.get_status_snapshot(force_refresh=True)
-	classified = classify_hardware_error(exc)
 	raise HTTPException(
 		status_code=status.HTTP_409_CONFLICT,
 		detail=_build_error_detail(
 			message,
-			code="motor_fault" if classified is None else classified[1],
+			code=code,
 			needs_home=True,
 			needs_home_axes=worker.needs_home_axes(),
 		),
@@ -735,7 +752,7 @@ async def _move_tool_to_coordinate(
 					target_z = grip_ext + coord.z_offset
 					await tool._mg.move_to_position(target_z, rpm=grip_rpm, accel=grip_accel)
 	except (MotorError, HardwareMotorError, ToolError) as e:
-		await _raise_motor_error(worker, f"Failed to move to cell: {str(e)}", e)
+		await _raise_motor_error(worker, "The robot could not move to the cell.", e)
 
 	slide_extension = await _get_current_stage_extension(tool)
 
@@ -865,9 +882,11 @@ async def read_laser() -> LaserReadingResponse:
 	try:
 		distance_mm = await worker._robot.get_laser_distance()
 	except Exception as exc:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail=f"Failed to read laser distance: {str(exc)}",
+		raise hardware_api_error(
+			exc,
+			status.HTTP_503_SERVICE_UNAVAILABLE,
+			"laser_read_failed",
+			"The laser distance could not be read. Try again.",
 		) from exc
 
 	return LaserReadingResponse(distance_mm=float(distance_mm))
@@ -1264,7 +1283,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 			axes = ["z_axis"]
 		elif request.axis == "stage":
 			axes = ["stage"]
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=axes)
+		await _raise_motor_error(worker, "The axis could not jog.", e, axes=axes)
 
 	warnings_payload = warnings if warnings else None
 	_current_position = PositionResponse(
@@ -1319,13 +1338,7 @@ async def _perform_quick_test(
 
 	await _ensure_cell_is_testable(grid, location, allow_tray_home=True)
 
-	try:
-		coordinate = _build_coordinate_for_location(grid, location)
-	except (IndexError, ValueError, Exception) as exc:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=str(exc),
-		) from exc
+	coordinate = _coordinate_or_400(grid, location)
 
 	tool = worker._robot._tool
 
@@ -1334,7 +1347,7 @@ async def _perform_quick_test(
 			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
 			await tool.retract()
 		except (MotorError, HardwareMotorError, ToolError) as e:
-			await _raise_motor_error(worker, f"Failed to retract: {str(e)}", e)
+			await _raise_motor_error(worker, "The tool could not retract.", e)
 
 		coord = coordinate
 		_current_position = PositionResponse(
@@ -1352,7 +1365,7 @@ async def _perform_quick_test(
 			else:
 				await tool.pick_lift_place(coord, lift, QUICK_LIFT_HOLD_SECONDS)
 		except (MotorError, HardwareMotorError, ToolError) as e:
-			await _raise_motor_error(worker, f"Test failed: {str(e)}", e)
+			await _raise_motor_error(worker, "The cell test failed.", e)
 
 
 
@@ -1401,10 +1414,7 @@ async def grip_probe(request: GripProbeRequest) -> list[GripProbePoint]:
 
 	await _ensure_cell_is_testable(grid, location, allow_tray_home=True)
 
-	try:
-		coordinate = _build_coordinate_for_location(grid, location)
-	except (IndexError, ValueError, Exception) as exc:
-		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+	coordinate = _coordinate_or_400(grid, location)
 
 	far = [z for z in request.z_offsets if abs(float(z) - float(coordinate.z_offset)) > GRIP_PROBE_MAX_DEVIATION_MM]
 
@@ -1439,7 +1449,7 @@ async def grip_probe(request: GripProbeRequest) -> list[GripProbePoint]:
 					)
 				)
 		except (MotorError, HardwareMotorError, ToolError) as e:
-			await _raise_motor_error(worker, f"Grip probe failed after {len(points)} points: {str(e)}", e)
+			await _raise_motor_error(worker, f"The grip probe failed after {len(points)} points.", e)
 
 	return points
 
@@ -1476,13 +1486,7 @@ async def _perform_cycle_test(worker, location: StorageModuleCellLocation) -> No
 
 	cell = await _ensure_cell_is_testable(grid, location)
 
-	try:
-		coordinate = _build_coordinate_for_location(grid, location)
-	except (IndexError, ValueError, Exception) as exc:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=str(exc),
-		) from exc
+	coordinate = _coordinate_or_400(grid, location)
 
 	initial_item = cell.item.model_copy(deep=True) if cell.item is not None else None
 	is_initially_occupied = cell.status == CellStatus.OCCUPIED
@@ -1508,11 +1512,12 @@ async def _perform_cycle_test(worker, location: StorageModuleCellLocation) -> No
 
 			grid.save()
 		except (MotorError, HardwareMotorError, ToolError) as e:
-			await _raise_motor_error(worker, f"Cycle test failed: {str(e)}", e)
+			await _raise_motor_error(worker, "The cycle test failed.", e)
 		except Exception as exc:
-			raise HTTPException(
-				status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-				detail=f"Cycle test failed: {exc}",
+			raise api_error(
+				status.HTTP_500_INTERNAL_SERVER_ERROR,
+				"calibration_test_failed",
+				"The cycle test did not finish. Check the robot before continuing.",
 			) from exc
 
 
@@ -1880,7 +1885,7 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 			await tool._ms.home()
 			await tool._mg.home()
 	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Failed to home tool motors: {str(e)}", e, axes=["stage", "z_axis"])
+		await _raise_motor_error(worker, "The tool motors could not be homed.", e, axes=["stage", "z_axis"])
 
 	worker.clear_needs_home_axes(["stage", "z_axis"])
 	_clear_matching_tool_motor_crash_state(worker, ["stage", "z_axis"])
@@ -2007,9 +2012,10 @@ def _with_iobox_door_positions(door_config, close: float, open: float):
 	try:
 		return type(door_config).model_validate(config_dict)
 	except ValueError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Invalid IO door positions: {exc}",
+		raise api_error(
+			status.HTTP_400_BAD_REQUEST,
+			"door_positions_invalid",
+			"Those IO door positions are not valid.",
 		) from exc
 
 
@@ -2075,9 +2081,11 @@ async def move_iobox_door(request: IOBoxDoorMoveRequest):
 					motor._params = original_config
 			await io.refresh_door_state(force=True)
 	except (IOBoxError, MotorError, HardwareMotorError) as exc:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail=f"Failed to move IO door: {exc}",
+		raise hardware_api_error(
+			exc,
+			status.HTTP_503_SERVICE_UNAVAILABLE,
+			"door_control_failed",
+			"The machine door did not move. Try again.",
 		) from exc
 
 	return {"success": True, "position": request.position, "position_mm": target}
@@ -2205,7 +2213,7 @@ async def move_to_iobox_position(position: IOBoxPositionName) -> IOBoxPositionRe
 			await _retract_tool_for_move(tool, worker)
 			await tool.rotate_to_position("front")
 		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=["rotate"])
+			await _raise_motor_error(worker, "The robot could not move to the IO box position.", e, axes=["rotate"])
 
 		try:
 			await io.open_door()
@@ -2215,7 +2223,7 @@ async def move_to_iobox_position(position: IOBoxPositionName) -> IOBoxPositionRe
 		try:
 			await tool.move(AxisCoordinate(x, y))
 		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+			await _raise_motor_error(worker, "The robot could not move to the IO box position.", e)
 	_iobox_position = position
 	iobox_current.warnings = None
 
@@ -2300,7 +2308,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 			axes = ["z_axis"]
 		elif request.axis == "stage":
 			axes = ["stage"]
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e, axes=axes)
+		await _raise_motor_error(worker, "The IO box axis could not jog.", e, axes=axes)
 
 	iobox_current.warnings = warnings if warnings else None
 
@@ -2340,7 +2348,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 			await _retract_tool_for_move(tool, worker)
 			await tool.rotate_to_position("front")
 		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+			await _raise_motor_error(worker, "The IO box test failed.", e)
 
 		try:
 			await io.open_door()
@@ -2350,7 +2358,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 		try:
 			await tool.move(AxisCoordinate(iobox_current.pickup_low_x, iobox_current.pickup_low_y))
 		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+			await _raise_motor_error(worker, "The IO box test failed.", e)
 
 		stage_ext = iobox_current.stage_extension
 		grip_ext = iobox_current.z_extension
@@ -2382,7 +2390,7 @@ async def test_iobox_sequence(with_gripper: bool = False):
 			if with_gripper is True:
 				await tool.release("io test release")
 		except (MotorError, HardwareMotorError, ToolError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+			await _raise_motor_error(worker, "The IO box test failed.", e)
 	return {"success": True}
 
 
@@ -2430,7 +2438,7 @@ async def test_iobox_multi_item_cycle():
 			await _retract_tool_for_move(tool, worker)
 			await tool.rotate_to_position("front")
 		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+			await _raise_motor_error(worker, "The IO box multi-item test failed.", e)
 
 		try:
 			await io.open_door()
@@ -2448,7 +2456,7 @@ async def test_iobox_multi_item_cycle():
 			await tool.release("multi-item test release")
 			await tool.retract_empty()
 		except (MotorError, HardwareMotorError, ToolError) as e:
-			await _raise_motor_error(worker, f"Multi-item test failed: {str(e)}", e)
+			await _raise_motor_error(worker, "The IO box multi-item test failed.", e)
 	return {"success": True}
 
 
@@ -2499,14 +2507,14 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 			await worker._robot._tool.release("save home release")
 		except GripVerificationError as e:
 			# Homing would drag what the gripper still holds.
-			await _raise_motor_error(worker, f"Gripper did not release before homing: {str(e)}", e)
+			await _raise_motor_error(worker, "The gripper did not release before homing.", e)
 		except Exception:
 			pass
 
 		try:
 			await worker._robot._tool.home()
 		except (MotorError, HardwareMotorError) as e:
-			await _raise_motor_error(worker, f"Failed to home tool: {str(e)}", e)
+			await _raise_motor_error(worker, "The tool could not be homed.", e)
 
 		try:
 			await worker._robot._io.home_door()
@@ -2597,7 +2605,7 @@ async def rotate_to_angle(angle: float):
 				return {"success": True}
 			# A rotation is only safe once both tool axes are retracted; retract instead of
 			# rejecting a rotation that starts from an extended tool.
-			await _retract_tool_for_move(tool, worker, blocked_message="Rotation blocked")
+			await _retract_tool_for_move(tool, worker, blocked_message="The tool could not retract far enough to rotate.")
 			original_x = await tool.ensure_safe_rotation_x_position()
 			try:
 				await tool.ensure_safe_rotation_stage_extension()
@@ -2605,19 +2613,16 @@ async def rotate_to_angle(angle: float):
 			finally:
 				await tool.restore_safe_rotation_x_position(original_x)
 	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Rotation failed: {str(e)}", e)
+		await _raise_motor_error(worker, "The tool could not rotate.", e)
 	except MovementError as e:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
-			detail=_build_error_detail(
-				f"Rotation blocked: {str(e)}",
-				code="rotation_blocked",
-			),
+			detail=_build_error_detail(CODE_MESSAGES["rotation_blocked"], code="rotation_blocked"),
 		) from e
 	except ConfigError as e:
 		raise HTTPException(
 			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=_build_error_detail(f"Invalid rotation configuration: {str(e)}", code="config_error"),
+			detail=_build_error_detail("The rotation settings are not valid. Check the rotation configuration.", code="config_error"),
 		) from e
 
 	return {"success": True}
@@ -2776,7 +2781,7 @@ async def move_stage(request: StageMoveRequest):
 			await tool._ms.move_to_position(target)
 			await tool._ms.stop()
 	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Motor error: {str(e)}", e)
+		await _raise_motor_error(worker, "The stage could not move.", e)
 
 	return {"position": target, "warnings": warnings if warnings else None}
 
@@ -2807,4 +2812,4 @@ async def abort_calibration():
 		await worker.get_status_snapshot(force_refresh=True)
 		return {"success": True}
 	except (MotorError, HardwareMotorError) as e:
-		await _raise_motor_error(worker, f"Abort failed: {str(e)}", e)
+		await _raise_motor_error(worker, "The calibration could not be aborted.", e)

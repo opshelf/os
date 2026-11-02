@@ -38,29 +38,23 @@ from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settin
 logger = logging.getLogger(__name__)
 
 # Exception types that are not code bugs. In an unhandled 500 they get a
-# derived code and, when listed, str(exc) as the message; everything else gets
-# the CODE_MESSAGES sentence for its code. Full detail remains in the log and
-# Sentry, tied to the client by the correlation id.
-SAFE_500_TYPES: tuple[tuple[type[BaseException], str, bool], ...] = (
-	# (exception type, code, surface str(exc)?)
-	# surface str=True -> str(exc), or the code's sentence when empty
-	# surface str=False -> the code's sentence
-	# (str(exc) is not safe to surface: config loader
-	# messages embed absolute paths; SQLAlchemy messages
-	# embed the statement and bound parameters)
-	(TimeoutError, "timeout", True),
-	(ConfigError, "config_error", False),
-	(HardwareConfigError, "config_error", False),
-	(SQLAlchemyError, "db_error", False),
+# derived code and its CODE_MESSAGES sentence; str(exc) never reaches the
+# message (config loader text embeds absolute paths, SQLAlchemy text the
+# statement and bound parameters). Full detail remains in the log, Sentry and
+# the developer's detail.debug, tied to the client by the correlation id.
+SAFE_500_TYPES: tuple[tuple[type[BaseException], str], ...] = (
+	(TimeoutError, "timeout"),
+	(ConfigError, "config_error"),
+	(HardwareConfigError, "config_error"),
+	(SQLAlchemyError, "db_error"),
 )
 
 
 def internal_error_detail(exc: BaseException) -> tuple[str, str]:
 	"""Return the (code, message) for an unhandled exception's 500 body."""
-	for exc_type, code, surface_str in SAFE_500_TYPES:
+	for exc_type, code in SAFE_500_TYPES:
 		if isinstance(exc, exc_type):
-			sentence = CODE_MESSAGES.get(code, GENERIC_ERROR_MESSAGE)
-			return code, (str(exc) or sentence) if surface_str else sentence
+			return code, CODE_MESSAGES.get(code, GENERIC_ERROR_MESSAGE)
 	return "internal_error", CODE_MESSAGES["internal_error"]
 
 
@@ -125,6 +119,8 @@ CODE_MESSAGES: dict[str, str] = {
 	"cabinet_status_failed": "The machine door status could not be read. Try again.",
 	"camera_not_found": "That camera is not set up on this machine.",
 	"camera_unavailable": "That camera is not delivering frames.",
+	"calibration_test_failed": "The cycle test did not finish. Check the robot before continuing.",
+	"cell_not_calibrated": "That cell has no calibration point. Calibrate it first.",
 	"cell_not_found": "That cell does not exist.",
 	"cell_status_invalid": "That cell status is not valid.",
 	"cell_too_small": "The item does not fit in that cell. Choose a larger one.",
@@ -140,6 +136,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"db_error": "The robot could not save the change. Try again.",
 	"dimension_invalid": "Enter a size greater than zero.",
 	"door_control_failed": "The machine door did not move. Try again.",
+	"door_positions_invalid": "Those IO door positions are not valid.",
 	"error": "The robot could not complete the action.",
 	"forbidden": "You do not have permission to do that.",
 	"frame_encode_failed": "The IO box camera image could not be read. Try again.",
@@ -152,6 +149,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"iobox_sizer_unavailable": "The IO box measure tool is not available. Try again.",
 	"io_box_occupied": "The IO box is not empty. Take the item off the scale and wait for it to read empty.",
 	"item_not_found": "There is no item in that cell.",
+	"laser_read_failed": "The laser distance could not be read. Try again.",
 	"method_not_allowed": "That request is not supported.",
 	"motor_alarm": "A motor drive raised an alarm and stopped. Clear the alarm, then reset the robot.",
 	"motor_alarm_clear_failed": "The robot alarm could not be cleared. Try again.",
@@ -460,14 +458,13 @@ def _clean_message(exc: BaseException) -> str:
 	# sentence; the mapped handler logs the exception with its traceback.
 	if isinstance(exc, IntegrityError):
 		return CODE_MESSAGES["conflict"]
-	# OSError str() prefixes the errno, e.g. "[Errno 5] short write to printer",
-	# and appends the offending path, e.g. "...: '/dev/usb/lp0'". strerror is the
-	# readable part; the path is a server-side detail.
+	# Driver and timeout text ("[Errno 5] short write to printer: '/dev/usb/lp0'",
+	# "Gantry wait exceeded 30s timeout") is not operator copy; it reaches the log and
+	# the developer's detail.debug. TimeoutError is an OSError, so it is checked first.
+	if isinstance(exc, TimeoutError):
+		return CODE_MESSAGES["timeout"]
 	if isinstance(exc, OSError):
-		if getattr(exc, "filename", None) is not None:
-			return exc.strerror or CODE_MESSAGES["hardware_io"]
-		message = re.sub(r"^\[Errno \d+\] ", "", str(exc))
-		return message or CODE_MESSAGES["hardware_io"]
+		return CODE_MESSAGES["hardware_io"]
 	return str(exc) or CODE_MESSAGES["error"]
 
 

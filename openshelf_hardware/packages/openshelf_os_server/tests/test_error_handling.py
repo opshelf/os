@@ -402,7 +402,7 @@ def test_motor_fault_behind_a_catch_all_gets_its_own_code() -> None:
 
 def test_every_derived_code_has_its_own_sentence() -> None:
 	"""A code without copy would ship the generic sentence instead of its own."""
-	derived = {code for _, code, _ in SAFE_500_TYPES} | set(DEFAULT_STATUS_CODES.values())
+	derived = {code for _, code in SAFE_500_TYPES} | set(DEFAULT_STATUS_CODES.values())
 	assert derived - CODE_MESSAGES.keys() == set()
 
 
@@ -453,6 +453,61 @@ def _emitted_router_codes() -> set[str]:
 					):
 						codes.add(value.value)
 	return codes
+
+
+# Exceptions whose text is hand-written operator copy (the kiosk matches some of
+# these sentences exactly), and routes whose manager raises only such sentences.
+_OPERATOR_COPY_EXCEPTIONS = {
+	"BinWorkflowConflict",
+	"CycleTestStartError",
+	"DirectStoreReservationError",
+	"NoCompatibleBinError",
+	"ValidationError",
+}
+_OPERATOR_COPY_ROUTES = {"abort_laser_auto_calibration", "stream_laser_auto_calibration"}
+# Call name -> position of its client-visible message argument.
+_MESSAGE_ARGUMENT = {
+	"api_error": 2,
+	"hardware_api_error": 3,
+	"error_detail": 0,
+	"_build_error_detail": 0,
+	"_raise_motor_error": 1,
+}
+
+
+def _raw_exception_messages(tree: ast.AST) -> list[str]:
+	found: list[str] = []
+
+	def visit(node: ast.AST, function: str) -> None:
+		if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+			function = node.name
+		if isinstance(node, ast.ExceptHandler) and node.name is not None and function not in _OPERATOR_COPY_ROUTES:
+			caught = {n.id if isinstance(n, ast.Name) else getattr(n, "attr", "") for n in ast.walk(node.type)} if node.type else set()
+			if caught.isdisjoint(_OPERATOR_COPY_EXCEPTIONS):
+				for call in (n for statement in node.body for n in ast.walk(statement) if isinstance(n, ast.Call)):
+					name = call.func.id if isinstance(call.func, ast.Name) else getattr(call.func, "attr", "")
+					messages = [k.value for k in call.keywords if k.arg == "detail"] if name == "HTTPException" else []
+					if name in _MESSAGE_ARGUMENT and len(call.args) > _MESSAGE_ARGUMENT[name]:
+						messages.append(call.args[_MESSAGE_ARGUMENT[name]])
+					for message in messages:
+						if any(isinstance(n, ast.Name) and n.id == node.name for n in ast.walk(message)):
+							found.append(f"{function}:{call.lineno}")
+		for child in ast.iter_child_nodes(node):
+			visit(child, function)
+
+	visit(tree, "")
+	return found
+
+
+def test_router_messages_never_carry_raw_exception_text() -> None:
+	"""Exception text belongs in the log and the developer's detail.debug; in the
+	message it reaches the kiosk, which shows detail.message verbatim."""
+	router_dir = pathlib.Path(__file__).resolve().parents[1] / "src" / "openshelf_os_server" / "routers"
+	found = []
+	for path in sorted(router_dir.glob("*.py")):
+		tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+		found += [f"{path.name}:{site}" for site in _raw_exception_messages(tree)]
+	assert found == []
 
 
 def test_every_router_emitted_code_has_a_code_message() -> None:

@@ -171,7 +171,8 @@ async def test_rotate_to_angle_clearance_blocked_returns_409(client: AsyncClient
 	assert response.status_code == 409
 	detail = response.json()["detail"]
 	assert detail["code"] == "rotation_blocked"
-	assert "z_axis=162.470mm exceeds maximum 5.000mm" in detail["message"]
+	# The axis and limit reach the developer through detail.debug, not the message.
+	assert "z_axis" not in detail["message"]
 	assert "needs_home" not in detail
 	worker.set_needs_home.assert_not_called()
 
