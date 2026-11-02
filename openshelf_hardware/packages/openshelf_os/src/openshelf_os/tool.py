@@ -1045,7 +1045,8 @@ class Tool:
         self,
         *,
         should_ensure_safe_stage_extension: bool = True,
-    ) -> None:
+    ) -> bool:
+        """Turn to the home orientation; True when the stage was extended for the turn."""
         if self._mr is None:
             raise MotorError("Rotate motor required for rotation")
 
@@ -1063,18 +1064,20 @@ class Tool:
                 target_angle = float(rotation_back)
 
             if await self.is_rotation_at_position(target_angle):
-                return
-
+                return False
 
             original_x = await self.ensure_safe_rotation_x_position()
+            did_extend_stage = False
 
             try:
                 if should_ensure_safe_stage_extension is True:
-                    await self.ensure_safe_rotation_stage_extension()
+                    did_extend_stage = await self.ensure_safe_rotation_stage_extension()
 
                 await self._mr.move_to_position(target_angle)
             finally:
                 await self.restore_safe_rotation_x_position(original_x)
+
+            return did_extend_stage
 
         except Exception as e:
             await self._handle_fault(e)
@@ -1689,10 +1692,8 @@ class Tool:
         if await self._rotation_off_x_pose() is None:
             return
 
-        stage_before_mm = None if self._ms is None else float(await self._ms.get_position())
-        await self.rotate_to_home_orientation()
-        # rotate_to_home_orientation may extend the stage for the turn; homing it again retracts it.
-        if self._ms is not None and abs(float(await self._ms.get_position()) - stage_before_mm) > 0.5:
+        # The turn may extend the stage; homing it again retracts it.
+        if await self.rotate_to_home_orientation() is True and self._ms is not None:
             await self._ms.home()
 
     async def _home_sequence(
@@ -1712,9 +1713,9 @@ class Tool:
         # real coordinates (after a power loss the drive reads 0 wherever the carriage stands);
         # with the tool at an unknown angle it can stop on a gantry upright short of the hard
         # stop. It runs even when X is homed, since a stale _is_homed (drive power dropped after an
-        # emergency stop) leaves wrong coordinates; the X guard still refuses it for a homed X with
-        # the tool rotated. The rotate sequence then re-homes X verified with the tool straight,
-        # which sets the zero every later move uses.
+        # emergency stop) leaves wrong coordinates; the X guard refuses it for a homed X with the
+        # tool rotated, so the tool is straightened first. The rotate sequence then re-homes X
+        # verified with the tool straight, which sets the zero every later move uses.
         will_home_rotate = should_home("rotate") and self._mr is not None
         for motor, axis in ((self._mg, "z_axis"), (self._ms, "stage"), (self._mx, "x_axis")):
             if motor is None or should_home(axis) is False:
@@ -1722,15 +1723,9 @@ class Tool:
             provisional = axis == "x_axis" and will_home_rotate
             if provisional is True and getattr(motor, "_is_homed", False) is True:
                 # The X guard refuses even a provisional home of a homed X while the tool is off
-                # its front/back pose (e.g. after an abort); straighten the tool first.
-                try:
-                    await self._straighten_rotate_before_x_home()
-                except Exception as e:
-                    if isolate is False:
-                        raise
-                    self._logger.warning("init rotate straightening failed: %s", e)
-                    failed_home_motors.append(motor)
-                    continue
+                # its front/back pose (e.g. after an abort); straighten the tool first. Isolated
+                # startup homing never gets here: a fresh Robot has X unhomed.
+                await self._straighten_rotate_before_x_home()
             if isolate is True:
                 if await self._home_step_isolated(
                     motor, failed_config_motors, provisional=provisional
