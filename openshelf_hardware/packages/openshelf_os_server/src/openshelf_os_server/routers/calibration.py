@@ -388,7 +388,7 @@ def _clamp_value(value: float, limit: float, label: str, warnings: list[str]) ->
 	clamped = max(0.0, min(limit, value))
 	if clamped != value:
 		warnings.append(
-			f"{label} limit reached; requested {value:.2f}mm, clamped to {clamped:.2f}mm (limit {limit:.2f}mm)"
+			f"The {label} limit is {limit:.2f} mm, so the move to {value:.2f} mm stopped at {clamped:.2f} mm."
 		)
 	return clamped
 
@@ -400,7 +400,7 @@ def _clamp_motor_value(value: float, motor, label: str, warnings: list[str]) -> 
 
 	if clamped != value:
 		warnings.append(
-			f"{label} limit reached; requested {value:.2f}mm, clamped to {clamped:.2f}mm (range {lower_limit:.2f}-{upper_limit:.2f}mm)"
+			f"The {label} range is {lower_limit:.2f} to {upper_limit:.2f} mm, so the move to {value:.2f} mm stopped at {clamped:.2f} mm."
 		)
 
 	return clamped
@@ -1209,7 +1209,7 @@ async def jog_axis(request: JogRequest) -> PositionResponse:
 				if tool._ms is None:
 					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The stage motor is not configured on this machine.")
 				await _clear_motors_for_move(tool, stage=True)
-				new_slide = _clamp_value(new_slide + request.delta, stage_limit, "Stage", warnings)
+				new_slide = _clamp_value(new_slide + request.delta, stage_limit, "stage", warnings)
 				await tool._ms.move_to_position(new_slide)
 	except (MotorError, HardwareMotorError, RotationClearanceError) as e:
 		if isinstance(e, RotationClearanceError):
@@ -2222,7 +2222,7 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 				if tool._ms is None:
 					raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The stage motor is not configured on this machine.")
 				await _clear_motors_for_move(tool, stage=True)
-				new_value = _clamp_value(current_value + request.delta, tool._ms._params.lim, "Stage", warnings)
+				new_value = _clamp_value(current_value + request.delta, tool._ms._params.lim, "stage", warnings)
 				new_value = _round_iobox_calibration_value(new_value)
 				await tool._ms.move_to_position(new_value)
 			setattr(iobox_current, field, new_value)
@@ -2694,7 +2694,7 @@ async def move_stage(request: StageMoveRequest):
 	stage_limit = tool._ms._params.lim
 
 	warnings: list[str] = []
-	target = _clamp_value(request.position, stage_limit, "Stage", warnings)
+	target = _clamp_value(request.position, stage_limit, "stage", warnings)
 
 	try:
 		async with manual_motion_guard("calibration_stage", worker=worker):

@@ -89,7 +89,7 @@
 		try {
 			const result = await moveStage(target);
 			message = 'Stage extended.';
-			warning = result.warnings && result.warnings.length > 0 ? result.warnings.join('; ') : '';
+			warning = result.warnings && result.warnings.length > 0 ? result.warnings.join(' ') : '';
 		} catch (err) {
 			await notifyNeedsHome(err);
 			error = err instanceof Error ? err.message : 'Failed to extend stage.';
@@ -212,7 +212,7 @@
 {/if}
 
 {#if warning !== ''}
-	<StatusMessage message={`warning: ${warning}`} />
+	<StatusMessage message={`Warning: ${warning}`} />
 {/if}
 
 {#if error !== ''}

@@ -22,7 +22,8 @@
 		type CalibrationStatus,
 		type IOBoxDoorPosition,
 		type IOBoxPosition,
-		type IOBoxPositionName
+		type IOBoxPositionName,
+		formatHomeRequired
 	} from '$lib/api';
 	import { robotStatus } from '$lib/stores';
 	import { splitToastMessage, TOAST_DETAIL_SEPARATOR } from '$lib/toasts';
@@ -108,7 +109,7 @@
 		needsHome && (needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
 	);
 	const homeMessage = $derived(
-		needsHome ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
+		needsHome ? formatHomeRequired(needsHomeReason) : ''
 	);
 	const selectedFields = $derived(POSITION_FIELDS[selectedPosition]);
 	const isMultiItem = $derived(selectedPosition === 'multi_item');
@@ -326,7 +327,7 @@
 			syncEditValues();
 			restoreEditValues(previousValues, [movedField]);
 			const warnings = ioboxPosition?.warnings ?? [];
-			warning = warnings.length > 0 ? warnings.join('; ') : '';
+			warning = warnings.length > 0 ? warnings.join(' ') : '';
 			return true;
 		} catch (err) {
 			handleNeedsHomeError(err);
@@ -517,7 +518,7 @@
 			}
 		}
 
-		warning = moveWarnings.join('; ');
+		warning = moveWarnings.join(' ');
 		message = 'Moved all changed values.';
 	}
 
@@ -916,7 +917,7 @@
 {/if}
 
 {#if warning !== ''}
-	<StatusMessage message={`warning: ${warning}`} />
+	<StatusMessage message={`Warning: ${warning}`} />
 {/if}
 
 {#if error !== '' && duplicateHomeError === false}

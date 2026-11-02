@@ -695,7 +695,7 @@ async def assign_tray(
         await session.execute(select(Item).where(Item.barcode == payload.barcode))
     ).scalar_one_or_none()
     if existing_item is not None:
-        raise api_error(409, "barcode_taken", "That barcode already belongs to an item.")
+        raise api_error(409, "barcode_taken", "That barcode belongs to an item.")
 
     stale_row = (
         (

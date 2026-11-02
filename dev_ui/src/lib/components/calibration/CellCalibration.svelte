@@ -319,7 +319,7 @@
 			message = 'Stage extended.';
 			const warnings = result.warnings ?? [];
 
-			warning = warnings.length > 0 ? warnings.join('; ') : '';
+			warning = warnings.length > 0 ? warnings.join(' ') : '';
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'Failed to extend stage.';
@@ -406,7 +406,7 @@
 			currentPosition = await jogAxis(axis, delta);
 			syncEditValues();
 			const warnings = currentPosition?.warnings ?? [];
-			warning = warnings.length > 0 ? warnings.join('; ') : '';
+			warning = warnings.length > 0 ? warnings.join(' ') : '';
 		} catch (err) {
 			handleNeedsHomeError(err);
 			error = err instanceof Error ? err.message : 'Failed to jog axis.';
@@ -796,7 +796,7 @@
 	{/if}
 
 	{#if warning !== ''}
-		<StatusMessage message={`warning: ${warning}`} />
+		<StatusMessage message={`Warning: ${warning}`} />
 	{/if}
 
 	{#if error !== ''}
