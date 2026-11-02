@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from openshelf_os_server.errors import CODE_MESSAGES
+
 DESCRIPTION = """Local device API for engineers working on inventory, robot control, calibration,
 and diagnostics. All application routes, including engineering and development operations,
 are documented here. Cloud integrators should use the
@@ -102,7 +104,7 @@ class ErrorResponse(BaseModel):
 
     detail: str | dict[str, Any] | list[Any] = Field(
         description="Text, an operation-specific error object, or request validation errors.",
-        examples=[{"message": "The robot needs to be reset before this can continue.", "code": "home_required"}],
+        examples=[{"message": CODE_MESSAGES["home_required"], "code": "home_required"}],
     )
 
 

@@ -16,7 +16,7 @@ from ..core.login import generate_login_barcode
 from ..settings import get_settings
 from .auth_deps import get_current_user, require_permissions
 from .printer import _print_payload as print_payload
-from openshelf_os_server.errors import api_error
+from openshelf_os_server.errors import api_error, error_detail
 
 router = APIRouter(
 	prefix="/api/users",
@@ -379,21 +379,19 @@ async def print_login_barcode(
 	except Exception as exc:
 		raise HTTPException(
 			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail={
-				"message": "The new label code is saved, but the printer did not print. The old label no longer works.",
-				"code": "label_print_failed",
-				"login_barcode_assigned": True,
-			},
+			detail=error_detail(
+				"", "label_print_failed",
+				login_barcode_assigned=True,
+			),
 		) from exc
 
 	if not printed:
 		raise HTTPException(
 			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail={
-				"message": "The new label code is saved, but the printer did not print. The old label no longer works.",
-				"code": "label_print_failed",
-				"login_barcode_assigned": True,
-			},
+			detail=error_detail(
+				"", "label_print_failed",
+				login_barcode_assigned=True,
+			),
 		)
 
 	return LoginBarcodePrintResponse(

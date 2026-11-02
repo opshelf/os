@@ -136,7 +136,7 @@ async def manual_motion_guard(
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
-				"Movement already in progress",
+				"",
 				reason=_current_operation,
 			),
 		)
@@ -164,7 +164,7 @@ async def robot_command_enqueue_guard() -> AsyncIterator[None]:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
-				"Movement already in progress",
+				"",
 				reason=_current_operation,
 			),
 		)

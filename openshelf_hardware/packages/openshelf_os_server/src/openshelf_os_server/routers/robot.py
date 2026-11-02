@@ -461,13 +461,12 @@ def _ensure_command_allowed_while_needs_home(command: RobotCommands, worker: Rob
 
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
-        detail={
-            "message": "The robot needs to be reset before this can continue.",
-            "code": "home_required",
-            "needs_home": True,
-            "needs_home_axes": worker.needs_home_axes(),
-            "reason": worker.needs_home_reason(),
-        },
+        detail=error_detail(
+            "", "home_required",
+            needs_home=True,
+            needs_home_axes=worker.needs_home_axes(),
+            reason=worker.needs_home_reason(),
+        ),
     )
 
 
@@ -1198,11 +1197,10 @@ async def acknowledge_safety_guard(
         safety = result.get("safety", {})
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": "The robot is still stopped. Clear the reason and try again.",
-                "code": "safety_interruption_active",
-                "active_sources": safety.get("active_sources", []),
-            },
+            detail=error_detail(
+                "", "safety_interruption_active",
+                active_sources=safety.get("active_sources", []),
+            ),
         )
 
     return SuccessResponse()

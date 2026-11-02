@@ -167,12 +167,12 @@ export async function describeFailedResponse(
 	return formatErrorMessage(headline, detail, `${request} → ${response.status}`);
 }
 
-/** A failed robot event or command result, with the developer detail the server attached. */
 // The reason stays raw: recovery reads motor ids out of it.
 export function formatHomeRequired(reason: string): string {
 	return reason === '' ? 'Home required.' : `Home required: ${reason.replace(/\.$/, '')}.`;
 }
 
+/** A failed robot event or command result, with the developer detail the server attached. */
 export function formatFailure(data: Record<string, unknown>): string {
 	const error = typeof data.error === 'string' ? data.error : 'The robot command failed.';
 	const code = [data.fault_code, data.code].find((value) => typeof value === 'string') as

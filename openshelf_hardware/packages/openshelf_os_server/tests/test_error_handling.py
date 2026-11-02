@@ -4,6 +4,7 @@ import errno
 import logging
 import pathlib
 import re
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -614,22 +615,29 @@ def test_route_messages_do_not_restate_their_code_sentence() -> None:
 	and gets it. A restated copy drifts from the served sentence on the next edit, so a
 	route literal must add a word its code sentence lacks (a name, a reason, a step)."""
 	source_dir = pathlib.Path(__file__).resolve().parents[1] / "src" / "openshelf_os_server"
-	positions = {"api_error": (1, 2), "hardware_api_error": (2, 3), "error_detail": (1, 0)}
+	positions = {"api_error": (1, 2), "hardware_api_error": (2, 3), "error_detail": (1, 0), "CycleTestStartError": (0, 1)}
 
 	def words(text: str) -> set[str]:
 		return set(re.findall(r"[a-z0-9']+", text.lower()))
 
+	def const(node: ast.AST | None) -> Any:
+		return node.value if isinstance(node, ast.Constant) else None
+
 	restated = []
 	for path in sorted(source_dir.rglob("*.py")):
 		for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
-			name = getattr(node, "func", None) and getattr(node.func, "id", getattr(node.func, "attr", None))
-			if name not in positions or len(node.args) <= max(positions[name]):
-				continue
-			code, message = (node.args[index] for index in positions[name])
-			if not (isinstance(code, ast.Constant) and isinstance(message, ast.Constant) and isinstance(message.value, str)):
-				continue
-			if message.value != "" and words(message.value) <= words(CODE_MESSAGES.get(code.value, "")):
-				restated.append(f"{path.relative_to(source_dir)}:{node.lineno} {code.value}")
+			pairs = []
+			if isinstance(node, ast.Call):
+				name = getattr(node.func, "id", getattr(node.func, "attr", None))
+				if name in positions and len(node.args) > max(positions[name]):
+					pairs.append(tuple(const(node.args[index]) for index in positions[name]))
+			elif isinstance(node, ast.Dict):
+				entries = {const(key): const(value) for key, value in zip(node.keys, node.values)}
+				pairs.append((entries.get("code"), entries.get("message")))
+			for code, message in pairs:
+				if isinstance(code, str) and isinstance(message, str) and message != "":
+					if words(message) <= words(CODE_MESSAGES.get(code, "")):
+						restated.append(f"{path.relative_to(source_dir)}:{node.lineno} {code}")
 	assert restated == []
 
 
