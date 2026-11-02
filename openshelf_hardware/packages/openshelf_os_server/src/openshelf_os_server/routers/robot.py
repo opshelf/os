@@ -332,6 +332,17 @@ class MotorProbeResponse(BaseModel):
     reason: Optional[str] = None
 
 
+class MotorLimitSwitchState(BaseModel):
+    motor_name: str
+    enabled: bool
+    min_engaged: Optional[bool] = None
+    error: Optional[str] = None
+
+
+class MotorLimitSwitchesResponse(BaseModel):
+    results: List[MotorLimitSwitchState] = Field(default_factory=list)
+
+
 class MotorMoveRequest(BaseModel):
     position_mm: float = Field(..., description="Target position in millimeters")
 
@@ -1951,6 +1962,70 @@ async def probe_motors(
 
         reason = exc.detail.get("reason") if isinstance(exc.detail, dict) else None
         return MotorProbeResponse(busy=True, reason=reason)
+
+
+def _read_motor_limit_switch(worker: RobotWorker, motor_name: str) -> Optional[MotorLimitSwitchState]:
+    motor = worker._robot._get_motor_by_name(motor_name)
+    if motor is None:
+        return None
+
+    try:
+        engaged = motor.read_home_limit()
+    except Exception as exc:
+        logging.warning("Limit switch read failed for %s", motor_name, exc_info=exc)
+        return MotorLimitSwitchState(motor_name=motor_name, enabled=True, error="read failed")
+
+    return MotorLimitSwitchState(motor_name=motor_name, enabled=engaged is not None, min_engaged=engaged)
+
+
+@router.get(
+    "/debug/motors/limit_switches",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Read motor limit switches",
+    responses=response_docs(model=MotorLimitSwitchesResponse, errors=(401, 503)),
+)
+async def get_motor_limit_switches(
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> MotorLimitSwitchesResponse:
+    """Read motor limit switches.
+
+    Reads each configured motor's min (home) limit switch without commanding motion.
+    `min_engaged` is the logical state (true when engaged); `enabled=false` means the motor
+    has no limit switch or its limit switches are disabled in config.
+    """
+    results: List[MotorLimitSwitchState] = []
+    for section_motors in worker.get_motor_names().values():
+        for motor_name in section_motors:
+            state = _read_motor_limit_switch(worker, motor_name)
+            if state is not None:
+                results.append(state)
+
+    return MotorLimitSwitchesResponse(results=results)
+
+
+@router.get(
+    "/debug/motors/{motor_name}/limit_switches",
+    dependencies=[Depends(get_current_user), Depends(check_robot_enabled)],
+    summary="Read one motor's limit switches",
+    responses=response_docs(model=MotorLimitSwitchState, errors=(401, 404, 503)),
+)
+async def get_motor_limit_switch(
+    motor_name: str,
+    worker: RobotWorker = Depends(get_robot_worker_or_error),
+) -> MotorLimitSwitchState:
+    """Read one motor's limit switches.
+
+    Same reading as the list endpoint for a single motor. Unknown names return `404`.
+    """
+    state = _read_motor_limit_switch(worker, motor_name)
+    if state is None:
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            "motor_not_configured",
+            "That motor is not configured on this machine.",
+        )
+
+    return state
 
 
 @router.post(

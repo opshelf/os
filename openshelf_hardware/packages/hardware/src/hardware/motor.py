@@ -449,6 +449,12 @@ class Motor():
     def is_homed(self) -> bool:
         return self._is_homed
 
+    def read_home_limit(self) -> Optional[bool]:
+        """Engaged state of the home limit switch, or None when the motor has none."""
+        if self._home_limit_input is None:
+            return None
+        return self._home_limit_input.read()
+
     def is_hard_stopped(self) -> bool:
         return self._hard_stopped
 

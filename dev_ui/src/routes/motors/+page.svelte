@@ -10,8 +10,11 @@
 		controlDoor,
 		moveMotor,
 		probeMotors,
+		getMotorLimitSwitches,
+		getMotorLimitSwitch,
 		apiFetch,
 		type MotorList,
+		type MotorLimitSwitchState,
 		type MotorInfo,
 		type GripperState,
 		type DoorAction
@@ -20,6 +23,7 @@
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 	import { orderSectionMoves, type MotorMove } from '$lib/motor-order';
 	import { robotStatus } from '$lib/stores';
+	import { postToast } from '$lib/toasts';
 
 	let motors: MotorList | null = null;
 	let isLoading = true;
@@ -38,6 +42,7 @@
 	let isProbing = false;
 	let sectionAction: string | null = null;
 	let motorPositions: Record<string, string> = {};
+	let limitSwitches: Record<string, MotorLimitSwitchState> = {};
 	let pollError = '';
 
 	const POSITION_POLL_INTERVAL_MS = 1000;
@@ -58,6 +63,18 @@
 		}
 
 		return `${position} ${unitForMotor(motorName)}`;
+	}
+
+	function minLimitLabel(state: MotorLimitSwitchState | undefined): string {
+		if (state === undefined || state.enabled === false) {
+			return '-';
+		}
+
+		if (state.min_engaged === null) {
+			return '?';
+		}
+
+		return state.min_engaged === true ? 'H' : 'L';
 	}
 
 	function gantryMotors(): MotorInfo[] {
@@ -147,6 +164,47 @@
 			pollError = err instanceof Error ? err.message : 'failed to probe motors';
 		} finally {
 			isProbing = false;
+		}
+	}
+
+	async function fetchLimitSwitches(): Promise<void> {
+		if (browser === true && document.visibilityState !== 'visible') {
+			return;
+		}
+
+		try {
+			const result = await getMotorLimitSwitches();
+			const next: Record<string, MotorLimitSwitchState> = {};
+
+			for (const state of result.results) {
+				next[state.motor_name] = state;
+			}
+
+			limitSwitches = next;
+		} catch {
+			limitSwitches = {};
+		}
+	}
+
+	// A motor without an enabled min limit switch has nothing to check.
+	async function expectMinLimit(motorName: string, isHomed: boolean): Promise<void> {
+		const state = await getMotorLimitSwitch(motorName);
+		limitSwitches = { ...limitSwitches, [motorName]: state };
+
+		if (state.enabled === false) {
+			return;
+		}
+
+		if (state.min_engaged === null) {
+			throw new Error(`${motorName} min limit switch could not be read`);
+		}
+
+		if (state.min_engaged !== isHomed) {
+			const where = isHomed === true ? 'after homing' : 'away from home';
+			const expected = isHomed === true ? 'H' : 'L';
+			throw new Error(
+				`${motorName} min limit switch reads ${minLimitLabel(state)} ${where}, expected ${expected}`
+			);
 		}
 	}
 
@@ -251,7 +309,7 @@
 
 		try {
 			await fetchMotors();
-			await fetchPositions();
+			await Promise.all([fetchPositions(), fetchLimitSwitches()]);
 		} finally {
 			isLoading = false;
 		}
@@ -264,10 +322,13 @@
 			const testDistance = motorName === 'rotate' ? 1 : 10;
 
 			await moveMotor(motorName, testDistance);
+			await expectMinLimit(motorName, false);
 			await homeMotor(motorName);
+			await expectMinLimit(motorName, true);
 			testResults[motorName] = 'ok';
-		} catch {
+		} catch (err) {
 			testResults[motorName] = 'err';
+			postToast('error', err instanceof Error ? err.message : `${motorName} test failed`);
 		}
 	}
 
@@ -523,11 +584,13 @@
 		const didChangeVisibility = (): void => {
 			if (document.visibilityState === 'visible') {
 				void fetchPositions();
+				void fetchLimitSwitches();
 			}
 		};
 
 		const interval = setInterval(() => {
 			void fetchPositions();
+			void fetchLimitSwitches();
 		}, POSITION_POLL_INTERVAL_MS);
 
 		document.addEventListener('visibilitychange', didChangeVisibility);
@@ -573,7 +636,7 @@
 		<table class="motor-table">
 			<thead>
 				<tr>
-					<th colspan="6">
+					<th colspan="7">
 						<div class="section-heading">
 							<span>gantry motors</span>
 							<span>
@@ -593,9 +656,10 @@
 				</tr>
 				<tr>
 					<th>id</th>
-					<th class="motor-name">motor</th>
+					<th>motor</th>
 					<th>status</th>
-					<th class="position-column">POSITION</th>
+					<th>min</th>
+					<th>POSITION</th>
 					<th>move to</th>
 					<th>actions</th>
 				</tr>
@@ -604,7 +668,7 @@
 				{#each gantryMotors() as motor (motor.name)}
 					<tr>
 						<td class="motor-id">{motor.motor_id}</td>
-						<td class="motor-name">{motor.name}</td>
+						<td>{motor.name}</td>
 						<td>
 							{#if testingMotor === motor.name}
 								<span class="status-testing">TEST</span>
@@ -616,9 +680,8 @@
 								<span class="status-unknown">-</span>
 							{/if}
 						</td>
-						<td class="position-column"
-							>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
-						>
+						<td>{minLimitLabel(limitSwitches[motor.name])}</td>
+						<td>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td>
 						<td>
 							<input
 								type="number"
@@ -688,7 +751,7 @@
 		<table class="motor-table">
 			<thead>
 				<tr>
-					<th colspan="6">
+					<th colspan="7">
 						<div class="section-heading">
 							<span>tool motors</span>
 							<span>
@@ -713,9 +776,10 @@
 				</tr>
 				<tr>
 					<th>id</th>
-					<th class="motor-name">motor</th>
+					<th>motor</th>
 					<th>status</th>
-					<th class="position-column">POSITION</th>
+					<th>min</th>
+					<th>POSITION</th>
 					<th>move to</th>
 					<th>actions</th>
 				</tr>
@@ -724,7 +788,7 @@
 				{#each toolMotors() as motor (motor.name)}
 					<tr>
 						<td class="motor-id">{motor.motor_id}</td>
-						<td class="motor-name">{motor.name}</td>
+						<td>{motor.name}</td>
 						<td>
 							{#if testingMotor === motor.name}
 								<span class="status-testing">TEST</span>
@@ -736,9 +800,8 @@
 								<span class="status-unknown">-</span>
 							{/if}
 						</td>
-						<td class="position-column"
-							>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
-						>
+						<td>{minLimitLabel(limitSwitches[motor.name])}</td>
+						<td>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td>
 						<td>
 							<input
 								type="number"
@@ -799,7 +862,7 @@
 				{/each}
 				<tr>
 					<td class="motor-id">9</td>
-					<td class="motor-name">gripper</td>
+					<td>gripper</td>
 					<td>
 						{#if testingMotor === 'gripper'}
 							<span class="status-testing">TEST</span>
@@ -811,7 +874,8 @@
 							<span class="status-unknown">-</span>
 						{/if}
 					</td>
-					<td class="position-column">-</td>
+					<td>-</td>
+					<td>-</td>
 					<td>-</td>
 					<td>
 						<button type="button" on:click={didClickTestGripper} disabled={isActionDisabled()}>
@@ -847,7 +911,7 @@
 		<table class="motor-table">
 			<thead>
 				<tr>
-					<th colspan="6">
+					<th colspan="7">
 						<div class="section-heading">
 							<span>io motors</span>
 							<span>
@@ -867,9 +931,10 @@
 				</tr>
 				<tr>
 					<th>id</th>
-					<th class="motor-name">motor</th>
+					<th>motor</th>
 					<th>status</th>
-					<th class="position-column">POSITION</th>
+					<th>min</th>
+					<th>POSITION</th>
 					<th>move to</th>
 				</tr>
 			</thead>
@@ -877,7 +942,7 @@
 				{#each ioMotors() as motor (motor.name)}
 					<tr>
 						<td class="motor-id">{motor.motor_id}</td>
-						<td class="motor-name">{motor.name}</td>
+						<td>{motor.name}</td>
 						<td>
 							{#if testingMotor === motor.name}
 								<span class="status-testing">TEST</span>
@@ -889,9 +954,8 @@
 								<span class="status-unknown">-</span>
 							{/if}
 						</td>
-						<td class="position-column"
-							>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
-						>
+						<td>{minLimitLabel(limitSwitches[motor.name])}</td>
+						<td>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td>
 						<td>
 							<input
 								type="number"
@@ -951,7 +1015,7 @@
 					</tr>
 					{#if motor.name === 'door'}
 						<tr>
-							<td colspan="5">
+							<td colspan="6">
 								<div class="door-actions">
 									<button
 										type="button"
@@ -1027,14 +1091,6 @@
 
 	td {
 		white-space: nowrap;
-	}
-
-	.motor-name {
-		width: 120px;
-	}
-
-	.position-column {
-		width: 120px;
 	}
 
 	.motor-table-scroll + .motor-table-scroll {
