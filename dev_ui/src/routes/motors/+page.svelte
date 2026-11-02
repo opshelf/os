@@ -319,9 +319,8 @@
 		testingMotor = motorName;
 
 		try {
-			const testDistance = motorName === 'rotate' ? 1 : 10;
-
-			await moveMotor(motorName, testDistance);
+			// Far enough to release the min switch; on rotate it stays engaged past 3 deg.
+			await moveMotor(motorName, 10);
 			await expectMinLimit(motorName, false);
 			await homeMotor(motorName);
 			await expectMinLimit(motorName, true);
