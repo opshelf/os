@@ -25,6 +25,7 @@
 		unassignTray,
 		printPrinterLabel,
 		startCalibrationTestQueue,
+		formatFailure,
 		getCalibrationTestQueue,
 		abortCalibrationTestQueue,
 		storeItem,
@@ -1196,9 +1197,7 @@
 		const wait = pendingTestCommand;
 		pendingTestCommand = null;
 		const ok = data.message === 'success';
-		const error = ok
-			? undefined
-			: typeof data.error === 'string' ? data.error : String(data.message ?? 'command failed');
+		const error = ok ? undefined : formatFailure(data);
 		wait.resolve({ ok, error });
 	}
 

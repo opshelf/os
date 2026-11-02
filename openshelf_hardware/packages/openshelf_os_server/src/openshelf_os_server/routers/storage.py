@@ -57,7 +57,7 @@ from openshelf_os.storage import (
 	StorageModuleSide,
 )
 from openshelf_os_server.core.storage_module import StorageModuleSideDto, side_to_s
-from openshelf_os_server.errors import api_error
+from openshelf_os_server.errors import api_error, failure_detail
 from openshelf_os_server.settings import clear_config_cache, get_operating_mode, get_root_config, save_root_config
 
 router = APIRouter(tags=["storage"])
@@ -1091,7 +1091,7 @@ async def store_returned_tray(workflow_id: str, request: BinWorkflowReturn,
                     try:
                         await service.enqueue_return(workflow, worker)
                     except Exception as exc:
-                        await service.fail(workflow, str(exc))
+                        await service.fail(workflow, failure_detail(exc, "tray_return_failed")[1])
                         raise
     except BinWorkflowConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

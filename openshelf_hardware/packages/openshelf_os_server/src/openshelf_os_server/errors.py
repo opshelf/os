@@ -24,14 +24,16 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from hardware.exceptions import ModbusConnectionError
-from hardware.exceptions import MotorConfigError as HardwareMotorConfigError
-from hardware.exceptions import MotorTimeoutError as HardwareMotorTimeoutError
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.exceptions import ConfigError as HardwareConfigError
-from openshelf_os.exceptions import MotorWaitTimeoutError, RotationClearanceError
+from openshelf_os.faults import FAULT_MESSAGES, exception_debug, fault_code
 from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
+from openshelf_os_server.core.command_lifecycle import (
+	CommandQueueFullError,
+	CommandRequestConflictError,
+	CommandTargetInFlightError,
+)
 from openshelf_os_server.core.validation import CellOccupiedError, ValidationError
 from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings
 
@@ -132,11 +134,11 @@ CODE_MESSAGES: dict[str, str] = {
 	"chemical_not_found": "No matching chemical was found.",
 	"chemical_unavailable": "Chemical lookup is not available right now. Try again in a moment.",
 	"conflict": "That action does not fit what the robot is doing right now.",
-	"config_error": "The robot settings are not valid.",
 	"db_error": "The robot could not save the change. Try again.",
 	"dimension_invalid": "Enter a size greater than zero.",
 	"door_control_failed": "The machine door did not move. Try again.",
 	"door_positions_invalid": "Those IO door positions are not valid.",
+	"enqueue_failed": "The robot could not queue the command. Try again.",
 	"error": "The robot could not complete the action.",
 	"forbidden": "You do not have permission to do that.",
 	"frame_encode_failed": "The IO box camera image could not be read. Try again.",
@@ -149,17 +151,13 @@ CODE_MESSAGES: dict[str, str] = {
 	"iobox_sizer_unavailable": "The IO box measure tool is not available. Try again.",
 	"io_box_occupied": "The IO box is not empty. Take the item off the scale and wait for it to read empty.",
 	"item_not_found": "There is no item in that cell.",
+	"laser_calibration_failed": "The laser calibration failed. Check the robot, then run it again.",
 	"laser_read_failed": "The laser distance could not be read. Try again.",
 	"method_not_allowed": "That request is not supported.",
-	"motor_alarm": "A motor drive raised an alarm and stopped. Clear the alarm, then reset the robot.",
 	"motor_alarm_clear_failed": "The robot alarm could not be cleared. Try again.",
-	"motor_bus_disconnected": "The motor drives are not connected. Check the motor cable and power.",
-	"motor_fault": "The robot stopped with a motor fault. Reset the robot and try again.",
 	"motor_home_failed": "The robot could not be reset. Try again.",
 	"motor_move_failed": "The robot could not move. Try again.",
 	"motor_not_configured": "That motor is not configured on this machine.",
-	"motor_stalled": "A motor stalled before reaching its target. Check for an obstruction, then reset the robot.",
-	"motor_timeout": "A motor did not reach its target in time. Check for an obstruction, then reset the robot.",
 	"movement_in_progress": "The robot is moving. Wait for the move to finish.",
 	"no_compatible_bin": "No bin can take that item right now.",
 	"not_found": "That entry is no longer there.",
@@ -172,7 +170,6 @@ CODE_MESSAGES: dict[str, str] = {
 	"reserved_bin_barcode": "That barcode belongs to a bin. Scan the item barcode instead.",
 	"reserved_tray_item": "That item is already stored in a bin. Use the bin workflow instead.",
 	"reset_required": "The robot needs to be reset first. Reset it and try again.",
-	"rotation_blocked": "The robot cannot rotate right now. Clear the machine and try again.",
 	"safety_interruption_active": "The robot has an active safety interruption. Clear the listed source and try again.",
 	"scale_calibration_failed": "The scale could not be calibrated. Try again.",
 	"scale_config_failed": "The scale is not available on this machine.",
@@ -193,6 +190,8 @@ CODE_MESSAGES: dict[str, str] = {
 	"wifi_connect_failed_offline": "The machine could not connect and may now be offline.",
 	"wifi_list_failed": "The network list could not be read. Try again.",
 	"wifi_unavailable": "Network settings are not available on this machine.",
+	# Robot fault codes, shared with the worker's failure events.
+	**FAULT_MESSAGES,
 }
 
 GENERIC_ERROR_MESSAGE = CODE_MESSAGES["error"]
@@ -284,26 +283,11 @@ def normalize_operator_message(message: str, code: str) -> str:
 	return text
 
 
-_DEBUG_CHAIN_LIMIT = 5
-_DEBUG_TEXT_LIMIT = 500
-
-
 def _raised_from(exc: BaseException) -> BaseException | None:
 	"""The failure a route converted into an HTTP error, `from exc` or not."""
 	if exc.__cause__ is not None:
 		return exc.__cause__
 	return None if exc.__suppress_context__ else exc.__context__
-
-
-def _exception_chain(exc: BaseException | None):
-	"""Yield exc and its explicit causes, outermost first. Implicit context and
-	exception groups are skipped: below the route they are framework wrappers
-	(Starlette re-raises a middleware error from its task group)."""
-	for _ in range(_DEBUG_CHAIN_LIMIT):
-		if exc is None or isinstance(exc, BaseExceptionGroup):
-			return
-		yield exc
-		exc = exc.__cause__
 
 
 def _request_token(request: Request) -> str | None:
@@ -331,20 +315,32 @@ def debug_allowed(request: Request) -> bool:
 	return payload is not None and payload.get("type") == "access" and payload.get("email") == DEVELOPER_SYSTEM_USER_EMAIL
 
 
-def exception_debug(exc: BaseException) -> dict[str, Any]:
-	"""Developer-facing description of an exception: its chain and motor fault context."""
-	chain: list[str] = []
-	debug: dict[str, Any] = {"chain": chain}
-	for current in _exception_chain(exc):
-		text = str(current)[:_DEBUG_TEXT_LIMIT]
-		chain.append(f"{type(current).__name__}: {text}" if text else type(current).__name__)
-		fault_context = getattr(current, "fault_context", None)
-		if isinstance(fault_context, dict) and "fault_context" not in debug:
-			debug["fault_context"] = {
-				str(key): value if isinstance(value, (str, int, float, bool, type(None))) else str(value)
-				for key, value in fault_context.items()
-			}
-	return debug
+# Exceptions whose text is empty or driver output, by the code that describes them.
+_FAILURE_TYPE_CODES: tuple[tuple[type[BaseException], str], ...] = (
+	(asyncio.QueueFull, "queue_full"),
+	(CommandQueueFullError, "queue_full"),
+	(CommandTargetInFlightError, "target_in_flight"),
+	(CommandRequestConflictError, "request_replay"),
+	(TimeoutError, "timeout"),
+	(OSError, "hardware_io"),
+)
+
+
+def failure_detail(exc: BaseException, fallback_code: str) -> tuple[str, str]:
+	"""(code, operator sentence) for a failure recorded outside an HTTP body: a workflow
+	error, a command result. The exception itself belongs in the log and `debug`."""
+	code = fault_code(exc) or next(
+		(code for exc_type, code in _FAILURE_TYPE_CODES if isinstance(exc, exc_type)), fallback_code
+	)
+	return code, CODE_MESSAGES[code]
+
+
+def public_payload(payload: Any, show_debug: bool) -> Any:
+	"""A robot event or command result as a client may see it: the worker attaches the
+	exception behind a failure as `debug`, which only the developer user receives."""
+	if show_debug is True or isinstance(payload, dict) is False or "debug" not in payload:
+		return payload
+	return {key: value for key, value in payload.items() if key != "debug"}
 
 
 def client_detail(request: Request, detail: dict[str, Any], exc: BaseException | None) -> dict[str, Any]:
@@ -357,25 +353,23 @@ def client_detail(request: Request, detail: dict[str, Any], exc: BaseException |
 	return detail
 
 
+# Status per robot fault code when a route surfaces one; anything else is a 503.
+_FAULT_STATUS: dict[str, int] = {
+	"motor_timeout": status.HTTP_504_GATEWAY_TIMEOUT,
+	"rotation_blocked": status.HTTP_409_CONFLICT,
+	"grip_dropped": status.HTTP_409_CONFLICT,
+	"grip_io_box_failed": status.HTTP_409_CONFLICT,
+	"grip_pick_failed": status.HTTP_409_CONFLICT,
+	"grip_release_failed": status.HTTP_409_CONFLICT,
+}
+
+
 def classify_hardware_error(exc: BaseException) -> tuple[int, str] | None:
 	"""Return a (status, code) more specific than a route's catch-all, if the chain has one."""
-	for current in _exception_chain(exc):
-		if isinstance(current, RotationClearanceError):
-			return status.HTTP_409_CONFLICT, "rotation_blocked"
-		fault_context = getattr(current, "fault_context", None)
-		if isinstance(fault_context, dict):
-			if fault_context.get("alarm_code"):
-				return status.HTTP_503_SERVICE_UNAVAILABLE, "motor_alarm"
-			if fault_context.get("stall_detected") or fault_context.get("no_progress"):
-				return status.HTTP_503_SERVICE_UNAVAILABLE, "motor_stalled"
-			return status.HTTP_503_SERVICE_UNAVAILABLE, "motor_fault"
-		if isinstance(current, ModbusConnectionError):
-			return status.HTTP_503_SERVICE_UNAVAILABLE, "motor_bus_disconnected"
-		if isinstance(current, (HardwareMotorTimeoutError, MotorWaitTimeoutError)):
-			return status.HTTP_504_GATEWAY_TIMEOUT, "motor_timeout"
-		if isinstance(current, (HardwareMotorConfigError, ConfigError, HardwareConfigError)):
-			return status.HTTP_503_SERVICE_UNAVAILABLE, "config_error"
-	return None
+	code = fault_code(exc)
+	if code is None:
+		return None
+	return _FAULT_STATUS.get(code, status.HTTP_503_SERVICE_UNAVAILABLE), code
 
 
 def hardware_api_error(exc: BaseException, status_code: int, code: str, message: str) -> HTTPException:

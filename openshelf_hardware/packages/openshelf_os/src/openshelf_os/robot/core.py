@@ -21,6 +21,7 @@ from openshelf_os.serial_ports import (
     MOTOR_PORT_CANDIDATES,
     SCALE_PORT_CANDIDATES,
 )
+from openshelf_os.faults import exception_debug
 from openshelf_os.exceptions import (
     ConfigError as CabinetConfigError, GRIP_DROPPED_CODE, GRIP_IO_BOX_FAILED_CODE, MotorError, MovementError,
     ToolError,
@@ -1461,7 +1462,8 @@ class Robot:
             sentry_sdk.capture_exception(exc)
             return RobotCommandError(
                 command=command_name,
-                error=f"{type(exc).__name__}: {exc}"
+                error="The robot could not store the item. Check the robot before continuing.",
+                debug=exception_debug(exc),
             )
 
     async def retrieve(self, item_name: str) -> RobotResponse:
@@ -1596,7 +1598,8 @@ class Robot:
             sentry_sdk.capture_exception(exc)
             return RobotCommandError(
                 command=command_name,
-                error=f"{type(exc).__name__}: {exc}"
+                error="The robot could not retrieve the item. Check the robot before continuing.",
+                debug=exception_debug(exc),
             )
 
     # ------------------------------------------------------------------ #
@@ -1658,7 +1661,8 @@ class Robot:
             sentry_sdk.capture_exception(exc)
             return RobotCommandError(
                 command=command_name,
-                error=f"{type(exc).__name__}: {exc}"
+                error="The robot could not finish the command. Check the robot before continuing.",
+                debug=exception_debug(exc),
             )
 
     # ------------------------------------------------------------------ #

@@ -12,6 +12,13 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
 from openshelf_os import SIMULATED_FAULT_CONTEXT_KEY, SIMULATED_MOTOR_FAULT_PREFIX
+from openshelf_os.faults import (
+    EXECUTION_ERROR_CODE,
+    FAULT_MESSAGES,
+    WORKER_ERROR_CODE,
+    exception_debug,
+    fault_code,
+)
 from openshelf_os.robot.core import Robot
 from openshelf_os.robot.commands import (
     RobotCommands,
@@ -1412,8 +1419,14 @@ class RobotWorker:
         operation: Optional[QueuedOperation] = None,
         *,
         code: str = "command_interrupted",
+        fault_code: Optional[str] = None,
+        debug: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Publish a terminal, correlated failure and persist its lifecycle."""
+        """Publish a terminal, correlated failure and persist its lifecycle.
+
+        `code` classifies the failure for recovery (crash dialog, tray return); `fault_code`
+        names its cause when one is known. `error` is operator copy; the exception behind it
+        travels in `debug`, which the server hands only to the developer user."""
         if command is None:
             return
 
@@ -1435,6 +1448,10 @@ class RobotWorker:
             "barcode": barcode,
             "location": location,
         }
+        if fault_code is not None:
+            payload["fault_code"] = fault_code
+        if debug is not None:
+            payload["debug"] = debug
         if operation is not None and operation.visibility == "internal":
             payload["visibility"] = "internal"
         await self.publish_event(payload)
@@ -1502,6 +1519,7 @@ class RobotWorker:
                     result.error,
                     operation,
                     code="execution_failed",
+                    debug=result.debug,
                 )
             logging.info("Published command result to event queue")
         except Exception as err:
@@ -1515,14 +1533,17 @@ class RobotWorker:
                 isinstance(err, (MotorError, MovementError, ToolError))
                 and not is_rotation_clearance_refusal(err)
             )
-            failure_code = err.failure_code if is_grip_fault else "execution_error"
+            failure_code = err.failure_code if is_grip_fault else EXECUTION_ERROR_CODE
+            cause = fault_code(err) or failure_code
 
             try:
                 await self._publish_command_failure(
                     command,
-                    str(err),
+                    FAULT_MESSAGES[cause],
                     operation,
                     code=failure_code,
+                    fault_code=cause,
+                    debug=exception_debug(err),
                 )
             except Exception as publish_error:
                 logging.warning("Failed to publish command failure: %s", publish_error)
@@ -1900,11 +1921,14 @@ class RobotWorker:
                         pass
 
                 self._clear_robot_operation_context()
+                cause = fault_code(err) or WORKER_ERROR_CODE
                 await self._publish_command_failure(
                     self._current_command,
-                    str(err),
+                    FAULT_MESSAGES[cause],
                     self._current_operation,
-                    code="worker_error",
+                    code=WORKER_ERROR_CODE,
+                    fault_code=cause,
+                    debug=exception_debug(err),
                 )
                 try:
                     # A fault can leave the tray in the gripper; the next command must not run with it.

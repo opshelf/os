@@ -148,6 +148,33 @@ function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
 	return output;
 }
 
+/** A failed robot event or command result, with the developer detail the server attached. */
+export function formatFailure(data: Record<string, unknown>): string {
+	const error = typeof data.error === 'string' ? data.error : String(data.message ?? 'command failed');
+	const code = [data.fault_code, data.code].find((value) => typeof value === 'string') as
+		| string
+		| undefined;
+	const detail = formatDeveloperDetail({ code, debug: data.debug as ApiErrorDetail['debug'] });
+	return detail === '' ? error : `${error}${TOAST_DETAIL_SEPARATOR}${detail}`;
+}
+
+/** A failed laser auto calibration: its sentence plus the run's error detail. */
+export function formatLaserFailure(snapshot: LaserAutoCalibrationSnapshot): string {
+	const error = snapshot.error ?? 'laser auto calibration failed';
+	const failure = snapshot.error_detail;
+	if (failure === null || failure === undefined) {
+		return error;
+	}
+	const detail = formatDeveloperDetail({
+		correlation_id: failure.correlation_id ?? undefined,
+		debug: {
+			chain: [`${failure.error_type}: ${failure.error}`, ...(failure.phase ? [`phase ${failure.phase}`] : [])],
+			fault_context: failure.fault_context ?? undefined
+		}
+	});
+	return `${error}${TOAST_DETAIL_SEPARATOR}${detail}`;
+}
+
 function formatDeveloperDetail(detail?: ApiErrorDetail): string {
 	if (detail === undefined) {
 		return '';
@@ -845,6 +872,13 @@ export interface LaserAutoCalibrationSnapshot {
 	reference_offset_results: LaserAutoCalibrationReferenceOffset[];
 	stage_detail: Record<string, unknown>;
 	error: string | null;
+	error_detail?: {
+		error_type: string;
+		error: string;
+		phase: string | null;
+		correlation_id: string | null;
+		fault_context: Record<string, unknown> | null;
+	} | null;
 }
 
 export function buildLaserAutoCalibrationStreamUrl(

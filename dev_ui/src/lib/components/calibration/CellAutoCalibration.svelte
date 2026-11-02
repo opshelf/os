@@ -14,7 +14,7 @@
 		type LaserAutoCalibrationSnapshot,
 		type StorageGrid
 	} from '$lib/api';
-	import { normalizeLaserAutoCalibrationSnapshot } from '$lib/api';
+	import { formatLaserFailure, normalizeLaserAutoCalibrationSnapshot } from '$lib/api';
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideLabel } from '$lib/side';
 	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
 	import { postToast } from '$lib/toasts';
@@ -419,7 +419,7 @@
 
 			if (snapshot.state === 'failed') {
 				message = '';
-				error = snapshot.error ?? 'laser auto calibration failed';
+				error = formatLaserFailure(snapshot);
 				didCloseStream();
 			}
 		} catch {

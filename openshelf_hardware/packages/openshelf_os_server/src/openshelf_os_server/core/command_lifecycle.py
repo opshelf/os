@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 
+from openshelf_os.faults import exception_debug
 from openshelf_os.robot.models import QueuedOperation
 from openshelf_os_server.database.models import Item, RobotCommand
 from openshelf_os_server.database.session import AsyncSessionLocal
@@ -213,7 +214,13 @@ async def get_command(command_id: str) -> RobotCommand | None:
 		return await session.get(RobotCommand, command_id)
 
 
-async def fail_before_enqueue(command_id: str, error: str) -> None:
+async def fail_before_enqueue(
+	command_id: str,
+	error: str,
+	*,
+	fault_code: str | None = None,
+	debug: dict[str, Any] | None = None,
+) -> None:
 	row = await get_command(command_id)
 	if row is None:
 		return
@@ -225,6 +232,10 @@ async def fail_before_enqueue(command_id: str, error: str) -> None:
 		"error": error,
 		"code": "enqueue_failed",
 	}
+	if fault_code is not None:
+		result["fault_code"] = fault_code
+	if debug is not None:
+		result["debug"] = debug
 	if row.visibility == "internal":
 		result["visibility"] = "internal"
 	await finish_command(command_id, "failed", result)
@@ -306,5 +317,9 @@ async def enqueue_persisted(
 		else:  # Lightweight service test doubles use the legacy one-argument shape.
 			await worker.enqueue_command(command)
 	except Exception as exc:
-		await fail_before_enqueue(row.command_id, str(exc))
+		# errors imports this module for its exception types.
+		from openshelf_os_server.errors import failure_detail  # noqa: PLC0415
+
+		code, message = failure_detail(exc, "enqueue_failed")
+		await fail_before_enqueue(row.command_id, message, fault_code=code, debug=exception_debug(exc))
 		raise

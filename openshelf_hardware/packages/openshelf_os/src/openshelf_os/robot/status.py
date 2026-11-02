@@ -106,6 +106,8 @@ class RobotCommandSuccessful(BaseModel):
 class RobotCommandError(BaseModel):
     command: str = "unknown"
     error: str
+    # The exception behind an unexpected failure (`faults.exception_debug`); developer-only.
+    debug: Optional[dict[str, Any]] = None
 
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError]

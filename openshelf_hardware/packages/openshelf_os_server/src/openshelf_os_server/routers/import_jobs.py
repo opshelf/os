@@ -31,7 +31,7 @@ from openshelf_os_server.core.mock_robot import get_mock_robot_runtime
 from openshelf_os_server.database.models import ImportJob, User
 from openshelf_os_server.database.session import get_db
 from openshelf_os_server.documentation import response_docs
-from openshelf_os_server.errors import api_error, hardware_api_error
+from openshelf_os_server.errors import api_error, failure_detail, hardware_api_error
 from openshelf_os_server.routers.auth_deps import (
     require_permissions,
     require_relay_or_admin,
@@ -452,7 +452,7 @@ async def start_import_tray(
                     try:
                         await bins.start_retrieval(workflow, worker)
                     except Exception as exc:
-                        await bins.fail(workflow, str(exc), tray_moved=False)
+                        await bins.fail(workflow, failure_detail(exc, "tray_fetch_failed")[1], tray_moved=False)
                         logger.warning("Tray fetch failed: %s", exc)
                         raise hardware_api_error(exc, 503, "tray_fetch_failed", "The bin could not be fetched. Try again.") from exc
                 await bins.publish_workflow(worker, workflow)

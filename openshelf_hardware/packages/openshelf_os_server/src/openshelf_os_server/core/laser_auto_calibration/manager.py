@@ -15,6 +15,7 @@ from .stage_runner import StageRunnerMixin
 from .apply_runner import ApplyRunnerMixin
 from openshelf_os_server.core.logging_config import get_correlation_id
 from openshelf_os_server.core.manual_motion import manual_motion_guard
+from openshelf_os_server.errors import failure_detail
 from .snapshot_runner import SnapshotRunnerMixin
 from openshelf_os.robot.worker import fault_needs_home_axes
 
@@ -184,7 +185,10 @@ class LaserAutoCalibrationManager(
                     axes=fault_needs_home_axes(worker._robot, exc),
                 )
                 await worker.get_status_snapshot(force_refresh=True)
-                await self._set_terminal_state("failed", f"Abort homing failed: {exc}")
+                await self._set_terminal_state(
+                    "failed",
+                    "The laser calibration stopped, but the robot could not be homed. Reset the robot before continuing.",
+                )
                 return
 
             await self._set_terminal_state("cancelled", None)
@@ -200,7 +204,10 @@ class LaserAutoCalibrationManager(
                 exc_info=True,
             )
             await self._persist_failure_metadata(error_detail)
-            await self._set_terminal_state("failed", str(exc), error_detail=error_detail)
+            # error is operator copy; the exception stays in error_detail for developers.
+            await self._set_terminal_state(
+                "failed", failure_detail(exc, "laser_calibration_failed")[1], error_detail=error_detail
+            )
         finally:
             self._set_motion_diagnostic_context(worker)
 
