@@ -12,6 +12,7 @@ import sentry_sdk
 from openshelf_os.operating_mode import is_sentry_reporting_enabled, set_sentry_reporting_enabled, should_enable_sentry
 
 from openshelf_os_server.core.logging_config import get_logger
+from openshelf_os_server.errors import CODE_MESSAGES
 from openshelf_os_server.settings import get_operating_mode, get_root_config, save_root_config
 from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 
@@ -54,6 +55,21 @@ def _restart_process_id() -> int:
 
 def _schedule_api_restart() -> None:
 	asyncio.get_running_loop().call_later(1.0, os.kill, _restart_process_id(), signal.SIGTERM)
+
+@router.get(
+    "/error-messages",
+    response_model=dict[str, str],
+    summary="List the operator sentence for each error code",
+)
+async def get_error_messages() -> dict[str, str]:
+    """List the operator sentence for each error code.
+
+    The machine owns this copy: a client that shows its own sentence for a code (instead
+    of `detail.message`) reads it here, so the kiosk and this API cannot drift apart.
+    Public, because sign-in failures need it before there is a session.
+    """
+    return CODE_MESSAGES
+
 
 @router.get(
     "/mode",

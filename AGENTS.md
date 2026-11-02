@@ -28,7 +28,7 @@
 - For a catch-all around hardware, raise `hardware_api_error(exc, status, code, message)` so a drive alarm, stall, timeout, bus disconnect, config error or rotation refusal gets its own code instead of the route's "Try again" fallback; add new codes to `classify_hardware_error`.
 - Every `HTTPException` needs a stable code (`test_every_http_error_carries_a_code`): one code per meaning, reused across routes (`motor_not_configured`, `robot_not_initialized`), with its sentence in `CODE_MESSAGES`. Clients key on the code; the sentence may be edited.
 - `test_router_messages_never_carry_raw_exception_text` fails when a router puts a caught exception into a message; an exception whose text is hand-written operator copy (e.g. `BinWorkflowConflict`) belongs in its allowlist, anything else gets a code sentence.
-- Both client surfaces show `detail.message` verbatim: the kiosk maps `code` and exact sentences in `../ui/src/lib/operator-message.ts`, and `dev_ui/` toasts it, so new copy needs a matching kiosk entry (prefer a `code`, which survives wording changes) and copy stays sentence case with a terminal period, no "please", no raw identifiers.
+- `CODE_MESSAGES` (with `openshelf_os.faults.FAULT_MESSAGES`) is the one source of operator copy per code: the kiosk loads it from `GET /api/system/error-messages` at startup and prefers it over its built-in table, which only covers older devices and kiosk-raised codes; `dev_ui/` toasts `detail.message`. Change a code's wording here, not in `../ui`. Copy stays sentence case with a terminal period, no "please", no raw identifiers.
 
 ## Dev UI
 - Report errors through the toast system (`postToast('error', …)` from `$lib/toasts`), not inline error text in pages, dialogs, or components.

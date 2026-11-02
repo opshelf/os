@@ -28,18 +28,18 @@ EXECUTION_ERROR_CODE = "execution_error"
 WORKER_ERROR_CODE = "worker_error"
 
 FAULT_MESSAGES: dict[str, str] = {
-    "config_error": "The robot settings are not valid.",
+    "config_error": "The machine's settings are not valid. Check the settings.",
     EXECUTION_ERROR_CODE: "The robot could not finish the command. Check the robot before continuing.",
     GRIP_DROPPED_CODE: "The gripper lost the bin. Check where it fell, then recover the tool.",
     GRIP_IO_BOX_FAILED_CODE: "The gripper could not confirm the bin in the IO box. Check the IO box, then recover the tool.",
     GRIP_PICK_FAILED_CODE: "The gripper could not confirm it picked the bin. Check the shelf, then recover the tool.",
     GRIP_RELEASE_FAILED_CODE: "The gripper did not release the bin. Check the tool before continuing.",
     "motor_alarm": "A motor drive raised an alarm and stopped. Clear the alarm, then reset the robot.",
-    "motor_bus_disconnected": "The motor drives are not connected. Check the motor cable and power.",
-    "motor_fault": "The robot stopped with a motor fault. Reset the robot and try again.",
+    "motor_bus_disconnected": "The robot's motors are not connected. Check the motor cable and power.",
+    "motor_fault": "The robot reported a motor fault. Check the robot before continuing.",
     "motor_stalled": "A motor stalled before reaching its target. Check for an obstruction, then reset the robot.",
     "motor_timeout": "A motor did not reach its target in time. Check for an obstruction, then reset the robot.",
-    "rotation_blocked": "The robot cannot rotate right now. Clear the machine and try again.",
+    "rotation_blocked": "The robot could not turn the tray or bin. Clear the way and try again.",
     WORKER_ERROR_CODE: "The robot stopped the command after an internal error. Check the robot before continuing.",
 }
 
