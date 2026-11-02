@@ -925,3 +925,40 @@ async def test_a_held_return_whose_result_was_missed_is_applied_on_the_next_read
         await hold_the_return(db, service, bins, job, job_id)
         assert await service.reconcile(job)
         assert job.state == "completed"
+
+
+@pytest.mark.anyio
+async def test_a_return_the_bin_refuses_up_front_leaves_the_tray_filling(mock_mode, trays, client):
+    # The bin's inventory check refused the return before anything moved. The cleanup read rows
+    # the refusal had rolled back, so the call failed with a 500, left an ordinary return open on
+    # the import's tray, and every retry failed the same way.
+    job_id = await create([row("Vial", small=True)])
+    async with AsyncSessionLocal() as db:
+        service = ImportJobService(db)
+        bins = BinStorageService(db)
+        job = await service.get(job_id)
+        workflow = await service.start_tray(job, None)
+        await bins.transition(workflow, "awaiting_operator")
+        await service.place_in_tray(job, (await units(job_id))[0].id, 30)
+        home = await db.get(StorageBin, workflow.bin_id)
+        other = await StorageService(db).create_item("CELL-1", "Cell", {"width": 10, "length": 10, "height": 10})
+        db.add(ItemLocation(item_id=other.id, side=home.side, shelf_idx=home.shelf_idx, cell_idx=home.cell_idx))
+        await db.commit()
+        workflow_id = workflow.id
+    mock_mode.occupied = True
+
+    for _ in range(2):
+        refused = await client.post(f"/api/import-jobs/{job_id}/tray/return")
+        assert refused.status_code == 409, refused.text
+        detail = refused.json()["detail"]
+        assert (detail["code"], detail["message"]) == ("tray_return_rejected", "The bin's cell has an item stored in it.")
+        async with AsyncSessionLocal() as db:
+            assert (await db.get(StorageBinWorkflow, workflow_id)).state == "awaiting_operator"
+            open_returns = (
+                await db.scalars(select(StorageBinWorkflow).where(
+                    StorageBinWorkflow.operation == "return", StorageBinWorkflow.state == "awaiting_operator"
+                ))
+            ).all()
+            assert open_returns == []
+            step = await ImportJobService(db).next_step(await ImportJobService(db).get(job_id))
+            assert step["phase"] == "filling"

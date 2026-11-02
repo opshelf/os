@@ -1225,6 +1225,7 @@ class ImportJobService:
         """
         tray = await self.tray_for_return(job)
         workflow = await self._tray_workflow(job)
+        workflow_id = workflow.id if workflow is not None else None
         reopen = workflow is not None and workflow.state == "awaiting_operator"
         if workflow is not None and reopen:
             await self.bins.close_batch(workflow)
@@ -1242,16 +1243,22 @@ class ImportJobService:
             await self.settle(job)
             return None
         returning: Optional[StorageBinWorkflow] = None
+        returning_id: Optional[str] = None
         try:
             returning = await self.bins.begin_return(tray.barcode)
             if returning is None:
                 raise BinWorkflowConflict("This bin no longer exists.")
+            returning_id = returning.id
             candidates = [int(i) for i in (returning.resolution or {}).get("candidate_item_ids", [])]
             prepared = await self.bins.prepare_return(returning, candidates)
         except BinWorkflowConflict as exc:
-            # Leave the tray as it was: the batch keeps filling and no return stays open.
+            # Leave the tray as it was: the batch keeps filling and no return stays open. A refused
+            # check rolled the session back, so the rows are read again before they are changed.
+            await self.session.rollback()
+            returning = await self.session.get(StorageBinWorkflow, returning_id) if returning_id else None
             if returning is not None and returning.state == "awaiting_operator":
                 await self.bins.transition(returning, "cancelled", str(exc))
+            workflow = await self.session.get(StorageBinWorkflow, workflow_id) if workflow_id else None
             if workflow is not None and reopen:
                 await self.bins.transition(workflow, "awaiting_operator", "import bin return rejected")
             raise ImportJobError(409, "tray_return_rejected", str(exc)) from exc
