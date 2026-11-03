@@ -4,11 +4,13 @@
 	import {
 		abortLaserAutoCalibration,
 		buildLaserAutoCalibrationStreamUrl,
+		calibrateGripperOpenPosition,
 		getLaserAutoCalibrationStatus,
 		getLaserAutoCalibrationStreamError,
 		getLaserZStallEnabled,
 		getStorageGrid,
 		saveLaserZStallEnabled,
+		type GripperOpenPositionResult,
 		type LaserAutoCalibrationAngleResult,
 		type LaserAutoCalibrationRequest,
 		type LaserAutoCalibrationSnapshot,
@@ -39,6 +41,8 @@
 	let isExtensionCalibrationSelected = $state<boolean>(true);
 	let preferredAngleCalibration = $state<boolean>(true);
 	let preferredExtensionCalibration = $state<boolean>(true);
+	let isGripperCalibrationSelected = $state<boolean>(false);
+	let isMeasuringGripper = $state<boolean>(false);
 	let isZStallEnabled = $state<boolean>(false);
 	let isSavingZStall = $state<boolean>(false);
 	let selectedSide = $state<'' | 'front_module' | 'back_module'>('');
@@ -84,6 +88,10 @@
 	});
 
 	const isExtensionCalibrationDisabled = $derived.by(() => {
+		return selectedShelf !== '' || isSelectionDisabled === true;
+	});
+
+	const isGripperCalibrationDisabled = $derived.by(() => {
 		return selectedShelf !== '' || isSelectionDisabled === true;
 	});
 
@@ -264,6 +272,7 @@
 	function syncScopeSelection(requestedScope: LaserAutoCalibrationRequest): void {
 		isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
 		isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
+		isGripperCalibrationSelected = requestedScope.include_gripper_calibration === true;
 
 		// Shelf and cell scopes always drop both options, so only a scope that honours them
 		// may replace the remembered user choice.
@@ -302,6 +311,7 @@
 		if (requestedScope.mode === 'shelf' || requestedScope.mode === 'cell') {
 			isAngleCalibrationSelected = false;
 			isExtensionCalibrationSelected = false;
+			isGripperCalibrationSelected = false;
 		}
 	}
 
@@ -314,6 +324,7 @@
 		if (selectedShelf !== '' || selectedCell !== '') {
 			isAngleCalibrationSelected = false;
 			isExtensionCalibrationSelected = false;
+			isGripperCalibrationSelected = false;
 			return;
 		}
 
@@ -326,7 +337,8 @@
 			return {
 				mode: 'all',
 				include_angle_calibration: isAngleCalibrationSelected,
-				include_extension_calibration: isExtensionCalibrationSelected
+				include_extension_calibration: isExtensionCalibrationSelected,
+				include_gripper_calibration: isGripperCalibrationSelected
 			};
 		}
 
@@ -334,7 +346,8 @@
 			return {
 				mode: 'both',
 				include_angle_calibration: isAngleCalibrationSelected,
-				include_extension_calibration: isExtensionCalibrationSelected
+				include_extension_calibration: isExtensionCalibrationSelected,
+				include_gripper_calibration: isGripperCalibrationSelected
 			};
 		}
 
@@ -343,7 +356,8 @@
 				mode: 'side',
 				side: selectedSide,
 				include_angle_calibration: isAngleCalibrationSelected,
-				include_extension_calibration: isExtensionCalibrationSelected
+				include_extension_calibration: isExtensionCalibrationSelected,
+				include_gripper_calibration: isGripperCalibrationSelected
 			};
 		}
 
@@ -515,6 +529,44 @@
 		preferredExtensionCalibration = target.checked;
 		error = '';
 		message = '';
+	}
+
+	function didChangeGripperCalibration(event: Event): void {
+		const target = event.target as HTMLInputElement;
+
+		isGripperCalibrationSelected = target.checked;
+		error = '';
+		message = '';
+	}
+
+	async function didClickMeasureGripper(): Promise<void> {
+		isMeasuringGripper = true;
+		error = '';
+		message = '';
+
+		try {
+			const result = await calibrateGripperOpenPosition(selectedSide === '' ? undefined : selectedSide);
+			message = formatGripperResult(result);
+		} catch (err) {
+			postToast('error', err instanceof Error ? err.message : 'Failed to measure the gripper open position.');
+		} finally {
+			isMeasuringGripper = false;
+		}
+	}
+
+	function formatGripperResult(result: GripperOpenPositionResult | null | undefined): string {
+		if (result === null || result === undefined) {
+			return '-';
+		}
+
+		const stops = result.samples
+			.map((sample) => `${sideLabel(sideIndex(sample.side) ?? 0, vocabulary).toLowerCase()} stop ${sample.stop_position ?? '-'}`)
+			.join(', ');
+		const target = result.open_position === null ? 'not measured' : String(result.open_position);
+		const outcome = result.applied ? 'saved' : 'kept';
+		const skipped = result.skipped.length > 0 ? ` (${result.skipped.join('; ')})` : '';
+
+		return `open position ${result.previous_open_position} -> ${target}, ${outcome}; ${stops}${skipped}`;
 	}
 
 	async function didChangeZStall(event: Event): Promise<void> {
@@ -732,6 +784,28 @@
 				</tr>
 				<tr>
 					<td colspan="3">
+						<div class="actions">
+							<label class="all-toggle">
+								<input
+									type="checkbox"
+									checked={isGripperCalibrationSelected}
+									onchange={didChangeGripperCalibration}
+									disabled={isGripperCalibrationDisabled}
+								/>
+								<span>gripper open position</span>
+							</label>
+							<button
+								type="button"
+								onclick={didClickMeasureGripper}
+								disabled={isMeasuringGripper === true || isSelectionDisabled === true}
+							>
+								measure now
+							</button>
+						</div>
+					</td>
+				</tr>
+				<tr>
+					<td colspan="3">
 						<label class="all-toggle">
 							<input
 								type="checkbox"
@@ -811,6 +885,12 @@
 						<td>{getStageExtensionValue('front_module')}</td>
 						<td>{getStageExtensionValue('back_module')}</td>
 					</tr>
+					{#if snapshot?.gripper_open_position}
+						<tr>
+							<td>gripper open position</td>
+							<td colspan="2">{formatGripperResult(snapshot.gripper_open_position)}</td>
+						</tr>
+					{/if}
 				</tbody>
 			</table>
 		</div>

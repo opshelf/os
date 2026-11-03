@@ -838,6 +838,35 @@ export interface LaserAutoCalibrationReferenceOffset {
 	skipped: string[];
 }
 
+export interface GripperOpenPositionSample {
+	// The side arrives in the device vocabulary; compare via sideIndex().
+	side: string;
+	shelf_idx: number;
+	cell_idx: number;
+	z_offset_mm: number;
+	positions: number[];
+	states: string[];
+	stop_position: number | null;
+	verify_state: string | null;
+	verified: boolean;
+}
+
+export interface GripperOpenPositionResult {
+	previous_open_position: number;
+	open_position: number | null;
+	applied: boolean;
+	samples: GripperOpenPositionSample[];
+	skipped: string[];
+}
+
+export async function calibrateGripperOpenPosition(side?: StorageModuleSide): Promise<GripperOpenPositionResult> {
+	return apiFetch<GripperOpenPositionResult>('/calibration/gripper/open-position', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(side === undefined ? {} : { side: toDeviceSide(side) })
+	});
+}
+
 export interface LaserAutoCalibrationRequest {
 	mode: 'all' | 'both' | 'side' | 'shelf' | 'cell';
 	side?: StorageModuleSide;
@@ -845,6 +874,7 @@ export interface LaserAutoCalibrationRequest {
 	cell_idx?: number;
 	include_angle_calibration?: boolean;
 	include_extension_calibration?: boolean;
+	include_gripper_calibration?: boolean;
 }
 
 // The per-side snapshot fields followed the device vocabulary until the
@@ -898,6 +928,7 @@ export interface LaserAutoCalibrationSnapshot {
 	detected_cells: LaserAutoCalibrationCell[];
 	angle_results: LaserAutoCalibrationAngleResult[];
 	reference_offset_results: LaserAutoCalibrationReferenceOffset[];
+	gripper_open_position?: GripperOpenPositionResult | null;
 	error: string | null;
 	error_detail?: {
 		error_type: string;
@@ -927,6 +958,10 @@ export function buildLaserAutoCalibrationStreamUrl(
 
 	if (request.include_extension_calibration !== undefined) {
 		url.searchParams.set('include_extension_calibration', String(request.include_extension_calibration));
+	}
+
+	if (request.include_gripper_calibration === true) {
+		url.searchParams.set('include_gripper_calibration', 'true');
 	}
 
 	if (request.mode === 'both') {
