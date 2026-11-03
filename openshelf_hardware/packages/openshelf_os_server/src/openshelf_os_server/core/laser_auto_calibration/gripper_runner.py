@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from openshelf_os.common import AxisCoordinate
 from openshelf_os.storage import StorageModuleCellLocation
 
 from .models import *
+
+logger = logging.getLogger(__name__)
 
 
 def _write_gripper_debug_document(result: LaserAutoCalibrationGripperResult) -> None:
