@@ -1,5 +1,4 @@
 import { getAccessToken, loginAsDeveloper, refreshAccessToken } from './auth';
-import { TOAST_DETAIL_SEPARATOR } from './toasts';
 
 export function getApiBase(): string {
 	const override = import.meta.env.VITE_API_BASE_URL;
@@ -87,7 +86,6 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 		headers.set('Authorization', `Bearer ${token}`);
 	}
 
-	const requestLine = `${(init?.method ?? 'GET').toUpperCase()} ${path}`;
 	let response: Response;
 	try {
 		response = await fetch(buildApiUrl(path), {
@@ -95,7 +93,7 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 			headers
 		});
 	} catch {
-		throw new ApiError(formatErrorMessage(API_UNREACHABLE_MESSAGE, undefined, requestLine), 0);
+		throw new ApiError(API_UNREACHABLE_MESSAGE, 0);
 	}
 
 	if (response.status === 401) {
@@ -109,8 +107,7 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 
 	if (response.ok === false) {
 		const { message, detail } = await readErrorDetail(response);
-		const finalMessage = formatErrorMessage(message, detail, `${requestLine} → ${response.status}`);
-		throw new ApiError(finalMessage, response.status, detail);
+		throw new ApiError(message, response.status, detail);
 	}
 
 	if (response.status === 204) {
@@ -125,70 +122,25 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 	try {
 		return JSON.parse(text) as T;
 	} catch {
-		throw new Error(formatErrorMessage(API_NOT_JSON_MESSAGE, undefined, requestLine));
+		throw new Error(API_NOT_JSON_MESSAGE);
 	}
 }
 
 export const API_UNREACHABLE_MESSAGE = 'The device API did not answer. Check that the device is online.';
 export const API_NOT_JSON_MESSAGE = 'The device API sent a response that is not JSON.';
 
-// request is the "METHOD /path" (and status) the error came from: client-side failures carry
-// nothing else that says which call broke. A needs-home `reason` is raw motor text for
-// recovery, never part of the toast; the code clue names the condition.
-export function formatErrorMessage(message: string, detail?: ApiErrorDetail, request?: string): string {
-	const clue = formatErrorClue(detail, request);
-	return clue === '' ? message : `${message}${TOAST_DETAIL_SEPARATOR}${clue}`;
-}
-
-/** The sentence headline plus the clue line for a failed response to `request` ("METHOD /path"). */
-export async function describeFailedResponse(
-	headline: string,
-	response: Response,
-	request: string
-): Promise<string> {
-	const { detail } = await readErrorDetail(response);
-	return formatErrorMessage(headline, detail, `${request} → ${response.status}`);
-}
-
 // The needs-home reason stays raw in server state (recovery reads motor ids out of it), so the
 // banner is fixed copy.
 export const HOME_REQUIRED_MESSAGE = 'Home the robot before calibration movement.';
 
-/** A failed robot event or command result, with its cause code as the clue. */
+/** The sentence of a failed robot event or command result. */
 export function formatFailure(data: Record<string, unknown>): string {
-	const error = typeof data.error === 'string' ? data.error : 'The robot command failed.';
-	const code = [data.fault_code, data.code].find((value) => typeof value === 'string') as
-		| string
-		| undefined;
-	const correlation_id = typeof data.correlation_id === 'string' ? data.correlation_id : undefined;
-	return formatErrorMessage(error, { code, correlation_id });
+	return typeof data.error === 'string' ? data.error : 'The robot command failed.';
 }
 
-/** A failed laser auto calibration: its sentence plus the phase and ref to find it in the log. */
+/** The sentence of a failed laser auto calibration. */
 export function formatLaserFailure(snapshot: LaserAutoCalibrationSnapshot): string {
-	const error = snapshot.error ?? 'The laser auto calibration failed.';
-	const failure = snapshot.error_detail;
-	return formatErrorMessage(
-		error,
-		{ correlation_id: failure?.correlation_id || undefined },
-		failure?.phase ? `phase ${failure.phase}` : undefined
-	);
-}
-
-// One line that says where to look; the exception, motor state and traceback stay in the
-// server log under the same ref.
-export function formatErrorClue(detail?: ApiErrorDetail, request?: string): string {
-	const ids = request === undefined ? [] : [request];
-	if (detail?.code !== undefined) {
-		ids.push(`code ${detail.code}`);
-	}
-	if (detail?.permission !== undefined) {
-		ids.push(`needs ${detail.permission}`);
-	}
-	if (detail?.correlation_id !== undefined) {
-		ids.push(`ref ${detail.correlation_id}`);
-	}
-	return ids.join(' · ');
+	return snapshot.error ?? 'The laser auto calibration failed.';
 }
 
 function unreachableMessage(status: number): string {
@@ -972,11 +924,7 @@ export async function getLaserAutoCalibrationStreamError(
 	}
 
 	const { message, detail } = await readErrorDetail(response);
-	return new ApiError(
-		formatErrorMessage(message, detail, `GET /calibration/laser/stream → ${response.status}`),
-		response.status,
-		detail
-	);
+	return new ApiError(message, response.status, detail);
 }
 
 export async function getLaserAutoCalibrationStatus(): Promise<LaserAutoCalibrationSnapshot> {

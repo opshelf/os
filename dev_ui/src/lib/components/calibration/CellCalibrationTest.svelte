@@ -16,7 +16,6 @@
 		type StorageGrid,
 		HOME_REQUIRED_MESSAGE
 	} from '$lib/api';
-	import { withHeadline } from '$lib/toasts';
 	import { activeVocabulary, activeVocabularyStore, isSideToken, sideIndex, sideLabel } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
@@ -73,10 +72,6 @@
 
 	const needsToolHome = $derived(needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
 	const isHomeError = $derived(needsHome === true && error !== '' && error === homeError);
-	// A dropped headline keeps its clue line: it rides on the home banner.
-	const homeMessage = $derived(
-		isHomeError ? withHeadline(error, () => HOME_REQUIRED_MESSAGE) : HOME_REQUIRED_MESSAGE
-	);
 	const isBusy = $derived(
 		isRunningQuick === true ||
 		isRunningCycle === true ||
@@ -505,9 +500,9 @@
 
 {#if needsHome === true && needsToolHome === true}
 	<button type="button" onclick={didClickHomeToolMotors} disabled={homingDisabled}>home tool motors</button>
-	<ErrorMessage message={homeMessage} />
+	<ErrorMessage message={HOME_REQUIRED_MESSAGE} />
 {:else if needsHome === true}
-	<ErrorMessage message={homeMessage} />
+	<ErrorMessage message={HOME_REQUIRED_MESSAGE} />
 	<StatusMessage message="Other motors require homing. Use the motors page." />
 {/if}
 

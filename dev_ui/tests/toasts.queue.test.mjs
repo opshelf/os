@@ -5,9 +5,7 @@ import {
 	createToastSource,
 	dismissToast,
 	postToast,
-	splitToastMessage,
-	toasts,
-	withHeadline
+	toasts
 } from '../src/lib/toasts.ts';
 
 const out = [];
@@ -96,21 +94,6 @@ check(
 needsHome.report('');
 check('clearing the robot flag clears its toast', visible().length === 0);
 
-const withDetail = 'Home failed.\n\nRuntimeError: x\ncode: home_failed';
-check(
-	'withHeadline rewrites the headline and keeps the detail after it',
-	withHeadline(withDetail, (headline) => `${headline} (during x_axis)`) ===
-		'Home failed. (during x_axis)\n\nRuntimeError: x\ncode: home_failed'
-);
-check('withHeadline on a bare message rewrites it whole', withHeadline('Home failed.', (h) => `${h}!`) === 'Home failed.!');
-postToast('error', withHeadline(withDetail, (headline) => `${headline} (during x_axis)`));
-postToast('error', withHeadline(withDetail, (headline) => `${headline} (during y_axis)`));
-postToast('error', withHeadline(withDetail, (headline) => `${headline} (during x_axis)`));
-check(
-	'toasts key on the rewritten headline: two motors, two toasts; same motor dedupes',
-	visible().length === 2 &&
-		get(toasts).every((toast) => splitToastMessage(toast.message).detail === 'RuntimeError: x\ncode: home_failed')
-);
 for (const toast of [...get(toasts)]) {
 	dismissToast(toast.id);
 }

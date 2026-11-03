@@ -26,7 +26,6 @@
 		HOME_REQUIRED_MESSAGE
 	} from '$lib/api';
 	import { robotStatus } from '$lib/stores';
-	import { withHeadline } from '$lib/toasts';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -121,10 +120,6 @@
 	);
 	const hasDirtyValues = $derived(dirtyAxes.length > 0);
 	const duplicateHomeError = $derived(needsHome === true && error !== '' && error === homeError);
-	// A duplicate headline is dropped, its clue line is not: it rides on the home banner.
-	const homeBannerMessage = $derived(
-		duplicateHomeError ? withHeadline(error, () => homeMessage) : homeMessage
-	);
 	const editInputsDisabled = $derived(
 		isMoving === true || needsHome === true || isPositioned === false
 	);
@@ -907,7 +902,7 @@
 {/if}
 
 {#if homeMessage !== ''}
-	<ErrorMessage message={homeBannerMessage} />
+	<ErrorMessage message={homeMessage} />
 {/if}
 
 {#if needsOtherHome === true}

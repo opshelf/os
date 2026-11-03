@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { dismissToast, splitToastMessage, toasts } from '$lib/toasts';
+	import { dismissToast, toasts } from '$lib/toasts';
 
 	// A drag that selects text ends in a click; keep the toast so the selection can be copied.
 	function didClickToast(event: MouseEvent, id: number): void {
@@ -22,7 +22,6 @@
 {#if $toasts.length > 0}
 	<div class="toast-stack">
 		{#each $toasts as toast (toast.id)}
-			{@const { headline, detail } = splitToastMessage(toast.message)}
 			{#if toast.actions !== undefined && toast.actions.length > 0}
 				<div class="toast {toast.kind} with-actions" role="status">
 					<div
@@ -32,7 +31,7 @@
 						onclick={(event) => didClickToast(event, toast.id)}
 						onkeydown={(event) => didKeyToast(event, toast.id)}
 					>
-						{headline}{#if detail !== ''}<span class="toast-detail">{detail}</span>{/if}
+						{toast.message}
 					</div>
 					<div class="toast-actions">
 						{#each toast.actions as action (action.label)}
@@ -54,7 +53,7 @@
 					onclick={(event) => didClickToast(event, toast.id)}
 					onkeydown={(event) => didKeyToast(event, toast.id)}
 				>
-					{headline}{#if detail !== ''}<span class="toast-detail">{detail}</span>{/if}
+					{toast.message}
 				</div>
 			{/if}
 		{/each}
@@ -88,15 +87,6 @@
 		user-select: text;
 	}
 
-	/* exception text and ids are case-sensitive, so the detail is never uppercased */
-	.toast-detail {
-		display: block;
-		margin-top: 0.75em;
-		font-size: 0.8em;
-		text-transform: none;
-		white-space: pre-wrap;
-		opacity: 0.9;
-	}
 
 	.toast-actions {
 		display: flex;

@@ -42,7 +42,7 @@
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideInitial, sideLabel } from '$lib/side';
 	import type { SideIndex, SideVocabulary } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
-	import { postToast, withHeadline } from '$lib/toasts';
+	import { postToast } from '$lib/toasts';
 	import {
 		createReconnectingEventSource,
 		type ReconnectingEventSource
@@ -1364,7 +1364,7 @@
 					: sideInitialLetter;
 			const label = failed ? `${side}:${failed.shelf_idx}:${failed.cell_idx}` : 'test';
 			const reason = typeof event.error === 'string' ? `: ${event.error.replace(/\.+$/, '')}` : '';
-			postToast('error', formatFailure({ ...event, error: `Failed at ${label}${reason}.` }));
+			postToast('error', `Failed at ${label}${reason}.`);
 		} else {
 			postToast('status', state === 'cancelled' ? 'Test aborted.' : 'All tests passed.');
 		}
@@ -1441,14 +1441,8 @@
 				const cellLabel = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
 				if (result.ok === false) {
-					postToast(
-						'error',
-						withHeadline(
-							result.error ?? '',
-							(headline) =>
-								`Failed at ${cellLabel}${headline ? `: ${headline.replace(/\.+$/, '')}` : ''}.`
-						)
-					);
+					const reason = result.error ? `: ${result.error.replace(/\.+$/, '')}` : '';
+					postToast('error', `Failed at ${cellLabel}${reason}.`);
 					return;
 				}
 			}

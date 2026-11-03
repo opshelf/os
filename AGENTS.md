@@ -36,7 +36,7 @@
 
 ## Dev UI
 - Report errors through the toast system (`postToast('error', …)` from `$lib/toasts`), not inline error text in pages, dialogs, or components.
-- A toast is the sentence plus one clue line (request, code, phase, `ref` correlation id); never render exception chains or `fault_context` in the UI. The detail lives in the server log under that ref.
+- A toast is one operator sentence and nothing else: no request line, code, ref, exception text or `fault_context`. The detail lives in the server log under the request's correlation id.
 - Keep a button's label unchanged while its action is busy or queued — only disable it; do not swap in "homing…"/"queued"-style titles.
 
 ## Device signing keys

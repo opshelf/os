@@ -1,10 +1,4 @@
-import {
-	API_NOT_JSON_MESSAGE,
-	API_UNREACHABLE_MESSAGE,
-	describeFailedResponse,
-	formatErrorMessage,
-	getApiBase
-} from './api';
+import { API_NOT_JSON_MESSAGE, API_UNREACHABLE_MESSAGE, getApiBase } from './api';
 
 interface TokenResponse {
 	access_token: string;
@@ -37,7 +31,7 @@ async function postAuth(path: string, body: unknown): Promise<Response> {
 			body: JSON.stringify(body)
 		});
 	} catch {
-		throw new Error(formatErrorMessage(API_UNREACHABLE_MESSAGE, undefined, `POST ${path}`));
+		throw new Error(API_UNREACHABLE_MESSAGE);
 	}
 }
 
@@ -45,7 +39,7 @@ async function readTokens(response: Response, path: string): Promise<TokenRespon
 	try {
 		return (await response.json()) as TokenResponse;
 	} catch {
-		throw new Error(formatErrorMessage(API_NOT_JSON_MESSAGE, undefined, `POST ${path}`));
+		throw new Error(API_NOT_JSON_MESSAGE);
 	}
 }
 
@@ -53,15 +47,11 @@ export async function login(email: string, pin: string): Promise<void> {
 	const response = await postAuth('/auth/login/json', { email, pin });
 
 	if (response.status === 401) {
-		throw new LoginRejectedError(
-			await describeFailedResponse('The developer sign-in was rejected.', response, 'POST /auth/login/json')
-		);
+		throw new LoginRejectedError('The developer sign-in was rejected.');
 	}
 
 	if (response.ok === false) {
-		throw new Error(
-			await describeFailedResponse('Developer sign-in failed.', response, 'POST /auth/login/json')
-		);
+		throw new Error('Developer sign-in failed.');
 	}
 
 	const data = await readTokens(response, '/auth/login/json');
@@ -82,9 +72,7 @@ export async function refreshAccessToken(): Promise<void> {
 		accessToken = null;
 		refreshToken = null;
 		tokenExpiresAt = null;
-		throw new Error(
-			await describeFailedResponse('The session could not be refreshed.', response, 'POST /auth/refresh')
-		);
+		throw new Error('The session could not be refreshed.');
 	}
 
 	const data = await readTokens(response, '/auth/refresh');

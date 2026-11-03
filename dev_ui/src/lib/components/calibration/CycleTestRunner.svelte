@@ -8,8 +8,7 @@
 		startCycleTest,
 		type CycleTestConfig,
 		type CycleTestMode,
-		type CycleTestSnapshot,
-		formatFailure
+		type CycleTestSnapshot
 	} from '$lib/api';
 	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
 	import { postToast } from '$lib/toasts';
@@ -85,7 +84,7 @@
 		const fault = run.hardware_fault ?? run.error;
 
 		if (fault !== null) {
-			return formatFailure({ error: fault, code: run.code, correlation_id: run.correlation_id });
+			return fault;
 		}
 
 		const result = run.results.find((item) => item.passed === false);
@@ -94,11 +93,7 @@
 			return 'The cycle test failed.';
 		}
 
-		return formatFailure({
-			error: `Failed at ${result.cell}: ${result.error.replace(/\.+$/, '')}.`,
-			code: result.code,
-			correlation_id: result.correlation_id
-		});
+		return `Failed at ${result.cell}: ${result.error.replace(/\.+$/, '')}.`;
 	}
 
 	// Indexes on these devices are single digits, so "b32" becomes "B:3:2" as it is typed.
