@@ -68,6 +68,9 @@ PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
 # carries the marker prefix; a deduplicated frame shows up as
 # ">>>>> Repeating....".
 PYMODBUS_FRAME_DUMP_LINE_PREFIX = ">>>>> "
+# pymodbus logs an exact repeat of its previous log text as this instead of the text,
+# so the original was already reported or dropped and the repeat carries nothing new.
+PYMODBUS_REPEAT_LOG_TEXT = "Repeating...."
 DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
 DOOR_MOTOR_RECOVERY_FAILED_PREFIX = "Door motor recovery failed:"
 # Prefix of the fault message the debug fault-injection endpoint builds
@@ -143,10 +146,15 @@ def _is_pymodbus_no_response_retry(message: Any) -> bool:
 	return retry_count.isdigit()
 
 
+def _is_pymodbus_repeat(message: Any) -> bool:
+	return isinstance(message, str) is True and _strip_pymodbus_frame_dump(message) == PYMODBUS_REPEAT_LOG_TEXT
+
+
 def _is_suppressed_pymodbus_log_message(message: Any) -> bool:
 	return (
 		_is_pymodbus_request_id_mismatch(message) is True
 		or _is_pymodbus_no_response_retry(message) is True
+		or _is_pymodbus_repeat(message) is True
 	)
 
 
