@@ -89,6 +89,10 @@ CRASH_FAILURE_CODES = {
     GRIP_RELEASE_FAILED_CODE,
 }
 
+# What startup records for a tray motion the restart cut short: like an emergency stop, the tray
+# may be anywhere between its shelf and the IO box, so the crash dialog asks the operator.
+RESTART_INTERRUPTED_CODE = "command_interrupted"
+
 # A pick whose grip check failed before anything was lifted: the tray never left its shelf, so
 # cancelling the command leaves inventory as it was and no tray needs operator recovery. A
 # retrieve the worker refused up front because the gripper holds a tray never started either; a
@@ -472,6 +476,15 @@ class BinStorageService:
                 .limit(1)
             )
         ) is not None
+
+    async def bin_returning_home(self, bin_id: int) -> bool:
+        """Whether the robot is carrying this bin home: a return in motion that is not held."""
+        returns = await self.session.scalars(
+            select(StorageBinWorkflow).where(
+                StorageBinWorkflow.bin_id == bin_id, StorageBinWorkflow.state == "returning_bin"
+            )
+        )
+        return any(not (workflow.resolution or {}).get("physical_return_completed") for workflow in returns)
 
     async def item_bin_payload(self, item_id: int) -> Optional[dict[str, Any]]:
         row = await self.item_bin(item_id)
@@ -1060,7 +1073,13 @@ class BinStorageService:
             if (workflow.resolution or {}).get("physical_return_completed"):
                 await self.complete_return(workflow)
             elif workflow.state in {"retrieving_bin", "returning_bin"}:
-                await self.fail(workflow, "The bin move was interrupted. Check the robot before continuing.")
+                # Coded like an interrupted command, so the crash dialog lists the tray and the
+                # operator can confirm it home; without a code it would stay outside for good.
+                await self.fail(
+                    workflow,
+                    "The bin move was interrupted. Check the robot before continuing.",
+                    code=RESTART_INTERRUPTED_CODE,
+                )
 
     async def serialize_workflow(self, row: StorageBinWorkflow) -> dict[str, Any]:
         tray = await self.session.get(StorageBin, row.bin_id)
@@ -1553,22 +1572,28 @@ class BinStorageService:
         ).all()
         trays: list[tuple[StorageBin, int, int]] = []
         for row in bins:
-            members = (
-                await self.session.scalars(
-                    select(Item)
-                    .join(StorageBinItem, StorageBinItem.item_id == Item.id)
-                    .where(StorageBinItem.bin_id == row.id)
-                )
-            ).all()
-            if any(member.access_level_id != access_level_id for member in members):
-                continue
-            capacity = self._batch_capacity(row, len(members))
-            if row.compartment_layout is not None and await self._free_compartment(row) is None:
-                continue
-            if capacity <= 0:
-                continue
-            trays.append((row, len(members), capacity))
+            room = await self.batch_room(row, access_level_id)
+            if room is not None:
+                trays.append((row, *room))
         return trays
+
+    async def batch_room(self, row: StorageBin, access_level_id: Optional[int]) -> Optional[tuple[int, int]]:
+        """(member count, capacity) when the tray could take an item of the access level, else None."""
+        members = (
+            await self.session.scalars(
+                select(Item)
+                .join(StorageBinItem, StorageBinItem.item_id == Item.id)
+                .where(StorageBinItem.bin_id == row.id)
+            )
+        ).all()
+        if any(member.access_level_id != access_level_id for member in members):
+            return None
+        capacity = self._batch_capacity(row, len(members))
+        if row.compartment_layout is not None and await self._free_compartment(row) is None:
+            return None
+        if capacity <= 0:
+            return None
+        return len(members), capacity
 
     @staticmethod
     def _batch_capacity(row: StorageBin, member_count: int) -> int:
