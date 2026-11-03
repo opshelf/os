@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-from sse_starlette.sse import EventSourceResponse as LibraryEventSourceResponse
+from sse_starlette.sse import AppStatus, EventSourceResponse as LibraryEventSourceResponse
 
 from openshelf_os_server import main as main_module
 
@@ -191,4 +191,34 @@ async def test_stalled_sse_client_closes_the_stream_without_an_error_report(
     await asyncio.wait_for(app(_stream_scope("/api/robot/status", auth_headers), receive, send), timeout=5)
 
     assert sent[0] == {"type": "http.response.start", "status": 200, "headers": sent[0]["headers"]}
+    reported.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_sse_stream_opened_during_shutdown_is_not_an_error_report(
+    seeded_db: AsyncGenerator[None, None], auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sentry OPENSHELF-API-CK: a status stream opened while uvicorn shuts down (the
+    kiosk reconnecting during an api restart) hit sse-starlette's exit signal before
+    its first send, so the app ended without `http.response.start`, BaseHTTPMiddleware
+    raised RuntimeError("No response returned."), and it was reported as an unhandled 500.
+    """
+    monkeypatch.setattr(AppStatus, "should_exit", True)
+    reported = MagicMock()
+    monkeypatch.setattr(main_module, "capture_unhandled_exception", reported)
+    monkeypatch.setattr(audit_module, "capture_unhandled_exception", reported)
+
+    never = asyncio.Event()
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        await never.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    await asyncio.wait_for(app(_stream_scope("/api/robot/status", auth_headers), receive, send), timeout=5)
+
+    assert sent[0]["status"] == 200
     reported.assert_not_called()
