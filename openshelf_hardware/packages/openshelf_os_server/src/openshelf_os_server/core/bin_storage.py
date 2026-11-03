@@ -477,6 +477,15 @@ class BinStorageService:
             )
         ) is not None
 
+    async def bin_returning_home(self, bin_id: int) -> bool:
+        """Whether the robot is carrying this bin home: a return in motion that is not held."""
+        returns = await self.session.scalars(
+            select(StorageBinWorkflow).where(
+                StorageBinWorkflow.bin_id == bin_id, StorageBinWorkflow.state == "returning_bin"
+            )
+        )
+        return any(not (workflow.resolution or {}).get("physical_return_completed") for workflow in returns)
+
     async def item_bin_payload(self, item_id: int) -> Optional[dict[str, Any]]:
         row = await self.item_bin(item_id)
         return await self.serialize_bin(row) if row else None

@@ -577,20 +577,30 @@ class ImportJobService:
                 .order_by(StorageBin.barcode)
             )
         ).all()
+        coming_home: Optional[StorageBin] = None
         for tray in outside:
             if not self.bins.batch_fits(tray, first.planned_dimensions):
                 continue
-            # A tray on the move, or one back home whose return is held, cannot be scanned back.
-            if await self.bins.bin_in_motion(tray.id):
-                continue
             # Room and access level as the plan would count them once the tray is home again.
             if await self.bins.batch_room(tray, first.access_level_id) is None:
+                continue
+            # A tray on its way home needs no scan; one moving out, or back home with its return
+            # held, cannot be scanned back at all.
+            if await self.bins.bin_in_motion(tray.id):
+                if coming_home is None and await self.bins.bin_returning_home(tray.id):
+                    coming_home = tray
                 continue
             # This tray could take the item; the operator returns it with a scan, then fetches again.
             return ImportJobError(
                 409,
                 "trays_outside",
                 f"Bin {tray.barcode} is outside the machine. Put it in the IO box and scan it to return it, then fetch a bin again.",
+            )
+        if coming_home is not None:
+            return ImportJobError(
+                409,
+                "trays_outside",
+                f"Bin {coming_home.barcode} is on its way back. Fetch a bin again once it is home.",
             )
         return ImportJobError(
             409, "no_tray_free", "No multi-item bin with a free compartment fits this item. Skip it to continue."
@@ -722,18 +732,7 @@ class ImportJobService:
             # until the robot has put it back (a held return is not waited on).
             workflow is not None
             and workflow.state == "completed"
-            and any(
-                not self._returned_home(moving)
-                for moving in (
-                    await self.session.scalars(
-                        select(StorageBinWorkflow).where(
-                            StorageBinWorkflow.bin_id == workflow.bin_id,
-                            StorageBinWorkflow.operation == "return",
-                            StorageBinWorkflow.state == "returning_bin",
-                        )
-                    )
-                ).all()
-            )
+            and await self.bins.bin_returning_home(workflow.bin_id)
         ):
             return {
                 "kind": "tray",

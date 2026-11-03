@@ -3,7 +3,7 @@
 import hashlib
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import select
@@ -14,6 +14,7 @@ from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR
 from openshelf_os_server.core import bin_storage, mock_robot
 from openshelf_os_server.core import import_jobs as import_jobs_core
 from openshelf_os_server.core.bin_storage import BinStorageService
+from openshelf_os_server.core import robot as robot_module
 from openshelf_os_server.core.robot import _interrupted_bin_crash_reason
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.import_jobs import ImportJobError, ImportJobService, ImportRowInput, notify_command_result
@@ -775,6 +776,29 @@ async def test_a_tray_left_outside_is_named_and_can_be_returned_during_the_impor
 
 
 @pytest.mark.anyio
+async def test_a_tray_on_its_way_home_is_not_called_unreturnable(mock_mode, trays, client):
+    # The only tray that takes the item is already being carried home. The step fell through to
+    # "skip it", stranding the operator although the tray needed nothing but a moment.
+    await leave_tray_outside()
+    job_id = await create([row("Vial", small=True)])
+    opened = await client.post("/api/storage/bin-workflows/returns", json={"barcode": "900000000000"})
+    assert opened.status_code == 200, opened.text
+    async with AsyncSessionLocal() as db:
+        bins = BinStorageService(db)
+        returning = await db.get(StorageBinWorkflow, opened.json()["workflow"]["id"])
+        await bins.prepare_return(returning, list(returning.resolution["confirmed_item_ids"]))
+        service = ImportJobService(db)
+        job = await service.get(job_id)
+        assert returning.state == "returning_bin"
+        assert (await service.next_step(job))["reason"] == (
+            "Bin 900000000000 is on its way back. Fetch a bin again once it is home."
+        )
+        with pytest.raises(ImportJobError) as refused:
+            await service.start_tray(job, None)
+        assert (refused.value.status_code, refused.value.code) == (409, "trays_outside")
+
+
+@pytest.mark.anyio
 async def test_an_outside_tray_that_cannot_take_the_item_is_not_named(mock_mode, trays):
     # A full tray outside would not take the item even once home, so returning it cannot help.
     trays[:] = [tray(0, rows=1, columns=1)]
@@ -809,8 +833,30 @@ async def test_an_ordinary_return_refuses_a_tray_the_import_still_returns(mock_m
     assert refused.json()["detail"]["message"] == "This bin is in use by an import. Finish it on the import screen."
 
 
+async def start_robot_worker(monkeypatch):
+    """Run the real startup against the real database with the hardware stubbed; returns the worker."""
+    robot = MagicMock()
+    robot.get_init_component_names.return_value = []
+    robot.configure = AsyncMock(return_value=None)
+    worker = MagicMock(connect=AsyncMock(), start=AsyncMock(), get_status_snapshot=AsyncMock())
+    listener = MagicMock(start=AsyncMock())
+    monkeypatch.setattr(robot_module, "validate_robot_config", lambda: None)
+    monkeypatch.setattr(robot_module.r, "Robot", lambda: robot)
+    monkeypatch.setattr(robot_module.r_worker, "RobotWorker", lambda _robot, **_kwargs: worker)
+    monkeypatch.setattr(robot_module, "RobotEventListener", lambda _worker: listener)
+    for name in ("_barcode_enabled", "_printer_enabled", "_home_on_init_enabled"):
+        monkeypatch.setattr(robot_module, name, lambda: False)
+    for name in ("robot_worker", "robot_instance", "event_listener"):
+        monkeypatch.setattr(robot_module, name, None)
+    await robot_module.init_robot_worker()
+    # The stub worker must not stay installed for the requests that follow.
+    for name in ("robot_worker", "robot_instance", "event_listener"):
+        monkeypatch.setattr(robot_module, name, None)
+    return worker
+
+
 @pytest.mark.anyio
-async def test_a_restart_during_the_import_tray_return_is_recovered_in_the_crash_dialog(mock_mode, trays, client):
+async def test_a_restart_during_the_import_tray_return_is_recovered_in_the_crash_dialog(mock_mode, trays, client, monkeypatch):
     # The OS restarted while the robot carried the import's tray home. The return failed without a
     # code, so the crash dialog never listed the tray and the import asked for it in the IO box.
     job_id = await create([row("Vial", small=True)])
@@ -830,6 +876,8 @@ async def test_a_restart_during_the_import_tray_return_is_recovered_in_the_crash
         assert [w.id for w in await bins.crash_interrupted_workflows()] == [returning.id]
     # The robot starts stopped, so the crash dialog opens and lists the tray.
     assert await _interrupted_bin_crash_reason() is not None
+    worker = await start_robot_worker(monkeypatch)
+    worker.set_crash_state.assert_called_once_with(await _interrupted_bin_crash_reason())
 
     # No read reconciled the unit before the operator confirmed the tray on its shelf.
     assert [(unit.stage, unit.request_id) for unit in await units(job_id)] == [("returning", returning.id)]
