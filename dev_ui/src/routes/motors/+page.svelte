@@ -23,7 +23,7 @@
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 	import { orderSectionMoves, type MotorMove } from '$lib/motor-order';
 	import { robotStatus } from '$lib/stores';
-	import { postToast } from '$lib/toasts';
+	import { createToastSource, postToast } from '$lib/toasts';
 
 	let motors: MotorList | null = null;
 	let isLoading = true;
@@ -43,7 +43,8 @@
 	let sectionAction: string | null = null;
 	let motorPositions: Record<string, string> = {};
 	let limitSwitches: Record<string, MotorLimitSwitchState> = {};
-	let pollError = '';
+	// The poll repeats every second, so a failing probe is one condition, not a toast per tick.
+	const pollState = createToastSource('error');
 
 	const POSITION_POLL_INTERVAL_MS = 1000;
 
@@ -55,6 +56,10 @@
 		}
 
 		return 'mm';
+	}
+
+	function motorLabel(motorName: string): string {
+		return motorName.replace(/_/g, ' ');
 	}
 
 	function sectionLabel(sectionName: string): string {
@@ -146,7 +151,7 @@
 			if (result.busy === true) {
 				return;
 			}
-			pollError = '';
+			pollState.report('');
 
 			const nextPositions = { ...motorPositions };
 			const nextTargets = { ...moveTargets };
@@ -165,7 +170,7 @@
 			motorPositions = nextPositions;
 			moveTargets = nextTargets;
 		} catch (err) {
-			pollError = err instanceof Error ? err.message : 'Failed to probe motors.';
+			pollState.report(err instanceof Error ? err.message : 'The motor positions could not be read.');
 		} finally {
 			isProbing = false;
 		}
@@ -200,14 +205,14 @@
 		}
 
 		if (state.min_engaged === null) {
-			throw new Error(`The ${motorName} min limit switch could not be read.`);
+			throw new Error(`The ${motorLabel(motorName)} min limit switch could not be read.`);
 		}
 
 		if (state.min_engaged !== isHomed) {
 			const where = isHomed === true ? 'after homing' : 'away from home';
 			const expected = isHomed === true ? 'H' : 'L';
 			throw new Error(
-				`The ${motorName} min limit switch reads ${minLimitLabel(state)} ${where}, expected ${expected}.`
+				`The ${motorLabel(motorName)} min limit switch reads ${minLimitLabel(state)} ${where}, expected ${expected}.`
 			);
 		}
 	}
@@ -222,12 +227,12 @@
 			const result = await simulateMotorCrash(motorName);
 
 			if (result.success === true) {
-				message = `Crash simulated for ${motorName}.`;
+				message = `Crash simulated for ${motorLabel(motorName)}.`;
 			} else {
-				error = `Failed to simulate crash for ${motorName}.`;
+				error = `Failed to simulate crash for ${motorLabel(motorName)}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `Crash failed for ${motorName}.`;
+			error = err instanceof Error ? err.message : `Crash failed for ${motorLabel(motorName)}.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -244,12 +249,12 @@
 			const result = await clearMotorAlarm(motorName);
 
 			if (result.success === true) {
-				message = `Alarm cleared for ${motorName}.`;
+				message = `Alarm cleared for ${motorLabel(motorName)}.`;
 			} else {
-				error = `Failed to clear alarm for ${motorName}.`;
+				error = `Failed to clear alarm for ${motorLabel(motorName)}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `Clear alarm failed for ${motorName}.`;
+			error = err instanceof Error ? err.message : `Clear alarm failed for ${motorLabel(motorName)}.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -266,12 +271,12 @@
 			const result = await homeMotor(motorName);
 
 			if (result.success === true) {
-				message = `Homed ${motorName}.`;
+				message = `Homed ${motorLabel(motorName)}.`;
 			} else {
-				error = `Failed to home ${motorName}.`;
+				error = `Failed to home ${motorLabel(motorName)}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `Home failed for ${motorName}.`;
+			error = err instanceof Error ? err.message : `Home failed for ${motorLabel(motorName)}.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -331,7 +336,7 @@
 			testResults[motorName] = 'ok';
 		} catch (err) {
 			testResults[motorName] = 'err';
-			postToast('error', err instanceof Error ? err.message : `The ${motorName} test failed.`);
+			postToast('error', err instanceof Error ? err.message : `The ${motorLabel(motorName)} test failed.`);
 		}
 	}
 
@@ -361,7 +366,7 @@
 
 		try {
 			await testSingleMotor(motorName);
-			message = `The ${motorName} test is complete.`;
+			message = `The ${motorLabel(motorName)} test is complete.`;
 		} finally {
 			testingMotor = null;
 			isTesting = false;
@@ -440,7 +445,7 @@
 				const result = await homeMotor(motor.name);
 
 				if (result.success !== true) {
-					error = `Failed to home ${motor.name}.`;
+					error = `Failed to home ${motorLabel(motor.name)}.`;
 					return;
 				}
 			}
@@ -487,14 +492,14 @@
 			const targetValue = moveTargets[motor.name];
 
 			if (targetValue === undefined || targetValue === '') {
-				error = `Enter a position for ${motor.name}.`;
+				error = `Enter a position for ${motorLabel(motor.name)}.`;
 				return;
 			}
 
 			const positionMm = parseFloat(targetValue);
 
 			if (Number.isNaN(positionMm) === true) {
-				error = `Invalid position value for ${motor.name}.`;
+				error = `Invalid position value for ${motorLabel(motor.name)}.`;
 				return;
 			}
 
@@ -542,14 +547,14 @@
 		const targetValue = moveTargets[motorName];
 
 		if (targetValue === undefined || targetValue === '') {
-			error = `Enter a position for ${motorName}.`;
+			error = `Enter a position for ${motorLabel(motorName)}.`;
 			return;
 		}
 
 		const positionMm = parseFloat(targetValue);
 
 		if (Number.isNaN(positionMm) === true) {
-			error = `Invalid position value for ${motorName}.`;
+			error = `Invalid position value for ${motorLabel(motorName)}.`;
 			return;
 		}
 
@@ -561,12 +566,12 @@
 			const result = await moveMotor(motorName, positionMm);
 
 			if (result.success === true) {
-				message = `Moved ${motorName} to ${positionMm} ${unitForMotor(motorName)}.`;
+				message = `Moved ${motorLabel(motorName)} to ${positionMm} ${unitForMotor(motorName)}.`;
 			} else {
-				error = `Failed to move ${motorName}.`;
+				error = `Failed to move ${motorLabel(motorName)}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `Move failed for ${motorName}.`;
+			error = err instanceof Error ? err.message : `Move failed for ${motorLabel(motorName)}.`;
 		} finally {
 			movingMotor = null;
 		}
@@ -601,6 +606,7 @@
 		return () => {
 			clearInterval(interval);
 			document.removeEventListener('visibilitychange', didChangeVisibility);
+			pollState.release();
 		};
 	});
 </script>

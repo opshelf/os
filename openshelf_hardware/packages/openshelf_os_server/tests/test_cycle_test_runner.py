@@ -92,9 +92,10 @@ async def test_demo_map_refusal_gets_the_disable_demo_hint() -> None:
 		status_code=200, json=lambda: {"status": "failed", "result": {"error": refusal}}
 	)
 
-	error = await runner.run_command({"command": "store_item"})
+	code, error = await runner.run_command({"command": "store_item"})
 
-	assert error.startswith(f"{refusal} Disable demo.enabled in data/config.json")
+	assert code == "demo_map_missing"
+	assert "Turn off demo mode" in error
 
 
 @pytest.mark.asyncio

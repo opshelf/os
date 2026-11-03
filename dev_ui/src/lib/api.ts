@@ -95,10 +95,7 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 			headers
 		});
 	} catch {
-		throw new ApiError(
-			formatErrorMessage('The device API did not answer. Check that the device is online.', undefined, requestLine),
-			0
-		);
+		throw new ApiError(formatErrorMessage(API_UNREACHABLE_MESSAGE, undefined, requestLine), 0);
 	}
 
 	if (response.status === 401) {
@@ -128,27 +125,19 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 	try {
 		return JSON.parse(text) as T;
 	} catch {
-		throw new Error(
-			formatErrorMessage('The device API sent a response that is not JSON.', undefined, requestLine)
-		);
+		throw new Error(formatErrorMessage(API_NOT_JSON_MESSAGE, undefined, requestLine));
 	}
 }
 
+export const API_UNREACHABLE_MESSAGE = 'The device API did not answer. Check that the device is online.';
+export const API_NOT_JSON_MESSAGE = 'The device API sent a response that is not JSON.';
+
 // request is the "METHOD /path" (and status) the error came from: client-side failures carry
-// nothing else that says which call broke.
-function formatErrorMessage(message: string, detail?: ApiErrorDetail, request?: string): string {
-	let output = message;
-	if (detail?.reason && detail.reason !== message) {
-		output = `${output} (${detail.reason})`;
-	}
-	if (detail?.needs_home && detail.reason === undefined) {
-		output = `${output} Home required.`;
-	}
+// nothing else that says which call broke. A needs-home `reason` is raw motor text for
+// recovery, never part of the toast; the code clue names the condition.
+export function formatErrorMessage(message: string, detail?: ApiErrorDetail, request?: string): string {
 	const clue = formatErrorClue(detail, request);
-	if (clue !== '') {
-		output = `${output}${TOAST_DETAIL_SEPARATOR}${clue}`;
-	}
-	return output;
+	return clue === '' ? message : `${message}${TOAST_DETAIL_SEPARATOR}${clue}`;
 }
 
 /** The sentence headline plus the clue line for a failed response to `request` ("METHOD /path"). */
@@ -161,10 +150,9 @@ export async function describeFailedResponse(
 	return formatErrorMessage(headline, detail, `${request} → ${response.status}`);
 }
 
-// The reason stays raw: recovery reads motor ids out of it.
-export function formatHomeRequired(reason: string): string {
-	return reason === '' ? 'Home required.' : `Home required: ${reason.replace(/\.$/, '')}.`;
-}
+// The needs-home reason stays raw in server state (recovery reads motor ids out of it), so the
+// banner is fixed copy.
+export const HOME_REQUIRED_MESSAGE = 'Home the robot before calibration movement.';
 
 /** A failed robot event or command result, with its cause code as the clue. */
 export function formatFailure(data: Record<string, unknown>): string {
@@ -172,7 +160,8 @@ export function formatFailure(data: Record<string, unknown>): string {
 	const code = [data.fault_code, data.code].find((value) => typeof value === 'string') as
 		| string
 		| undefined;
-	const clue = formatErrorClue({ code });
+	const correlation_id = typeof data.correlation_id === 'string' ? data.correlation_id : undefined;
+	const clue = formatErrorClue({ code, correlation_id });
 	return clue === '' ? error : `${error}${TOAST_DETAIL_SEPARATOR}${clue}`;
 }
 
@@ -216,12 +205,10 @@ function unreachableMessage(status: number): string {
 	return `The request failed with status ${status}.`;
 }
 
-const MAX_ERROR_BODY_LENGTH = 200;
-
 async function readErrorDetail(
 	response: Response
 ): Promise<{ message: string; detail?: ApiErrorDetail }> {
-	const fallback = `The request failed with status ${response.status}.`;
+	const fallback = unreachableMessage(response.status);
 	const contentType = response.headers.get('content-type') ?? '';
 	let text = '';
 
@@ -236,7 +223,7 @@ async function readErrorDetail(
 	}
 
 	if (contentType.includes('text/html') === true) {
-		return { message: unreachableMessage(response.status) };
+		return { message: fallback };
 	}
 
 	try {
@@ -249,21 +236,16 @@ async function readErrorDetail(
 				}
 				if (detail && typeof detail === 'object') {
 					const detailObject = detail as ApiErrorDetail;
-					const message =
-						typeof detailObject.message === 'string'
-							? detailObject.message
-							: JSON.stringify(detailObject);
+					const message = typeof detailObject.message === 'string' ? detailObject.message : fallback;
 					return { message, detail: detailObject };
 				}
 			}
-
-			return { message: JSON.stringify(payload) };
 		}
 	} catch {
-		return { message: text.length <= MAX_ERROR_BODY_LENGTH ? text : fallback };
+		// A relay or proxy answered with its own text, not the device API.
 	}
 
-	return { message: text.length <= MAX_ERROR_BODY_LENGTH ? text : fallback };
+	return { message: fallback };
 }
 
 import { inferVocabularyFromGrid, setActiveVocabulary, toDeviceSide } from './side';
@@ -564,6 +546,8 @@ export type CalibrationTestQueueSnapshot = {
 	current: CalibrationTestQueueCell | null;
 	failed: CalibrationTestQueueCell | null;
 	error: string | null;
+	code: string | null;
+	correlation_id: string | null;
 	started_at: string | null;
 	updated_at: string | null;
 };
@@ -614,6 +598,7 @@ export type CycleTestCellResult = {
 	steps: Record<string, boolean>;
 	passed: boolean;
 	error: string | null;
+	code: string | null;
 	duration_s: number;
 };
 
@@ -629,6 +614,7 @@ export type CycleTestSnapshot = {
 	unsized_cells: string[];
 	hardware_fault: string | null;
 	error: string | null;
+	code: string | null;
 	log: string[];
 	started_by: string | null;
 	started_at: string | null;

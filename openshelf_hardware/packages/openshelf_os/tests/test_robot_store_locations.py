@@ -92,7 +92,7 @@ async def test_non_demo_store_rejects_occupied_explicit_location() -> None:
     result = await robot.store(item_payload("ordinary-item", location))
 
     assert isinstance(result, RobotCommandError)
-    assert result.error == "Requested storage cell is occupied"
+    assert result.error == "That cell is not available."
     robot.io_pick.assert_not_awaited()
 
 
@@ -132,5 +132,5 @@ async def test_ordinary_store_rejects_tray_home() -> None:
     result = await robot.store(item_payload("ordinary-item", location))
 
     assert isinstance(result, RobotCommandError)
-    assert result.error == "Requested storage cell is reserved"
+    assert result.error == "That cell is not available."
     robot.io_pick.assert_not_awaited()

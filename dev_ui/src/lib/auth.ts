@@ -1,4 +1,10 @@
-import { describeFailedResponse, getApiBase } from './api';
+import {
+	API_NOT_JSON_MESSAGE,
+	API_UNREACHABLE_MESSAGE,
+	describeFailedResponse,
+	formatErrorMessage,
+	getApiBase
+} from './api';
 
 interface TokenResponse {
 	access_token: string;
@@ -21,15 +27,30 @@ export function isAuthenticated(): boolean {
 
 export class LoginRejectedError extends Error {}
 
-export async function login(email: string, pin: string): Promise<void> {
-	const apiBase = getApiBase();
-	const url = `${apiBase}/auth/login/json`;
+// Sign-in runs outside apiFetch (which would retry it on 401), so it guards the same
+// failures: a dropped network and a body that is not the API's JSON.
+async function postAuth(path: string, body: unknown): Promise<Response> {
+	try {
+		return await fetch(`${getApiBase()}${path}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+	} catch {
+		throw new Error(formatErrorMessage(API_UNREACHABLE_MESSAGE, undefined, `POST ${path}`));
+	}
+}
 
-	const response = await fetch(url, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ email, pin })
-	});
+async function readTokens(response: Response, path: string): Promise<TokenResponse> {
+	try {
+		return (await response.json()) as TokenResponse;
+	} catch {
+		throw new Error(formatErrorMessage(API_NOT_JSON_MESSAGE, undefined, `POST ${path}`));
+	}
+}
+
+export async function login(email: string, pin: string): Promise<void> {
+	const response = await postAuth('/auth/login/json', { email, pin });
 
 	if (response.status === 401) {
 		throw new LoginRejectedError(
@@ -43,7 +64,7 @@ export async function login(email: string, pin: string): Promise<void> {
 		);
 	}
 
-	const data = (await response.json()) as TokenResponse;
+	const data = await readTokens(response, '/auth/login/json');
 
 	accessToken = data.access_token;
 	refreshToken = data.refresh_token;
@@ -55,14 +76,7 @@ export async function refreshAccessToken(): Promise<void> {
 		throw new Error('No session to refresh. Sign in again.');
 	}
 
-	const apiBase = getApiBase();
-	const url = `${apiBase}/auth/refresh`;
-
-	const response = await fetch(url, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ refresh_token: refreshToken })
-	});
+	const response = await postAuth('/auth/refresh', { refresh_token: refreshToken });
 
 	if (response.ok === false) {
 		accessToken = null;
@@ -73,7 +87,7 @@ export async function refreshAccessToken(): Promise<void> {
 		);
 	}
 
-	const data = (await response.json()) as TokenResponse;
+	const data = await readTokens(response, '/auth/refresh');
 
 	accessToken = data.access_token;
 	tokenExpiresAt = Date.now() + data.expires_in * 1000;

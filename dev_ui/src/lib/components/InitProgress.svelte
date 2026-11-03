@@ -73,10 +73,6 @@
 			return 'pending';
 		}
 
-		if (state === 'failed') {
-			return component.reason ? `failed — ${component.reason}` : 'failed';
-		}
-
 		return component.phase;
 	}
 </script>
@@ -95,7 +91,12 @@
 					<tr class="step step-{state}">
 						<td class="step-marker">●</td>
 						<td class="step-name">{label(component.component)}</td>
-						<td class="step-status">{statusText(component)}</td>
+						<td class="step-status">
+							{statusText(component)}
+							{#if state === 'failed' && component.reason}
+								<span class="step-reason">{component.reason}</span>
+							{/if}
+						</td>
 					</tr>
 				{/each}
 			</tbody>
@@ -115,6 +116,11 @@
 
 	.step-status {
 		text-transform: uppercase;
+	}
+
+	.step-reason {
+		display: block;
+		text-transform: none;
 	}
 
 	.step-done {

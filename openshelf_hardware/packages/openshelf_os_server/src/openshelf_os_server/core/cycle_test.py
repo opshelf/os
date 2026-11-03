@@ -30,6 +30,7 @@ from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.core.robot import get_robot_worker
 from openshelf_os_server.database.models import Item, ItemLocation
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.errors import CODE_MESSAGES, DEFAULT_STATUS_CODES
 from openshelf_os_server.settings import get_operating_mode, get_settings
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,11 @@ RunState = Literal["idle", "running", "paused", "completed", "failed", "cancelle
 TERMINAL_STATES = {"idle", "completed", "failed", "cancelled"}
 SIDES = ("F", "B")
 SIDE_NAMES = {"F": "front_module", "B": "back_module"}
+
+# (code, operator sentence): what a failed step, cell or run reports. The cause behind it
+# goes to the module log.
+Failure = tuple[str, str]
+NO_CELLS: Failure = ("cycle_test_no_cells", "No cells match the test settings.")
 
 
 def _parse_target(value: str) -> dict[str, Any]:
@@ -133,6 +139,7 @@ class CellResult(BaseModel):
 	steps: dict[str, bool] = Field(default_factory=dict)
 	passed: bool = False
 	error: Optional[str] = None
+	code: Optional[str] = None
 	duration_s: float = 0.0
 
 
@@ -148,6 +155,7 @@ class CycleTestSnapshot(BaseModel):
 	unsized_cells: list[str] = Field(default_factory=list)
 	hardware_fault: Optional[str] = None
 	error: Optional[str] = None
+	code: Optional[str] = Field(None, description="Cause code of hardware_fault or error")
 	log: list[str] = Field(default_factory=list, description=f"Last {LOG_LIMIT} log lines")
 	started_by: Optional[str] = None
 	started_at: Optional[str] = None
@@ -169,29 +177,37 @@ def _cell_id(location: dict[str, Any]) -> str:
 	return f"{location['side']}:{location['shelf']}:{location['cell']}"
 
 
-def _detail(resp: httpx.Response) -> str:
+def _failure(resp: httpx.Response) -> Failure:
+	"""The API's own code and sentence for a failed loopback request."""
 	try:
 		data = resp.json()
 	except ValueError:
-		return resp.text.strip()
+		data = None
 	detail = data.get("detail") if isinstance(data, dict) else None
-	if isinstance(detail, dict):
-		return str(detail.get("message") or detail)
-	if detail is not None:
-		return str(detail)
-	return resp.text.strip()
+	if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+		return str(detail.get("code") or "error"), detail["message"]
+	code = DEFAULT_STATUS_CODES.get(resp.status_code, "error")
+	logger.warning("cycle test request answered %s without an error body: %.200s", resp.status_code, resp.text)
+	return code, CODE_MESSAGES[code]
 
 
-def _describe_fault(status: dict[str, Any]) -> Optional[str]:
+def _describe_fault(status: dict[str, Any]) -> Optional[Failure]:
+	# The reasons stay raw in robot state (recovery parses motor ids out of them); the run
+	# reports a sentence and logs the reason.
 	axes = status.get("needs_home_axes")
-	suffix = f"; needs home axes: {', '.join(str(a) for a in axes)}" if isinstance(axes, list) and axes else ""
 	if status.get("is_emergency_stopped") is True:
-		return f"emergency stop: {status.get('emergency_stop_reason') or 'unknown reason'}"
-	if status.get("is_crashed") is True:
-		return f"robot crashed: {status.get('crash_reason') or 'unknown reason'}{suffix}"
-	if status.get("needs_home") is True:
-		return f"home required: {status.get('needs_home_reason') or 'unknown reason'}{suffix}"
-	return None
+		failure: Failure = ("emergency_stop", "The emergency stop was pressed. Release it, then reset the robot.")
+		reason = status.get("emergency_stop_reason")
+	elif status.get("is_crashed") is True:
+		failure = ("robot_crashed", "The robot stopped on a fault. Inspect it and home it before running again.")
+		reason = status.get("crash_reason")
+	elif status.get("needs_home") is True:
+		failure = ("home_required", CODE_MESSAGES["home_required"])
+		reason = status.get("needs_home_reason")
+	else:
+		return None
+	logger.warning("cycle test hardware fault %s: %s (needs home axes: %s)", failure[0], reason, axes)
+	return failure
 
 
 class _UserTokenAuth(httpx.Auth):
@@ -241,25 +257,28 @@ class CycleTestRunner:
 	def log(self, line: str) -> None:
 		self.manager.log(line)
 
-	def failed(self, resp: httpx.Response) -> str:
-		return f"{resp.status_code} {_detail(resp)}"
+	def set_hardware_fault(self, fault: Failure) -> None:
+		self.snapshot.code, self.snapshot.hardware_fault = fault
+
+	def set_error(self, failure: Failure) -> None:
+		self.snapshot.code, self.snapshot.error = failure
 
 	# -- robot state -------------------------------------------------------
 
-	async def hardware_fault(self) -> Optional[str]:
+	async def hardware_fault(self) -> Optional[Failure]:
 		if self.is_mock:
 			return None
 		try:
 			worker = await get_robot_worker()
 		except ValueError:
-			return "robot is not initialized"
+			return "robot_not_initialized", CODE_MESSAGES["robot_not_initialized"]
 		raw = await worker.get_status_snapshot(force_refresh=True)
 		if raw is None:
 			return None
 		status = json.loads(raw) if isinstance(raw, str) else raw
 		return _describe_fault(status) if isinstance(status, dict) else None
 
-	async def wait_for_hardware_fault(self) -> Optional[str]:
+	async def wait_for_hardware_fault(self) -> Optional[Failure]:
 		# The worker publishes the failure before it enters the crash state.
 		deadline = time.monotonic() + HARDWARE_FAULT_SETTLE_S
 		while True:
@@ -297,7 +316,7 @@ class CycleTestRunner:
 		while True:
 			resp = await self.client.get("/api/storage/items", params={"skip": 0, "limit": 200})
 			if resp.status_code != 200:
-				self.log(f"  Clear failed: could not list items: {resp.status_code} {_detail(resp)}")
+				self.log(f"  Clear failed: could not list items: {_failure(resp)[1]}")
 				return False
 			candidates = [
 				item["barcode"] for item in resp.json().get("items", [])
@@ -311,10 +330,10 @@ class CycleTestRunner:
 				if del_resp.status_code in (200, 204, 404):
 					deleted += 1
 				elif del_resp.status_code == 409:
-					undeletable[barcode] = _detail(del_resp)
+					undeletable[barcode] = _failure(del_resp)[1]
 					self.log(f"  Skipping undeletable item {barcode}: {undeletable[barcode]}")
 				else:
-					self.log(f"  Clear failed deleting {barcode}: {del_resp.status_code} {_detail(del_resp)}")
+					self.log(f"  Clear failed deleting {barcode}: {_failure(del_resp)[1]}")
 					return False
 		suffix = f"; skipped {len(undeletable)} undeletable" if undeletable else ""
 		self.log(f"  Cleared {deleted} items (and their locations){suffix}")
@@ -331,7 +350,7 @@ class CycleTestRunner:
 		self.barcode_counter += 1
 		return barcode
 
-	async def create_item(self, capacity: dict[str, float]) -> tuple[Optional[str], Optional[str]]:
+	async def create_item(self, capacity: dict[str, float]) -> tuple[Optional[str], Optional[Failure]]:
 		dimensions = {axis: int(capacity[axis] * 0.8) for axis in ("width", "height", "length")}
 		for _ in range(100):
 			barcode = await self.next_barcode()
@@ -347,37 +366,39 @@ class CycleTestRunner:
 			if resp.status_code in (200, 201):
 				return barcode, None
 			if resp.status_code != 409:
-				return None, self.failed(resp)
-		return None, "barcode collided 100 times"
+				return None, _failure(resp)
+		logger.warning("cycle test found no free barcode after 100 tries")
+		return None, ("barcode_unavailable", "A test barcode could not be generated. Clear old test items, then run the test again.")
 
-	async def seed_location(self, barcode: str, side: str, shelf: int, cell: int) -> Optional[str]:
+	async def seed_location(self, barcode: str, side: str, shelf: int, cell: int) -> Optional[Failure]:
 		resp = await self.client.post(
 			"/api/storage/items/locations/add",
 			json={"barcode": barcode, "side": side, "shelf_idx": shelf, "cell_idx": cell},
 		)
 		if resp.status_code in (200, 201):
 			return None
-		return self.failed(resp)
+		return _failure(resp)
 
 	# -- robot commands ----------------------------------------------------
 
-	async def run_command(self, payload: dict[str, Any]) -> Optional[str]:
-		"""Submit a command and wait for its durable result; returns an error or None."""
+	async def run_command(self, payload: dict[str, Any]) -> Optional[Failure]:
+		"""Submit a command and wait for its durable result; returns the failure or None."""
 		resp = await self.client.post("/api/robot/commands", json=payload)
 		if resp.status_code != 200:
-			return self.failed(resp)
+			return _failure(resp)
 		command_id = resp.json().get("command_id")
 		start = time.monotonic()
 		last_fault_check = start
 		while True:
 			now = time.monotonic()
 			if now - start > COMMAND_TIMEOUT_S:
-				return "command result timeout"
+				logger.warning("cycle test command %s had no result after %ss", command_id, COMMAND_TIMEOUT_S)
+				return "timeout", CODE_MESSAGES["timeout"]
 			if now - last_fault_check >= 1.0:
 				last_fault_check = now
 				fault = await self.hardware_fault()
 				if fault is not None:
-					self.snapshot.hardware_fault = fault
+					self.set_hardware_fault(fault)
 					return fault
 			row = await self.client.get(f"/api/robot/commands/{command_id}")
 			if row.status_code == 200:
@@ -386,43 +407,46 @@ class CycleTestRunner:
 					return None
 				if data["status"] == "failed":
 					result = data.get("result") or {}
-					error = str(result.get("error") or result.get("message") or "command failed")
+					error = str(result.get("error") or CODE_MESSAGES["execution_error"])
 					if DEMO_MAP_MISSING_SUFFIX in error:
-						error += " Disable demo.enabled in data/config.json and restart the API for arbitrary cycle-test barcodes."
-					return error
+						return (
+							"demo_map_missing",
+							"This barcode is not in the demo cell map. Turn off demo mode in the settings and restart the API to test any barcode.",
+						)
+					return str(result.get("fault_code") or result.get("code") or "execution_error"), error
 			await asyncio.sleep(COMMAND_POLL_S)
 
-	async def store(self, barcode: str, side: str, shelf: int, cell: int) -> Optional[str]:
+	async def store(self, barcode: str, side: str, shelf: int, cell: int) -> Optional[Failure]:
 		location = {"side": side, "shelf_idx": shelf, "cell_idx": cell}
 		error = await self.run_command({"command": "store_item", "item": {"barcode": barcode, "location": location}})
 		if error is not None:
 			return error
 		ok, _ = await self.wait_for_location(barcode, side, shelf, cell, True)
-		return None if ok else "item was not at location in database"
+		return None if ok else ("cycle_test_location_mismatch", "The item was stored, but the database does not show it in the cell.")
 
-	async def retrieve(self, barcode: str, side: str, shelf: int, cell: int) -> Optional[str]:
+	async def retrieve(self, barcode: str, side: str, shelf: int, cell: int) -> Optional[Failure]:
 		location = {"side": side, "shelf_idx": shelf, "cell_idx": cell}
 		error = await self.run_command({"command": "retrieve_item", "barcode": barcode, "location": location})
 		if error is not None:
 			return error
 		ok, _ = await self.wait_for_location(barcode, side, shelf, cell, False)
-		return None if ok else "item was not removed from location in database"
+		return None if ok else ("cycle_test_location_mismatch", "The item was retrieved, but the database still shows it in the cell.")
 
-	async def quick(self, side: str, shelf: int, cell: int) -> Optional[str]:
+	async def quick(self, side: str, shelf: int, cell: int) -> Optional[Failure]:
 		params = {"lift": f"{self.config.lift_mm:g}"} if self.config.lift_mm is not None else None
 		resp = await self.client.post(
 			"/api/calibration/test",
 			params=params,
 			json={"side": side, "shelf_idx": shelf, "cell_idx": cell},
 		)
-		return None if resp.status_code == 200 else self.failed(resp)
+		return None if resp.status_code == 200 else _failure(resp)
 
 	# -- cells -------------------------------------------------------------
 
 	async def locations(self) -> Optional[list[dict[str, Any]]]:
 		resp = await self.client.get("/api/storage/grid")
 		if resp.status_code != 200:
-			self.log(f"Could not read the storage grid: {resp.status_code} {_detail(resp)}")
+			self.log(f"Could not read the storage grid: {_failure(resp)[1]}")
 			return None
 		grid = resp.json()
 		locations: list[dict[str, Any]] = []
@@ -511,11 +535,11 @@ class CycleTestRunner:
 		shelf, cell = location["shelf"], location["cell"]
 		mode = self.config.mode
 
-		async def step(name: str, label: str, error: Optional[str]) -> bool:
-			result.steps[name] = error is None
-			if error is not None:
-				result.error = error
-				self.log(f"  - {label}: FAIL - {error}")
+		async def step(name: str, label: str, failure: Optional[Failure]) -> bool:
+			result.steps[name] = failure is None
+			if failure is not None:
+				result.code, result.error = failure
+				self.log(f"  - {label}: FAIL - {result.error}")
 				return False
 			self.log(f"  - {label}: OK")
 			return True
@@ -530,8 +554,8 @@ class CycleTestRunner:
 		if existing:
 			self.log(f"  - Existing item at location: {barcode}")
 		else:
-			barcode, error = await self.create_item(location["capacity"])
-			if not await step("create", f"Create item{f' ({barcode})' if barcode else ''}", error):
+			barcode, failure = await self.create_item(location["capacity"])
+			if not await step("create", f"Create item{f' ({barcode})' if barcode else ''}", failure):
 				return
 		assert barcode is not None
 		result.barcode = barcode
@@ -566,28 +590,28 @@ class CycleTestRunner:
 
 		fault = await self.hardware_fault()
 		if fault is not None:
-			snapshot.hardware_fault = fault
-			self.log(f"Robot has a hardware fault: {fault}")
+			self.set_hardware_fault(fault)
+			self.log(f"Robot has a hardware fault: {fault[1]}")
 			return False
 
 		if is_first and self.config.clear:
 			self.log("Clearing all items and item locations...")
 			if not await self.clear_database():
-				snapshot.error = "failed to clear the database"
+				self.set_error(("cycle_test_clear_failed", "The items could not be cleared before the test."))
 				return False
 
 		self.log("Getting storage locations...")
 		locations = await self.locations()
 		if locations is None:
-			snapshot.error = "could not read the storage grid"
+			self.set_error(("grid_load_failed", CODE_MESSAGES["grid_load_failed"]))
 			return False
 		if not locations:
 			self.log("Warning: no storage cells available, skipping cell tests")
-			snapshot.error = "no cells to test"
+			self.set_error(NO_CELLS)
 			return False
 		filtered = self.filter_locations(locations)
 		if filtered is None:
-			snapshot.error = "no cells to test"
+			self.set_error(NO_CELLS)
 			return False
 
 		snapshot.total = len(filtered)
@@ -609,14 +633,16 @@ class CycleTestRunner:
 				await self.test_cell(location, result)
 			except httpx.HTTPError as exc:
 				logger.warning("cycle test request failed", exc_info=exc)
-				result.error = "request to the API failed"
+				result.code, result.error = "cycle_test_request_failed", "The cycle test could not reach the device API."
 				self.log(f"  - FAIL - {result.error}")
 			result.duration_s = round(time.monotonic() - started, 1)
 			snapshot.current = None
 			self.manager.publish()
 
 			if not result.passed and snapshot.hardware_fault is None:
-				snapshot.hardware_fault = await self.wait_for_hardware_fault()
+				fault = await self.wait_for_hardware_fault()
+				if fault is not None:
+					self.set_hardware_fault(fault)
 			if snapshot.hardware_fault is not None:
 				self.log(f"HARDWARE FAULT at cell {cell_id}: {snapshot.hardware_fault}")
 				self.log("Stopping test. Inspect the robot and home it before running again.")
@@ -664,8 +690,8 @@ class CycleTestRunner:
 		except Exception as exc:
 			logger.error("cycle test run failed", exc_info=exc)
 			final = "failed"
-			snapshot.error = "cycle test stopped on an internal error"
-			self.log(snapshot.error)
+			self.set_error(("internal_error", CODE_MESSAGES["internal_error"]))
+			self.log(f"Stopped: {snapshot.error}")
 		finally:
 			await self.client.aclose()
 			snapshot.state = final

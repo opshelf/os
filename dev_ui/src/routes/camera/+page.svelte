@@ -696,7 +696,7 @@
 
 	{#if selectedCamera !== null && isCameraOnline === false}
 		<ErrorMessage
-			message={`Camera '${selectedCamera.id}' is offline. Verify it is powered and reachable, then refresh.`}
+			message={`The ${selectedCamera.id.replace(/_/g, ' ')} camera is offline. Check that it is powered and reachable, then refresh.`}
 		/>
 	{:else if streamUrl !== '' && streamError === false && isPageVisible === true}
 		<div class="stream-container" class:webcodecs={h264Ready}>

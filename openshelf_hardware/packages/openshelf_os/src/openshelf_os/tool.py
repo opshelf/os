@@ -353,9 +353,10 @@ class Tool:
                     self._laser_ready = True
                     self._emit_init("laser", "ready")
                 except Exception as e:
-                    self._emit_init("laser", "failed", reason=str(e))
+                    self._emit_init("laser", "failed", reason="The laser did not start. Check that it is connected.")
                     if isolate is False:
                         raise
+                    self._logger.warning("init laser failed", exc_info=e)
             else:
                 self._logger.info("Laser disabled via config")
 
@@ -1801,13 +1802,13 @@ class Tool:
             or any(failed_home_motor is motor for failed_home_motor in failed_home_motors)
             for motor in (self._mx, self._ms)
         ):
-            self._emit_init("rotate", "failed", "home", "dependency failed")
+            self._emit_init("rotate", "failed", "home", "The x axis and stage have to home first.")
             return False
         try:
             await self._home_rotate_sequence()
             return True
         except Exception as e:
-            self._emit_init("rotate", "failed", "home", str(e))
+            self._emit_init("rotate", "failed", "home", "Homing failed. Check for an obstruction, then home it again.")
             self._logger.warning("init rotate home failed: %s", e, exc_info=e)
             return False
 

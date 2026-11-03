@@ -23,7 +23,7 @@
 		type IOBoxDoorPosition,
 		type IOBoxPosition,
 		type IOBoxPositionName,
-		formatHomeRequired
+		HOME_REQUIRED_MESSAGE
 	} from '$lib/api';
 	import { robotStatus } from '$lib/stores';
 	import { splitToastMessage, TOAST_DETAIL_SEPARATOR } from '$lib/toasts';
@@ -76,7 +76,8 @@
 	let message = $state<string>('');
 	let warning = $state<string>('');
 	let needsHome = $state<boolean>(false);
-	let needsHomeReason = $state<string>('');
+	// The error a needs-home refusal produced: the home banner already says it.
+	let homeError = $state<string>('');
 	let needsHomeAxes = $state<string[]>([]);
 	let lastStreamNeedsHome = $state<boolean>(false);
 	let selectedPosition = $state<IOBoxPositionName>('low');
@@ -108,9 +109,7 @@
 	const needsOtherHome = $derived(
 		needsHome && (needsHomeAxes.length === 0 || needsHomeAxes.some((axis) => !TOOL_AXES.has(axis)))
 	);
-	const homeMessage = $derived(
-		needsHome ? formatHomeRequired(needsHomeReason) : ''
-	);
+	const homeMessage = $derived(needsHome ? HOME_REQUIRED_MESSAGE : '');
 	const selectedFields = $derived(POSITION_FIELDS[selectedPosition]);
 	const isMultiItem = $derived(selectedPosition === 'multi_item');
 	const dirtyAxes = $derived(
@@ -121,27 +120,12 @@
 		)
 	);
 	const hasDirtyValues = $derived(dirtyAxes.length > 0);
-	const errorParts = $derived(splitToastMessage(error));
-	const duplicateHomeError = $derived.by(() => {
-		if (needsHome !== true || error === '') {
-			return false;
-		}
-
-		const errorLower = errorParts.headline.toLowerCase();
-		const reasonLower = needsHomeReason.toLowerCase();
-
-		if (needsHomeReason !== '' && errorLower.includes(reasonLower)) {
-			return true;
-		}
-
-		return needsHomeReason === '' && errorLower.includes('home required');
-	});
+	const duplicateHomeError = $derived(needsHome === true && error !== '' && error === homeError);
 	// A duplicate headline is dropped, its clue line is not: it rides on the home banner.
-	const homeBannerMessage = $derived(
-		duplicateHomeError && errorParts.detail !== ''
-			? `${homeMessage}${TOAST_DETAIL_SEPARATOR}${errorParts.detail}`
-			: homeMessage
-	);
+	const homeBannerMessage = $derived.by(() => {
+		const clue = duplicateHomeError ? splitToastMessage(error).detail : '';
+		return clue === '' ? homeMessage : `${homeMessage}${TOAST_DETAIL_SEPARATOR}${clue}`;
+	});
 	const editInputsDisabled = $derived(
 		isMoving === true || needsHome === true || isPositioned === false
 	);
@@ -245,7 +229,6 @@
 
 	function applyNeedsHomeStatus(status: CalibrationStatus): void {
 		needsHome = status.needs_home;
-		needsHomeReason = status.needs_home_reason ?? '';
 		needsHomeAxes = status.needs_home_axes ?? [];
 	}
 
@@ -254,13 +237,13 @@
 			return;
 		}
 		needsHome = true;
-		needsHomeReason = detail.reason ?? detail.message ?? needsHomeReason;
 		needsHomeAxes = detail.needs_home_axes ?? [];
 	}
 
 	function handleNeedsHomeError(err: unknown): void {
 		if (err instanceof ApiError) {
 			applyNeedsHomeDetail(err.detail);
+			homeError = err.detail?.needs_home === true ? err.message : '';
 		}
 	}
 

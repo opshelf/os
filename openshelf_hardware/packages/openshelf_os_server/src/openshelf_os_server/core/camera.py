@@ -1383,7 +1383,7 @@ async def _probe_camera_for_init(camera_id: str) -> None:
 	manager = camera_registry.get(camera_id)
 
 	if manager is None:
-		tracker.report(component, "failed", reason="camera not registered")
+		tracker.report(component, "failed", reason="The camera is not set up.")
 		logger.warning("camera_init_unregistered", camera_id=camera_id)
 		return
 
@@ -1392,7 +1392,7 @@ async def _probe_camera_for_init(camera_id: str) -> None:
 	try:
 		is_delivering_frames = await probe_camera_frames(camera_id)
 	except Exception as e:
-		tracker.report(component, "failed", reason=str(e))
+		tracker.report(component, "failed", reason="The camera did not start. Check its cable.")
 		logger.warning("camera_init_probe_failed", camera_id=camera_id, error=str(e), exc_info=True)
 		return
 
@@ -1402,7 +1402,7 @@ async def _probe_camera_for_init(camera_id: str) -> None:
 		return
 
 	timeout_s = manager.first_frame_timeout
-	tracker.report(component, "failed", reason=f"no frames within {timeout_s:.0f}s")
+	tracker.report(component, "failed", reason=f"The camera sent no picture within {timeout_s:.0f} seconds.")
 	logger.warning("camera_init_no_frames", camera_id=camera_id, timeout_s=timeout_s)
 
 

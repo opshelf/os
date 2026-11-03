@@ -134,7 +134,7 @@ class Servo:
             self._configured = True
             self._emit_init("ready")
         except Exception as e:
-            self._emit_init("failed", detail="configure", reason=str(e))
+            self._emit_init("failed", detail="configure", reason="The servo could not be configured. Check its cable.")
             raise MotorError(f"Failed to configure servo: {str(e)}") from e
 
     @property

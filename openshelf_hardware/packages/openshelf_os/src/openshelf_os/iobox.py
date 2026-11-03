@@ -229,8 +229,8 @@ class IOBox:
                 },
             )
             self._emit_init("light_curtain", "ready")
-        except Exception as exc:
-            self._emit_init("light_curtain", "failed", reason=str(exc))
+        except Exception:
+            self._emit_init("light_curtain", "failed", reason="The light curtain did not start. Check its connection.")
             raise
 
     async def _ensure_scale_ready(self) -> None:

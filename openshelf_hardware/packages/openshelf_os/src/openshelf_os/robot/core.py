@@ -264,11 +264,11 @@ class Robot:
         self._emit_init("motor_bus", "connecting")
         try:
             await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
-        except Exception as exc:
-            self._emit_init("motor_bus", "failed", reason=str(exc))
+        except Exception:
+            self._emit_init("motor_bus", "failed", reason="The motor bus did not connect. Check its cable and power.")
             for name in _INIT_MOTOR_COMPONENTS:
                 if self._get_motor_by_name(name) is not None:
-                    self._emit_init(name, "failed", reason="motor bus down")
+                    self._emit_init(name, "failed", reason="The motor bus is not connected.")
             raise
         self._emit_init("motor_bus", "ready")
 
@@ -330,9 +330,10 @@ class Robot:
                 await cabinet.configure()
                 self._emit_init("cabinet", "ready")
             except Exception as exc:
-                self._emit_init("cabinet", "failed", reason=str(exc))
+                self._emit_init("cabinet", "failed", reason="The cabinet did not start. Check its connection.")
                 if isolate is False:
                     raise
+                self._logger.warning("Cabinet configure failed", exc_info=exc)
 
         for name in _INIT_MOTOR_COMPONENTS:
             motor = self._get_motor_by_name(name)
@@ -359,9 +360,10 @@ class Robot:
             self._emit_init(f"{label}_bus", "ready")
             return True
         except Exception as exc:
-            self._emit_init(f"{label}_bus", "failed", reason=str(exc))
+            self._emit_init(f"{label}_bus", "failed", reason=f"The {label} bus did not connect. Check its cable and power.")
             if isolate is False:
                 raise
+            self._logger.warning("%s bus connect failed", label, exc_info=exc)
             return False
 
     async def shutdown(self) -> None:
@@ -1391,7 +1393,8 @@ class Robot:
             # A tray home holds its tray, so only that tray's return may target it; the cell's
             # status does not mark it.
             if is_reserved and not tray:
-                return RobotCommandError(command=command_name, error="Requested storage cell is reserved")
+                self._logger.info("Store refused: cell %s is a bin home", parsed_location)
+                return RobotCommandError(command=command_name, error="That cell is not available.")
 
             # Demo mode keeps its barcode-to-cell mapping for ordinary items. A tray return
             # targets a workflow-chosen home rather than a client-requested cell, so the
@@ -1402,10 +1405,8 @@ class Robot:
                     if cell is None:
                         return RobotCommandError(command=command_name, error="That cell does not exist.")
                     if cell.status != CellStatus.AVAILABLE:
-                        return RobotCommandError(
-                            command=command_name,
-                            error=f"Requested storage cell is {cell.status.value}",
-                        )
+                        self._logger.info("Store refused: cell %s is %s", parsed_location, cell.status.value)
+                        return RobotCommandError(command=command_name, error="That cell is not available.")
                     if self._grid.cell_fits_item(cell, item) is False:
                         return RobotCommandError(command=command_name, error="The item does not fit that cell.")
                 location = parsed_location
@@ -1657,7 +1658,8 @@ class Robot:
                 else:
                     result = RobotCommandError(command=command_name, error="This item has no cell to retrieve from.")
             else:
-                result = RobotCommandError(command=command_name, error="Invalid Robot Command")
+                self._logger.warning("Unknown robot command %s", command_name)
+                result = RobotCommandError(command=command_name, error="That robot command does not exist.")
             self.clear_operation_context()
             return result
         except (MotorError, MovementError, ToolError):

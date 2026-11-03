@@ -14,8 +14,9 @@
 		type CalibrationStatus,
 		type Cell,
 		type StorageGrid,
-		formatHomeRequired
+		HOME_REQUIRED_MESSAGE
 	} from '$lib/api';
+	import { splitToastMessage, TOAST_DETAIL_SEPARATOR } from '$lib/toasts';
 	import { activeVocabulary, activeVocabularyStore, isSideToken, sideIndex, sideLabel } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
@@ -62,7 +63,8 @@
 	let error = $state<string>('');
 	let message = $state<string>('');
 	let needsHome = $state<boolean>(false);
-	let needsHomeReason = $state<string>('');
+	// The error a needs-home refusal produced: the home banner already says it.
+	let homeError = $state<string>('');
 	let needsHomeAxes = $state<string[]>([]);
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
@@ -70,9 +72,12 @@
 	const TEST_SELECTION_STORAGE_KEY = 'opshelf.calibration.test.selection';
 
 	const needsToolHome = $derived(needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
-	const homeMessage = $derived(
-		needsHome === true ? formatHomeRequired(needsHomeReason) : ''
-	);
+	const isHomeError = $derived(needsHome === true && error !== '' && error === homeError);
+	// A dropped headline keeps its clue line: it rides on the home banner.
+	const homeMessage = $derived.by(() => {
+		const clue = isHomeError ? splitToastMessage(error).detail : '';
+		return clue === '' ? HOME_REQUIRED_MESSAGE : `${HOME_REQUIRED_MESSAGE}${TOAST_DETAIL_SEPARATOR}${clue}`;
+	});
 	const isBusy = $derived(
 		isRunningQuick === true ||
 		isRunningCycle === true ||
@@ -198,7 +203,6 @@
 
 	function applyNeedsHomeStatus(status: CalibrationStatus): void {
 		needsHome = status.needs_home;
-		needsHomeReason = status.needs_home_reason ?? '';
 		needsHomeAxes = status.needs_home_axes ?? [];
 	}
 
@@ -208,13 +212,13 @@
 		}
 
 		needsHome = true;
-		needsHomeReason = detail.reason ?? detail.message ?? needsHomeReason;
 		needsHomeAxes = detail.needs_home_axes ?? [];
 	}
 
 	function handleNeedsHomeError(err: unknown): void {
 		if (err instanceof ApiError) {
 			applyNeedsHomeDetail(err.detail);
+			homeError = err.detail?.needs_home === true ? err.message : '';
 		}
 	}
 
@@ -496,7 +500,7 @@
 	<StatusMessage {message} />
 {/if}
 
-{#if error !== ''}
+{#if error !== '' && isHomeError === false}
 	<ErrorMessage message={error} />
 {/if}
 

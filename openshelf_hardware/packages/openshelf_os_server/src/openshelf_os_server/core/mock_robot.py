@@ -400,7 +400,7 @@ class MockRobotRuntime:
 				if parsed_location is None:
 					raise MockCommandExecutionError("Invalid location")
 				if parsed_location in occupied:
-					raise MockCommandExecutionError("Requested storage cell is occupied")
+					raise MockCommandExecutionError("That cell is not available.")
 				location = parsed_location
 			else:
 				for side in MOCK_SIDES:

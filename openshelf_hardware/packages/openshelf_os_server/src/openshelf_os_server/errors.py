@@ -542,9 +542,13 @@ def _make_mapped_handler(status_code: int, code: str):
 async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
 	# FastAPI's own handler answers this with a raw list of field problems;
 	# the shared serializer only has a dict form, so the structured problems
-	# stay in the log and the client gets the code's sentence.
+	# stay in the log and the client gets the code's sentence. Submitted values (a PIN, a
+	# password) stay out of the log too: field path and problem only.
+	problems = "; ".join(
+		f"{'.'.join(str(part) for part in error.get('loc', ()))}: {error.get('msg', '')}" for error in exc.errors()
+	)
 	logger.warning(
-		f"422 validation_failed: {exc.errors()} "
+		f"422 validation_failed: {problems} "
 		f"(correlation_id={request_correlation_id(request)})",
 	)
 	return JSONResponse(

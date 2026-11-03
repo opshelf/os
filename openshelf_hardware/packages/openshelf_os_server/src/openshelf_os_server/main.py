@@ -76,6 +76,7 @@ from openshelf_os_server.core.mock_robot import (
 )
 from openshelf_os_server.core.command_lifecycle import recover_interrupted_commands
 from openshelf_os_server.errors import (
+	CODE_MESSAGES,
 	capture_unhandled_exception,
 	client_detail,
 	error_detail,
@@ -1287,7 +1288,8 @@ async def health() -> JSONResponse:
 	if robot_health["status"] == "error":
 		body["status"] = "degraded"
 		body["robot_status"] = "error"
-		body["robot_error"] = str(robot_health.get("error", ""))
+		# Public and unauthenticated: the exception was logged with its traceback when startup failed.
+		body["robot_error"] = CODE_MESSAGES["robot_not_initialized"]
 		body["robot_error_type"] = str(robot_health.get("error_type", "Error"))
 		return JSONResponse(status_code=503, content=body)
 

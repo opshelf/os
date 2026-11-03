@@ -581,14 +581,14 @@ class RobotWorker:
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
 
-    def _build_scale_error_status(self, error: Exception) -> ScaleStatus:
+    def _build_scale_error_status(self) -> ScaleStatus:
         return ScaleStatus(
             enabled=True,
             available=False,
             occupied=False,
             threshold_grams=SCALE_OCCUPIED_THRESHOLD_GRAMS,
             updated_at=datetime.now(timezone.utc).isoformat(),
-            error=str(error),
+            error="Could not read the scale. Check its cable.",
         )
 
     def _scale_publish_key(self, scale_status: ScaleStatus) -> str:
@@ -615,7 +615,11 @@ class RobotWorker:
                 self._latest_scale_status = scale_status
                 self._latest_scale_status_monotonic = time.monotonic()
         except Exception as err:
-            scale_status = self._build_scale_error_status(err)
+            # Polled every tick: log the failure when the scale goes down, not on every read.
+            previous = self._latest_scale_status
+            if previous is None or previous.error is None:
+                logger.warning("Scale read failed", exc_info=err)
+            scale_status = self._build_scale_error_status()
             self._latest_scale_status = scale_status
             self._latest_scale_status_monotonic = time.monotonic()
         scale_key = self._scale_publish_key(scale_status)

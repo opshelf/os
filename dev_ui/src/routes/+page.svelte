@@ -3,7 +3,6 @@
 	import {
 		apiFetch,
 		acknowledgeSafety,
-		ApiError,
 		controlCabinetRelease,
 		setBypassSafetyGuard,
 		setBypassSafetyComponent,
@@ -14,6 +13,7 @@
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import InitProgress from '$lib/components/InitProgress.svelte';
 	import { activeVocabulary, sideIndex, sideInitial, vocabularyOfToken } from '$lib/side';
+	import { postToast } from '$lib/toasts';
 
 	const RESTART_BUTTON_RESET_MS = 15000;
 
@@ -36,7 +36,6 @@
 	let isRestartingApi = false;
 	let restartApiError = '';
 	let isAcknowledgingSafety = false;
-	let safetyAckError = '';
 	let componentUpdating: Record<SafetyComponent, boolean> = {
 		light_curtain: false,
 		cabinet_doors: false
@@ -144,16 +143,11 @@
 
 	async function didClickAcknowledgeSafety(): Promise<void> {
 		isAcknowledgingSafety = true;
-		safetyAckError = '';
 
 		try {
 			await acknowledgeSafety();
 		} catch (err) {
-			if (err instanceof ApiError && err.status === 409 && err.detail?.active_sources?.length) {
-				safetyAckError = `Cannot acknowledge while these sources are active: ${err.detail.active_sources.join(', ')}.`;
-			} else {
-				safetyAckError = err instanceof Error ? err.message : 'Acknowledge failed.';
-			}
+			postToast('error', err instanceof Error ? err.message : 'The acknowledgement failed.');
 		} finally {
 			isAcknowledgingSafety = false;
 		}
@@ -165,7 +159,7 @@
 		try {
 			await controlCabinetRelease('release');
 		} catch (err) {
-			console.error('failed to unlock cabinet:', err);
+			postToast('error', err instanceof Error ? err.message : 'The cabinet did not unlock.');
 		} finally {
 			isUnlockingCabinet = false;
 		}
@@ -210,7 +204,7 @@
 				body: JSON.stringify({ command: 'home' })
 			});
 		} catch (err) {
-			console.error('home command failed:', err);
+			postToast('error', err instanceof Error ? err.message : 'The home command failed.');
 		} finally {
 			isHomingRobot = false;
 		}
@@ -603,7 +597,7 @@
 								<div class="status-action-cell">
 									<span>
 										{#if getSafetyAwaitingAck()}
-											yes{getSafetyCanAcknowledge() !== true ? ` (${getSafetyActiveSources().join(', ')})` : ''}
+											yes{getSafetyCanAcknowledge() !== true ? ` (${getSafetyActiveSources().map((source) => source.replace(/_/g, ' ')).join(', ')})` : ''}
 										{:else}
 											no
 										{/if}
@@ -613,9 +607,6 @@
 										onclick={didClickAcknowledgeSafety}>ACK</button
 									>
 								</div>
-								{#if safetyAckError !== ''}
-									<ErrorMessage message={safetyAckError} />
-								{/if}
 							</td>
 						</tr>
 					</tbody>

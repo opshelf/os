@@ -131,9 +131,11 @@ async def test_request_validation_error_is_standardized(
 	# The raw list of problems never reaches the client.
 	assert "loc" not in response.text and "input" not in response.text
 	assert "not-an-int" not in response.text
-	# The structured problems stay in the server log, tied to the client.
+	# The field problem stays in the server log, tied to the client; the submitted value
+	# (a PIN on sign-in) reaches neither.
 	records = [r for r in caplog.records if r.name == "openshelf_os_server.errors" and r.levelno == logging.WARNING]
-	assert records and "not-an-int" in caplog.text
+	assert records and "body.barcode" in caplog.text
+	assert "not-an-int" not in caplog.text
 
 
 @pytest.mark.anyio

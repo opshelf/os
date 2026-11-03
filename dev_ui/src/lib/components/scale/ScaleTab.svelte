@@ -242,7 +242,7 @@
 					<tr><td>decimal position</td><td>{scaleStatus.decimal_position ?? '-'}</td></tr>
 					<tr><td>updated at</td><td>{scaleStatus.updated_at ?? '-'}</td></tr>
 					{#if scaleStatus.error}
-						<tr><td>error</td><td>{scaleStatus.error.toUpperCase()}</td></tr>
+						<tr><td>error</td><td>{scaleStatus.error}</td></tr>
 					{/if}
 				{:else}
 					<tr><td colspan="2">waiting for scale status...</td></tr>

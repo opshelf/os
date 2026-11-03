@@ -377,7 +377,7 @@ class Motor():
             # Configure movement parameters
             await self.move_config()
         except Exception as e:
-            self._emit_init("failed", detail="configure", reason=str(e))
+            self._emit_init("failed", detail="configure", reason="The motor could not be configured. Check its drive and cable.")
             self._logger.error(
                 "Failed to configure motor",
                 extra={"motor_id": self._motor_id, "error": str(e)},
@@ -2529,7 +2529,11 @@ class Motor():
             home_failed = True
             if isinstance(e, MotorTimeoutError):
                 self._is_homed = False
-            reason = "timeout" if isinstance(e, MotorTimeoutError) else str(e)
+            reason = (
+                "Homing timed out. Check for an obstruction, then home it again."
+                if isinstance(e, MotorTimeoutError)
+                else "Homing failed. Check the motor before homing it again."
+            )
             self._emit_init("failed", detail="home", reason=reason)
             if not isinstance(e, (MotorError, MotorConfigError, MotorTimeoutError)):
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
@@ -2547,5 +2551,5 @@ class Motor():
                     # Keep the homing failure as the reported cause.
                     self._logger.warning(message, extra={"motor_id": self._motor_id})
                 else:
-                    self._emit_init("failed", detail="home", reason="homing override restore failed")
+                    self._emit_init("failed", detail="home", reason="The motor settings were not restored after homing. Check the drive.")
                     raise MotorConfigError(message)

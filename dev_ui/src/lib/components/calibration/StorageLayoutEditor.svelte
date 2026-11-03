@@ -1364,10 +1364,7 @@
 					: sideInitialLetter;
 			const label = failed ? `${side}:${failed.shelf_idx}:${failed.cell_idx}` : 'test';
 			const reason = typeof event.error === 'string' ? `: ${event.error.replace(/\.+$/, '')}` : '';
-			postToast(
-				'error',
-				formatFailure({ error: `Failed at ${label}${reason}.` })
-			);
+			postToast('error', formatFailure({ ...event, error: `Failed at ${label}${reason}.` }));
 		} else {
 			postToast('status', state === 'cancelled' ? 'Test aborted.' : 'All tests passed.');
 		}

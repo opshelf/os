@@ -19,7 +19,7 @@
 		type WorkerStatusPayload
 	} from '$lib';
 	import { devicePath, stripDeviceId } from '$lib/nav';
-	import { createToastSource } from '$lib/toasts';
+	import { createToastSource, postToast } from '$lib/toasts';
 	import NeedsHomeToast from '$lib/components/NeedsHomeToast.svelte';
 	import SafetyAckAlert from '$lib/components/SafetyAckAlert.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
@@ -54,7 +54,6 @@
 	let deviceLabel = $state('');
 	let isSizerEnabled = $state(false);
 	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
-	let didReceiveRobotUnavailable = false;
 
 	// Status stream faults have no page of their own, so the layout reports them to the
 	// toast queue: the message changes when the fault changes and goes empty once the
@@ -107,7 +106,6 @@
 
 	function didReceiveRobotStatus(raw: string): void {
 		try {
-			didReceiveRobotUnavailable = false;
 			robotStatus.set(JSON.parse(raw) as WorkerStatusPayload);
 			robotStatusError.set('');
 			robotStatusLastUpdate.set(new Date().toLocaleString());
@@ -129,7 +127,7 @@
 				try {
 					await loginAsDeveloper();
 				} catch (error) {
-					console.error('failed to sign in as developer:', error);
+					postToast('error', error instanceof Error ? error.message : 'The developer sign-in failed.');
 				}
 			}
 
@@ -138,7 +136,7 @@
 
 			const stream = createReconnectingEventSource({
 				path: '/robot/status',
-				refreshAuthenticationOnError: () => didReceiveRobotUnavailable === false,
+				refreshAuthenticationOnError: true,
 				onOpen: () => {
 					setApiState('up');
 					robotStatusError.set('');
@@ -147,12 +145,6 @@
 					didReceiveRobotStatus(event.data);
 				},
 				onError: () => {
-					if (didReceiveRobotUnavailable === true) {
-						didReceiveRobotUnavailable = false;
-						setApiState('up');
-						return;
-					}
-
 					setApiState('down');
 					robotStatusError.set('Lost connection to the robot status stream.');
 				},
@@ -173,16 +165,6 @@
 						} catch {
 							// ignore malformed init progress payloads
 						}
-					},
-					robot_unavailable: (event) => {
-						if (event instanceof MessageEvent === false) {
-							return;
-						}
-
-						didReceiveRobotUnavailable = true;
-						robotStatus.set(null);
-						robotStatusError.set(event.data);
-						setApiState('up');
 					}
 				}
 			});

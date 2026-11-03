@@ -8,7 +8,8 @@
 		startCycleTest,
 		type CycleTestConfig,
 		type CycleTestMode,
-		type CycleTestSnapshot
+		type CycleTestSnapshot,
+		formatFailure
 	} from '$lib/api';
 	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
 	import { postToast } from '$lib/toasts';
@@ -65,13 +66,35 @@
 	}
 
 	function applySnapshot(next: CycleTestSnapshot): void {
+		const wasActive = snapshot?.state === 'running' || snapshot?.state === 'paused';
+
 		snapshot = next;
+
+		if (wasActive === true && next.state === 'failed') {
+			postToast('error', describeFailure(next));
+		}
 
 		if (next.state === 'running' || next.state === 'paused') {
 			openStream();
 		} else {
 			closeStream();
 		}
+	}
+
+	function describeFailure(run: CycleTestSnapshot): string {
+		const fault = run.hardware_fault ?? run.error;
+
+		if (fault !== null) {
+			return formatFailure({ error: fault, code: run.code });
+		}
+
+		const result = run.results.find((item) => item.passed === false);
+
+		if (result === undefined || result.error === null) {
+			return 'The cycle test failed.';
+		}
+
+		return formatFailure({ error: `Failed at ${result.cell}: ${result.error.replace(/\.+$/, '')}.`, code: result.code });
 	}
 
 	// Indexes on these devices are single digits, so "b32" becomes "B:3:2" as it is typed.
@@ -193,7 +216,7 @@
 		const field = invalidField();
 
 		if (field !== null) {
-			postToast('error', `${field} has an invalid format; see the placeholder.`);
+			postToast('error', `Enter the ${field} in the format the placeholder shows.`);
 			return;
 		}
 

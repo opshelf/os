@@ -491,7 +491,11 @@ class ImportJobService:
     def _mark_return_failed(self, unit: ImportJobUnit, error: Any) -> None:
         unit.stage = "placed"
         unit.request_id = None
-        unit.error = f"Bin return failed: {error or 'unknown error'}"
+        # errors imports the robot worker, which imports this module.
+        from openshelf_os_server.errors import CODE_MESSAGES  # noqa: PLC0415
+
+        # The workflow's own sentence, unprefixed, so the kiosk can match it.
+        unit.error = str(error) if error else CODE_MESSAGES["tray_return_failed"]
 
     @staticmethod
     def _request_id(job: ImportJob, unit: ImportJobUnit) -> str:

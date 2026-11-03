@@ -18,6 +18,7 @@ from openshelf_os.config.settings import BARCODE_MAX_LENGTH
 from openshelf_os_server.core.label_printer import build_label_job
 from openshelf_os_server.core.printer_status import (
     PrinterStatus,
+    PRINTER_UNREADABLE_MESSAGE,
     PrinterStatusProbeError,
     probe_printer_status,
 )
@@ -194,11 +195,12 @@ async def get_printer_status() -> PrinterStatusResponse:
     try:
         current_status = await asyncio.to_thread(_probe_status)
     except PrinterStatusProbeError as exc:
+        logger.warning("printer status probe failed", exc_info=exc)
         return PrinterStatusResponse(
             enabled=settings.printer.enabled,
             connected=False,
             healthy=False,
-            error=str(exc),
+            error=PRINTER_UNREADABLE_MESSAGE,
         )
 
     failure_reason = current_status.failure_reason()

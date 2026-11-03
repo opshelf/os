@@ -289,7 +289,7 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 		await _run_nmcli("connection", "modify", PENDING_NAME, "connection.id", CONNECTION_NAME)
 		_write_config(ssid, password)
 		logger.info("wifi_connect_succeeded", ssid=ssid)
-		return WifiConnectResponse(success=True, ssid=ssid, message=f"connected to {ssid}")
+		return WifiConnectResponse(success=True, ssid=ssid, message=f"Connected to {ssid}.")
 
 	restored = await _rollback(previous_connection)
 	detail = result.stderr.strip() or "connection did not activate"

@@ -6,6 +6,7 @@ import sentry_sdk
 
 from openshelf_os import robot as r
 import openshelf_os.robot.worker as r_worker
+from openshelf_os.faults import FAULT_MESSAGES
 from openshelf_os.common import (
     ConfigError,
     ConfigMissingError,
@@ -24,7 +25,7 @@ from openshelf_os_server.core.crash_video_recorder import (
     begin_motion_crash_artifacts,
     capture_motion_crash_artifacts,
 )
-from openshelf_os_server.core.printer_status import PrinterStatusProbeError, probe_printer_status
+from openshelf_os_server.core.printer_status import PRINTER_UNREADABLE_MESSAGE, PrinterStatusProbeError, probe_printer_status
 from openshelf_os_server.core.robot_events import RobotEventListener
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import BinStorageService, reserved_bin_locations
@@ -41,6 +42,7 @@ robot_initialization_error: Optional[str] = None
 robot_initialization_error_type: Optional[str] = None
 CRITICAL_MOTOR_COMPONENTS = {"x_axis", "y_axis", "z_axis", "stage", "rotate", "door"}
 BARCODE_CONNECT_TIMEOUT_S = 5.0
+STARTUP_FAILED_MESSAGE = "The robot did not start. Check the robot status."
 
 
 def _barcode_enabled() -> bool:
@@ -65,7 +67,8 @@ async def _report_scanner_status(worker: r_worker.RobotWorker) -> None:
     try:
         connected = await worker.wait_scanner_connected(BARCODE_CONNECT_TIMEOUT_S)
     except Exception as exc:
-        tracker.report("barcode", "failed", reason=str(exc))
+        tracker.report("barcode", "failed", reason="The barcode scanner did not connect.")
+        logger.warning("barcode scanner connect failed", exc_info=exc)
         return
     if connected is True:
         tracker.report("barcode", "ready")
@@ -81,7 +84,8 @@ def _report_printer_status() -> None:
     try:
         status = probe_printer_status(device)
     except PrinterStatusProbeError as exc:
-        tracker.report("printer", "failed", reason=str(exc))
+        tracker.report("printer", "failed", reason=PRINTER_UNREADABLE_MESSAGE)
+        logger.warning("printer status probe failed", exc_info=exc)
         return
 
     reason = status.failure_reason()
@@ -162,9 +166,9 @@ async def init_robot_worker() -> None:
         validate_robot_config()
         tracker.report("config", "ready")
     except Exception as e:
-        tracker.report("config", "failed", reason=str(e))
+        tracker.report("config", "failed", reason=FAULT_MESSAGES["config_error"])
         set_robot_initialization_error(e)
-        tracker.set_overall(OVERALL_FAILED, error=str(e))
+        tracker.set_overall(OVERALL_FAILED, error=FAULT_MESSAGES["config_error"])
         logger.warning("robot_config_validation_failed: %s", e, exc_info=True)
         _capture_init_exception(e)
         return
@@ -185,7 +189,7 @@ async def init_robot_worker() -> None:
     except Exception as e:
         robot_instance = None
         set_robot_initialization_error(e)
-        tracker.set_overall(OVERALL_FAILED, error=str(e))
+        tracker.set_overall(OVERALL_FAILED, error=STARTUP_FAILED_MESSAGE)
         logger.warning("robot_constructor_failed: %s", e, exc_info=True)
         _capture_init_exception(e)
         return
@@ -194,7 +198,7 @@ async def init_robot_worker() -> None:
         has_active_bin_workflow = await _has_active_bin_workflow()
     except Exception as e:
         set_robot_initialization_error(e)
-        tracker.set_overall(OVERALL_FAILED, error=str(e))
+        tracker.set_overall(OVERALL_FAILED, error=STARTUP_FAILED_MESSAGE)
         logger.warning("bin_workflow_state_query_failed: %s", e, exc_info=True)
         _capture_init_exception(e)
         return
@@ -207,7 +211,7 @@ async def init_robot_worker() -> None:
         logger.info("Built Robot")
     except Exception as e:
         set_robot_initialization_error(e)
-        tracker.set_overall(OVERALL_FAILED, error=str(e))
+        tracker.set_overall(OVERALL_FAILED, error=STARTUP_FAILED_MESSAGE)
         logger.warning("robot_configure_failed: %s", e, exc_info=True)
         _capture_init_exception(e)
         try:
@@ -271,7 +275,7 @@ async def init_robot_worker() -> None:
         tracker.report("command_worker", "ready")
         _report_printer_status()
     except Exception as e:
-        tracker.report("command_worker", "failed", reason=str(e))
+        tracker.report("command_worker", "failed", reason="The robot command worker did not start.")
         if listener is not None:
             try:
                 await listener.stop()
@@ -283,7 +287,7 @@ async def init_robot_worker() -> None:
             except Exception as shutdown_error:
                 logger.warning("robot_worker_cleanup_failed: %s", shutdown_error, exc_info=True)
         set_robot_initialization_error(e)
-        tracker.set_overall(OVERALL_FAILED, error=str(e))
+        tracker.set_overall(OVERALL_FAILED, error=STARTUP_FAILED_MESSAGE)
         logger.warning("robot_worker_start_failed: %s", e, exc_info=True)
         _capture_init_exception(e)
         return

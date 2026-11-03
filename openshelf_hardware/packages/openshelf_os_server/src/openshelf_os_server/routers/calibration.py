@@ -42,6 +42,7 @@ from openshelf_os.exceptions import (
 from hardware.exceptions import MotorError as HardwareMotorError
 
 from openshelf_os_server.core.robot import get_robot_worker
+from openshelf_os_server.core.logging_config import correlation_id_var
 from openshelf_os_server.core.laser_auto_calibration import (
 	LaserAutoCalibrationGripperResult,
 	LaserAutoCalibrationScope,
@@ -52,7 +53,7 @@ from openshelf_os_server.core.laser_auto_calibration.gripper_runner import calib
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.bin_storage import is_reserved_bin_location, reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.errors import CODE_MESSAGES, api_error, classify_hardware_error, error_detail, hardware_api_error, internal_error_detail
+from openshelf_os_server.errors import CODE_MESSAGES, api_error, classify_hardware_error, error_detail, hardware_api_error, internal_error_detail, standardize_http_detail
 from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, require_permissions_for_stream
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
@@ -1547,6 +1548,8 @@ class TestQueueSnapshot(BaseModel):
 	current: Optional[TestQueueCell] = None
 	failed: Optional[TestQueueCell] = None
 	error: Optional[str] = None
+	code: Optional[str] = None
+	correlation_id: Optional[str] = None
 	started_at: Optional[str] = None
 	updated_at: Optional[str] = None
 
@@ -1591,26 +1594,17 @@ async def _finish_test_queue(
 	state: Literal["completed", "failed", "cancelled"],
 	failed: Optional[TestQueueCell] = None,
 	error: Optional[str] = None,
+	code: Optional[str] = None,
 ) -> None:
 	snapshot.state = state
 	snapshot.current = None
 	snapshot.failed = failed
 	snapshot.error = error
+	snapshot.code = code
+	# The task inherited the start request's context, so this is the ref its log lines carry.
+	snapshot.correlation_id = correlation_id_var.get() if code is not None else None
 	snapshot.updated_at = _test_queue_now_iso()
 	await _publish_test_queue_event(worker, snapshot)
-
-
-def _test_queue_error_message(detail: Any) -> str:
-	# Mirrors dev_ui formatErrorMessage so queue toasts match the old single-cell errors.
-	if not isinstance(detail, dict):
-		return str(detail)
-	message = detail.get("message") or str(detail)
-	reason = detail.get("reason")
-	if reason and reason != message:
-		return f"{message} ({reason})"
-	if detail.get("needs_home") and reason is None:
-		return f"{message} Home required."
-	return message
 
 
 async def _run_cell_test_queue(
@@ -1630,6 +1624,7 @@ async def _run_cell_test_queue(
 		snapshot.current = cell
 
 		error: Optional[str] = None
+		code: Optional[str] = None
 		try:
 			if snapshot.mode == "quick":
 				async with _calibration_state_lock:
@@ -1639,21 +1634,25 @@ async def _run_cell_test_queue(
 				await ensure_laser_auto_calibration_not_running()
 				await _perform_cycle_test(worker, location)
 		except HTTPException as exc:
-			error = _test_queue_error_message(exc.detail)
+			# The body a client would get: one sentence and a code, no needs-home reason.
+			detail = standardize_http_detail(exc)
+			if not isinstance(detail, dict):
+				detail = error_detail("", "error")
+			code, error = str(detail["code"]), str(detail["message"])
 			# The test helpers raise the HTTP error `from` the failure, and no HTTP handler
 			# sees it here.
 			if exc.__cause__ is not None:
 				logger.warning("calibration test queue cell failed: %s", error, exc_info=exc.__cause__)
 		except Exception as exc:
 			logger.error("calibration test queue cell failed", exc_info=True)
-			_, error = internal_error_detail(exc)
+			code, error = internal_error_detail(exc)
 
 		snapshot.completed += 1
 		snapshot.current = None
 		snapshot.updated_at = _test_queue_now_iso()
 
 		if error is not None:
-			await _finish_test_queue(worker, snapshot, "failed", failed=cell, error=error)
+			await _finish_test_queue(worker, snapshot, "failed", failed=cell, error=error, code=code)
 			return
 
 		await _publish_test_queue_event(worker, snapshot, cell, True)
