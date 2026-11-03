@@ -306,7 +306,7 @@ class MockRobotRuntime:
 			except asyncio.CancelledError:
 				raise
 			except Exception as exc:
-				logger.info("mock command failed: %s", exc)
+				logger.info("mock command failed: %s (correlation_id=%s)", exc, row.correlation_id)
 				result = {
 					"message": "failed",
 					"command": row.payload.get("command"),
@@ -315,6 +315,8 @@ class MockRobotRuntime:
 					"error": str(exc),
 					"code": "execution_conflict",
 				}
+				if row.correlation_id is not None:
+					result["correlation_id"] = row.correlation_id
 				await self._finish(row.command_id, "failed", result)
 			await self.publish_event({**result, "command_id": row.command_id})
 			await self.publish_status()

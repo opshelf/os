@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from openshelf_os.correlation import correlation_id_var
 from openshelf_os.exceptions import (
     GRIP_IO_BOX_FAILED_CODE,
     GRIP_PICK_FAILED_CODE,
@@ -260,6 +262,40 @@ async def test_a_classified_fault_homes_only_the_axes_it_invalidated(
         if isinstance(fault, GripVerificationError):
             assert worker._crash_code == GRIP_PICK_FAILED_CODE
     finally:
+        worker._running = False
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        RobotWorker._instance = None
+
+
+async def test_failed_command_event_carries_the_ref_its_log_line_uses():
+    """The toast's ref must find the traceback: the event and the worker's log line share the id."""
+    seen: list[tuple[str, str | None]] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            seen.append((record.getMessage(), correlation_id_var.get()))
+
+    handler = Capture()
+    worker_logger = logging.getLogger("openshelf_os.robot.worker")
+    worker_logger.addHandler(handler)
+    RobotWorker._instance = None
+    worker = RobotWorker(PickRobot(MovementError("Z axis stalled")))  # type: ignore[arg-type]
+    events = await worker.subscribe_events()
+    await worker.enqueue_command(
+        RetrieveItemCommand(location=LOCATION), command_id=COMMAND_ID, correlation_id="req-ref-1"
+    )
+    worker._running = True
+    task = asyncio.create_task(worker.process_commands())
+    try:
+        failure = await _next_event(events, lambda e: e.get("command") == "retrieve_item")
+        assert failure["correlation_id"] == "req-ref-1"
+        logged = [ref for message, ref in seen if message.startswith("Command execution error")]
+        assert logged == ["req-ref-1"]
+        assert correlation_id_var.get() is None
+    finally:
+        worker_logger.removeHandler(handler)
         worker._running = False
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

@@ -598,6 +598,7 @@ export type CycleTestCellResult = {
 	passed: boolean;
 	error: string | null;
 	code: string | null;
+	correlation_id: string | null;
 	duration_s: number;
 };
 
@@ -614,6 +615,7 @@ export type CycleTestSnapshot = {
 	hardware_fault: string | null;
 	error: string | null;
 	code: string | null;
+	correlation_id: string | null;
 	log: string[];
 	started_by: string | null;
 	started_at: string | null;

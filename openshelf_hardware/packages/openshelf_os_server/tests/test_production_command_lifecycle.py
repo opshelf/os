@@ -35,6 +35,7 @@ class RecordingWorker:
 		command: StoreItemCommand,
 		*,
 		command_id: str | None = None,
+		correlation_id: str | None = None,
 		visibility: str | None = None,
 	) -> None:
 		self.enqueued.append((command, command_id, visibility))
@@ -269,7 +270,7 @@ async def test_accepted_mass_enrollment_is_durable_before_enqueue_and_survives_f
 		"tare_weight": 100, "net_weight": 250, "full_net_weight": 500,
 	})
 
-	async def inspect_before_enqueue(command, *, command_id=None, visibility=None):
+	async def inspect_before_enqueue(command, *, command_id=None, correlation_id=None, visibility=None):
 		async with AsyncSessionLocal() as db:
 			item = (await db.execute(select(Item).where(Item.barcode == command.item["barcode"]))).scalar_one()
 			assert item.weight == 350 and item.enrollment_weight_pending

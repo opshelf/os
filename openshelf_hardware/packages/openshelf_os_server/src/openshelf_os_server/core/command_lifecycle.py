@@ -232,6 +232,8 @@ async def fail_before_enqueue(
 	}
 	if fault_code is not None:
 		result["fault_code"] = fault_code
+	if row.correlation_id is not None:
+		result["correlation_id"] = row.correlation_id
 	if row.visibility == "internal":
 		result["visibility"] = "internal"
 	await finish_command(command_id, "failed", result)
@@ -308,6 +310,7 @@ async def enqueue_persisted(
 			await worker.enqueue_command(
 				command,
 				command_id=row.command_id,
+				correlation_id=row.correlation_id,
 				visibility=visibility,
 			)
 		else:  # Lightweight service test doubles use the legacy one-argument shape.

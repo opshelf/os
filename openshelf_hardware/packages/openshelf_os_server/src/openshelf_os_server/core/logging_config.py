@@ -9,9 +9,9 @@ import structlog
 from structlog.typing import WrappedLogger
 from pythonjsonlogger.json import JsonFormatter
 
+from openshelf_os.correlation import correlation_id_var
 from openshelf_os.device import get_device_id
 
-correlation_id_var: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 device_id_var: ContextVar[str | None] = ContextVar("device_id", default=None)
 user_id_var: ContextVar[int | None] = ContextVar("user_id", default=None)
 default_device_id = get_device_id()

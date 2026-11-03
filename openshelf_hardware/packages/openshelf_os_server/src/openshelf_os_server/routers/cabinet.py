@@ -101,6 +101,7 @@ async def get_cabinet_status(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.error("Cabinet status read failed: %s", exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "cabinet_status_failed",

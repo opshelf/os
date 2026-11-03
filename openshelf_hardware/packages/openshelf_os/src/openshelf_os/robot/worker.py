@@ -9,9 +9,11 @@ import uuid
 import sentry_sdk
 
 from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
 from openshelf_os import SIMULATED_FAULT_CONTEXT_KEY, SIMULATED_MOTOR_FAULT_PREFIX
+from openshelf_os.correlation import correlation_id_var
 from openshelf_os.faults import (
     EXECUTION_ERROR_CODE,
     WORKER_ERROR_CODE,
@@ -53,6 +55,20 @@ from openshelf_os.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _operation_log_context(operation: Optional[QueuedOperation]):
+    """Log under the request that queued `operation`, so its failure toast's ref finds the line."""
+    correlation_id = operation.correlation_id if operation is not None else None
+    if correlation_id is None:
+        yield
+        return
+    token = correlation_id_var.set(correlation_id)
+    try:
+        yield
+    finally:
+        correlation_id_var.reset(token)
 
 SCALE_OCCUPIED_THRESHOLD_GRAMS = 5.0
 SCALE_POLL_INTERVAL_SECONDS = 1.0
@@ -1042,12 +1058,14 @@ class RobotWorker:
         command: RobotCommands,
         *,
         command_id: Optional[str] = None,
+        correlation_id: Optional[str] = None,
         visibility: Optional[str] = None,
     ) -> None:
         async with self._terminalization_lock:
             queued_operation = self._snapshot_command(
                 command,
                 command_id=command_id,
+                correlation_id=correlation_id,
                 visibility=visibility,
                 admission_generation=self._interruption_generation,
             )
@@ -1370,6 +1388,7 @@ class RobotWorker:
         command: RobotCommands,
         *,
         command_id: Optional[str] = None,
+        correlation_id: Optional[str] = None,
         visibility: Optional[str] = None,
         admission_generation: int = 0,
     ) -> QueuedOperation:
@@ -1387,6 +1406,7 @@ class RobotWorker:
             timestamp=datetime.now(timezone.utc),
             admission_generation=admission_generation,
             command_id=command_id or str(uuid.uuid4()),
+            correlation_id=correlation_id,
             visibility=visibility,
             location=location,
             item_data=item_data,
@@ -1451,6 +1471,8 @@ class RobotWorker:
         }
         if fault_code is not None:
             payload["fault_code"] = fault_code
+        if operation is not None and operation.correlation_id is not None:
+            payload["correlation_id"] = operation.correlation_id
         if operation is not None and operation.visibility == "internal":
             payload["visibility"] = "internal"
         await self.publish_event(payload)
@@ -1652,7 +1674,8 @@ class RobotWorker:
                     if interruption_reason is not None:
                         await self._publish_command_failure(command, interruption_reason, operation)
                 else:
-                    await self._publish_completed_command_result(task, command, operation)
+                    with _operation_log_context(operation):
+                        await self._publish_completed_command_result(task, command, operation)
             elif interruption_reason is None:
                 return None
             else:
@@ -1883,7 +1906,8 @@ class RobotWorker:
 
                         logger.info("Starting command execution: %s", command.command)
                         self._command_started_at = time.monotonic()
-                        self._current_task = asyncio.create_task(self._robot.handle_command(command))
+                        with _operation_log_context(queued_operation):
+                            self._current_task = asyncio.create_task(self._robot.handle_command(command))
                 else:
                     safety_changed = await self._evaluate_safety_guard()
                     if safety_changed is True:
@@ -1898,16 +1922,17 @@ class RobotWorker:
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                logger.exception("Unexpected robot worker error: %s", err)
-                self._report_error(
-                    WorkerError(
-                        error_type="UnexpectedError",
-                        message=str(err),
-                        context={"command": self._current_command.model_dump() if self._current_command else None},
-                        stack_trace=traceback.format_exc(),
-                    ),
-                    exc=err,
-                )
+                with _operation_log_context(self._current_operation):
+                    logger.exception("Unexpected robot worker error: %s", err)
+                    self._report_error(
+                        WorkerError(
+                            error_type="UnexpectedError",
+                            message=str(err),
+                            context={"command": self._current_command.model_dump() if self._current_command else None},
+                            stack_trace=traceback.format_exc(),
+                        ),
+                        exc=err,
+                    )
 
                 if self._current_task is not None and self._current_task.done() is False:
                     logger.warning("Cancelling command task due to unexpected error")

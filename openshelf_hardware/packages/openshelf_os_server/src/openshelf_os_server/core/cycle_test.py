@@ -44,6 +44,7 @@ DB_POLL_S = 0.1
 HARDWARE_FAULT_SETTLE_S = 5.0
 LOG_LIMIT = 300
 TOKEN_REFRESH_S = 600.0
+CORRELATION_HEADER = "X-Correlation-ID"
 
 CycleMode = Literal["retrieve_store", "store_retrieve", "store_only", "retrieve_only", "quick", "quick_lift"]
 RunState = Literal["idle", "running", "paused", "completed", "failed", "cancelled"]
@@ -54,7 +55,7 @@ SIDE_NAMES = {"F": "front_module", "B": "back_module"}
 # (code, operator sentence): what a failed step, cell or run reports. The cause behind it
 # goes to the module log.
 Failure = tuple[str, str]
-NO_CELLS: Failure = ("cycle_test_no_cells", "No cells match the test settings.")
+NO_CELLS: Failure = ("cycle_test_no_cells", CODE_MESSAGES["cycle_test_no_cells"])
 
 
 def _parse_target(value: str) -> dict[str, Any]:
@@ -140,6 +141,7 @@ class CellResult(BaseModel):
 	passed: bool = False
 	error: Optional[str] = None
 	code: Optional[str] = None
+	correlation_id: Optional[str] = Field(None, description="Ref of the server log lines for this cell")
 	duration_s: float = 0.0
 
 
@@ -156,6 +158,7 @@ class CycleTestSnapshot(BaseModel):
 	hardware_fault: Optional[str] = None
 	error: Optional[str] = None
 	code: Optional[str] = Field(None, description="Cause code of hardware_fault or error")
+	correlation_id: Optional[str] = Field(None, description="Ref of the server log lines for hardware_fault or error")
 	log: list[str] = Field(default_factory=list, description=f"Last {LOG_LIMIT} log lines")
 	started_by: Optional[str] = None
 	started_at: Optional[str] = None
@@ -187,26 +190,33 @@ def _failure(resp: httpx.Response) -> Failure:
 	if isinstance(detail, dict) and isinstance(detail.get("message"), str):
 		return str(detail.get("code") or "error"), detail["message"]
 	code = DEFAULT_STATUS_CODES.get(resp.status_code, "error")
-	logger.warning("cycle test request answered %s without an error body: %.200s", resp.status_code, resp.text)
+	logger.warning(
+		"cycle test request answered %s without an error body: %.200s (correlation_id=%s)",
+		resp.status_code,
+		resp.text,
+		resp.request.headers.get(CORRELATION_HEADER),
+	)
 	return code, CODE_MESSAGES[code]
 
 
-def _describe_fault(status: dict[str, Any]) -> Optional[Failure]:
+def _describe_fault(status: dict[str, Any], ref: Optional[str] = None) -> Optional[Failure]:
 	# The reasons stay raw in robot state (recovery parses motor ids out of them); the run
 	# reports a sentence and logs the reason.
 	axes = status.get("needs_home_axes")
 	if status.get("is_emergency_stopped") is True:
-		failure: Failure = ("emergency_stop", "The emergency stop was pressed. Release it, then reset the robot.")
+		failure: Failure = ("emergency_stop", CODE_MESSAGES["emergency_stop"])
 		reason = status.get("emergency_stop_reason")
 	elif status.get("is_crashed") is True:
-		failure = ("robot_crashed", "The robot stopped on a fault. Inspect it and home it before running again.")
+		failure = ("robot_crashed", CODE_MESSAGES["robot_crashed"])
 		reason = status.get("crash_reason")
 	elif status.get("needs_home") is True:
 		failure = ("home_required", CODE_MESSAGES["home_required"])
 		reason = status.get("needs_home_reason")
 	else:
 		return None
-	logger.warning("cycle test hardware fault %s: %s (needs home axes: %s)", failure[0], reason, axes)
+	logger.warning(
+		"cycle test hardware fault %s: %s (needs home axes: %s) (correlation_id=%s)", failure[0], reason, axes, ref
+	)
 	return failure
 
 
@@ -252,16 +262,27 @@ class CycleTestRunner:
 			timeout=COMMAND_TIMEOUT_S + 10,
 		)
 		self.barcode_counter: Optional[int] = None
+		self.ref = ""
+		self.new_ref()
 		self.is_mock = get_operating_mode() == OperatingMode.mock
 
 	def log(self, line: str) -> None:
 		self.manager.log(line)
 
+	def new_ref(self) -> str:
+		"""Every loopback request carries this id, so the queued command, its worker log lines
+		and the error handler's lines all log under the ref the dev UI shows for the failure."""
+		self.ref = str(uuid4())
+		self.client.headers[CORRELATION_HEADER] = self.ref
+		return self.ref
+
 	def set_hardware_fault(self, fault: Failure) -> None:
 		self.snapshot.code, self.snapshot.hardware_fault = fault
+		self.snapshot.correlation_id = self.ref
 
 	def set_error(self, failure: Failure) -> None:
 		self.snapshot.code, self.snapshot.error = failure
+		self.snapshot.correlation_id = self.ref
 
 	# -- robot state -------------------------------------------------------
 
@@ -276,7 +297,7 @@ class CycleTestRunner:
 		if raw is None:
 			return None
 		status = json.loads(raw) if isinstance(raw, str) else raw
-		return _describe_fault(status) if isinstance(status, dict) else None
+		return _describe_fault(status, self.ref) if isinstance(status, dict) else None
 
 	async def wait_for_hardware_fault(self) -> Optional[Failure]:
 		# The worker publishes the failure before it enters the crash state.
@@ -367,8 +388,8 @@ class CycleTestRunner:
 				return barcode, None
 			if resp.status_code != 409:
 				return None, _failure(resp)
-		logger.warning("cycle test found no free barcode after 100 tries")
-		return None, ("barcode_unavailable", "A test barcode could not be generated. Clear old test items, then run the test again.")
+		logger.warning("cycle test found no free barcode after 100 tries (correlation_id=%s)", self.ref)
+		return None, ("barcode_unavailable", CODE_MESSAGES["barcode_unavailable"])
 
 	async def seed_location(self, barcode: str, side: str, shelf: int, cell: int) -> Optional[Failure]:
 		resp = await self.client.post(
@@ -392,7 +413,9 @@ class CycleTestRunner:
 		while True:
 			now = time.monotonic()
 			if now - start > COMMAND_TIMEOUT_S:
-				logger.warning("cycle test command %s had no result after %ss", command_id, COMMAND_TIMEOUT_S)
+				logger.warning(
+					"cycle test command %s had no result after %ss (correlation_id=%s)", command_id, COMMAND_TIMEOUT_S, self.ref
+				)
 				return "timeout", CODE_MESSAGES["timeout"]
 			if now - last_fault_check >= 1.0:
 				last_fault_check = now
@@ -411,7 +434,7 @@ class CycleTestRunner:
 					if DEMO_MAP_MISSING_SUFFIX in error:
 						return (
 							"demo_map_missing",
-							"This barcode is not in the demo cell map. Turn off demo mode in the settings and restart the API to test any barcode.",
+							CODE_MESSAGES["demo_map_missing"],
 						)
 					return str(result.get("fault_code") or result.get("code") or "execution_error"), error
 			await asyncio.sleep(COMMAND_POLL_S)
@@ -422,7 +445,7 @@ class CycleTestRunner:
 		if error is not None:
 			return error
 		ok, _ = await self.wait_for_location(barcode, side, shelf, cell, True)
-		return None if ok else ("cycle_test_location_mismatch", "The item was stored, but the database does not show it in the cell.")
+		return None if ok else ("cycle_test_location_mismatch", CODE_MESSAGES["cycle_test_location_mismatch"])
 
 	async def retrieve(self, barcode: str, side: str, shelf: int, cell: int) -> Optional[Failure]:
 		location = {"side": side, "shelf_idx": shelf, "cell_idx": cell}
@@ -430,7 +453,7 @@ class CycleTestRunner:
 		if error is not None:
 			return error
 		ok, _ = await self.wait_for_location(barcode, side, shelf, cell, False)
-		return None if ok else ("cycle_test_location_mismatch", "The item was retrieved, but the database still shows it in the cell.")
+		return None if ok else ("cycle_test_location_mismatch", CODE_MESSAGES["cycle_test_location_mismatch"])
 
 	async def quick(self, side: str, shelf: int, cell: int) -> Optional[Failure]:
 		params = {"lift": f"{self.config.lift_mm:g}"} if self.config.lift_mm is not None else None
@@ -597,7 +620,7 @@ class CycleTestRunner:
 		if is_first and self.config.clear:
 			self.log("Clearing all items and item locations...")
 			if not await self.clear_database():
-				self.set_error(("cycle_test_clear_failed", "The items could not be cleared before the test."))
+				self.set_error(("cycle_test_clear_failed", CODE_MESSAGES["cycle_test_clear_failed"]))
 				return False
 
 		self.log("Getting storage locations...")
@@ -624,7 +647,7 @@ class CycleTestRunner:
 			capacity = location["capacity"]
 			self.log(f"[{index}/{len(filtered)}] Cell {cell_id} ({capacity['width']}x{capacity['height']}x{capacity['length']}mm)")
 			snapshot.current = cell_id
-			result = CellResult(cell=cell_id)
+			result = CellResult(cell=cell_id, correlation_id=self.new_ref())
 			snapshot.results.append(result)
 			self.manager.publish()
 
@@ -632,8 +655,8 @@ class CycleTestRunner:
 			try:
 				await self.test_cell(location, result)
 			except httpx.HTTPError as exc:
-				logger.warning("cycle test request failed", exc_info=exc)
-				result.code, result.error = "cycle_test_request_failed", "The cycle test could not reach the device API."
+				logger.warning("cycle test request failed (correlation_id=%s)", self.ref, exc_info=exc)
+				result.code, result.error = "cycle_test_request_failed", CODE_MESSAGES["cycle_test_request_failed"]
 				self.log(f"  - FAIL - {result.error}")
 			result.duration_s = round(time.monotonic() - started, 1)
 			snapshot.current = None
@@ -688,7 +711,7 @@ class CycleTestRunner:
 			final = "cancelled"
 			self.log("Aborted by user")
 		except Exception as exc:
-			logger.error("cycle test run failed", exc_info=exc)
+			logger.error("cycle test run failed (correlation_id=%s)", self.ref, exc_info=exc)
 			final = "failed"
 			self.set_error(("internal_error", CODE_MESSAGES["internal_error"]))
 			self.log(f"Stopped: {snapshot.error}")

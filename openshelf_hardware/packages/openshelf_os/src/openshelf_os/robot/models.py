@@ -34,6 +34,7 @@ class QueuedOperation(BaseModel):
     timestamp: datetime
     admission_generation: int = Field(default=0, exclude=True)
     command_id: Optional[str] = None
+    correlation_id: Optional[str] = None
     visibility: Optional[str] = None
     location: Optional[dict[str, Any]] = None
     item_data: Optional[dict[str, Any]] = None

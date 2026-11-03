@@ -14,6 +14,7 @@ from openshelf_os.robot.core import DEMO_MAP_MISSING_SUFFIX
 from openshelf_os_server.core import cycle_test, robot as robot_core
 from openshelf_os_server.database.models import Item
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.errors import CODE_MESSAGES
 from test_calibration_test_queue import build_grid, build_worker, patch_worker
 
 
@@ -34,7 +35,7 @@ async def test_clear_run_is_refused_outside_development_and_mock(client, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_run_stops_moving_after_the_first_failing_cell(client, monkeypatch) -> None:
+async def test_run_stops_moving_after_the_first_failing_cell(client, monkeypatch, caplog) -> None:
 	# A failed cell may leave the tool in an unknown state; the run must not go on to the next cell.
 	grid = build_grid()
 	pick = AsyncMock(side_effect=ToolError("gripper lost the tray"))
@@ -59,6 +60,10 @@ async def test_run_stops_moving_after_the_first_failing_cell(client, monkeypatch
 	assert pick.await_count == 1
 	assert [r["cell"] for r in snapshot["results"]] == ["F:0:0"]
 	assert snapshot["results"][0]["passed"] is False
+	# The ref shown with the failure is the id the server logged the cause under.
+	ref = snapshot["results"][0]["correlation_id"]
+	assert ref
+	assert any(f"correlation_id={ref}" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -120,3 +125,23 @@ def test_loopback_token_is_minted_on_a_freshly_booted_host(monkeypatch) -> None:
 	next(auth.auth_flow(request))
 
 	assert request.headers["Authorization"].removeprefix("Bearer ")
+
+
+def test_cycle_test_failures_use_the_served_copy() -> None:
+	# One sentence per code: the runner reports CODE_MESSAGES text, which /api/system/error-messages serves.
+	for code in (
+		"barcode_unavailable",
+		"cycle_test_clear_failed",
+		"cycle_test_location_mismatch",
+		"cycle_test_no_cells",
+		"cycle_test_request_failed",
+		"demo_map_missing",
+		"emergency_stop",
+		"robot_crashed",
+	):
+		assert code in CODE_MESSAGES, code
+	assert cycle_test.NO_CELLS == ("cycle_test_no_cells", CODE_MESSAGES["cycle_test_no_cells"])
+	estop = cycle_test._describe_fault({"is_emergency_stopped": True, "emergency_stop_reason": "x"})
+	assert estop == ("emergency_stop", CODE_MESSAGES["emergency_stop"])
+	crash = cycle_test._describe_fault({"is_crashed": True, "crash_reason": "x"})
+	assert crash == ("robot_crashed", CODE_MESSAGES["robot_crashed"])
