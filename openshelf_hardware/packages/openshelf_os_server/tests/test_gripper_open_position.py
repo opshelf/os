@@ -1,5 +1,6 @@
 """Setting the gripper open position from the reference cells' hole stops."""
 
+import asyncio
 import copy
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -43,7 +44,8 @@ class FakeDrive:
 	"""A tray hole per side: splayed at a target at least `contact_margin` counts past its stop, the
 	fingers stop there and report contact; nearer, they stop at the target and report none."""
 
-	def __init__(self, stops: dict[int, int], contact_margin: int = 6) -> None:
+	def __init__(self, stops: dict[int, int], contact_margin: int = 6, abort_write_of: int | None = None) -> None:
+		self.abort_write_of = abort_write_of
 		self.stops = stops
 		self.contact_margin = contact_margin
 		self.open_position = 0x20
@@ -51,6 +53,8 @@ class FakeDrive:
 
 	async def set_open_position(self, value: int) -> None:
 		self.open_position = value
+		if value == self.abort_write_of:
+			raise asyncio.CancelledError
 
 	async def open(self):
 		stop = self.stops[self.s]
@@ -134,3 +138,14 @@ async def test_a_target_that_does_not_grip_on_the_check_is_neither_kept_nor_save
 	assert result.applied is False
 	assert drive.open_position == 0x20
 	save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_an_abort_on_the_new_target_write_puts_the_previous_value_back(tmp_path) -> None:
+	"""The write can land on the drive before the abort does; the unverified value must not stay live."""
+	drive = FakeDrive(stops={0: 14, 1: 14}, abort_write_of=6)
+
+	with pytest.raises(asyncio.CancelledError):
+		await _calibrate(drive, tmp_path)
+
+	assert drive.open_position == 0x20

@@ -120,9 +120,9 @@ async def measure_hole_stop(
 	open position is back in place on return, however the probes end."""
 	previous = int(tool._gs.open_position)
 	states: list[Any] = []
-	await tool._gs.set_open_position(GRIP_OPEN_PROBE_TARGET)
 
 	try:
+		await tool._gs.set_open_position(GRIP_OPEN_PROBE_TARGET)
 		for _ in range(probes):
 			raise_if_cancelled(should_abort)
 			states.append(await probe_cell(tool, coordinate))

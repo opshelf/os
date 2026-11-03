@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -216,8 +217,9 @@ async def test_grip_target_sits_mid_window(end_mm, target_mm, deepest_probe_mm) 
 class FakeOpenPositionTool(FakeGripTool):
 	"""Splays stop at the hole (`stops`, one per splay) when the target is open enough for contact."""
 
-	def __init__(self, stops: list[int], fail_on_splay: int | None = None) -> None:
+	def __init__(self, stops: list[int], fail_on_splay: int | None = None, abort_write_of: int | None = None) -> None:
 		super().__init__(edge_mm=0.0)
+		self.abort_write_of = abort_write_of
 		self.stops = list(stops)
 		self.fail_on_splay = fail_on_splay
 		self.splays = 0
@@ -228,6 +230,8 @@ class FakeOpenPositionTool(FakeGripTool):
 	async def _set_open_position(self, value: int) -> None:
 		self.targets.append(value)
 		self._gs.open_position = value
+		if value == self.abort_write_of:
+			raise asyncio.CancelledError
 
 	async def _open(self):
 		self.splays += 1
@@ -243,6 +247,18 @@ async def test_hole_stop_puts_the_drive_back_when_a_splay_fails() -> None:
 	tool = FakeOpenPositionTool(stops=[14, 14], fail_on_splay=2)
 
 	with pytest.raises(RuntimeError):
+		await measure_hole_stop(tool, AxisCoordinate(x=354.0, y=41.0, s=0, z_offset=12.0))
+
+	assert tool.targets == [0x00, 0x20]
+	assert tool._gs.open_position == 0x20
+
+
+@pytest.mark.asyncio
+async def test_hole_stop_puts_the_drive_back_when_the_probe_target_write_is_aborted() -> None:
+	"""An abort landing on the write itself can leave the drive at the probe target."""
+	tool = FakeOpenPositionTool(stops=[14, 14], abort_write_of=0x00)
+
+	with pytest.raises(asyncio.CancelledError):
 		await measure_hole_stop(tool, AxisCoordinate(x=354.0, y=41.0, s=0, z_offset=12.0))
 
 	assert tool.targets == [0x00, 0x20]

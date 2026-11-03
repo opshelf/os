@@ -91,10 +91,11 @@ async def calibrate_gripper_open_position(
     if len(measured) > 0:
         open_position = laser_module.open_position_for_stop(min(int(sample.stop_position) for sample, _ in measured))
         result.open_position = open_position
-        await tool._gs.set_open_position(open_position)
         verified = False
 
         try:
+            await tool._gs.set_open_position(open_position)
+
             for sample, coordinate in measured:
                 if should_abort is not None and should_abort():
                     raise asyncio.CancelledError()
