@@ -43,6 +43,8 @@
 	let preferredExtensionCalibration = $state<boolean>(true);
 	let isGripperCalibrationSelected = $state<boolean>(false);
 	let isMeasuringGripper = $state<boolean>(false);
+	// A measure-now result is newer than the run snapshot's until the next run starts.
+	let measuredGripperResult = $state<GripperOpenPositionResult | null>(null);
 	let isZStallEnabled = $state<boolean>(false);
 	let isSavingZStall = $state<boolean>(false);
 	let selectedSide = $state<'' | 'front_module' | 'back_module'>('');
@@ -94,6 +96,8 @@
 	const isGripperCalibrationDisabled = $derived.by(() => {
 		return selectedShelf !== '' || isSelectionDisabled === true;
 	});
+
+	const gripperResult = $derived(measuredGripperResult ?? snapshot?.gripper_open_position ?? null);
 
 	const isStartDisabled = $derived.by(() => {
 		if (isConnecting === true || isStreamOpen === true || isStreamReconnecting === true) {
@@ -546,6 +550,7 @@
 
 		try {
 			const result = await calibrateGripperOpenPosition(selectedSide === '' ? undefined : selectedSide);
+			measuredGripperResult = result;
 			message = formatGripperResult(result);
 		} catch (err) {
 			postToast('error', err instanceof Error ? err.message : 'Failed to measure the gripper open position.');
@@ -591,6 +596,7 @@
 		}
 
 		activeRequestedScope = getRequestedScope();
+		measuredGripperResult = null;
 
 		didConnectStream(false);
 	}
@@ -885,10 +891,10 @@
 						<td>{getStageExtensionValue('front_module')}</td>
 						<td>{getStageExtensionValue('back_module')}</td>
 					</tr>
-					{#if snapshot?.gripper_open_position}
+					{#if gripperResult !== null}
 						<tr>
 							<td>gripper open position</td>
-							<td colspan="2">{formatGripperResult(snapshot.gripper_open_position)}</td>
+							<td colspan="2">{formatGripperResult(gripperResult)}</td>
 						</tr>
 					{/if}
 				</tbody>
