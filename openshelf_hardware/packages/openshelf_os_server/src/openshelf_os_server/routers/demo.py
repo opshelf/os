@@ -36,8 +36,8 @@ async def ensure_laser_auto_calibration_not_running() -> None:
 async def get_robot_worker_or_503():
 	try:
 		return await get_robot_worker()
-	except ValueError as exc:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from exc
+	except ValueError:
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from None
 
 router = APIRouter(prefix="/api/demo", tags=["demo"], dependencies=[Depends(get_current_user)])
 

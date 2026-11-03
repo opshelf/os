@@ -382,8 +382,8 @@ async def check_robot_enabled() -> None:
 async def get_robot_worker_or_error() -> RobotWorker:
     try:
         return await get_robot_worker()
-    except ValueError as e:
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from e
+    except ValueError:
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from None
 
 
 async def get_command_worker_for_mode() -> RobotWorker | None:

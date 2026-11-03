@@ -175,7 +175,7 @@ class IOBox:
                 self._emit_init("scale", "ready")
             else:
                 self._scale_ready = False
-                self._emit_init("scale", "failed", reason="scale bus unavailable")
+                self._emit_init("scale", "failed", reason="The scale bus is not connected.")
         else:
             self._logger.info("Scale disabled via config")
 

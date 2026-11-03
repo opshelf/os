@@ -161,19 +161,18 @@ export function formatFailure(data: Record<string, unknown>): string {
 		| string
 		| undefined;
 	const correlation_id = typeof data.correlation_id === 'string' ? data.correlation_id : undefined;
-	const clue = formatErrorClue({ code, correlation_id });
-	return clue === '' ? error : `${error}${TOAST_DETAIL_SEPARATOR}${clue}`;
+	return formatErrorMessage(error, { code, correlation_id });
 }
 
 /** A failed laser auto calibration: its sentence plus the phase and ref to find it in the log. */
 export function formatLaserFailure(snapshot: LaserAutoCalibrationSnapshot): string {
 	const error = snapshot.error ?? 'The laser auto calibration failed.';
 	const failure = snapshot.error_detail;
-	const clue = [
-		...(failure?.phase ? [`phase ${failure.phase}`] : []),
-		...(failure?.correlation_id ? [`ref ${failure.correlation_id}`] : [])
-	].join(' · ');
-	return clue === '' ? error : `${error}${TOAST_DETAIL_SEPARATOR}${clue}`;
+	return formatErrorMessage(
+		error,
+		{ correlation_id: failure?.correlation_id || undefined },
+		failure?.phase ? `phase ${failure.phase}` : undefined
+	);
 }
 
 // One line that says where to look; the exception, motor state and traceback stay in the

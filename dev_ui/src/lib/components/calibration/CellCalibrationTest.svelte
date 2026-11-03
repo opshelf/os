@@ -16,7 +16,7 @@
 		type StorageGrid,
 		HOME_REQUIRED_MESSAGE
 	} from '$lib/api';
-	import { splitToastMessage, TOAST_DETAIL_SEPARATOR } from '$lib/toasts';
+	import { withHeadline } from '$lib/toasts';
 	import { activeVocabulary, activeVocabularyStore, isSideToken, sideIndex, sideLabel } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
@@ -74,10 +74,9 @@
 	const needsToolHome = $derived(needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
 	const isHomeError = $derived(needsHome === true && error !== '' && error === homeError);
 	// A dropped headline keeps its clue line: it rides on the home banner.
-	const homeMessage = $derived.by(() => {
-		const clue = isHomeError ? splitToastMessage(error).detail : '';
-		return clue === '' ? HOME_REQUIRED_MESSAGE : `${HOME_REQUIRED_MESSAGE}${TOAST_DETAIL_SEPARATOR}${clue}`;
-	});
+	const homeMessage = $derived(
+		isHomeError ? withHeadline(error, () => HOME_REQUIRED_MESSAGE) : HOME_REQUIRED_MESSAGE
+	);
 	const isBusy = $derived(
 		isRunningQuick === true ||
 		isRunningCycle === true ||
@@ -218,7 +217,7 @@
 	function handleNeedsHomeError(err: unknown): void {
 		if (err instanceof ApiError) {
 			applyNeedsHomeDetail(err.detail);
-			homeError = err.detail?.needs_home === true ? err.message : '';
+			homeError = err.detail?.code === 'home_required' ? err.message : '';
 		}
 	}
 

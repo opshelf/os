@@ -345,13 +345,6 @@ def normalize_operator_message(message: str, code: str) -> str:
 	return text
 
 
-def _raised_from(exc: BaseException) -> BaseException | None:
-	"""The failure a route converted into an HTTP error, `from exc` or not."""
-	if exc.__cause__ is not None:
-		return exc.__cause__
-	return None if exc.__suppress_context__ else exc.__context__
-
-
 # Exceptions whose text is empty or driver output, by the code that describes them.
 _FAILURE_TYPE_CODES: tuple[tuple[type[BaseException], str], ...] = (
 	(asyncio.QueueFull, "queue_full"),
@@ -456,7 +449,8 @@ async def http_exception_handler(request: Request, exc: Exception) -> JSONRespon
 	# string details into the structured {message, code} form.
 	http_exc = cast(StarletteHTTPException, exc)
 	detail = standardize_http_detail(http_exc)
-	cause = _raised_from(http_exc)
+	# Only an explicit `raise ... from exc`: an implicit __context__ is usually a 4xx or polled lookup.
+	cause = http_exc.__cause__
 	if cause is not None:
 		# Clients get one sentence and a correlation id; the failure behind it lives here.
 		code = detail.get("code") if isinstance(detail, dict) else None

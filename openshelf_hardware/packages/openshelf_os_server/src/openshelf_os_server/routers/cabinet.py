@@ -61,8 +61,8 @@ async def check_robot_enabled() -> None:
 async def get_robot_worker_or_error() -> RobotWorker:
     try:
         return await get_robot_worker()
-    except ValueError as exc:
-        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from exc
+    except ValueError:
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from None
 
 
 async def ensure_laser_auto_calibration_not_running() -> None:
@@ -101,7 +101,6 @@ async def get_cabinet_status(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Cabinet status read failed: %s", exc, exc_info=exc)
         raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "cabinet_status_failed",

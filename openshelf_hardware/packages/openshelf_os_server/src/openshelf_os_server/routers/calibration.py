@@ -120,8 +120,8 @@ async def ensure_laser_auto_calibration_not_running() -> None:
 async def get_robot_worker_or_503():
 	try:
 		return await get_robot_worker()
-	except ValueError as exc:
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from exc
+	except ValueError:
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from None
 _DEFAULT_CELL_HEIGHT = 200.0
 _DEFAULT_CELL_WIDTH = 480.0
 _DEFAULT_DIVIDER_WIDTH = 12.0
@@ -533,13 +533,13 @@ async def _raise_motor_error(
 	"""Raise the 409 for a motion failure. `action` is the operator sentence for what
 	failed; the cause sentence comes from the classified code, and the exception itself
 	reaches the log."""
-	logger.warning(action, exc_info=exc)
 	if axes is None:
 		if isinstance(exc, GripVerificationError):
 			# A grip miss keeps every position: open the fingers and withdraw instead of homing.
 			try:
 				await worker._robot.recover(fault_needs_home_axes(worker._robot, exc) or None)
 			except Exception as recover_error:
+				logger.warning(action, exc_info=exc)
 				await _raise_motor_error(worker, f"{action} The tool could not recover.", recover_error)
 			raise HTTPException(
 				status_code=status.HTTP_409_CONFLICT,
@@ -1020,8 +1020,8 @@ async def stream_laser_auto_calibration(
 	if is_active is False and subscribe_only is False:
 		try:
 			worker = await get_robot_worker()
-		except ValueError as exc:
-			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from exc
+		except ValueError:
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from None
 
 		_ensure_ready(worker)
 
@@ -1641,8 +1641,7 @@ async def _run_cell_test_queue(
 			code, error = str(detail["code"]), str(detail["message"])
 			# The test helpers raise the HTTP error `from` the failure, and no HTTP handler
 			# sees it here.
-			if exc.__cause__ is not None:
-				logger.warning("calibration test queue cell failed: %s", error, exc_info=exc.__cause__)
+			logger.warning("calibration test queue cell failed: %s", error, exc_info=exc.__cause__ or exc)
 		except Exception as exc:
 			logger.error("calibration test queue cell failed", exc_info=True)
 			code, error = internal_error_detail(exc)

@@ -65,6 +65,16 @@ def _raise_for_kind(kind: str) -> None:
 			raise MotorError("Alarm 24 persists after clear attempt on /dev/ttyUSB0")
 		except MotorError as exc:
 			raise api_error(503, "motor_alarm_clear_failed", "") from exc
+	if kind == "implicit":
+		try:
+			raise ValueError("bad cell index")
+		except ValueError:
+			raise api_error(422, "validation_failed", "")
+	if kind == "polled":
+		try:
+			raise ValueError("not initialized")
+		except ValueError:
+			raise api_error(503, "robot_not_initialized", "") from None
 	if kind == "string_detail":
 		raise HTTPException(status_code=404, detail="thing not found")
 	if kind == "traceback_detail":
@@ -388,6 +398,22 @@ async def test_route_error_logs_the_failure_behind_its_sentence(
 	ref = response.json()["detail"]["correlation_id"]
 	record = next(r for r in caplog.records if r.name == "openshelf_os_server.errors" and ref in r.getMessage())
 	assert record.exc_info is not None and "Alarm 24 persists" in str(record.exc_info[1])
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("kind", ["implicit", "polled"])
+async def test_route_error_without_explicit_cause_is_not_logged(
+	unauthenticated_client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
+	caplog: pytest.LogCaptureFixture,
+	kind: str,
+) -> None:
+	"""Client-input 4xx raised inside `except` and polled not-initialized 503s stay quiet."""
+	client = await _client_with_test_route(unauthenticated_client, monkeypatch)
+	with caplog.at_level(logging.WARNING, logger="openshelf_os_server.errors"):
+		response = await client.get(TEST_PATH, params={"kind": kind})
+	assert response.status_code in (422, 503)
+	assert [r for r in caplog.records if r.name == "openshelf_os_server.errors"] == []
 
 
 @pytest.mark.anyio
