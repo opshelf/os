@@ -10,7 +10,7 @@ from openshelf_os.exceptions import GRIP_IO_BOX_FAILED_CODE
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.exceptions import GripperError, GripVerificationError
 from openshelf_os.robot.core import Robot
-from openshelf_os.tool import require_grip
+from openshelf_os.tool import require_grip, require_release
 
 
 def build_robot():
@@ -99,6 +99,23 @@ async def test_place_does_not_withdraw_while_the_gripper_still_touches_the_tray(
     assert raised.value.failure_code == GRIP_RELEASE_FAILED_CODE
     # Withdrawing now would drag the tray out of its cell.
     tool.retract_empty.assert_not_awaited()
+
+
+@pytest.mark.parametrize(('status', 'position', 'is_holding'), [
+    (0xB1, 0xFA, False),  # lb4a-5: fingers stall on their own end stop, drive reports OUTER
+    (0xB1, 0xFC, False),
+    (0xF1, 0xFD, False),  # clean release
+    (0xB1, 0x90, True),   # caught on the tray mid-retract
+    (0x71, 0x20, True),   # still splayed in the tray
+])
+def test_release_check_ignores_a_stall_at_the_retracted_end(status, position, is_holding):
+    state = GripState(status, 0, position, 0x83)
+    assert state.holding is is_holding
+    if is_holding:
+        with pytest.raises(GripVerificationError, match='Still holding after place release'):
+            require_release(state, 'place release')
+    else:
+        require_release(state, 'place release')
 
 
 @pytest.mark.asyncio

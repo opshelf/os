@@ -19,6 +19,12 @@ STALE_OBJ_WINDOW_S = 0.15
 # (lb4a-3, 2026-10-19). The drive also reports INNER with the fingers 80+ counts short, caught on a
 # lip or the floor of the opening with nothing held, so a contact further out than this is no grip.
 GRIP_POSITION_MARGIN = 0x30
+# Preset 2 (release) target. Fingers that bottom out on their own end stop a few counts short of it
+# stall at the force limit and the drive reports a closing contact (lb4a-5, 2026-11-03: OUTER at
+# 0xFA-0xFC, current 0x7F-0x83, against a clean 0xFD/NONE release), so a contact that close to the
+# retracted end holds nothing.
+RELEASE_POSITION = 0xFE
+RETRACTED_MARGIN = 0x10
 
 
 class GripObject(IntEnum):
@@ -54,8 +60,11 @@ class GripState:
     @property
     def holding(self) -> bool:
         """Any finger contact. Unlike gripped, a contact past the grip margin still ties the tool
-        to whatever the fingers touch, so motion would drag it."""
-        return self.obj in (GripObject.INNER, GripObject.OUTER)
+        to whatever the fingers touch, so motion would drag it. A stall at the retracted end of travel
+        is not contact with anything."""
+        if self.obj not in (GripObject.INNER, GripObject.OUTER):
+            return False
+        return self.position < RELEASE_POSITION - RETRACTED_MARGIN
 
     @property
     def gripped(self) -> bool:
@@ -119,7 +128,7 @@ class Servo:
             await self._controller.write_single_register(
                 self._motor_id, 
                 0x03ED, 
-                0x80FE
+                0x8000 | RELEASE_POSITION
             )
 
             await self._controller.write_single_register(
