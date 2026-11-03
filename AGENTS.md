@@ -23,7 +23,7 @@
 
 ## API errors
 - Every error body is `{"detail": {"message", "code"}}`: raise `api_error(status, code, message)` from `errors.py` so the body always carries a stable `code`, and never put exception text, enum values, ids, config keys, paths or stderr in the message — `errors.py` normalizes the body into one sentence-case operator sentence and scrubs server-side detail, and the fix is to log the exception (`logger.warning(..., exc_info=exc)`) instead of forwarding it.
-- Raise route errors `from exc`: the handlers turn the chained exception into `detail.debug` (exception chain, motor `fault_context`, validation field paths) only for the developer system user the dev UI signs in as (`errors.debug_allowed`), and every error body carries `correlation_id`. Developer detail goes there, never into `message`.
+- Raise route errors `from exc`: the HTTP handler logs the chained exception with its traceback under the request's correlation id, and turns it into `detail.debug` (exception chain, motor `fault_context`, validation field paths) only for the developer system user the dev UI signs in as (`errors.debug_allowed`), and every error body carries `correlation_id`. Developer detail goes there, never into `message`.
 - Failures recorded outside an HTTP body (worker failure events, command results, bin workflow errors, laser calibration state) follow the same split: `error` is an operator sentence, `fault_code` names the cause from `openshelf_os.faults`, and the exception travels as `debug` (`exception_debug`), which `errors.public_payload` strips for everyone but the developer user. Use `errors.failure_detail(exc, fallback_code)` for the sentence; never store `str(exc)`. Keep the event `code` unchanged: it drives crash recovery (`CRASH_FAILURE_CODES`). Needs-home and crash reasons stay raw on purpose: recovery parses motor ids out of them.
 - For a catch-all around hardware, raise `hardware_api_error(exc, status, code, message)` so a drive alarm, stall, timeout, bus disconnect, config error or rotation refusal gets its own code instead of the route's "Try again" fallback; add new codes to `classify_hardware_error`.
 - Every `HTTPException` needs a stable code (`test_every_http_error_carries_a_code`): one code per meaning, reused across routes (`motor_not_configured`, `robot_not_initialized`), with its sentence in `CODE_MESSAGES`. Clients key on the code; the sentence may be edited.
@@ -36,6 +36,7 @@
 
 ## Dev UI
 - Report errors through the toast system (`postToast('error', …)` from `$lib/toasts`), not inline error text in pages, dialogs, or components.
+- A toast is the sentence plus one clue line (request, code, phase, `ref` correlation id); never render exception chains, `detail.debug` or `fault_context` in the UI. The detail lives in the server log under that ref.
 - Keep a button's label unchanged while its action is busy or queued — only disable it; do not swap in "homing…"/"queued"-style titles.
 
 ## Device signing keys

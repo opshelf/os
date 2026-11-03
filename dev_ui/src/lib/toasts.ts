@@ -48,9 +48,9 @@ const ACK_TIMEOUT_MS = 60000;
 
 export const toasts = writable<Toast[]>([]);
 
-// API errors carry a developer detail block (exception chain, error code, request id)
-// after this separator. Only the headline identifies a toast: the detail differs on
-// every request, so a fault that keeps failing must not look new each time.
+// API errors carry a one-line clue (request, error code, ref into the server log) after
+// this separator. Only the headline identifies a toast: the ref differs on every request,
+// so a fault that keeps failing must not look new each time.
 export const TOAST_DETAIL_SEPARATOR = '\n\n';
 
 export function splitToastMessage(message: string): { headline: string; detail: string } {
@@ -64,7 +64,7 @@ export function splitToastMessage(message: string): { headline: string; detail: 
 }
 
 // Text added to an error belongs in its headline: appending to the whole message would
-// land after the developer detail block.
+// land after the clue line.
 export function withHeadline(message: string, rewrite: (headline: string) => string): string {
 	const { headline, detail } = splitToastMessage(message);
 	const next = rewrite(headline);

@@ -136,7 +136,7 @@
 
 		return needsHomeReason === '' && errorLower.includes('home required');
 	});
-	// A duplicate headline is dropped, its developer detail is not: it rides on the home banner.
+	// A duplicate headline is dropped, its clue line is not: it rides on the home banner.
 	const homeBannerMessage = $derived(
 		duplicateHomeError && errorParts.detail !== ''
 			? `${homeMessage}${TOAST_DETAIL_SEPARATOR}${errorParts.detail}`

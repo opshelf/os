@@ -484,9 +484,18 @@ async def http_exception_handler(request: Request, exc: Exception) -> JSONRespon
 	# string details into the structured {message, code} form.
 	http_exc = cast(StarletteHTTPException, exc)
 	detail = standardize_http_detail(http_exc)
+	cause = _raised_from(http_exc)
+	if cause is not None:
+		# Clients get one sentence and a correlation id; the failure behind it lives here.
+		code = detail.get("code") if isinstance(detail, dict) else None
+		logger.warning(
+			f"{http_exc.status_code} {code} {request.method} {request.url.path} "
+			f"(correlation_id={request_correlation_id(request)})",
+			exc_info=cause,
+		)
 	if isinstance(detail, dict):
 		# Routes raise these `from` the real failure, so the chain is the developer detail.
-		detail = client_detail(request, detail, _raised_from(http_exc))
+		detail = client_detail(request, detail, cause)
 	return JSONResponse(
 		content={"detail": detail},
 		status_code=http_exc.status_code,

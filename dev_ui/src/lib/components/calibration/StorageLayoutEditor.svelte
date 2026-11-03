@@ -1146,8 +1146,7 @@
 				try {
 					const data = JSON.parse(event.data);
 					if (data.kind === 'calibration_test_queue') {
-						// The event carries the developer detail beside the snapshot, where the server can strip it.
-						didReceiveTestQueueEvent({ ...data.payload, error_debug: data.debug });
+						didReceiveTestQueueEvent(data.payload);
 						return;
 					}
 					if (data.kind === 'label_scanned' && typeof data.payload === 'string') {
@@ -1367,10 +1366,7 @@
 			const reason = typeof event.error === 'string' ? `: ${event.error.replace(/\.+$/, '')}` : '';
 			postToast(
 				'error',
-				formatFailure({
-					error: `Failed at ${label}${reason}.`,
-					debug: event.error_debug ?? undefined
-				})
+				formatFailure({ error: `Failed at ${label}${reason}.` })
 			);
 		} else {
 			postToast('status', state === 'cancelled' ? 'Test aborted.' : 'All tests passed.');

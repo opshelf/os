@@ -4,7 +4,6 @@
 	import {
 		abortCycleTest,
 		continueCycleTest,
-		formatDeveloperDetail,
 		getCycleTest,
 		startCycleTest,
 		type CycleTestConfig,
@@ -362,7 +361,7 @@
 				{#if failedResult !== null}
 					<tr>
 						<td>failed</td>
-						<td class="fail">{failedResult.cell}{failedResult.error !== null ? `: ${failedResult.error}` : ''}{#if failedResult.debug}<pre class="detail">{formatDeveloperDetail({ debug: failedResult.debug })}</pre>{/if}</td>
+						<td class="fail">{failedResult.cell}{failedResult.error !== null ? `: ${failedResult.error}` : ''}</td>
 					</tr>
 				{/if}
 				{#if snapshot.hardware_fault !== null}
@@ -415,10 +414,5 @@
 
 	.fail {
 		color: #c62828;
-	}
-	.detail {
-		margin: 0.25rem 0 0;
-		font-size: 0.8em;
-		white-space: pre-wrap;
 	}
 </style>

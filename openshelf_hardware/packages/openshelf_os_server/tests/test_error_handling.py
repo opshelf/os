@@ -386,6 +386,22 @@ async def test_exception_detail_reaches_only_the_developer_user(
 
 
 @pytest.mark.anyio
+async def test_route_error_logs_the_failure_behind_its_sentence(
+	unauthenticated_client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
+	caplog: pytest.LogCaptureFixture,
+) -> None:
+	"""Toasts carry only the sentence and a ref; most routes raise `from exc` without
+	logging, so the handler's log line is the only record of the cause."""
+	client = await _client_with_test_route(unauthenticated_client, monkeypatch)
+	with caplog.at_level(logging.WARNING, logger="openshelf_os_server.errors"):
+		response = await client.get(TEST_PATH, params={"kind": "chained"})
+	ref = response.json()["detail"]["correlation_id"]
+	record = next(r for r in caplog.records if r.name == "openshelf_os_server.errors" and ref in r.getMessage())
+	assert record.exc_info is not None and "Alarm 24 persists" in str(record.exc_info[1])
+
+
+@pytest.mark.anyio
 async def test_unhandled_500_on_audit_excluded_route_keeps_correlation_id_and_debug(
 	unauthenticated_client: AsyncClient,
 	monkeypatch: pytest.MonkeyPatch,

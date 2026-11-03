@@ -65,12 +65,6 @@ export type ApiErrorDetail = {
 	warnings?: string[];
 	correlation_id?: string;
 	permission?: string;
-	// Sent only to the developer user: the exception chain behind the sentence.
-	debug?: {
-		chain?: string[];
-		fault_context?: Record<string, unknown>;
-		fields?: string[];
-	};
 };
 
 export class ApiError extends Error {
@@ -150,14 +144,14 @@ function formatErrorMessage(message: string, detail?: ApiErrorDetail, request?: 
 	if (detail?.needs_home && detail.reason === undefined) {
 		output = `${output} Home required.`;
 	}
-	const developerDetail = formatDeveloperDetail(detail, request);
-	if (developerDetail !== '') {
-		output = `${output}${TOAST_DETAIL_SEPARATOR}${developerDetail}`;
+	const clue = formatErrorClue(detail, request);
+	if (clue !== '') {
+		output = `${output}${TOAST_DETAIL_SEPARATOR}${clue}`;
 	}
 	return output;
 }
 
-/** The sentence headline plus the developer detail line for a failed response to `request` ("METHOD /path"). */
+/** The sentence headline plus the clue line for a failed response to `request` ("METHOD /path"). */
 export async function describeFailedResponse(
 	headline: string,
 	response: Response,
@@ -172,41 +166,30 @@ export function formatHomeRequired(reason: string): string {
 	return reason === '' ? 'Home required.' : `Home required: ${reason.replace(/\.$/, '')}.`;
 }
 
-/** A failed robot event or command result, with the developer detail the server attached. */
+/** A failed robot event or command result, with its cause code as the clue. */
 export function formatFailure(data: Record<string, unknown>): string {
 	const error = typeof data.error === 'string' ? data.error : 'The robot command failed.';
 	const code = [data.fault_code, data.code].find((value) => typeof value === 'string') as
 		| string
 		| undefined;
-	const detail = formatDeveloperDetail({ code, debug: data.debug as ApiErrorDetail['debug'] });
-	return detail === '' ? error : `${error}${TOAST_DETAIL_SEPARATOR}${detail}`;
+	const clue = formatErrorClue({ code });
+	return clue === '' ? error : `${error}${TOAST_DETAIL_SEPARATOR}${clue}`;
 }
 
-/** A failed laser auto calibration: its sentence plus the run's error detail. */
+/** A failed laser auto calibration: its sentence plus the phase and ref to find it in the log. */
 export function formatLaserFailure(snapshot: LaserAutoCalibrationSnapshot): string {
 	const error = snapshot.error ?? 'The laser auto calibration failed.';
 	const failure = snapshot.error_detail;
-	if (failure === null || failure === undefined) {
-		return error;
-	}
-	const detail = formatDeveloperDetail({
-		correlation_id: failure.correlation_id ?? undefined,
-		debug: {
-			chain: [`${failure.error_type}: ${failure.error}`, ...(failure.phase ? [`phase ${failure.phase}`] : [])],
-			fault_context: failure.fault_context ?? undefined
-		}
-	});
-	return `${error}${TOAST_DETAIL_SEPARATOR}${detail}`;
+	const clue = [
+		...(failure?.phase ? [`phase ${failure.phase}`] : []),
+		...(failure?.correlation_id ? [`ref ${failure.correlation_id}`] : [])
+	].join(' · ');
+	return clue === '' ? error : `${error}${TOAST_DETAIL_SEPARATOR}${clue}`;
 }
 
-export function formatDeveloperDetail(detail?: ApiErrorDetail, request?: string): string {
-	const lines = [...(detail?.debug?.chain ?? []), ...(detail?.debug?.fields ?? [])];
-	const fault = Object.entries(detail?.debug?.fault_context ?? {})
-		.filter(([, value]) => value !== null && value !== false)
-		.map(([key, value]) => `${key}=${value}`);
-	if (fault.length > 0) {
-		lines.push(fault.join(' '));
-	}
+// One line that says where to look; the exception, motor state and traceback stay in the
+// server log under the same ref.
+export function formatErrorClue(detail?: ApiErrorDetail, request?: string): string {
 	const ids = request === undefined ? [] : [request];
 	if (detail?.code !== undefined) {
 		ids.push(`code ${detail.code}`);
@@ -217,10 +200,7 @@ export function formatDeveloperDetail(detail?: ApiErrorDetail, request?: string)
 	if (detail?.correlation_id !== undefined) {
 		ids.push(`ref ${detail.correlation_id}`);
 	}
-	if (ids.length > 0) {
-		lines.push(ids.join(' · '));
-	}
-	return lines.join('\n');
+	return ids.join(' · ');
 }
 
 function unreachableMessage(status: number): string {
@@ -584,8 +564,6 @@ export type CalibrationTestQueueSnapshot = {
 	current: CalibrationTestQueueCell | null;
 	failed: CalibrationTestQueueCell | null;
 	error: string | null;
-	// Developer-only exception detail behind `error`; null for other users.
-	error_debug?: ApiErrorDetail['debug'] | null;
 	started_at: string | null;
 	updated_at: string | null;
 };
@@ -636,8 +614,6 @@ export type CycleTestCellResult = {
 	steps: Record<string, boolean>;
 	passed: boolean;
 	error: string | null;
-	// Developer-only exception detail behind `error`; null for other users.
-	debug?: ApiErrorDetail['debug'] | null;
 	duration_s: number;
 };
 
@@ -931,11 +907,8 @@ export interface LaserAutoCalibrationSnapshot {
 	gripper_open_position?: GripperOpenPositionResult | null;
 	error: string | null;
 	error_detail?: {
-		error_type: string;
-		error: string;
 		phase: string | null;
 		correlation_id: string | null;
-		fault_context: Record<string, unknown> | null;
 	} | null;
 }
 
