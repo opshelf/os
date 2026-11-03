@@ -1,5 +1,22 @@
 <script lang="ts">
 	import { dismissToast, splitToastMessage, toasts } from '$lib/toasts';
+
+	// A drag that selects text ends in a click; keep the toast so the selection can be copied.
+	function didClickToast(event: MouseEvent, id: number): void {
+		const selection = window.getSelection();
+		const node = event.currentTarget as Node;
+		if (selection !== null && selection.isCollapsed === false && node.contains(selection.anchorNode)) {
+			return;
+		}
+		dismissToast(id);
+	}
+
+	function didKeyToast(event: KeyboardEvent, id: number): void {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			dismissToast(id);
+		}
+	}
 </script>
 
 {#if $toasts.length > 0}
@@ -8,9 +25,15 @@
 			{@const { headline, detail } = splitToastMessage(toast.message)}
 			{#if toast.actions !== undefined && toast.actions.length > 0}
 				<div class="toast {toast.kind} with-actions" role="status">
-					<button type="button" class="toast-body" onclick={() => dismissToast(toast.id)}>
+					<div
+						class="toast-body"
+						role="button"
+						tabindex="0"
+						onclick={(event) => didClickToast(event, toast.id)}
+						onkeydown={(event) => didKeyToast(event, toast.id)}
+					>
 						{headline}{#if detail !== ''}<span class="toast-detail">{detail}</span>{/if}
-					</button>
+					</div>
 					<div class="toast-actions">
 						{#each toast.actions as action (action.label)}
 							<button
@@ -24,9 +47,15 @@
 					</div>
 				</div>
 			{:else}
-				<button type="button" class="toast {toast.kind}" onclick={() => dismissToast(toast.id)}>
+				<div
+					class="toast {toast.kind}"
+					role="button"
+					tabindex="0"
+					onclick={(event) => didClickToast(event, toast.id)}
+					onkeydown={(event) => didKeyToast(event, toast.id)}
+				>
 					{headline}{#if detail !== ''}<span class="toast-detail">{detail}</span>{/if}
-				</button>
+				</div>
 			{/if}
 		{/each}
 	</div>
@@ -52,6 +81,11 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		text-transform: uppercase;
+		box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.25);
+		cursor: pointer;
+		/* buttons are unselectable app-wide; a toast's text is meant to be copied */
+		-webkit-user-select: text;
+		user-select: text;
 	}
 
 	/* exception text and ids are case-sensitive, so the detail is never uppercased */
@@ -71,27 +105,15 @@
 		margin-top: 1em;
 	}
 
-	/* a div, so it lacks the shadow plain toasts get as buttons */
 	.toast.with-actions {
 		white-space: normal;
-		box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.25);
+		cursor: default;
 	}
 
 	.toast-body {
-		width: 100%;
-		margin: 0;
-		padding: 0;
-		border: none;
-		background: transparent;
-		color: inherit;
-		text-align: left;
-		box-shadow: none;
+		cursor: pointer;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
-	}
-
-	.toast-body:active {
-		transform: none;
 	}
 
 	.toast-actions button {
