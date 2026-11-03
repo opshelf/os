@@ -3,9 +3,10 @@
 import asyncio
 import copy
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from httpx import AsyncClient
 
 from openshelf_os.storage import (
 	CalibrationCoordinate,
@@ -149,3 +150,63 @@ async def test_an_abort_on_the_new_target_write_puts_the_previous_value_back(tmp
 		await _calibrate(drive, tmp_path)
 
 	assert drive.open_position == 0x20
+
+
+async def _post_route(client: AsyncClient, drive: FakeDrive, grid: StorageGrid, tmp_path, body: dict):
+	tool = FakeTool(drive)
+	tool.is_grip_detection_enabled = True
+	tool.retract = AsyncMock()
+	worker = MagicMock()
+	worker.needs_home.return_value = False
+	worker.needs_reset.return_value = False
+	worker.refresh_tray_on_tool = AsyncMock(return_value=False)
+	worker.get_status_snapshot = AsyncMock(return_value={})
+	worker._current_command = None
+	worker._demo_cycling = False
+	worker._safety_guard_bypassed = False
+	worker._safety_motion_blocked = False
+	worker._awaiting_safety_ack = False
+	worker._safety_active_sources = []
+	worker._command_queue = SimpleNamespace(qsize=lambda: 0)
+	worker._queued_commands = []
+	worker._current_operation = None
+	worker._robot = SimpleNamespace(_tool=tool, _grid=grid, reload_parameters=MagicMock())
+	routes = "openshelf_os_server.routers.calibration"
+
+	with (
+		patch(f"{routes}.get_robot_worker", return_value=worker),
+		patch(f"{routes}.ensure_laser_auto_calibration_not_running", new=AsyncMock()),
+		patch(f"{routes}._clear_motors_for_move", new=AsyncMock()),
+		patch(f"{RUNNER}.get_root_config", return_value=FakeConfig()),
+		patch(f"{RUNNER}.save_root_config", MagicMock()),
+		patch(f"{RUNNER}.clear_config_cache"),
+		patch(f"{RUNNER}._build_default_scans_dir", return_value=str(tmp_path)),
+	):
+		return await client.post("/api/calibration/gripper/open-position", json=body)
+
+
+@pytest.mark.asyncio
+async def test_route_reports_a_side_without_a_reference_cell_and_measures_the_other(
+	client: AsyncClient, tmp_path
+) -> None:
+	grid = _datum_grid()
+	grid.back_module = []
+
+	response = await _post_route(client, FakeDrive(stops={0: 14}), grid, tmp_path, {})
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["applied"] is True
+	assert [sample["stop_position"] for sample in body["samples"]] == [14]
+	assert body["skipped"] == ["back: no hand-calibrated reference cell"]
+
+
+@pytest.mark.asyncio
+async def test_route_refuses_when_no_requested_side_has_a_reference_cell(client: AsyncClient, tmp_path) -> None:
+	grid = _datum_grid()
+	grid.back_module = []
+
+	response = await _post_route(client, FakeDrive(stops={0: 14}), grid, tmp_path, {"side": "back_module"})
+
+	assert response.status_code == 400
+	assert response.json()["detail"]["code"] == "reference_cell_missing"

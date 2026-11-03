@@ -1437,9 +1437,8 @@ async def calibrate_gripper_open_position_route(request: GripperOpenPositionRequ
 
 	grid = worker._robot._grid
 	sides = [StorageModuleSide.FRONT, StorageModuleSide.BACK] if request.side is None else [request.side]
-	sides = [side for side in sides if grid is not None and select_reference_datum_cell(grid=grid, side=side) is not None]
 
-	if len(sides) == 0:
+	if grid is None or not any(select_reference_datum_cell(grid=grid, side=side) is not None for side in sides):
 		raise api_error(status.HTTP_400_BAD_REQUEST, "reference_cell_missing", "")
 
 	async with manual_motion_guard("calibration_gripper_open_position", worker=worker):
