@@ -44,7 +44,8 @@ async def calibrate_gripper_open_position(
     open_position is one drive register for both sides, so the side whose hole stops the fingers
     widest sets it. The new value goes live, is checked with one more splay per side, and is only
     then persisted; a side without a steady grip (an empty cell, a multi-item bin) is skipped, and
-    without any measurement or a failed check the drive keeps its previous value.
+    without any measurement or a failed check the drive keeps its previous value. When a side that
+    has a reference cell was not measured, the value only moves more open than the previous one.
     """
     tool = worker._robot._tool
     grid = worker._robot._grid
@@ -88,8 +89,31 @@ async def calibrate_gripper_open_position(
 
         measured.append((sample, coordinate))
 
+    open_position = None
+
     if len(measured) > 0:
         open_position = laser_module.open_position_for_stop(min(int(sample.stop_position) for sample, _ in measured))
+        measured_sides = {sample.side for sample, _ in measured}
+        unmeasured = [
+            _side_to_short_name(side)
+            for side in (StorageModuleSide.FRONT, StorageModuleSide.BACK)
+            if side not in measured_sides and laser_module.select_reference_datum_cell(grid=grid, side=side) is not None
+        ]
+
+        if unmeasured and open_position >= previous:
+            # An unmeasured side may need the widest hole's value from an earlier run: only ever move more open.
+            result.open_position = previous
+            result.skipped.append(
+                f"open position stays 0x{previous:02X}: {', '.join(unmeasured)} not measured, "
+                f"measured value 0x{open_position:02X} would be narrower"
+            )
+            laser_module.print_status(
+                f"phase=gripper-open-position open_position=0x{previous:02X} kept (measured 0x{open_position:02X}, "
+                f"unmeasured={','.join(unmeasured)})"
+            )
+            open_position = None
+
+    if open_position is not None:
         result.open_position = open_position
         verified = False
 

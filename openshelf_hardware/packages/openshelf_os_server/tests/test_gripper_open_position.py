@@ -45,14 +45,18 @@ class FakeDrive:
 	"""A tray hole per side: splayed at a target at least `contact_margin` counts past its stop, the
 	fingers stop there and report contact; nearer, they stop at the target and report none."""
 
-	def __init__(self, stops: dict[int, int], contact_margin: int = 6, abort_write_of: int | None = None) -> None:
+	def __init__(
+		self, stops: dict[int, int], contact_margin: int = 6, abort_write_of: int | None = None, open_position: int = 0x20
+	) -> None:
 		self.abort_write_of = abort_write_of
 		self.stops = stops
 		self.contact_margin = contact_margin
-		self.open_position = 0x20
+		self.open_position = open_position
+		self.writes: list[int] = []
 		self.s = 0
 
 	async def set_open_position(self, value: int) -> None:
+		self.writes.append(value)
 		self.open_position = value
 		if value == self.abort_write_of:
 			raise asyncio.CancelledError
@@ -97,7 +101,7 @@ class FakeConfig:
 		return copy.deepcopy(self)
 
 
-async def _calibrate(drive: FakeDrive, tmp_path):
+async def _calibrate(drive: FakeDrive, tmp_path, sides: list[StorageModuleSide] | None = None):
 	worker = SimpleNamespace(_robot=SimpleNamespace(_tool=FakeTool(drive), _grid=_datum_grid(), reload_parameters=MagicMock()))
 	save = MagicMock()
 
@@ -108,7 +112,7 @@ async def _calibrate(drive: FakeDrive, tmp_path):
 		patch(f"{RUNNER}._build_default_scans_dir", return_value=str(tmp_path)),
 	):
 		result = await gripper_runner.calibrate_gripper_open_position(
-			worker, [StorageModuleSide.FRONT, StorageModuleSide.BACK]
+			worker, sides or [StorageModuleSide.FRONT, StorageModuleSide.BACK]
 		)
 
 	return result, save
@@ -127,6 +131,55 @@ async def test_the_widest_hole_sets_the_one_open_position_and_it_is_saved(tmp_pa
 	assert result.open_position == 6
 	assert drive.open_position == 6
 	assert save.call_args.args[0].robot.tool.gripper.open_position == 6
+
+
+@pytest.mark.asyncio
+async def test_a_back_only_run_never_narrows_the_value_the_front_hole_needs(tmp_path) -> None:
+	"""A both-sides run set 6 for front stop 14; a later back-only stop of 20 gives 12, which would
+	leave the front hole with no grip."""
+	drive = FakeDrive(stops={0: 14, 1: 20}, open_position=6)
+
+	result, save = await _calibrate(drive, tmp_path, [StorageModuleSide.BACK])
+
+	assert [sample.stop_position for sample in result.samples] == [20]
+	assert result.applied is False
+	assert result.open_position == 6
+	assert drive.open_position == 6
+	assert 12 not in drive.writes
+	assert drive.writes[-1] == 6
+	assert result.skipped == ["open position stays 0x06: front not measured, measured value 0x0C would be narrower"]
+	save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_back_only_run_may_still_open_further_than_the_previous_value(tmp_path) -> None:
+	drive = FakeDrive(stops={0: 14, 1: 10}, open_position=6)
+
+	result, save = await _calibrate(drive, tmp_path, [StorageModuleSide.BACK])
+
+	assert result.applied is True
+	assert result.open_position == 2
+	assert drive.open_position == 2
+	assert save.call_args.args[0].robot.tool.gripper.open_position == 2
+
+
+@pytest.mark.asyncio
+async def test_a_partial_run_may_narrow_when_the_other_side_has_no_reference_cell(tmp_path) -> None:
+	"""Only sides that have a reference cell count as unmeasured."""
+	drive = FakeDrive(stops={0: 14, 1: 20}, open_position=6)
+	worker = SimpleNamespace(_robot=SimpleNamespace(_tool=FakeTool(drive), _grid=_datum_grid(), reload_parameters=MagicMock()))
+	worker._robot._grid.front_module = []
+
+	with (
+		patch(f"{RUNNER}.get_root_config", return_value=FakeConfig()),
+		patch(f"{RUNNER}.save_root_config", MagicMock()),
+		patch(f"{RUNNER}.clear_config_cache"),
+		patch(f"{RUNNER}._build_default_scans_dir", return_value=str(tmp_path)),
+	):
+		result = await gripper_runner.calibrate_gripper_open_position(worker, [StorageModuleSide.BACK])
+
+	assert result.applied is True
+	assert drive.open_position == 12
 
 
 @pytest.mark.asyncio
