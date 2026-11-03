@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 import sentry_sdk
+from pymodbus.logging import Log
 from sentry_sdk.envelope import Envelope
+from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.transport import Transport
 
 import pytest
@@ -160,3 +163,37 @@ async def test_injected_motor_fault_is_not_sent_to_sentry_but_a_real_one_is() ->
 		finally:
 			worker._running = False
 			RobotWorker._instance = None
+
+
+def test_repeated_pymodbus_no_response_error_is_not_sent_to_sentry() -> None:
+	"""Sentry OPENSHELF-API-AZ: pymodbus logs a repeat of its previous error text as
+	"Repeating...." plus the frame dump, so a second consecutive no-response retry
+	slipped past the no-response filter as its own issue."""
+	sent: list[dict[str, Any]] = []
+
+	class CapturingTransport(Transport):
+		def capture_envelope(self, envelope: Envelope) -> None:
+			event = envelope.get_event()
+			if event is not None:
+				sent.append(event)
+
+	no_response = "No response received after 3 retries, continue with next request"
+	Log.last_log_text = ""
+	Log.frame_dump = []
+	with sentry_sdk.new_scope() as scope:
+		scope.set_client(
+			sentry_sdk.Client(
+				dsn="https://key@sentry.invalid/1",
+				transport=CapturingTransport,
+				default_integrations=False,
+				integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)],
+				before_send=main._before_send_sentry_event,
+			)
+		)
+		Log.error(no_response)
+		Log.transport_dump(Log.SEND_DATA, b"\x02\x03\x60\x2c\x00\x02\x1b\xf1", b"")
+		Log.error(no_response)
+		Log.error("Unable to create udp socket {}", "boom")
+		scope.get_client().flush()
+
+	assert [event["logentry"]["message"] for event in sent] == ["Unable to create udp socket boom"]
