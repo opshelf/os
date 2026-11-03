@@ -581,17 +581,10 @@ class ImportJobService:
             if not self.bins.batch_fits(tray, first.planned_dimensions):
                 continue
             # A tray on the move, or one back home whose return is held, cannot be scanned back.
-            if await self.session.scalar(
-                select(StorageBinWorkflow.id)
-                .where(
-                    StorageBinWorkflow.bin_id == tray.id,
-                    StorageBinWorkflow.state.in_(("retrieving_bin", "returning_bin")),
-                )
-                .limit(1)
-            ) is not None:
+            if await self.bins.bin_in_motion(tray.id):
                 continue
             # Room and access level as the plan would count them once the tray is home again.
-            if not any(row.id == tray.id for row, _, _ in await self.bins.batch_trays(first.access_level_id, tray.id)):
+            if await self.bins.batch_room(tray, first.access_level_id) is None:
                 continue
             # This tray could take the item; the operator returns it with a scan, then fetches again.
             return ImportJobError(

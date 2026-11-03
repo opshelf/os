@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from openshelf_os.common import OperatingMode
 from openshelf_os.config.settings import StorageBinSettings
+from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR
 from openshelf_os_server.core import bin_storage, mock_robot
 from openshelf_os_server.core import import_jobs as import_jobs_core
 from openshelf_os_server.core.bin_storage import BinStorageService
@@ -727,11 +728,6 @@ async def test_a_scanned_label_replaces_only_a_generated_barcode_that_nothing_el
         assert (placed.barcode, (await db.get(Item, placed.item_id)).barcode) == ("BOTTLE-3", "BOTTLE-3")
 
 
-class Publisher:
-    async def publish_event(self, payload: dict) -> None:
-        pass
-
-
 async def leave_tray_outside(barcode="LEFT-OUT-1"):
     """An ordinary place whose dialog was closed without returning the tray: it stays outside."""
     async with AsyncSessionLocal() as db:
@@ -848,8 +844,8 @@ async def test_a_restart_during_the_import_tray_return_is_recovered_in_the_crash
 
 @pytest.mark.anyio
 async def test_a_delivery_refused_before_moving_leaves_the_tray_home(mock_mode, trays):
-    # Something went into the IO box after the fetch was admitted, so the worker refused the
-    # delivery before moving. The tray was marked outside, and "Try again" found no tray.
+    # The gripper still held a tray, so the worker refused the delivery before moving. The tray
+    # never left its shelf, but the import showed no failed fetch and no error; it just offered a fresh start.
     job_id = await create([row("Vial", small=True)])
     async with AsyncSessionLocal() as db:
         service = ImportJobService(db)
@@ -858,17 +854,14 @@ async def test_a_delivery_refused_before_moving_leaves_the_tray_home(mock_mode, 
         workflow = await service.start_tray(job, None)
         await bins.handle_robot_result({
             "request_id": workflow.id, "command": "retrieve_item", "message": "failed",
-            "error": "Please remove the item from the IO box before retrieving another",
-            "code": "io_box_occupied",
-        }, Publisher())
+            "error": TRAY_ON_TOOL_ERROR, "code": TRAY_ON_TOOL_CODE,
+        }, mock_mode)
         assert workflow.state == "cancelled"
         assert (await db.get(StorageBin, workflow.bin_id)).status == "at_home"
         assert not await bins.has_unfinished_motion()
 
         step = await service.next_step(job)
-        assert (step["phase"], step["error"]) == (
-            "failed", "Please remove the item from the IO box before retrieving another"
-        )
+        assert (step["phase"], step["error"]) == ("failed", TRAY_ON_TOOL_ERROR)
         again = await service.start_tray(job, None)
         assert again.bin_id == workflow.bin_id and again.state == "retrieving_bin"
 

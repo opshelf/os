@@ -89,20 +89,15 @@ CRASH_FAILURE_CODES = {
     GRIP_RELEASE_FAILED_CODE,
 }
 
-# The worker refuses a retrieve before any motion when the IO box is not empty.
-IO_BOX_OCCUPIED_CODE = "io_box_occupied"
 # What startup records for a tray motion the restart cut short: like an emergency stop, the tray
 # may be anywhere between its shelf and the IO box, so the crash dialog asks the operator.
 RESTART_INTERRUPTED_CODE = "command_interrupted"
 
-# Retrieves the worker refused up front: the gripper still holds a tray, or the IO box is not
-# empty. Nothing started, so the tray is still on its shelf. A return refused the same way still
-# has its tray in the IO box, so for a return these codes do not mean the tray never left.
-RETRIEVE_REFUSED_CODES = {TRAY_ON_TOOL_CODE, IO_BOX_OCCUPIED_CODE}
 # A pick whose grip check failed before anything was lifted: the tray never left its shelf, so
-# cancelling the command leaves inventory as it was and no tray needs operator recovery. The
-# refused retrieves above never started either.
-TRAY_NEVER_LEFT_CODES = {GRIP_PICK_FAILED_CODE, *RETRIEVE_REFUSED_CODES}
+# cancelling the command leaves inventory as it was and no tray needs operator recovery. A
+# retrieve the worker refused up front because the gripper holds a tray never started either; a
+# return refused the same way still has its tray in the IO box, so it is not in this class.
+TRAY_NEVER_LEFT_CODES = {GRIP_PICK_FAILED_CODE, TRAY_ON_TOOL_CODE}
 
 logger = logging.getLogger(__name__)
 
@@ -1568,22 +1563,28 @@ class BinStorageService:
         ).all()
         trays: list[tuple[StorageBin, int, int]] = []
         for row in bins:
-            members = (
-                await self.session.scalars(
-                    select(Item)
-                    .join(StorageBinItem, StorageBinItem.item_id == Item.id)
-                    .where(StorageBinItem.bin_id == row.id)
-                )
-            ).all()
-            if any(member.access_level_id != access_level_id for member in members):
-                continue
-            capacity = self._batch_capacity(row, len(members))
-            if row.compartment_layout is not None and await self._free_compartment(row) is None:
-                continue
-            if capacity <= 0:
-                continue
-            trays.append((row, len(members), capacity))
+            room = await self.batch_room(row, access_level_id)
+            if room is not None:
+                trays.append((row, *room))
         return trays
+
+    async def batch_room(self, row: StorageBin, access_level_id: Optional[int]) -> Optional[tuple[int, int]]:
+        """(member count, capacity) when the tray could take an item of the access level, else None."""
+        members = (
+            await self.session.scalars(
+                select(Item)
+                .join(StorageBinItem, StorageBinItem.item_id == Item.id)
+                .where(StorageBinItem.bin_id == row.id)
+            )
+        ).all()
+        if any(member.access_level_id != access_level_id for member in members):
+            return None
+        capacity = self._batch_capacity(row, len(members))
+        if row.compartment_layout is not None and await self._free_compartment(row) is None:
+            return None
+        if capacity <= 0:
+            return None
+        return len(members), capacity
 
     @staticmethod
     def _batch_capacity(row: StorageBin, member_count: int) -> int:
@@ -1758,7 +1759,7 @@ class BinStorageService:
             code = payload.get("code")
             error = str(payload.get("error") or "Bin motion failed")
             if code in TRAY_NEVER_LEFT_CODES and (
-                code not in RETRIEVE_REFUSED_CODES or workflow.state == "retrieving_bin"
+                code != TRAY_ON_TOOL_CODE or workflow.state == "retrieving_bin"
             ):
                 # Nothing was lifted, so the command is cancelled: the tray stays home and the
                 # workflow leaves no unfinished motion behind.
