@@ -197,6 +197,13 @@ class LaserAutoCalibrationError(BaseModel):
     diagnostic_snapshot: dict[str, Any] | None = None
 
 
+class LaserAutoCalibrationErrorRef(BaseModel):
+    """The client's share of a failure: where it stopped and the id of its log line."""
+
+    phase: str | None = None
+    correlation_id: str | None = None
+
+
 class LaserAutoCalibrationSnapshot(BaseModel):
     state: Literal["idle", "starting", "running", "applying", "completed", "failed", "cancelled"] = "idle"
     session_id: str | None = None
@@ -225,7 +232,7 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     reference_offset_results: list[LaserAutoCalibrationReferenceOffset] = Field(default_factory=list)
     gripper_open_position: LaserAutoCalibrationGripperResult | None = None
     error: str | None = None
-    error_detail: LaserAutoCalibrationError | None = None
+    error_detail: LaserAutoCalibrationErrorRef | None = None
 
 
 @dataclass

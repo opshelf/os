@@ -1245,7 +1245,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 		exc_info=True,
 	)
 	code, message = internal_error_detail(exc)
-	return JSONResponse(status_code=500, content={"detail": client_detail(request, error_detail(message, code), exc)})
+	return JSONResponse(status_code=500, content={"detail": client_detail(request, error_detail(message, code))})
 
 
 @app.get(

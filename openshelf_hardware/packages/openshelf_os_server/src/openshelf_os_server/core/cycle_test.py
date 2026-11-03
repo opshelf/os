@@ -133,8 +133,6 @@ class CellResult(BaseModel):
 	steps: dict[str, bool] = Field(default_factory=dict)
 	passed: bool = False
 	error: Optional[str] = None
-	# Developer-only exception detail behind `error`; served only to errors.debug_allowed callers.
-	debug: Optional[dict[str, Any]] = None
 	duration_s: float = 0.0
 
 
@@ -182,23 +180,6 @@ def _detail(resp: httpx.Response) -> str:
 	if detail is not None:
 		return str(detail)
 	return resp.text.strip()
-
-
-def _detail_debug(resp: httpx.Response) -> Optional[dict[str, Any]]:
-	try:
-		data = resp.json()
-	except ValueError:
-		return None
-	detail = data.get("detail") if isinstance(data, dict) else None
-	debug = detail.get("debug") if isinstance(detail, dict) else None
-	return debug if isinstance(debug, dict) else None
-
-
-def public_snapshot_json(payload: str, show_debug: bool) -> str:
-	"""A serialized snapshot as a client may see it: cell failure `debug` is developer-only."""
-	if show_debug is True:
-		return payload
-	return CycleTestSnapshot.model_validate_json(payload).model_dump_json(exclude={"results": {"__all__": {"debug"}}})
 
 
 def _describe_fault(status: dict[str, Any]) -> Optional[str]:
@@ -255,15 +236,12 @@ class CycleTestRunner:
 			timeout=COMMAND_TIMEOUT_S + 10,
 		)
 		self.barcode_counter: Optional[int] = None
-		# Developer detail for the failure the last step returned.
-		self.error_debug: Optional[dict[str, Any]] = None
 		self.is_mock = get_operating_mode() == OperatingMode.mock
 
 	def log(self, line: str) -> None:
 		self.manager.log(line)
 
 	def failed(self, resp: httpx.Response) -> str:
-		self.error_debug = _detail_debug(resp)
 		return f"{resp.status_code} {_detail(resp)}"
 
 	# -- robot state -------------------------------------------------------
@@ -408,8 +386,6 @@ class CycleTestRunner:
 					return None
 				if data["status"] == "failed":
 					result = data.get("result") or {}
-					debug = result.get("debug")
-					self.error_debug = debug if isinstance(debug, dict) else None
 					error = str(result.get("error") or result.get("message") or "command failed")
 					if DEMO_MAP_MISSING_SUFFIX in error:
 						error += " Disable demo.enabled in data/config.json and restart the API for arbitrary cycle-test barcodes."
@@ -539,8 +515,6 @@ class CycleTestRunner:
 			result.steps[name] = error is None
 			if error is not None:
 				result.error = error
-				result.debug = self.error_debug
-				self.error_debug = None
 				self.log(f"  - {label}: FAIL - {error}")
 				return False
 			self.log(f"  - {label}: OK")

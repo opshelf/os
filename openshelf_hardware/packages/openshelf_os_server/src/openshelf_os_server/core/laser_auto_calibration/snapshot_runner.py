@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import *
-from .models import LaserAutoCalibrationError
+from .models import LaserAutoCalibrationErrorRef
 
 
 class SnapshotRunnerMixin:
@@ -203,7 +203,7 @@ class SnapshotRunnerMixin:
         state: Literal["completed", "failed", "cancelled"],
         error: str | None,
         *,
-        error_detail: LaserAutoCalibrationError | None = None,
+        error_detail: LaserAutoCalibrationErrorRef | None = None,
     ) -> None:
         await self._update_snapshot(
             state=state,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,10 +17,7 @@ from openshelf_os.storage import (
 	Shelf,
 	StorageGrid,
 )
-from openshelf_os_server.core.auth import AuthService
-from openshelf_os_server.errors import public_payload
 from openshelf_os_server.routers import calibration
-from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings
 
 
 def build_grid(*, second_cell_status: CellStatus = CellStatus.AVAILABLE) -> StorageGrid:
@@ -117,40 +116,31 @@ async def test_queue_stops_at_the_first_failing_cell(client) -> None:
 	assert events[-1]['job_id'] == start.json()['job_id']
 
 
-def _bearer(email: str) -> dict[str, str]:
-	settings = get_settings()
-	token = AuthService(settings.auth.jwt_secret, settings.auth.jwt_algorithm).create_access_token(
-		user_id=1, email=email, role='admin', permissions=[], expires_minutes=5,
-	)
-	return {'Authorization': f'Bearer {token}'}
-
-
 @pytest.mark.asyncio
-async def test_queue_failure_carries_motor_detail_only_for_the_developer(client) -> None:
-	# The operator sentence stays in `error`; the motor text rides `error_debug`/`debug`
-	# so the developer sees what failed and every other reader does not.
+async def test_queue_failure_keeps_motor_text_in_the_log(client, caplog) -> None:
+	# The operator sentence stays in `error`; the motor text goes only to the log, since no
+	# HTTP handler sees the error the test helpers raise inside the queue task.
 	worker = build_worker(build_grid(), AsyncMock(side_effect=MotorError('Alarm 24 on motor 3')))
 
-	with patch_worker(worker)[0], patch_worker(worker)[1]:
+	with patch_worker(worker)[0], patch_worker(worker)[1], caplog.at_level(logging.WARNING):
 		await client.post(
 			'/api/calibration/test/queue',
 			json={'side': 'front_module', 'mode': 'quick', 'cells': [{'shelf_idx': 0, 'cell_idx': 0}]},
 		)
 		await await_test_queue()
-		developer = await client.get('/api/calibration/test/queue', headers=_bearer(DEVELOPER_SYSTEM_USER_EMAIL))
-		operator = await client.get('/api/calibration/test/queue', headers=_bearer('admin@opshelf.com'))
+		status = await client.get('/api/calibration/test/queue')
 
-	assert developer.json()['state'] == 'failed'
-	assert 'motor 3' not in developer.json()['error']
-	assert developer.json()['error_debug']['chain'] == ['MotorError: Alarm 24 on motor 3']
-	assert operator.json()['error'] == developer.json()['error']
-	assert operator.json()['error_debug'] is None
-	assert 'motor 3' not in operator.text
-
+	assert status.json()['state'] == 'failed'
+	assert status.json()['error']
+	assert 'motor 3' not in status.text
 	event = worker.publish_event.await_args_list[-1].args[0]
-	assert 'error_debug' not in event['payload']
-	assert event['debug']['chain'] == ['MotorError: Alarm 24 on motor 3']
-	assert 'debug' not in public_payload(event, False)
+	assert 'motor 3' not in json.dumps(event)
+	assert any(
+		'calibration test queue cell failed' in record.getMessage()
+		and record.exc_info is not None
+		and 'Alarm 24 on motor 3' in str(record.exc_info[1])
+		for record in caplog.records
+	)
 
 
 @pytest.mark.asyncio
@@ -220,37 +210,3 @@ async def test_abort_stops_the_queue_before_the_next_cell(client) -> None:
 
 	events = published_queue_events(worker)
 	assert events[-1]['state'] == 'cancelled'
-
-
-@pytest.mark.asyncio
-async def test_abort_during_failure_publish_hides_error_debug_from_operators(client) -> None:
-	# _finish_test_queue sets error_debug before awaiting the terminal publish, so the
-	# task is still running and abort returns the snapshot with the detail attached.
-	gate = asyncio.Event()
-	worker = build_worker(build_grid(), AsyncMock(side_effect=MotorError('Alarm 24 on motor 3')))
-
-	async def slow_publish(payload):
-		if payload.get('debug') is not None:
-			await asyncio.wait_for(gate.wait(), timeout=5)
-
-	worker.publish_event = AsyncMock(side_effect=slow_publish)
-
-	with patch_worker(worker)[0], patch_worker(worker)[1]:
-		await client.post(
-			'/api/calibration/test/queue',
-			json={'side': 'front_module', 'mode': 'quick', 'cells': [{'shelf_idx': 0, 'cell_idx': 0}]},
-		)
-		while calibration._test_queue_snapshot.error_debug is None:
-			await asyncio.sleep(0.01)
-		assert calibration._test_queue_task.done() is False
-
-		operator = await client.post('/api/calibration/test/queue/abort', headers=_bearer('admin@opshelf.com'))
-		developer = await client.post('/api/calibration/test/queue/abort', headers=_bearer(DEVELOPER_SYSTEM_USER_EMAIL))
-
-		gate.set()
-		await await_test_queue()
-
-	assert operator.status_code == 200
-	assert operator.json()['error_debug'] is None
-	assert 'motor 3' not in operator.text
-	assert developer.json()['error_debug']['chain'] == ['MotorError: Alarm 24 on motor 3']

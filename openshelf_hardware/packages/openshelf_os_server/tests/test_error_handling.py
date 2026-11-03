@@ -15,7 +15,6 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from hardware.exceptions import ModbusConnectionError, MotorConfigError, MotorError
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.faults import fault_code
-from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
 from openshelf_os_server.core.validation import CellOccupiedError, ValidationError
 from openshelf_os_server.errors import (
@@ -30,7 +29,6 @@ from openshelf_os_server.errors import (
 )
 from openshelf_os_server.main import app
 from openshelf_os_server.middleware import audit
-from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings
 
 TEST_PATH = "/api/test/error-handling"
 
@@ -333,23 +331,13 @@ def test_bare_code_word_never_reaches_client_as_identifier() -> None:
 		assert message[0].isupper() and message.endswith("."), value
 
 
-def _bearer(email: str) -> dict[str, str]:
-	settings = get_settings()
-	token = AuthService(settings.auth.jwt_secret, settings.auth.jwt_algorithm).create_access_token(
-		user_id=1, email=email, role="admin", permissions=[], expires_minutes=5,
-	)
-	return {"Authorization": f"Bearer {token}"}
-
-
 @pytest.mark.anyio
-async def test_exception_detail_reaches_only_the_developer_user(
+async def test_error_bodies_carry_the_correlation_id_never_the_exception(
 	unauthenticated_client: AsyncClient,
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-	"""The dev UI needs the exception chain behind a sentence; the kiosk must never
-	get it, because driver text carries paths and ids the operator copy rule keeps
-	out. Every caller gets the correlation id that ties the body to the log.
-	"""
+	"""Driver text carries paths and ids, and a submitted value can be a PIN; none of it
+	reaches a client. The correlation id ties the body to the log line that has it."""
 	client = await _client_with_test_route(unauthenticated_client, monkeypatch)
 	requests = (
 		("GET", TEST_PATH, {"kind": "chained"}, None),
@@ -358,31 +346,30 @@ async def test_exception_detail_reaches_only_the_developer_user(
 		("POST", f"{TEST_PATH}/validate", None, {"barcode": "not-an-int"}),
 	)
 
-	for headers in ({}, _bearer("admin@opshelf.com")):
-		for method, path, params, body in requests:
-			response = await client.request(method, path, params=params, json=body, headers=headers)
-			detail = response.json()["detail"]
-			assert "debug" not in detail, (path, params)
-			assert "/dev/" not in response.text and "not-an-int" not in response.text
-			assert detail["correlation_id"], (path, params)
+	for method, path, params, body in requests:
+		response = await client.request(method, path, params=params, json=body)
+		detail = response.json()["detail"]
+		assert set(detail) == {"message", "code", "correlation_id"}, (path, params)
+		assert detail["correlation_id"], (path, params)
+		for leak in ("/dev/", "Alarm 24", "boom", "not-an-int", "barcode"):
+			assert leak not in response.text, (path, params, leak)
 
-	developer = _bearer(DEVELOPER_SYSTEM_USER_EMAIL)
-	chained = (await client.get(TEST_PATH, params={"kind": "chained"}, headers=developer)).json()["detail"]
-	assert chained["message"] == CODE_MESSAGES["motor_alarm_clear_failed"]
-	assert chained["debug"]["chain"] == ["MotorError: Alarm 24 persists after clear attempt on /dev/ttyUSB0"]
 
-	mapped = (await client.get(TEST_PATH, params={"kind": "os_error_filename"}, headers=developer)).json()["detail"]
-	assert "/dev/usb/lp0" in mapped["debug"]["chain"][0]
-
-	unhandled = (await client.get(TEST_PATH, params={"kind": "runtime_error"}, headers=developer)).json()["detail"]
-	assert unhandled["debug"]["chain"] == ["RuntimeError: boom"]
-
-	invalid = (
-		await client.post(f"{TEST_PATH}/validate", json={"barcode": "not-an-int"}, headers=developer)
-	).json()["detail"]
-	assert invalid["debug"]["fields"][0].startswith("body.barcode: ")
-	# Field paths only: a submitted value can be a PIN.
-	assert "not-an-int" not in str(invalid)
+@pytest.mark.anyio
+async def test_unhandled_500_logs_the_exception_under_its_correlation_id(
+	unauthenticated_client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
+	caplog: pytest.LogCaptureFixture,
+) -> None:
+	"""AuditMiddleware answers unhandled exceptions itself, so its log line is where a
+	toast's ref leads."""
+	client = await _client_with_test_route(unauthenticated_client, monkeypatch)
+	with caplog.at_level(logging.WARNING, logger="openshelf_os_server.middleware.audit"):
+		response = await client.get(TEST_PATH, params={"kind": "runtime_error"})
+	assert response.status_code == 500
+	ref = response.json()["detail"]["correlation_id"]
+	record = next(r for r in caplog.records if r.name == "openshelf_os_server.middleware.audit" and ref in r.getMessage())
+	assert record.exc_info is not None and str(record.exc_info[1]) == "boom"
 
 
 @pytest.mark.anyio
@@ -402,7 +389,7 @@ async def test_route_error_logs_the_failure_behind_its_sentence(
 
 
 @pytest.mark.anyio
-async def test_unhandled_500_on_audit_excluded_route_keeps_correlation_id_and_debug(
+async def test_unhandled_500_on_audit_excluded_route_keeps_correlation_id(
 	unauthenticated_client: AsyncClient,
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -415,15 +402,8 @@ async def test_unhandled_500_on_audit_excluded_route_keeps_correlation_id_and_de
 	async with AsyncClient(transport=transport, base_url="http://test") as client:
 		anonymous = await client.get(TEST_PATH, params={"kind": "runtime_error"})
 		assert anonymous.status_code == 500
-		assert anonymous.json()["detail"]["correlation_id"]
-		assert "debug" not in anonymous.json()["detail"]
-
-		developer = await client.get(
-			TEST_PATH, params={"kind": "runtime_error"}, headers=_bearer(DEVELOPER_SYSTEM_USER_EMAIL)
-		)
-	detail = developer.json()["detail"]
-	assert detail["correlation_id"]
-	assert detail["debug"]["chain"] == ["RuntimeError: boom"]
+	assert anonymous.json()["detail"]["correlation_id"]
+	assert "boom" not in anonymous.text
 
 
 def test_motor_fault_behind_a_catch_all_gets_its_own_code() -> None:
@@ -594,8 +574,8 @@ def _raw_exception_messages(tree: ast.AST) -> list[str]:
 
 
 def test_router_messages_never_carry_raw_exception_text() -> None:
-	"""Exception text belongs in the log and the developer's detail.debug; in the
-	message it reaches the kiosk, which shows detail.message verbatim."""
+	"""Exception text belongs in the log; in the message it reaches the kiosk, which
+	shows detail.message verbatim."""
 	router_dir = pathlib.Path(__file__).resolve().parents[1] / "src" / "openshelf_os_server" / "routers"
 	found = []
 	for path in sorted(router_dir.glob("*.py")):

@@ -27,9 +27,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.exceptions import ConfigError as HardwareConfigError
-from openshelf_os.faults import FAULT_MESSAGES, exception_debug, fault_code
+from openshelf_os.faults import FAULT_MESSAGES, fault_code
 from openshelf_os.robot.worker import IO_BOX_OCCUPIED_ERROR, TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR
-from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
 from openshelf_os_server.core.command_lifecycle import (
 	CommandQueueFullError,
@@ -37,15 +36,14 @@ from openshelf_os_server.core.command_lifecycle import (
 	CommandTargetInFlightError,
 )
 from openshelf_os_server.core.validation import CellOccupiedError, ValidationError
-from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings
 
 logger = logging.getLogger(__name__)
 
 # Exception types that are not code bugs. In an unhandled 500 they get a
 # derived code and its CODE_MESSAGES sentence; str(exc) never reaches the
 # message (config loader text embeds absolute paths, SQLAlchemy text the
-# statement and bound parameters). Full detail remains in the log, Sentry and
-# the developer's detail.debug, tied to the client by the correlation id.
+# statement and bound parameters). Full detail remains in the log and Sentry,
+# tied to the client by the correlation id.
 SAFE_500_TYPES: tuple[tuple[type[BaseException], str], ...] = (
 	(TimeoutError, "timeout"),
 	(ConfigError, "config_error"),
@@ -354,31 +352,6 @@ def _raised_from(exc: BaseException) -> BaseException | None:
 	return None if exc.__suppress_context__ else exc.__context__
 
 
-def _request_token(request: Request) -> str | None:
-	scheme, _, token = request.headers.get("Authorization", "").partition(" ")
-	if scheme.lower() == "bearer" and token != "":
-		return token
-	return request.query_params.get("token") or None
-
-
-def debug_allowed(request: Request) -> bool:
-	"""True when the caller is the developer system user the dev UI signs in as.
-
-	Only those clients get ``detail.debug``: exception text can carry paths, ids
-	and driver output that the operator copy rule keeps away from the kiosk.
-	"""
-	auth = get_settings().auth
-	token = _request_token(request)
-	if token is None:
-		return (
-			(auth.enabled is False or auth.require_auth is False)
-			and auth.dev_mode is True
-			and auth.dev_auto_user == DEVELOPER_SYSTEM_USER_EMAIL
-		)
-	payload = AuthService(auth.jwt_secret or "", auth.jwt_algorithm).decode_token(token)
-	return payload is not None and payload.get("type") == "access" and payload.get("email") == DEVELOPER_SYSTEM_USER_EMAIL
-
-
 # Exceptions whose text is empty or driver output, by the code that describes them.
 _FAILURE_TYPE_CODES: tuple[tuple[type[BaseException], str], ...] = (
 	(asyncio.QueueFull, "queue_full"),
@@ -392,28 +365,27 @@ _FAILURE_TYPE_CODES: tuple[tuple[type[BaseException], str], ...] = (
 
 def failure_detail(exc: BaseException, fallback_code: str) -> tuple[str, str]:
 	"""(code, operator sentence) for a failure recorded outside an HTTP body: a workflow
-	error, a command result. The exception itself belongs in the log and `debug`."""
+	error, a command result. The exception itself belongs in the log."""
 	code = fault_code(exc) or next(
 		(code for exc_type, code in _FAILURE_TYPE_CODES if isinstance(exc, exc_type)), fallback_code
 	)
 	return code, CODE_MESSAGES[code]
 
 
-def public_payload(payload: Any, show_debug: bool) -> Any:
-	"""A robot event or command result as a client may see it: the worker attaches the
-	exception behind a failure as `debug`, which only the developer user receives."""
-	if show_debug is True or isinstance(payload, dict) is False or "debug" not in payload:
+def strip_legacy_debug(payload: Any) -> Any:
+	"""Robot events and command results persisted before the developer `debug` channel
+	was removed still carry the exception chain under `debug`; it never reaches a client.
+	The event log has no retention, so those rows stay readable."""
+	if isinstance(payload, dict) is False or "debug" not in payload:
 		return payload
 	return {key: value for key, value in payload.items() if key != "debug"}
 
 
-def client_detail(request: Request, detail: dict[str, Any], exc: BaseException | None) -> dict[str, Any]:
-	"""Add the correlation id, and for developer clients the exception chain, to a body."""
+def client_detail(request: Request, detail: dict[str, Any]) -> dict[str, Any]:
+	"""Add the correlation id that ties a body to the server log."""
 	correlation_id = request_correlation_id(request)
 	if correlation_id:
 		detail["correlation_id"] = correlation_id
-	if exc is not None and debug_allowed(request):
-		detail["debug"] = exception_debug(exc)
 	return detail
 
 
@@ -494,8 +466,7 @@ async def http_exception_handler(request: Request, exc: Exception) -> JSONRespon
 			exc_info=cause,
 		)
 	if isinstance(detail, dict):
-		# Routes raise these `from` the real failure, so the chain is the developer detail.
-		detail = client_detail(request, detail, cause)
+		detail = client_detail(request, detail)
 	return JSONResponse(
 		content={"detail": detail},
 		status_code=http_exc.status_code,
@@ -528,8 +499,8 @@ def _clean_message(exc: BaseException) -> str:
 	if isinstance(exc, IntegrityError):
 		return CODE_MESSAGES["conflict"]
 	# Driver and timeout text ("[Errno 5] short write to printer: '/dev/usb/lp0'",
-	# "Gantry wait exceeded 30s timeout") is not operator copy; it reaches the log and
-	# the developer's detail.debug. TimeoutError is an OSError, so it is checked first.
+	# "Gantry wait exceeded 30s timeout") is not operator copy; it reaches the log.
+	# TimeoutError is an OSError, so it is checked first.
 	if isinstance(exc, TimeoutError):
 		return CODE_MESSAGES["timeout"]
 	if isinstance(exc, OSError):
@@ -561,7 +532,7 @@ def _make_mapped_handler(status_code: int, code: str):
 			)
 		return JSONResponse(
 			status_code=status_code,
-			content={"detail": client_detail(request, error_detail(message, code), exc)},
+			content={"detail": client_detail(request, error_detail(message, code))},
 			headers=MAPPED_HEADERS.get(code, {}),
 		)
 
@@ -571,23 +542,14 @@ def _make_mapped_handler(status_code: int, code: str):
 async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
 	# FastAPI's own handler answers this with a raw list of field problems;
 	# the shared serializer only has a dict form, so the structured problems
-	# stay in the log and the client gets the code's sentence. Developer clients
-	# also get the field paths, never the submitted values (a PIN can be one).
+	# stay in the log and the client gets the code's sentence.
 	logger.warning(
 		f"422 validation_failed: {exc.errors()} "
 		f"(correlation_id={request_correlation_id(request)})",
 	)
-	detail = client_detail(request, error_detail("", "validation_failed"), None)
-	if debug_allowed(request):
-		detail["debug"] = {
-			"fields": [
-				f"{'.'.join(str(part) for part in error.get('loc', ()))}: {error.get('msg', '')}"
-				for error in exc.errors()
-			]
-		}
 	return JSONResponse(
 		status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-		content={"detail": detail},
+		content={"detail": client_detail(request, error_detail("", "validation_failed"))},
 	)
 
 

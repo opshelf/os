@@ -146,5 +146,4 @@ async def test_direct_hardware_bus_loss_returns_classified_command_error() -> No
     assert isinstance(result, RobotCommandError)
     assert result.fault_code == "motor_bus_disconnected"
     assert result.error == FAULT_MESSAGES["motor_bus_disconnected"]
-    assert "device 3" not in result.error
-    assert "device 3" in result.debug["chain"][0]
+    assert "device 3" not in result.model_dump_json()

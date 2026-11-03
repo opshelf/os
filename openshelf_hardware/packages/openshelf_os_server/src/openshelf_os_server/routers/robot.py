@@ -82,7 +82,7 @@ from openshelf_os_server.core.bin_storage import (
     validate_direct_store_reservation,
 )
 from openshelf_os_server.routers.common import SuccessResponse
-from openshelf_os_server.errors import api_error, debug_allowed, error_detail, hardware_api_error, public_payload
+from openshelf_os_server.errors import api_error, error_detail, hardware_api_error, strip_legacy_debug
 from openshelf_os_server.settings import get_settings, get_operating_mode
 from openshelf_os_server.database.session import get_db
 from openshelf_os_server.database.models import AccessLevel, Item, ItemLocation, StorageBinItem, User
@@ -1059,7 +1059,7 @@ async def robot_commands(
     ),
     summary="Read a durable command result",
 )
-async def get_robot_command(command_id: str, request: Request) -> CommandLifecycleResponse:
+async def get_robot_command(command_id: str) -> CommandLifecycleResponse:
     """Read a durable command result.
 
     Available for mock and hardware command records. `result` is null before a terminal
@@ -1071,7 +1071,7 @@ async def get_robot_command(command_id: str, request: Request) -> CommandLifecyc
     if row is None:
         raise api_error(status.HTTP_404_NOT_FOUND, "command_not_found", "")
     command = serialize_command(row)
-    command["result"] = public_payload(command["result"], debug_allowed(request))
+    command["result"] = strip_legacy_debug(command["result"])
     return CommandLifecycleResponse.model_validate(command)
 
 
@@ -2288,7 +2288,6 @@ async def stream_events(request: Request) -> EventSourceResponse:
             worker = None
         if worker is not None:
             event_queue = await worker.subscribe_events()
-    show_debug = debug_allowed(request)
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         sent_max = resume_from
@@ -2348,7 +2347,7 @@ async def stream_events(request: Request) -> EventSourceResponse:
                 # Forward from the durable log so clients only ever see committed
                 # events, in `seq` order, with the ids resumption relies on.
                 for row in await read_robot_events(sent_max, EVENT_LOG_PAGE_LIMIT):
-                    yield {"id": str(row.seq), "data": json.dumps(public_payload(row.payload, show_debug))}
+                    yield {"id": str(row.seq), "data": json.dumps(strip_legacy_debug(row.payload))}
                     sent_max = row.seq
                     if row.seq > latest_seq:
                         new_rows_delivered += 1
@@ -2395,7 +2394,6 @@ class RobotEventLogResponse(BaseModel):
     summary="Replay the durable robot event log",
 )
 async def get_robot_event_log(
-    request: Request,
     since: int = Query(0, ge=0),
     limit: int = Query(500, ge=1, le=1000),
 ) -> RobotEventLogResponse:
@@ -2410,14 +2408,13 @@ async def get_robot_event_log(
     """
     rows = await read_robot_events(since, limit)
     latest_seq = await latest_robot_event_seq()
-    show_debug = debug_allowed(request)
     return RobotEventLogResponse(
         events=[
             RobotEventLogEntry(
                 seq=row.seq,
                 created_at=row.created_at,
                 command_id=row.command_id,
-                payload=public_payload(row.payload, show_debug),
+                payload=strip_legacy_debug(row.payload),
             )
             for row in rows
         ],

@@ -15,7 +15,6 @@ from openshelf_os import SIMULATED_FAULT_CONTEXT_KEY, SIMULATED_MOTOR_FAULT_PREF
 from openshelf_os.faults import (
     EXECUTION_ERROR_CODE,
     WORKER_ERROR_CODE,
-    exception_debug,
     fault_failure,
 )
 from openshelf_os.robot.core import Robot
@@ -1419,13 +1418,12 @@ class RobotWorker:
         *,
         code: str = "command_interrupted",
         fault_code: Optional[str] = None,
-        debug: Optional[dict[str, Any]] = None,
     ) -> None:
         """Publish a terminal, correlated failure and persist its lifecycle.
 
         `code` classifies the failure for recovery (crash dialog, tray return); `fault_code`
         names its cause when one is known. `error` is operator copy; the exception behind it
-        travels in `debug`, which the server hands only to the developer user."""
+        belongs in the caller's log line."""
         if command is None:
             return
 
@@ -1449,8 +1447,6 @@ class RobotWorker:
         }
         if fault_code is not None:
             payload["fault_code"] = fault_code
-        if debug is not None:
-            payload["debug"] = debug
         if operation is not None and operation.visibility == "internal":
             payload["visibility"] = "internal"
         await self.publish_event(payload)
@@ -1518,7 +1514,6 @@ class RobotWorker:
                     result.error,
                     operation,
                     code="execution_failed",
-                    debug=result.debug,
                     fault_code=result.fault_code,
                 )
             logger.info("Published command result to event queue")
@@ -1543,7 +1538,6 @@ class RobotWorker:
                     operation,
                     code=failure_code,
                     fault_code=cause,
-                    debug=exception_debug(err),
                 )
             except Exception as publish_error:
                 logger.warning("Failed to publish command failure: %s", publish_error, exc_info=publish_error)
@@ -1928,7 +1922,6 @@ class RobotWorker:
                     self._current_operation,
                     code=WORKER_ERROR_CODE,
                     fault_code=cause,
-                    debug=exception_debug(err),
                 )
                 try:
                     # A fault can leave the tray in the gripper; the next command must not run with it.

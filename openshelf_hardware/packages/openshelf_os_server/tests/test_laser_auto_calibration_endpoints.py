@@ -112,6 +112,39 @@ async def test_abort_during_grip_probe_with_contact_left_flags_needs_home() -> N
 
 
 @pytest.mark.asyncio
+async def test_failed_session_keeps_the_exception_out_of_the_client_snapshot(caplog) -> None:
+    """Clients get the phase and the correlation id of the log line; the exception text,
+    fault context and diagnostic snapshot stay in the log and the run metadata."""
+    manager = LaserAutoCalibrationManager()
+    manager._snapshot.current_stage = 'angle-calibration'
+    worker = SimpleNamespace(
+        set_needs_home=MagicMock(),
+        get_status_snapshot=AsyncMock(return_value={'port': '/dev/ttyUSB0'}),
+        refresh_tray_on_tool=AsyncMock(return_value=False),
+    )
+    failure = RuntimeError('motor 3 timed out on /dev/ttyUSB0')
+    failure.fault_context = {'alarm_code': 24}
+
+    with patch.object(manager, '_get_current_calibration_params', AsyncMock(return_value={})):
+        with patch.object(manager, '_run_requested_scope', AsyncMock(side_effect=failure)):
+            with patch.object(manager, '_restore_in_memory_calibration_params'):
+                with caplog.at_level('ERROR'):
+                    await manager._run_session(worker, 'laser-session')
+
+    snapshot = manager._snapshot
+    assert snapshot.state == 'failed'
+    assert snapshot.error_detail is not None
+    assert snapshot.error_detail.model_dump() == {'phase': 'angle-calibration', 'correlation_id': None}
+    client_view = snapshot.model_dump_json()
+    for leak in ('/dev/ttyUSB0', 'motor 3', 'alarm_code', 'RuntimeError'):
+        assert leak not in client_view, leak
+    record = next(r for r in caplog.records if r.getMessage() == 'laser_auto_calibration_failed')
+    assert record.exc_info is not None
+    assert record.error_detail['error'] == 'motor 3 timed out on /dev/ttyUSB0'
+    assert record.error_detail['fault_context'] == {'alarm_code': 24}
+
+
+@pytest.mark.asyncio
 async def test_home_after_abort_retracts_tool_before_moving_x() -> None:
     manager = LaserAutoCalibrationManager()
     calls = MagicMock()

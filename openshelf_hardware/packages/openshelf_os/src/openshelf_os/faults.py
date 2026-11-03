@@ -2,12 +2,11 @@
 
 Route error bodies and the worker's failure events share this vocabulary, so a drive
 alarm reads the same whether a route or a queued command hit it. The exception text
-never becomes operator copy: it travels as `exception_debug`, which the server hands
-only to the developer user.
+never becomes operator copy: it goes to the log under the request's correlation id.
 """
 from __future__ import annotations
 
-from typing import Any, Iterator, Optional
+from typing import Iterator, Optional
 
 from hardware.exceptions import ModbusConnectionError
 from hardware.exceptions import MotorConfigError as HardwareMotorConfigError
@@ -48,7 +47,6 @@ FAULT_MESSAGES: dict[str, str] = {
 }
 
 _CHAIN_LIMIT = 5
-_TEXT_LIMIT = 500
 
 
 def exception_chain(exc: Optional[BaseException]) -> Iterator[BaseException]:
@@ -98,19 +96,3 @@ def fault_failure(exc: BaseException, fallback_code: str) -> tuple[str, str]:
     chain, else `fallback_code`, which must be a FAULT_MESSAGES key."""
     code = fault_code(exc) or fallback_code
     return code, FAULT_MESSAGES[code]
-
-
-def exception_debug(exc: BaseException) -> dict[str, Any]:
-    """Developer-facing description of an exception: its chain and motor fault context."""
-    chain: list[str] = []
-    debug: dict[str, Any] = {"chain": chain}
-    for current in exception_chain(exc):
-        text = str(current)[:_TEXT_LIMIT]
-        chain.append(f"{type(current).__name__}: {text}" if text else type(current).__name__)
-        fault_context = getattr(current, "fault_context", None)
-        if isinstance(fault_context, dict) and "fault_context" not in debug:
-            debug["fault_context"] = {
-                str(key): value if isinstance(value, (str, int, float, bool, type(None))) else str(value)
-                for key, value in fault_context.items()
-            }
-    return debug

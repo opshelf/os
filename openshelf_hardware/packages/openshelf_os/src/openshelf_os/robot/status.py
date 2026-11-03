@@ -106,8 +106,6 @@ class RobotCommandSuccessful(BaseModel):
 class RobotCommandError(BaseModel):
     command: str = "unknown"
     error: str
-    # The exception behind an unexpected failure (`faults.exception_debug`); developer-only.
-    debug: Optional[dict[str, Any]] = None
     # Cause code from `faults.fault_failure`: the classified fault, else the command's fallback code; the kiosk maps it to copy.
     fault_code: Optional[str] = None
 

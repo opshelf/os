@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from starlette.requests import Request
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -19,10 +18,6 @@ from openshelf_os_server.core.command_lifecycle import COMMAND_LIMIT, admit, rec
 from openshelf_os_server.database.models import Item, RobotCommand
 from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.routers import robot as robot_router
-
-
-# A route called directly still reads its caller from the request; this one has no token.
-_ANONYMOUS_REQUEST = Request({"type": "http", "headers": [], "query_string": b""})
 
 
 class RecordingWorker:
@@ -370,7 +365,7 @@ async def test_production_command_is_durable_idempotent_and_pollable(
 		assert conflict.value.status_code == 409
 
 	command, command_id, visibility = worker.enqueued[0]
-	queued = await robot_router.get_robot_command(accepted.command_id, _ANONYMOUS_REQUEST)
+	queued = await robot_router.get_robot_command(accepted.command_id)
 	operation = QueuedOperation(
 		command=command,
 		timestamp=queued.created_at,
@@ -378,7 +373,7 @@ async def test_production_command_is_durable_idempotent_and_pollable(
 		visibility=visibility,
 	)
 	await handle_worker_lifecycle("running", operation, None)
-	running = await robot_router.get_robot_command(accepted.command_id, _ANONYMOUS_REQUEST)
+	running = await robot_router.get_robot_command(accepted.command_id)
 	assert running.status == "running"
 	assert running.request_id == "production-store-once"
 
@@ -389,7 +384,7 @@ async def test_production_command_is_durable_idempotent_and_pollable(
 		"request_id": "production-store-once",
 	}
 	await handle_worker_lifecycle("succeeded", operation, result)
-	completed = await robot_router.get_robot_command(accepted.command_id, _ANONYMOUS_REQUEST)
+	completed = await robot_router.get_robot_command(accepted.command_id)
 	assert completed.status == "succeeded"
 	assert completed.result == result
 	assert completed.completed_at is not None

@@ -25,7 +25,6 @@ from openshelf_os.faults import (
     EXECUTION_ERROR_CODE,
     RETRIEVE_FAILED_CODE,
     STORE_FAILED_CODE,
-    exception_debug,
     fault_failure,
 )
 from openshelf_os.exceptions import (
@@ -1470,7 +1469,6 @@ class Robot:
             return RobotCommandError(
                 command=command_name,
                 error=message,
-                debug=exception_debug(exc),
                 fault_code=cause,
             )
 
@@ -1608,7 +1606,6 @@ class Robot:
             return RobotCommandError(
                 command=command_name,
                 error=message,
-                debug=exception_debug(exc),
                 fault_code=cause,
             )
 
@@ -1673,7 +1670,6 @@ class Robot:
             return RobotCommandError(
                 command=command_name,
                 error=message,
-                debug=exception_debug(exc),
                 fault_code=cause,
             )
 

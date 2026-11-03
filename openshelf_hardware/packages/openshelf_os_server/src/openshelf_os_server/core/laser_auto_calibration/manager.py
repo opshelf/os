@@ -7,7 +7,7 @@ from uuid import uuid4
 from pathlib import Path
 
 from .models import *
-from .models import LaserAutoCalibrationError
+from .models import LaserAutoCalibrationError, LaserAutoCalibrationErrorRef
 from .scope_runner import ScopeRunnerMixin
 from .scan_runner import ScanRunnerMixin
 from .angle_runner import AngleRunnerMixin
@@ -209,9 +209,13 @@ class LaserAutoCalibrationManager(
                 exc_info=True,
             )
             await self._persist_failure_metadata(error_detail)
-            # error is operator copy; the exception stays in error_detail for developers.
+            # error is operator copy; the exception stays in the log line and run metadata.
             await self._set_terminal_state(
-                "failed", failure_detail(exc, "laser_calibration_failed")[1], error_detail=error_detail
+                "failed",
+                failure_detail(exc, "laser_calibration_failed")[1],
+                error_detail=LaserAutoCalibrationErrorRef(
+                    phase=error_detail.phase, correlation_id=error_detail.correlation_id
+                ),
             )
         finally:
             self._set_motion_diagnostic_context(worker)

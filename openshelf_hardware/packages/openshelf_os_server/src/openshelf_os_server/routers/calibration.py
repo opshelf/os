@@ -30,7 +30,6 @@ from openshelf_os.storage import (
 )
 from openshelf_os.laser_calibration.grip_edge import probe_grip_at
 from openshelf_os.laser_calibration.reference_offsets import select_reference_datum_cell
-from openshelf_os.faults import exception_debug
 from openshelf_os.exceptions import (
 	ConfigError,
 	GripVerificationError,
@@ -53,7 +52,7 @@ from openshelf_os_server.core.laser_auto_calibration.gripper_runner import calib
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.bin_storage import is_reserved_bin_location, reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.errors import CODE_MESSAGES, api_error, classify_hardware_error, debug_allowed, error_detail, hardware_api_error, internal_error_detail
+from openshelf_os_server.errors import CODE_MESSAGES, api_error, classify_hardware_error, error_detail, hardware_api_error, internal_error_detail
 from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, require_permissions_for_stream
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.settings import get_root_config, save_root_config
@@ -532,7 +531,7 @@ async def _raise_motor_error(
 ) -> None:
 	"""Raise the 409 for a motion failure. `action` is the operator sentence for what
 	failed; the cause sentence comes from the classified code, and the exception itself
-	reaches the log and the developer's `detail.debug` through the chain."""
+	reaches the log."""
 	logger.warning(action, exc_info=exc)
 	if axes is None:
 		if isinstance(exc, GripVerificationError):
@@ -1548,8 +1547,6 @@ class TestQueueSnapshot(BaseModel):
 	current: Optional[TestQueueCell] = None
 	failed: Optional[TestQueueCell] = None
 	error: Optional[str] = None
-	# Developer-only exception detail behind `error`; GET drops it for other callers.
-	error_debug: Optional[dict[str, Any]] = None
 	started_at: Optional[str] = None
 	updated_at: Optional[str] = None
 
@@ -1575,11 +1572,8 @@ async def _publish_test_queue_event(
 ) -> None:
 	payload: dict[str, Any] = {
 		"kind": "calibration_test_queue",
-		"payload": snapshot.model_dump(exclude={"error_debug"}),
+		"payload": snapshot.model_dump(),
 	}
-	if snapshot.error_debug is not None:
-		# Top level, where errors.public_payload strips it for non-developer readers.
-		payload["debug"] = snapshot.error_debug
 	if cell is not None:
 		payload["payload"]["cell"] = cell.model_dump()
 		payload["payload"]["ok"] = ok
@@ -1597,13 +1591,11 @@ async def _finish_test_queue(
 	state: Literal["completed", "failed", "cancelled"],
 	failed: Optional[TestQueueCell] = None,
 	error: Optional[str] = None,
-	error_debug: Optional[dict[str, Any]] = None,
 ) -> None:
 	snapshot.state = state
 	snapshot.current = None
 	snapshot.failed = failed
 	snapshot.error = error
-	snapshot.error_debug = error_debug
 	snapshot.updated_at = _test_queue_now_iso()
 	await _publish_test_queue_event(worker, snapshot)
 
@@ -1638,7 +1630,6 @@ async def _run_cell_test_queue(
 		snapshot.current = cell
 
 		error: Optional[str] = None
-		error_debug: Optional[dict[str, Any]] = None
 		try:
 			if snapshot.mode == "quick":
 				async with _calibration_state_lock:
@@ -1649,20 +1640,20 @@ async def _run_cell_test_queue(
 				await _perform_cycle_test(worker, location)
 		except HTTPException as exc:
 			error = _test_queue_error_message(exc.detail)
-			# The route helpers raise the HTTP error `from` the motor failure.
+			# The test helpers raise the HTTP error `from` the failure, and no HTTP handler
+			# sees it here.
 			if exc.__cause__ is not None:
-				error_debug = exception_debug(exc.__cause__)
+				logger.warning("calibration test queue cell failed: %s", error, exc_info=exc.__cause__)
 		except Exception as exc:
 			logger.error("calibration test queue cell failed", exc_info=True)
 			_, error = internal_error_detail(exc)
-			error_debug = exception_debug(exc)
 
 		snapshot.completed += 1
 		snapshot.current = None
 		snapshot.updated_at = _test_queue_now_iso()
 
 		if error is not None:
-			await _finish_test_queue(worker, snapshot, "failed", failed=cell, error=error, error_debug=error_debug)
+			await _finish_test_queue(worker, snapshot, "failed", failed=cell, error=error)
 			return
 
 		await _publish_test_queue_event(worker, snapshot, cell, True)
@@ -1729,17 +1720,14 @@ async def start_cell_test_queue(request: TestQueueRequest) -> TestQueueSnapshot:
     summary="Read the calibration test queue state",
     responses=response_docs(model=TestQueueSnapshot, errors=(401, 403)),
 )
-async def get_cell_test_queue(request: Request) -> TestQueueSnapshot:
+async def get_cell_test_queue() -> TestQueueSnapshot:
 	"""Read the calibration test queue state.
 
 	Returns the current or most recent queue snapshot; `state` is `idle` until the first
 	queue starts on this process. Clients resuming a backgrounded or reloaded page use this
 	to catch up between `calibration_test_queue` events.
 	"""
-	snapshot = _test_queue_snapshot.model_copy(deep=True)
-	if debug_allowed(request) is False:
-		snapshot.error_debug = None
-	return snapshot
+	return _test_queue_snapshot.model_copy(deep=True)
 
 
 @router.post(
@@ -1749,7 +1737,7 @@ async def get_cell_test_queue(request: Request) -> TestQueueSnapshot:
     summary="Abort the calibration test queue",
     responses=response_docs(model=TestQueueSnapshot, errors=(401, 403, 409)),
 )
-async def abort_cell_test_queue(request: Request) -> TestQueueSnapshot:
+async def abort_cell_test_queue() -> TestQueueSnapshot:
 	"""Abort the calibration test queue.
 
 	Requests cancellation before the next cell; the cell currently moving finishes first,
@@ -1762,12 +1750,7 @@ async def abort_cell_test_queue(request: Request) -> TestQueueSnapshot:
 		raise api_error(status.HTTP_409_CONFLICT, "calibration_test_not_running", "")
 
 	_test_queue_abort_requested = True
-	# A failed queue sets error_debug before its terminal publish completes, so the task
-	# can still be running here.
-	snapshot = _test_queue_snapshot.model_copy(deep=True)
-	if debug_allowed(request) is False:
-		snapshot.error_debug = None
-	return snapshot
+	return _test_queue_snapshot.model_copy(deep=True)
 
 
 def _validate_saved_dimensions(dimensions: Dimensions) -> None:

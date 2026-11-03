@@ -98,29 +98,6 @@ async def test_demo_map_refusal_gets_the_disable_demo_hint() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_command_debug_is_recorded_and_stripped_for_non_developers() -> None:
-	debug = {"chain": ["MotorError: Alarm 24 on motor 3"]}
-	runner = object.__new__(cycle_test.CycleTestRunner)
-	runner.error_debug = None
-	runner.client = AsyncMock()
-	runner.client.post.return_value = SimpleNamespace(status_code=200, json=lambda: {"command_id": "c1"})
-	runner.client.get.return_value = SimpleNamespace(
-		status_code=200,
-		json=lambda: {"status": "failed", "result": {"error": "The robot could not move.", "debug": debug}},
-	)
-
-	error = await runner.run_command({"command": "store_item"})
-
-	assert error == "The robot could not move."
-	assert runner.error_debug == debug
-
-	snapshot = cycle_test.CycleTestSnapshot(results=[cycle_test.CellResult(cell="F:0:0", error=error, debug=debug)])
-	payload = snapshot.model_dump_json()
-	assert "motor 3" in cycle_test.public_snapshot_json(payload, True)
-	assert "motor 3" not in cycle_test.public_snapshot_json(payload, False)
-
-
-@pytest.mark.asyncio
 async def test_abort_during_a_step_cell_does_not_leave_the_run_paused() -> None:
 	# Abort while a cell runs must end the run at the next pause; a hung pause keeps the run active and blocks new starts.
 	manager = cycle_test.CycleTestManager()

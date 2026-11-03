@@ -1,6 +1,7 @@
 """Audit logging middleware."""
 import asyncio
 import json
+import logging
 import time
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,8 @@ from ..utils.audit_constants import AUDIT_RETENTION_DAYS, LEGACY_COMMAND_RECORDS
 from ..utils.cors_policy import response_allow_origin, resolve_allowed_origins
 from ..routers.auth_deps import get_current_user_optional
 from ..errors import capture_unhandled_exception, client_detail, error_detail, internal_error_detail, request_correlation_id
+
+logger = logging.getLogger(__name__)
 
 command_records_context: ContextVar[List[Dict[str, Any]]] = ContextVar("command_records", default=[])
 
@@ -176,11 +179,14 @@ class AuditMiddleware(BaseHTTPMiddleware):
 
 		except Exception as e:
 			error_message = str(e)
-			traceback.print_exc()
 			correlation_id = request_correlation_id(request)
+			logger.warning(
+				f"500 unhandled {request.method} {request.url.path} (correlation_id={correlation_id})",
+				exc_info=e,
+			)
 			capture_unhandled_exception(e, request.url.path, request.method, correlation_id, enabled=self.sentry_enabled)
 			code, message = internal_error_detail(e)
-			detail = client_detail(request, error_detail(message, code), e)
+			detail = client_detail(request, error_detail(message, code))
 			response = JSONResponse(status_code=500, content={"detail": detail})
 			# This response never travels back through the CORS middleware, so it carries
 			# the origin header itself, under the same policy as every other response.
