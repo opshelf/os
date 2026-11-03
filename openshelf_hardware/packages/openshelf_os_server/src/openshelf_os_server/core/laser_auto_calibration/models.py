@@ -155,6 +155,28 @@ class LaserAutoCalibrationReferenceOffset(BaseModel):
     skipped: list[str] = Field(default_factory=list)
 
 
+class LaserAutoCalibrationGripperSample(BaseModel):
+    side: StorageModuleSide
+    shelf_idx: int
+    cell_idx: int
+    z_offset_mm: float
+    positions: list[int] = Field(default_factory=list)
+    states: list[str] = Field(default_factory=list)
+    stop_position: int | None = None
+    verify_state: str | None = None
+    verified: bool = False
+
+
+class LaserAutoCalibrationGripperResult(BaseModel):
+    """The gripper open position measured at each side's hand-calibrated reference cell."""
+
+    previous_open_position: int
+    open_position: int | None = None
+    applied: bool = False
+    samples: list[LaserAutoCalibrationGripperSample] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+
+
 class LaserAutoCalibrationScope(BaseModel):
     mode: Literal["all", "both", "side", "shelf", "cell"] = "all"
     side: StorageModuleSide | None = None
@@ -162,6 +184,7 @@ class LaserAutoCalibrationScope(BaseModel):
     cell_idx: int | None = None
     include_angle_calibration: bool = True
     include_extension_calibration: bool = True
+    include_gripper_calibration: bool = False
     hold_y_enabled: bool = True
 
 class LaserAutoCalibrationError(BaseModel):
@@ -200,6 +223,7 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
     angle_results: list[LaserAutoCalibrationAngleResult] = Field(default_factory=list)
     reference_offset_results: list[LaserAutoCalibrationReferenceOffset] = Field(default_factory=list)
+    gripper_open_position: LaserAutoCalibrationGripperResult | None = None
     error: str | None = None
     error_detail: LaserAutoCalibrationError | None = None
 
@@ -525,6 +549,8 @@ __all__ = [
     "LaserAutoCalibrationAngleResult",
     "LaserAutoCalibrationReferenceOffsetSample",
     "LaserAutoCalibrationReferenceOffset",
+    "LaserAutoCalibrationGripperSample",
+    "LaserAutoCalibrationGripperResult",
     "LaserAutoCalibrationScope",
     "LaserAutoCalibrationSnapshot",
     "_SideState",

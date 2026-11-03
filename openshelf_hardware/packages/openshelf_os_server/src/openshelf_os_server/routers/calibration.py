@@ -29,6 +29,7 @@ from openshelf_os.storage import (
 	StorageModuleSide,
 )
 from openshelf_os.laser_calibration.grip_edge import probe_grip_at
+from openshelf_os.laser_calibration.reference_offsets import select_reference_datum_cell
 from openshelf_os.faults import exception_debug
 from openshelf_os.exceptions import (
 	ConfigError,
@@ -43,10 +44,12 @@ from hardware.exceptions import MotorError as HardwareMotorError
 
 from openshelf_os_server.core.robot import get_robot_worker
 from openshelf_os_server.core.laser_auto_calibration import (
+	LaserAutoCalibrationGripperResult,
 	LaserAutoCalibrationScope,
 	LaserAutoCalibrationSnapshot,
 	get_laser_auto_calibration_manager,
 )
+from openshelf_os_server.core.laser_auto_calibration.gripper_runner import calibrate_gripper_open_position
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.bin_storage import is_reserved_bin_location, reserved_bin_locations
 from openshelf_os_server.database.session import AsyncSessionLocal
@@ -201,6 +204,7 @@ def _build_laser_auto_calibration_scope(
 	mode: Literal["all", "both"] | None,
 	include_angle_calibration: bool | None,
 	include_extension_calibration: bool | None,
+	include_gripper_calibration: bool | None = None,
 ) -> LaserAutoCalibrationScope:
 	if shelf_idx is not None and shelf_idx < 0:
 		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "The shelf number cannot be negative.")
@@ -216,6 +220,7 @@ def _build_laser_auto_calibration_scope(
 			mode="both",
 			include_angle_calibration=include_angle_calibration is not False,
 			include_extension_calibration=include_extension_calibration is not False,
+			include_gripper_calibration=include_gripper_calibration is True,
 		)
 
 	if side is None:
@@ -226,6 +231,7 @@ def _build_laser_auto_calibration_scope(
 			mode="all",
 			include_angle_calibration=include_angle_calibration is not False,
 			include_extension_calibration=include_extension_calibration is not False,
+			include_gripper_calibration=include_gripper_calibration is True,
 		)
 
 	if cell_idx is not None and shelf_idx is None:
@@ -237,6 +243,7 @@ def _build_laser_auto_calibration_scope(
 			side=side,
 			include_angle_calibration=include_angle_calibration is not False,
 			include_extension_calibration=include_extension_calibration is not False,
+			include_gripper_calibration=include_gripper_calibration is True,
 		)
 
 	if cell_idx is None:
@@ -971,6 +978,7 @@ async def stream_laser_auto_calibration(
 	mode: Literal["all", "both"] | None = None,
 	include_angle_calibration: bool | None = None,
 	include_extension_calibration: bool | None = None,
+	include_gripper_calibration: bool | None = None,
 	hold_y_enabled: bool | None = None,
 	subscribe_only: bool = False,
 ) -> EventSourceResponse:
@@ -984,7 +992,9 @@ async def stream_laser_auto_calibration(
 	Returns Server-Sent Events with JSON calibration snapshots. A client disconnect
 	unsubscribes that client; use the abort endpoint to stop the session. Do not infer
 	cancellation from a closed connection. Optional scope parameters select cells,
-	both sides, or the angle/extension calibration phases. `hold_y_enabled=false` parks
+	both sides, or the angle/extension calibration phases. `include_gripper_calibration=true`
+	(side and module runs only) first sets the gripper open position from each side's reference
+	cell, before the grip-edge sweep that depends on it. `hold_y_enabled=false` parks
 	Y on its brake between moves instead of holding it energised for the session. Every run
 	frames its offsets from the hand-calibrated bottom-left cell of the sides it covers and
 	returns `400` before moving when one of those cells is missing or not marked manual, or
@@ -998,6 +1008,7 @@ async def stream_laser_auto_calibration(
 		mode,
 		include_angle_calibration,
 		include_extension_calibration,
+		include_gripper_calibration,
 	).model_copy(
 		update={
 			"hold_y_enabled": hold_y_enabled is not False,
@@ -1386,6 +1397,59 @@ async def grip_probe(request: GripProbeRequest) -> list[GripProbePoint]:
 			await _raise_motor_error(worker, f"The grip probe failed after {len(points)} points.", e)
 
 	return points
+
+
+class GripperOpenPositionRequest(BaseModel):
+	side: Optional[StorageModuleSide] = Field(
+		None, description="Measure at this side's reference cell only; omit to measure both sides."
+	)
+
+
+@router.post(
+    "/gripper/open-position",
+    dependencies=[ROBOT_CONTROL],
+    response_model=LaserAutoCalibrationGripperResult,
+    summary="Measure and set the gripper open position at the reference cells",
+    responses=response_docs(errors=(400, 401, 403, 409, 500, 503)),
+)
+@serialize_calibration_state
+async def calibrate_gripper_open_position_route(request: GripperOpenPositionRequest) -> LaserAutoCalibrationGripperResult:
+	"""Measure and set the gripper open position at the reference cells.
+
+	At each side's hand-calibrated bottom-left cell, at its own z, the fingers splay fully open
+	twice to read where the tray's hole stops them; the open position (gripper preset 1) is set
+	that many counts more open than the widest stop, checked with one more splay per side, and
+	saved to robot.tool.gripper.open_position without a restart. Moves hardware. A side without
+	a steady grip (an empty cell, a multi-item bin) is reported in `skipped`; `applied` is false
+	when nothing was measured or the check splay gave no grip, and the drive then keeps its
+	previous value.
+	"""
+	await ensure_laser_auto_calibration_not_running()
+
+	worker = await get_robot_worker_or_503()
+
+	_ensure_ready(worker)
+
+	tool = worker._robot._tool
+
+	if tool.is_grip_detection_enabled is not True:
+		raise api_error(status.HTTP_400_BAD_REQUEST, "grip_detection_disabled", "")
+
+	grid = worker._robot._grid
+	sides = [StorageModuleSide.FRONT, StorageModuleSide.BACK] if request.side is None else [request.side]
+	sides = [side for side in sides if grid is not None and select_reference_datum_cell(grid=grid, side=side) is not None]
+
+	if len(sides) == 0:
+		raise api_error(status.HTTP_400_BAD_REQUEST, "reference_cell_missing", "")
+
+	async with manual_motion_guard("calibration_gripper_open_position", worker=worker):
+		try:
+			await _clear_motors_for_move(tool, gantry=True, gripper=True, stage=True, rotation=True)
+			await tool.retract()
+			return await calibrate_gripper_open_position(worker, sides)
+		except (MotorError, HardwareMotorError, ToolError) as e:
+			await _raise_motor_error(worker, "The gripper open position measurement failed.", e)
+			raise
 
 
 @router.post(

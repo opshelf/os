@@ -45,6 +45,15 @@ GRIP_EDGE_TARGET_MAX_MARGIN_MM = 3.0
 GRIP_EDGE_SHELF_SEARCH_BELOW_MM = 2.0
 # A shelf whose first cells all fail to grip is taken for multi-item bins and not probed further.
 GRIP_EDGE_BIN_SHELF_MISSES = 2
+# The open position (preset 1 target, 0x00 fully open .. 0xFF closed) is found by splaying fully open
+# at a cell's own z: the hole stops the fingers before the target, and where they stop is the hole.
+GRIP_OPEN_PROBE_TARGET = 0x00
+# The drive reports contact only when the target lies >= ~6 counts past where the hole stops the
+# fingers (lb4a-10 F:0:0, 2026-11-02: stop 14, target 32 never reported, 6 gripped).
+GRIP_OPEN_CONTACT_MARGIN = 8
+# Two splays at one z stopping further apart than this are no steady grip (a multi-item bin's stray).
+GRIP_OPEN_STOP_AGREEMENT = 2
+GRIP_OPEN_POSITION_MAX = 0xBF
 
 
 @dataclass
@@ -82,6 +91,55 @@ async def probe_grip_at(tool: Any, coordinate: Any, z_offset_mm: float) -> Any:
 	await tool.retract_empty()
 
 	return state
+
+
+@dataclass
+class HoleStopMeasurement:
+	states: list[str]
+	positions: list[int]
+	# None unless every splay gripped and they stopped within GRIP_OPEN_STOP_AGREEMENT counts.
+	stop_position: int | None
+
+
+async def probe_cell(tool: Any, coordinate: Any) -> Any:
+	"""probe_grip_at the coordinate's own z, moving there with the fingers in from wherever the tool is."""
+	await tool._gs.safe_open()
+	await tool.move(coordinate)
+	await tool.rotate_to_position("front" if coordinate.s == 0 else "back")
+	return await probe_grip_at(tool, coordinate, float(coordinate.z_offset))
+
+
+async def measure_hole_stop(
+	tool: Any,
+	coordinate: Any,
+	*,
+	probes: int = 2,
+	should_abort: Callable[[], bool] | None = None,
+) -> HoleStopMeasurement:
+	"""Where the tray's hole stops the fingers splayed fully open at the coordinate. The drive's own
+	open position is back in place on return, however the probes end."""
+	previous = int(tool._gs.open_position)
+	states: list[Any] = []
+	await tool._gs.set_open_position(GRIP_OPEN_PROBE_TARGET)
+
+	try:
+		for _ in range(probes):
+			raise_if_cancelled(should_abort)
+			states.append(await probe_cell(tool, coordinate))
+	finally:
+		await tool._gs.set_open_position(previous)
+
+	positions = [int(state.position) for state in states]
+	steady = all(state.gripped for state in states) and max(positions) - min(positions) <= GRIP_OPEN_STOP_AGREEMENT
+	return HoleStopMeasurement(
+		states=[str(state) for state in states],
+		positions=positions,
+		stop_position=min(positions) if steady else None,
+	)
+
+
+def open_position_for_stop(stop_position: int) -> int:
+	return max(0x00, min(GRIP_OPEN_POSITION_MAX, int(stop_position) - GRIP_OPEN_CONTACT_MARGIN))
 
 
 async def find_grip_edge(

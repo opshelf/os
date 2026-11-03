@@ -917,3 +917,20 @@ async def test_y_axis_home_lifts_off_the_stop_after_restoring_overrides(mock_con
     assert motor._move_to_position.await_count == 2
     assert call(1, 0x0191, 10) in calls and call(1, 0x000B, 4000) in calls
     assert calls.index(call(1, 0x000F, 0)) > calls.index(call(1, 0x000B, 4000))
+
+
+@pytest.mark.asyncio
+async def test_servo_open_position_changes_on_the_running_drive(mock_controller):
+    """The open target is preset 1's register with its enable bit; a target at or past safe-open
+    (0xC0) would leave the fingers splayed narrower than the release preset and is refused."""
+    servo = _configured_servo(mock_controller)
+
+    await servo.set_open_position(0x06)
+
+    mock_controller.write_single_register.assert_awaited_once_with(0x9, 0x03EB, 0x8006)
+    assert servo.open_position == 0x06
+
+    with pytest.raises(ValueError):
+        await servo.set_open_position(0xC0)
+    assert mock_controller.write_single_register.await_count == 1
+    assert servo.open_position == 0x06

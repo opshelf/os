@@ -137,6 +137,18 @@ class Servo:
             self._emit_init("failed", detail="configure", reason=str(e))
             raise MotorError(f"Failed to configure servo: {str(e)}") from e
 
+    @property
+    def open_position(self) -> int:
+        return self._open_position
+
+    async def set_open_position(self, value: int) -> None:
+        """Change the preset 1 target on the running drive; configure() wrote it the same way."""
+        if not 0x00 <= value < 0xC0:
+            raise ValueError(f"open_position 0x{value:02X} outside 0x00..0xBF")
+        await self._ensure_configured()
+        await self._controller.write_single_register(self._motor_id, 0x03EB, 0x8000 | value)
+        self._open_position = value
+
     async def wait_for_activate(self):
         start_time = time.monotonic()
 

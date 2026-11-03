@@ -218,6 +218,14 @@ class ScopeRunnerMixin:
         self._validate_reference_datum_cells(requested_scope, worker)
         self._validate_z_offset_sources(requested_scope, worker)
 
+        if requested_scope.include_gripper_calibration is True and (
+            get_root_config().robot.tool.gripper.object_detection_enabled is not True
+        ):
+            raise ValueError(
+                "the gripper open position is measured with the gripper's object detection, which "
+                "robot.tool.gripper.object_detection_enabled turns off on this machine"
+            )
+
     def _validate_z_offset_sources(
         self,
         requested_scope: LaserAutoCalibrationScope,
@@ -370,6 +378,7 @@ class ScopeRunnerMixin:
                 worker,
                 requested_scope.include_angle_calibration,
                 requested_scope.include_extension_calibration,
+                include_gripper_calibration=requested_scope.include_gripper_calibration,
                 front_bounds=front_bounds,
                 back_bounds=back_bounds,
             )
@@ -387,6 +396,7 @@ class ScopeRunnerMixin:
                 side,
                 requested_scope.include_angle_calibration,
                 requested_scope.include_extension_calibration,
+                include_gripper_calibration=requested_scope.include_gripper_calibration,
             )
 
             return
@@ -422,6 +432,7 @@ class ScopeRunnerMixin:
         include_angle_calibration: bool = True,
         include_extension_calibration: bool = True,
         *,
+        include_gripper_calibration: bool = False,
         front_bounds: ScanBounds | None = None,
         back_bounds: ScanBounds | None = None,
     ) -> None:
@@ -478,6 +489,13 @@ class ScopeRunnerMixin:
                 front_stage_extension_mm,
             )
 
+        if include_gripper_calibration is True:
+            # Before the grip-edge sweep: a wrong open position gives the datum no grip there,
+            # which refuses the whole run.
+            await self._run_gripper_open_position_calibration(
+                worker, [StorageModuleSide.BACK, StorageModuleSide.FRONT]
+            )
+
         completed_results.append(await self._run_side(worker, StorageModuleSide.BACK, back_angle_result))
         completed_results.append(await self._run_side(worker, StorageModuleSide.FRONT, front_angle_result))
 
@@ -490,6 +508,8 @@ class ScopeRunnerMixin:
         side: StorageModuleSide,
         include_angle_calibration: bool = True,
         include_extension_calibration: bool = True,
+        *,
+        include_gripper_calibration: bool = False,
     ) -> None:
         completed_results: list[_CompletedSideResult] = []
         scan_config = get_root_config().robot.grid.scan
@@ -514,6 +534,9 @@ class ScopeRunnerMixin:
                 probe_y_mm=probe_y_mm,
             )
             await self._apply_stage_extension_calibration(worker, side, stage_extension_mm)
+
+        if include_gripper_calibration is True:
+            await self._run_gripper_open_position_calibration(worker, [side])
 
         completed_results.append(await self._run_side(worker, side, angle_result))
         await self._persist_completed_results(worker, completed_results)

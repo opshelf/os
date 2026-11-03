@@ -13,6 +13,7 @@ from .scan_runner import ScanRunnerMixin
 from .angle_runner import AngleRunnerMixin
 from .stage_runner import StageRunnerMixin
 from .apply_runner import ApplyRunnerMixin
+from .gripper_runner import GripperRunnerMixin
 from openshelf_os_server.core.logging_config import get_correlation_id
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.errors import failure_detail
@@ -26,6 +27,7 @@ class LaserAutoCalibrationManager(
     AngleRunnerMixin,
     StageRunnerMixin,
     ApplyRunnerMixin,
+    GripperRunnerMixin,
     SnapshotRunnerMixin,
 ):
     def __init__(self) -> None:

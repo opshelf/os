@@ -3,7 +3,12 @@ from types import SimpleNamespace
 import pytest
 
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.laser_calibration.grip_edge import find_grip_edge, run_grip_edge_sweep
+from openshelf_os.laser_calibration.grip_edge import (
+	find_grip_edge,
+	measure_hole_stop,
+	open_position_for_stop,
+	run_grip_edge_sweep,
+)
 from openshelf_os.storage import StorageModuleSide
 
 
@@ -206,3 +211,52 @@ async def test_grip_target_sits_mid_window(end_mm, target_mm, deepest_probe_mm) 
 	assert result.samples[0].edge_z_mm == pytest.approx(5.25)
 	assert result.samples[0].target_z_mm == pytest.approx(target_mm)
 	assert max(z_seen) == pytest.approx(deepest_probe_mm)
+
+
+class FakeOpenPositionTool(FakeGripTool):
+	"""Splays stop at the hole (`stops`, one per splay) when the target is open enough for contact."""
+
+	def __init__(self, stops: list[int], fail_on_splay: int | None = None) -> None:
+		super().__init__(edge_mm=0.0)
+		self.stops = list(stops)
+		self.fail_on_splay = fail_on_splay
+		self.splays = 0
+		self.targets: list[int] = []
+		self._gs.open_position = 0x20
+		self._gs.set_open_position = self._set_open_position
+
+	async def _set_open_position(self, value: int) -> None:
+		self.targets.append(value)
+		self._gs.open_position = value
+
+	async def _open(self):
+		self.splays += 1
+		if self.splays == self.fail_on_splay:
+			raise RuntimeError("bus timeout")
+		stop = self.stops[self.splays - 1]
+		return SimpleNamespace(gripped=self._gs.open_position <= stop - 6, position=stop)
+
+
+@pytest.mark.asyncio
+async def test_hole_stop_puts_the_drive_back_when_a_splay_fails() -> None:
+	"""Left at the fully open probe target, every later pick and probe would splay to 0."""
+	tool = FakeOpenPositionTool(stops=[14, 14], fail_on_splay=2)
+
+	with pytest.raises(RuntimeError):
+		await measure_hole_stop(tool, AxisCoordinate(x=354.0, y=41.0, s=0, z_offset=12.0))
+
+	assert tool.targets == [0x00, 0x20]
+	assert tool._gs.open_position == 0x20
+
+
+@pytest.mark.asyncio
+async def test_hole_stop_needs_two_splays_that_agree() -> None:
+	"""A multi-item bin's divider gives a stray contact that does not repeat at the same spot."""
+	coordinate = AxisCoordinate(x=354.0, y=41.0, s=0, z_offset=12.0)
+
+	steady = await measure_hole_stop(FakeOpenPositionTool(stops=[15, 14]), coordinate)
+	stray = await measure_hole_stop(FakeOpenPositionTool(stops=[14, 30]), coordinate)
+
+	assert steady.stop_position == 14
+	assert open_position_for_stop(steady.stop_position) == 6
+	assert stray.stop_position is None
