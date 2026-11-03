@@ -28,7 +28,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.exceptions import ConfigError as HardwareConfigError
 from openshelf_os.faults import FAULT_MESSAGES, fault_code
-from openshelf_os.robot.worker import IO_BOX_OCCUPIED_ERROR, TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR
+from openshelf_os.robot.worker import IO_BOX_OCCUPIED_ERROR, PHYSICAL_ESTOP_REASON, TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
 from openshelf_os_server.core.command_lifecycle import (
 	CommandQueueFullError,
@@ -119,7 +119,6 @@ CODE_MESSAGES: dict[str, str] = {
 	"bad_request": "The machine could not do what you asked. Reload and try again.",
 	"barcode_required": "Enter the item barcode.",
 	"barcode_taken": "That barcode is already in use.",
-	"barcode_unavailable": "A test barcode could not be generated. Clear old test items, then run the test again.",
 	"bin_access_denied": "This bin also holds items you cannot access. Ask a supervisor to retrieve it.",
 	"bin_home_missing": "The bin's home cell is missing from storage.",
 	"bin_item_delete_requires_admin": "Only an admin can delete an item that is in a bin.",
@@ -154,6 +153,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"chemical_unavailable": "Chemical lookup is not available right now. Try again in a moment.",
 	"command_not_found": "That robot command does not exist.",
 	"conflict": "The robot cannot do that right now. Wait for it to finish and try again.",
+	"cycle_test_barcode_unavailable": "A test barcode could not be generated. Clear old test items, then run the test again.",
 	"cycle_test_clear_failed": "The items could not be cleared before the test.",
 	"cycle_test_location_mismatch": "The robot finished the move, but the database does not show the item where it should be.",
 	"cycle_test_mode": "Cycle tests run only in development or mock mode because they create and delete items.",
@@ -174,7 +174,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"door_positions_invalid": "Those IO door positions are not valid.",
 	"email_in_use": "That email already belongs to another operator.",
 	"enqueue_failed": "The robot could not queue the command. Try again.",
-	"emergency_stop": "The emergency stop was pressed. Release it, then reset the robot.",
+	"emergency_stop": PHYSICAL_ESTOP_REASON,
 	"error": "The machine could not complete the action. Check the machine status before trying again.",
 	"forbidden": "You do not have permission to do that.",
 	"frame_encode_failed": "The IO box camera image could not be read. Try again.",

@@ -16,10 +16,14 @@ from openshelf_os.runtime_state import RuntimeStatePaths
 from openshelf_os_server.core.camera import init_sizer_camera_manager, unregister_camera_manager
 from openshelf_os_server.database.models import Item, ItemSizerMeasurement
 from openshelf_os_server.database.session import AsyncSessionLocal
+from openshelf_os_server.errors import CODE_MESSAGES
 from openshelf_os_server.core.logging_config import get_logger
 from openshelf_os_server.settings import get_root_config
 
 logger = get_logger(__name__)
+
+TOF_UNAVAILABLE_MESSAGE = "The IO box distance sensor did not respond. Check the sensor connection."
+MEASUREMENT_FAILED_MESSAGE = "The IO box measurement failed. Try again."
 
 
 @dataclass
@@ -28,7 +32,6 @@ class IOBoxSizerRuntime:
 	service: IOBoxSizerService | None = None
 	available: bool = False
 	last_error: str | None = None
-	last_error_type: str | None = None
 	last_measurement_time: str | None = None
 
 
@@ -94,8 +97,7 @@ async def init_iobox_sizer() -> None:
 				exc_info=True,
 			)
 		_runtime.available = False
-		_runtime.last_error = str(exc)
-		_runtime.last_error_type = type(exc).__name__
+		_runtime.last_error = CODE_MESSAGES["iobox_sizer_unavailable"]
 		_runtime.service = None
 		logger.warning(
 			"iobox_sizer_unavailable",
@@ -122,8 +124,7 @@ async def init_iobox_sizer() -> None:
 
 	_runtime.service = service
 	_runtime.available = True
-	_runtime.last_error = str(tof_error) if tof_error is not None else None
-	_runtime.last_error_type = type(tof_error).__name__ if tof_error is not None else None
+	_runtime.last_error = TOF_UNAVAILABLE_MESSAGE if tof_error is not None else None
 	await init_sizer_camera_manager(service.camera)
 	logger.info(
 		"iobox_sizer_initialized",
@@ -172,7 +173,6 @@ def get_iobox_sizer_status() -> dict[str, Any]:
 		"camera": config.camera.model_dump(mode="json"),
 		"tof_channels": config.tof.channels,
 		"last_error": runtime.last_error if runtime is not None else None,
-		"last_error_type": runtime.last_error_type if runtime is not None else None,
 		"last_measurement_time": runtime.last_measurement_time if runtime is not None else None,
 	}
 
@@ -197,8 +197,7 @@ async def measure_iobox_size() -> IOBoxSizerMeasurement:
 				await measurement_task
 			except Exception as exc:
 				if runtime is not None:
-					runtime.last_error = str(exc)
-					runtime.last_error_type = type(exc).__name__
+					runtime.last_error = MEASUREMENT_FAILED_MESSAGE
 				logger.warning(
 					"iobox_sizer_measurement_failed",
 					error=str(exc),
@@ -208,8 +207,7 @@ async def measure_iobox_size() -> IOBoxSizerMeasurement:
 			raise
 		except Exception as exc:
 			if runtime is not None:
-				runtime.last_error = str(exc)
-				runtime.last_error_type = type(exc).__name__
+				runtime.last_error = MEASUREMENT_FAILED_MESSAGE
 			logger.warning(
 				"iobox_sizer_measurement_failed",
 				error=str(exc),

@@ -31,7 +31,6 @@ class SizerStatusResponse(BaseModel):
     camera: IOBoxSizerCameraConfig
     tof_channels: list[int]
     last_error: str | None
-    last_error_type: str | None
     last_measurement_time: str | None
 
 

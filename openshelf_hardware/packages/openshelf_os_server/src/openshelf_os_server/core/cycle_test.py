@@ -204,8 +204,9 @@ def _describe_fault(status: dict[str, Any], ref: Optional[str] = None) -> Option
 	# reports a sentence and logs the reason.
 	axes = status.get("needs_home_axes")
 	if status.get("is_emergency_stopped") is True:
-		failure: Failure = ("emergency_stop", CODE_MESSAGES["emergency_stop"])
 		reason = status.get("emergency_stop_reason")
+		# The worker's reason is always an operator sentence: pressed, or the input could not be read.
+		failure: Failure = ("emergency_stop", reason or CODE_MESSAGES["emergency_stop"])
 	elif status.get("is_crashed") is True:
 		failure = ("robot_crashed", CODE_MESSAGES["robot_crashed"])
 		reason = status.get("crash_reason")
@@ -389,7 +390,7 @@ class CycleTestRunner:
 			if resp.status_code != 409:
 				return None, _failure(resp)
 		logger.warning("cycle test found no free barcode after 100 tries (correlation_id=%s)", self.ref)
-		return None, ("barcode_unavailable", CODE_MESSAGES["barcode_unavailable"])
+		return None, ("cycle_test_barcode_unavailable", CODE_MESSAGES["cycle_test_barcode_unavailable"])
 
 	async def seed_location(self, barcode: str, side: str, shelf: int, cell: int) -> Optional[Failure]:
 		resp = await self.client.post(

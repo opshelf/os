@@ -515,7 +515,7 @@
 		const ordered = orderSectionMoves(targets, currentMm);
 
 		if ('unknown' in ordered) {
-			error = `The ${ordered.unknown} position is unknown. Wait for the position readout.`;
+			error = `The ${motorLabel(ordered.unknown)} position is unknown. Wait for the position readout.`;
 			return;
 		}
 
@@ -529,7 +529,7 @@
 				const result = await moveMotor(target.name, target.positionMm);
 
 				if (result.success !== true) {
-					error = `Failed to move ${target.name}.`;
+					error = `Failed to move ${motorLabel(target.name)}.`;
 					return;
 				}
 			}

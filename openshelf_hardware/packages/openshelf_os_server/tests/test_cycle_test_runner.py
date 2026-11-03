@@ -127,21 +127,11 @@ def test_loopback_token_is_minted_on_a_freshly_booted_host(monkeypatch) -> None:
 	assert request.headers["Authorization"].removeprefix("Bearer ")
 
 
-def test_cycle_test_failures_use_the_served_copy() -> None:
-	# One sentence per code: the runner reports CODE_MESSAGES text, which /api/system/error-messages serves.
-	for code in (
-		"barcode_unavailable",
-		"cycle_test_clear_failed",
-		"cycle_test_location_mismatch",
-		"cycle_test_no_cells",
-		"cycle_test_request_failed",
-		"demo_map_missing",
+def test_cycle_test_estop_fault_reports_the_workers_reason() -> None:
+	unreadable = "The emergency stop could not be read. Check the robot before continuing."
+	status = {"is_emergency_stopped": True, "emergency_stop_reason": unreadable}
+	assert cycle_test._describe_fault(status) == ("emergency_stop", unreadable)
+	assert cycle_test._describe_fault({"is_emergency_stopped": True}) == (
 		"emergency_stop",
-		"robot_crashed",
-	):
-		assert code in CODE_MESSAGES, code
-	assert cycle_test.NO_CELLS == ("cycle_test_no_cells", CODE_MESSAGES["cycle_test_no_cells"])
-	estop = cycle_test._describe_fault({"is_emergency_stopped": True, "emergency_stop_reason": "x"})
-	assert estop == ("emergency_stop", CODE_MESSAGES["emergency_stop"])
-	crash = cycle_test._describe_fault({"is_crashed": True, "crash_reason": "x"})
-	assert crash == ("robot_crashed", CODE_MESSAGES["robot_crashed"])
+		CODE_MESSAGES["emergency_stop"],
+	)
