@@ -1935,7 +1935,8 @@
 							type="button"
 							class="tray-barcode-button"
 							onclick={() => void didPrintTrayLabel()}
-							disabled={trayBarcode.trim() === '' || busy === true || isPrintingTrayLabel === true}
+							disabled={currentTray === null || trayDirty() || busy === true || isPrintingTrayLabel === true}
+							title={currentTray === null || trayDirty() ? 'Save the bin first; the label prints its cell.' : undefined}
 						>
 							print label
 						</button>
