@@ -14,10 +14,12 @@ LABEL_WIDTH_DOTS = 384
 LABEL_HEIGHT_DOTS = 203
 LEFT_MARGIN_DOTS = 6
 RIGHT_MARGIN_DOTS = 24
-TOP_MARGIN_DOTS = 0
-BOTTOM_MARGIN_DOTS = 64
+# The raster starts at the label's top edge give or take ~8 dots per label, so the content is
+# centred with equal margins that absorb that jitter.
+TOP_MARGIN_DOTS = 20
+BOTTOM_MARGIN_DOTS = 20
 TEXT_GAP_DOTS = 4
-TEXT_MAX_SIZE = 22
+TEXT_MAX_SIZE = 28
 TEXT_MIN_SIZE = 14
 FONT_PATH = os.path.join(os.path.dirname(barcode.__file__), "fonts", "DejaVuSansMono.ttf")
 
