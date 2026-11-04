@@ -106,6 +106,8 @@ class RobotCommandSuccessful(BaseModel):
 class RobotCommandError(BaseModel):
     command: str = "unknown"
     error: str
+    # Cause code from `faults.fault_failure`: the classified fault, else the command's fallback code; the kiosk maps it to copy.
+    fault_code: Optional[str] = None
 
 
 RobotResponse = Union[RobotCommandSuccessful, RobotCommandError]

@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
-	import { apiFetch, buildAuthenticatedUrl, buildAuthenticatedWsUrl } from '$lib';
+	import {
+		apiFetch,
+		buildAuthenticatedUrl,
+		buildAuthenticatedWsUrl,
+		ensureValidToken,
+		isAuthenticated
+	} from '$lib';
 	import { H264StreamPlayer, isWebCodecsAvailable } from '$lib/h264-stream';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 
@@ -9,9 +15,6 @@
 		id: string;
 		type: string;
 		online: boolean;
-		running: boolean;
-		consumers: number;
-		has_frame: boolean;
 	};
 
 	type CamerasResponse = {
@@ -19,6 +22,7 @@
 	};
 
 	const STATUS_POLL_INTERVAL_MS = 5000;
+	const MAX_H264_DROPS = 3;
 
 	type CameraLine = [number, number, number, number];
 	type Point = {
@@ -32,6 +36,7 @@
 	let statusError = '';
 	let streamError = false;
 	let mjpegErrorDuringTry = false;
+	let mjpegFailed = false;
 	let loading = true;
 	let isImageFlipped = false;
 	let isDrawingMode = false;
@@ -40,6 +45,8 @@
 	let h264Player: H264StreamPlayer | null = null;
 	let h264Ready = false;
 	const h264FailedFor = new Set<string>();
+	const h264DropsFor = new Map<string, number>();
+	const h264DecodedFor = new Set<string>();
 	const webCodecsSupported = browser && isWebCodecsAvailable();
 	let resizeObserver: ResizeObserver | null = null;
 	let observedCanvas: HTMLCanvasElement | null = null;
@@ -47,6 +54,8 @@
 	let lineStart: Point | null = null;
 	let previewEnd: Point | null = null;
 	let statusTimer: ReturnType<typeof setInterval> | null = null;
+	let cameraStatusUnavailable = false;
+	let isPageVisible = browser === false || document.visibilityState === 'visible';
 
 	$: selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
 	$: isCameraOnline = selectedCamera !== null && selectedCamera.online === true;
@@ -54,6 +63,19 @@
 		selectedCameraId !== '' && isCameraOnline === true
 			? buildAuthenticatedUrl(`/camera/${selectedCameraId}`)
 			: '';
+	// Which transport is actually feeding the visible picture: the raw
+	// H.264 NALU/WebCodecs path, or the MJPEG decode-worker fallback
+	// (also the only path for cameras that do not offer H.264, e.g. H.265).
+	$: codecLabel =
+		selectedCamera === null
+			? ''
+			: selectedCamera.online === false
+				? 'offline'
+				: streamError === true
+					? 'error'
+					: h264Ready === true
+						? 'h264'
+						: 'mjpeg';
 	$: if (browser === true && selectedCameraId !== '' && deviceId !== '') {
 		loadCameraPreferences(selectedCameraId, deviceId);
 	}
@@ -106,22 +128,100 @@
 			statusError = '';
 			streamError = false;
 			mjpegErrorDuringTry = false;
+			mjpegFailed = false;
 
 			selectAvailableCamera();
 		} catch (error) {
-			statusError = error instanceof Error ? error.message : 'unable to load cameras';
+			statusError = error instanceof Error ? error.message : 'Unable to load cameras.';
 		} finally {
 			loading = false;
 		}
 	}
 
 	async function refreshCameraStatus(): Promise<void> {
-		try {
-			const response = await apiFetch<CamerasResponse>('/camera');
-			cameras = response.cameras;
-		} catch {
+		if (isPageVisible === false) {
 			return;
 		}
+
+		await refreshStreamToken();
+
+		if (document.hidden === true) {
+			return;
+		}
+
+		try {
+			const response = await apiFetch<CamerasResponse>('/camera');
+			const selectedWasOnline = selectedCamera?.online === true;
+			const selectedIsOnline =
+				response.cameras.find((camera) => camera.id === selectedCameraId)?.online === true;
+			const didComeOnline =
+				cameraStatusUnavailable || (selectedWasOnline === false && selectedIsOnline);
+
+			cameras = response.cameras;
+			cameraStatusUnavailable = false;
+
+			if (didComeOnline) {
+				h264FailedFor.delete(selectedCameraId);
+				h264DropsFor.delete(selectedCameraId);
+				restartSelectedStream();
+			} else if (streamError === true && selectedIsOnline) {
+				restartSelectedStream();
+			}
+		} catch {
+			cameraStatusUnavailable = true;
+			return;
+		}
+	}
+
+	// iOS cuts both stream transports of a backgrounded tab and may resume an MJPEG
+	// image frozen without an error, so streams stop while hidden and start fresh on return.
+	async function didChangeVisibility(): Promise<void> {
+		if (document.visibilityState === 'hidden') {
+			isPageVisible = false;
+			stopH264Player();
+			return;
+		}
+
+		// The token is not refreshed while hidden, so renew it before any stream
+		// URL is built for the restart.
+		await refreshStreamToken();
+
+		if (document.hidden === true) {
+			return;
+		}
+
+		isPageVisible = true;
+		restartSelectedStream();
+		void refreshCameraStatus();
+	}
+
+	async function refreshStreamToken(): Promise<void> {
+		if (isAuthenticated() === false) {
+			return;
+		}
+
+		try {
+			await ensureValidToken();
+		} catch {
+			// The next status poll retries the refresh.
+		}
+	}
+
+	function restartSelectedStream(): void {
+		if (selectedCameraId === '') {
+			return;
+		}
+
+		// The reactive streamUrl only recomputes when the camera or its status changes,
+		// so a restart would reuse the token it was built with.
+		if (streamUrl !== '') {
+			streamUrl = buildAuthenticatedUrl(`/camera/${selectedCameraId}`);
+		}
+
+		streamError = false;
+		mjpegErrorDuringTry = false;
+		mjpegFailed = false;
+		stopH264Player();
 	}
 
 	function didSelectCamera(event: Event): void {
@@ -161,6 +261,8 @@
 	}
 
 	function didStreamError(): void {
+		mjpegFailed = true;
+
 		if (h264Ready === false && h264Player !== null) {
 			// The WebCodecs primary is still being attempted for this
 			// camera; let it run to completion. The key below remounts
@@ -175,6 +277,7 @@
 
 	function didStreamLoad(): void {
 		streamError = false;
+		mjpegFailed = false;
 		requestAnimationFrame(() => {
 			resizeCanvas();
 			drawLines();
@@ -228,6 +331,9 @@
 
 	function didH264FirstFrame(): void {
 		h264Ready = true;
+		if (selectedCamera !== null) {
+			h264DecodedFor.add(selectedCamera.id);
+		}
 		requestAnimationFrame(() => {
 			resizeCanvas();
 			drawLines();
@@ -236,11 +342,20 @@
 
 	function didH264Error(): void {
 		if (selectedCamera !== null) {
-			// This camera did not deliver a WebCodecs stream; keep using the
-			// MJPEG fallback for it for the rest of this session.
-			h264FailedFor.add(selectedCamera.id);
+			// A camera that delivers no WebCodecs stream, or keeps dropping one
+			// after decoding frames, stays on the MJPEG fallback for the rest of
+			// this session. Other drops are retried on the next status poll.
+			const drops = (h264DropsFor.get(selectedCamera.id) ?? 0) + 1;
+			h264DropsFor.set(selectedCamera.id, drops);
+
+			if (h264DecodedFor.has(selectedCamera.id) === false || drops >= MAX_H264_DROPS) {
+				h264FailedFor.add(selectedCamera.id);
+			}
 		}
 
+		// The MJPEG image is about to be remounted for a fresh attempt; clear the
+		// failed flag so the new image is visible while it loads.
+		mjpegFailed = false;
 		h264Ready = false;
 		h264Player = null;
 	}
@@ -387,6 +502,7 @@
 		selectedCameraId = cameraId;
 		streamError = false;
 		mjpegErrorDuringTry = false;
+		mjpegFailed = false;
 		lineStart = null;
 		previewEnd = null;
 		stopH264Player();
@@ -508,52 +624,52 @@
 	}
 </script>
 
+<svelte:document on:visibilitychange={didChangeVisibility} />
+
+<svelte:head>
+	<title>Cameras • Openshelf</title>
+</svelte:head>
+
 {#if loading}
 	<p>loading cameras...</p>
 {:else if statusError !== ''}
 	<ErrorMessage message={statusError} />
 {:else}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="2">camera selection</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#if cameras.length === 0}
+	<div class="scroll-x">
+		<table>
+			<thead>
 				<tr>
-					<td colspan="2">no cameras available</td>
+					<th colspan="2">camera selection</th>
 				</tr>
-			{:else}
-				<tr>
-					<td>camera</td>
-					<td>
-						<select value={selectedCameraId} on:change={didSelectCamera}>
-							{#each cameras as camera}
-								<option value={camera.id}
-									>{camera.id} ({camera.type}){camera.online === false ? ' - offline' : ''}</option
-								>
-							{/each}
-						</select>
-					</td>
-				</tr>
-				{#if selectedCamera !== null}
+			</thead>
+			<tbody>
+				{#if cameras.length === 0}
 					<tr>
-						<td>type</td>
-						<td>{selectedCamera.type}</td>
+						<td colspan="2">no cameras available</td>
 					</tr>
+				{:else}
 					<tr>
-						<td>status</td>
-						<td>{selectedCamera.online === true ? 'online' : 'offline'}</td>
+						<td>camera</td>
+						<td>
+							<select value={selectedCameraId} on:change={didSelectCamera}>
+								{#each cameras as camera}
+									<option value={camera.id}
+										>{camera.id} ({camera.type}){camera.online === false ? ' - offline' : ''}</option
+									>
+								{/each}
+							</select>
+						</td>
 					</tr>
-					<tr>
-						<td>consumers</td>
-						<td>{selectedCamera.consumers}</td>
-					</tr>
+					{#if selectedCamera !== null}
+						<tr>
+							<td>codec</td>
+							<td>{codecLabel}</td>
+						</tr>
+					{/if}
 				{/if}
-			{/if}
-		</tbody>
-	</table>
+			</tbody>
+		</table>
+	</div>
 
 	<div style="height: 1.5em"></div>
 
@@ -564,7 +680,7 @@
 			class="flip-button"
 			class:active={isImageFlipped}
 			on:click={didToggleImageFlip}
-			aria-pressed={isImageFlipped}>↕︎</button
+			aria-pressed={isImageFlipped}>FLIP</button
 		>
 		<button
 			type="button"
@@ -580,9 +696,9 @@
 
 	{#if selectedCamera !== null && isCameraOnline === false}
 		<ErrorMessage
-			message={`camera '${selectedCamera.id}' is offline. verify it is powered and reachable, then refresh.`}
+			message={`The ${selectedCamera.id.replace(/_/g, ' ')} camera is offline. Check that it is powered and reachable, then refresh.`}
 		/>
-	{:else if streamUrl !== '' && streamError === false}
+	{:else if streamUrl !== '' && streamError === false && isPageVisible === true}
 		<div class="stream-container" class:webcodecs={h264Ready}>
 			<canvas
 				bind:this={feedCanvasEl}
@@ -594,6 +710,7 @@
 				{#key mjpegErrorDuringTry && h264Player === null && h264FailedFor.has(selectedCameraId)}
 					<img
 						class:flipped={isImageFlipped}
+						class:mjpeg-off={mjpegFailed}
 						src={streamUrl}
 						alt="camera feed"
 						on:error={didStreamError}
@@ -611,7 +728,7 @@
 			></canvas>
 		</div>
 	{:else if streamError === true}
-		<ErrorMessage message="unable to display the camera stream. verify the camera is running." />
+		<ErrorMessage message="Unable to display the camera stream. Verify the camera is running." />
 	{/if}
 {/if}
 
@@ -622,16 +739,11 @@
 		align-items: center;
 	}
 
-	.flip-button {
-		min-width: 1.5em;
-	}
-
-	.button-row button.active {
-		font-weight: 700;
-	}
-
+	/* The "on" state is the sunken look: drop the shadow and translate by the
+	   shadow offset. No font-weight change, so an active button keeps its width
+	   and does not push the following button to the right. */
+	.flip-button.active,
 	.draw-button.active {
-		background-color: #e6e6e6;
 		box-shadow: none;
 		transform: translate3d(4px, 4px, 0px);
 	}
@@ -662,6 +774,11 @@
 		display: block;
 		position: relative;
 		z-index: 0;
+	}
+
+	/* Hide the image (and its broken-image icon) once the feed fails to load. */
+	.stream-container img.mjpeg-off {
+		display: none;
 	}
 
 	.stream-container img.flipped,

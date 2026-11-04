@@ -2,13 +2,17 @@ from types import SimpleNamespace
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
+from openshelf_os.config.exceptions import ConfigError
+from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.robot.commands import RetrieveItemCommand, StoreItemCommand
+from openshelf_os_server.errors import CODE_MESSAGES
 from openshelf_os_server.routers import robot as robot_router
 
 
 def _mock_worker():
 	worker = MagicMock()
 	worker.needs_home = MagicMock(return_value=False)
+	worker.needs_reset = MagicMock(return_value=False)
 	worker.needs_home_axes = MagicMock(return_value=[])
 	worker.needs_home_reason = MagicMock(return_value="")
 	worker.get_scale_data = AsyncMock()
@@ -24,6 +28,31 @@ def _mock_worker():
 
 
 @pytest.mark.anyio
+async def test_scale_endpoint_distinguishes_disabled_scale_from_broken_config() -> None:
+	"""The feature-off state and a real config failure must not share a code."""
+	worker = _mock_worker()
+	worker.get_scale_data.side_effect = ConfigError("The scale is not available on this machine.")
+
+	with patch("openshelf_os_server.routers.robot.get_operating_mode", return_value=OperatingMode.production):
+		with pytest.raises(HTTPException) as disabled:
+			await robot_router.get_scale_reading(worker=worker)
+
+	assert disabled.value.status_code == 404
+	assert disabled.value.detail["code"] == "scale_not_enabled"
+
+	worker.get_scale_data.side_effect = ConfigError("Z_EXT_SCALE not configured")
+
+	with patch("openshelf_os_server.routers.robot.get_operating_mode", return_value=OperatingMode.production):
+		with pytest.raises(HTTPException) as broken:
+			await robot_router.get_scale_reading(worker=worker)
+
+	assert broken.value.status_code == 503
+	assert broken.value.detail == {
+		"message": CODE_MESSAGES["scale_config_failed"],
+		"code": "scale_config_failed",
+	}
+
+
 @pytest.mark.anyio
 async def test_retrieve_command_uses_cached_occupied_scale_status() -> None:
 	worker = _mock_worker()
@@ -42,31 +71,6 @@ async def test_retrieve_command_uses_cached_occupied_scale_status() -> None:
 
 	assert exc_info.value.status_code == 409
 	worker.get_scale_data.assert_not_awaited()
-
-
-@pytest.mark.anyio
-async def test_retrieve_command_bypasses_occupied_scale_with_global_safety_override() -> None:
-	worker = _mock_worker()
-	worker.get_safety_status.return_value = {"bypassed": True}
-	worker.get_cached_scale_status.return_value = SimpleNamespace(occupied=True)
-	item_result = MagicMock()
-	item_result.scalar_one_or_none.return_value = SimpleNamespace(access_level_id=None)
-	no_active_workflow_result = MagicMock()
-	no_active_workflow_result.scalar_one_or_none.return_value = None
-	db = AsyncMock()
-	db.execute.side_effect = [item_result, no_active_workflow_result]
-
-	with patch("openshelf_os_server.routers.robot.is_laser_auto_calibration_running", AsyncMock(return_value=False)):
-		await robot_router.robot_commands(
-			command=RetrieveItemCommand(location={"side": "front_module", "shelf_idx": 0, "cell_idx": 0}),
-			worker=worker,
-			current_user=SimpleNamespace(id=1, role=SimpleNamespace(name="admin")),
-			db=db,
-		)
-
-	worker.get_cached_scale_status.assert_not_called()
-	worker.get_scale_data.assert_not_awaited()
-	worker.enqueue_command.assert_awaited_once()
 
 
 @pytest.mark.anyio

@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { acknowledgeSafety, ApiError } from '$lib/api';
+	import { acknowledgeSafety } from '$lib/api';
 	import { robotStatus } from '$lib/stores';
+	import { postToast } from '$lib/toasts';
 
 	// The global /robot/status stream is the single source of truth. The
 	// server decides can_acknowledge: an interruption that is over on every
@@ -17,7 +18,11 @@
 		safety !== null ? ((safety as Record<string, unknown>).interruption_id as number) ?? 0 : 0
 	);
 	const activeSources = $derived(
-		canAcknowledge ? [...(((safety as Record<string, unknown>).active_sources as string[]) ?? []).sort()] : []
+		canAcknowledge
+			? (((safety as Record<string, unknown>).active_sources as string[]) ?? [])
+					.map((source) => source.replace(/_/g, ' '))
+					.sort()
+			: []
 	);
 
 	// Dismissal is tracked per interruption episode so a cancelled alert does
@@ -25,7 +30,6 @@
 	// episode id) re-opens it.
 	let dismissedId = $state<number | null>(null);
 	let isAcknowledging = $state<boolean>(false);
-	let ackError = $state<string>('');
 
 	const isVisible = $derived(canAcknowledge && dismissedId !== interruptionId);
 
@@ -33,7 +37,6 @@
 		if (canAcknowledge === false) {
 			dismissedId = null;
 			isAcknowledging = false;
-			ackError = '';
 		}
 	});
 
@@ -42,16 +45,11 @@
 			return;
 		}
 		isAcknowledging = true;
-		ackError = '';
 
 		try {
 			await acknowledgeSafety();
 		} catch (err) {
-			if (err instanceof ApiError && err.status === 409 && err.detail?.active_sources?.length) {
-				ackError = `cannot acknowledge: ${err.detail.active_sources.join(', ')}`;
-			} else {
-				ackError = err instanceof Error ? err.message : 'acknowledge failed';
-			}
+			postToast('error', err instanceof Error ? err.message : 'The acknowledgement failed.');
 		} finally {
 			isAcknowledging = false;
 		}
@@ -78,9 +76,6 @@
 				{isAcknowledging ? 'acknowledging...' : 'acknowledge'}
 			</button>
 		</div>
-		{#if ackError !== ''}
-			<p class="safety-ack-error">{ackError}</p>
-		{/if}
 	</aside>
 {/if}
 
@@ -129,13 +124,5 @@
 
 	.safety-ack-actions button {
 		margin-top: 0;
-	}
-
-	.safety-ack-error {
-		margin-top: 1em;
-		max-width: 32em;
-		color: #c40000;
-		text-transform: none;
-		white-space: pre-wrap;
 	}
 </style>

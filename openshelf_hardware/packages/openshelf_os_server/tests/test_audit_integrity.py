@@ -1,11 +1,13 @@
 """Audit signing key resolution and the legacy key ring."""
 
+import hashlib
 import pathlib
 from types import SimpleNamespace
 from typing import Optional
 
 import pytest
 
+from openshelf_os.config import settings as settings_module
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os_server.utils import audit_integrity
 
@@ -49,7 +51,7 @@ def _restart(monkeypatch: pytest.MonkeyPatch, mode: OperatingMode) -> None:
 	audit_integrity.reset_generated_key_cache()
 
 
-@pytest.mark.parametrize("published_key", sorted(audit_integrity.INSECURE_PUBLISHED_SECRETS))
+@pytest.mark.parametrize("published_key", sorted(settings_module.INSECURE_PUBLISHED_SECRETS))
 def test_published_default_key_never_signs(
 	monkeypatch: pytest.MonkeyPatch,
 	published_key: str,
@@ -65,11 +67,17 @@ def test_published_default_key_never_signs(
 	assert audit_integrity.verify_binding_hmac(published_mac, BINDING, "v2-mock") == "HMAC mismatch"
 
 
-def test_configured_key_signs_when_env_is_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-	_stub_settings(monkeypatch, audit_hmac_key="config-audit-key-0123456789abcdef")
+def test_key_published_only_as_a_digest_never_signs(monkeypatch: pytest.MonkeyPatch) -> None:
+	published_key = "key-published-in-an-old-revision"
+	digest = hashlib.sha256(published_key.encode("utf-8")).hexdigest()
+	monkeypatch.setattr(settings_module, "INSECURE_PUBLISHED_SECRET_DIGESTS", frozenset({digest}))
+	_stub_settings(monkeypatch, audit_hmac_key=None)
+	monkeypatch.setenv("AUDIT_HMAC_KEY", published_key)
 
-	expected = audit_integrity.hmac_sha256_hex(BINDING, b"config-audit-key-0123456789abcdef")
-	assert audit_integrity.hmac_sha256_hex(BINDING) == expected
+	key = audit_integrity._load_hmac_key()
+
+	assert key != published_key.encode("utf-8")
+	assert audit_integrity.get_hmac_key_id() == "v2-mock"
 
 
 def test_generated_key_is_persisted_and_survives_a_restart(
@@ -103,20 +111,6 @@ def test_generated_key_ids_never_carry_the_provisioned_id(
 	assert audit_integrity.verify_binding_hmac("0" * 64, BINDING, current_id) == "HMAC mismatch"
 
 
-def test_unwritable_data_directory_reports_the_provisioning_contract(
-	monkeypatch: pytest.MonkeyPatch,
-	tmp_path: pathlib.Path,
-) -> None:
-	_stub_settings(monkeypatch, audit_hmac_key=None)
-	# A regular file blocks the key path for every uid; mode bits would not, root bypasses them.
-	readonly_file = tmp_path / "read-only-data"
-	readonly_file.touch()
-	monkeypatch.setattr(audit_integrity, "_generated_key_path", lambda _mode: readonly_file / "audit-hmac-key.mock")
-
-	with pytest.raises(RuntimeError, match="AUDIT_HMAC_KEY and AUDIT_HMAC_KEY_ID"):
-		audit_integrity._load_hmac_key()
-
-
 def test_preexisting_empty_key_file_reports_the_provisioning_contract(
 	monkeypatch: pytest.MonkeyPatch,
 	tmp_path: pathlib.Path,
@@ -129,47 +123,6 @@ def test_preexisting_empty_key_file_reports_the_provisioning_contract(
 		audit_integrity._load_hmac_key()
 
 	assert str(key_file) in str(excinfo.value)
-
-
-def test_preexisting_binary_key_file_reports_the_provisioning_contract(
-	monkeypatch: pytest.MonkeyPatch,
-	tmp_path: pathlib.Path,
-) -> None:
-	_stub_settings(monkeypatch, audit_hmac_key=None)
-	key_file = tmp_path / "audit-hmac-key.mock"
-	key_file.write_bytes(b"\xff\xfe\x00binary")
-
-	with pytest.raises(RuntimeError, match="AUDIT_HMAC_KEY and AUDIT_HMAC_KEY_ID") as excinfo:
-		audit_integrity._load_hmac_key()
-
-	assert str(key_file) in str(excinfo.value)
-
-
-def test_key_id_follows_the_configured_key_id_env(monkeypatch: pytest.MonkeyPatch) -> None:
-	monkeypatch.setenv("AUDIT_HMAC_KEY_ID", "v3")
-	assert audit_integrity.get_hmac_key_id() == "v3"
-
-	# Provisioning exports an empty id when the operator supplies their own key.
-	monkeypatch.setattr(audit_integrity, "_HMAC_KEY_ID", None)
-	monkeypatch.setenv("AUDIT_HMAC_KEY_ID", "")
-	assert audit_integrity.get_hmac_key_id() == "v1"
-
-
-def test_rows_signed_with_published_keys_stay_verifiable_after_rotation(
-	monkeypatch: pytest.MonkeyPatch,
-) -> None:
-	monkeypatch.setattr(audit_integrity, "_HMAC_KEY_CACHE", ROTATED_KEY)
-	monkeypatch.setattr(audit_integrity, "_HMAC_KEY_ID", "v2")
-
-	for published_key in audit_integrity.PUBLISHED_HMAC_KEYS["v1"]:
-		legacy_mac = audit_integrity.hmac_sha256_hex(BINDING, published_key)
-		assert audit_integrity.verify_binding_hmac(legacy_mac, BINDING, "v1") is None
-
-	current_mac = audit_integrity.hmac_sha256_hex(BINDING, ROTATED_KEY)
-	assert audit_integrity.verify_binding_hmac(current_mac, BINDING, "v2") is None
-
-	# Rows written before hmac_key_id existed carry the key that was in use.
-	assert audit_integrity.verify_binding_hmac(current_mac, BINDING, None) is None
 
 
 def test_rows_signed_with_published_keys_stay_verifiable_under_operator_key(

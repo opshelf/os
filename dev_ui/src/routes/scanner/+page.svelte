@@ -7,6 +7,7 @@
 		sendScannerScan,
 		type ScannerStatus
 	} from '$lib';
+	import { generateRandomBarcode } from '$lib/barcode';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -26,7 +27,7 @@
 			status = await getScannerStatus();
 			statusError = '';
 		} catch (err) {
-			statusError = err instanceof Error ? err.message : 'failed to read scanner status';
+			statusError = err instanceof Error ? err.message : 'Failed to read scanner status.';
 		}
 	}
 
@@ -43,7 +44,7 @@
 
 	async function didClickSend(): Promise<void> {
 		if (simulatedCode.length === 0) {
-			scanError = 'enter a code to send';
+			scanError = 'Enter a code to send.';
 			return;
 		}
 
@@ -53,36 +54,12 @@
 
 		try {
 			await sendScannerScan(simulatedCode);
-			message = 'scan sent';
+			message = 'Scan sent.';
 		} catch (err) {
-			scanError = err instanceof Error ? err.message : 'failed to send scan';
+			scanError = err instanceof Error ? err.message : 'Failed to send scan.';
 		} finally {
 			isSending = false;
 		}
-	}
-
-	function generateRandomBarcode(): string {
-		const digits: number[] = [];
-
-		for (let i = 0; i < 11; i++) {
-			digits.push(Math.floor(Math.random() * 10));
-		}
-
-		let oddSum = 0;
-		let evenSum = 0;
-
-		for (let i = 0; i < 11; i++) {
-			if (i % 2 === 0) {
-				oddSum += digits[i];
-			} else {
-				evenSum += digits[i];
-			}
-		}
-
-		const checkDigit = (10 - ((oddSum * 3 + evenSum) % 10)) % 10;
-		digits.push(checkDigit);
-
-		return digits.join('');
 	}
 
 	function didClickGenerate(): void {
@@ -141,68 +118,74 @@
 	});
 </script>
 
+<svelte:head>
+	<title>Scanner • Openshelf</title>
+</svelte:head>
+
 {#if isLoading === true}
 	<p>loading scanner data...</p>
 {:else}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="2">scanner status</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#if status !== null}
+	<div class="scroll-x">
+		<table>
+			<thead>
 				<tr>
-					<td>enabled</td>
-					<td
-						class:status-ok={status.enabled === true}
-						class:status-error={status.enabled === false}
-					>
-						{status.enabled ? 'yes' : 'no'}
+					<th colspan="2">scanner status</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#if status !== null}
+					<tr>
+						<td>enabled</td>
+						<td
+							class:status-ok={status.enabled === true}
+							class:status-error={status.enabled === false}
+						>
+							{status.enabled ? 'yes' : 'no'}
+						</td>
+					</tr>
+					<tr>
+						<td>connected</td>
+						<td
+							class:status-ok={status.connected === true}
+							class:status-error={status.connected === false}
+						>
+							{status.connected ? 'yes' : 'no'}
+						</td>
+					</tr>
+				{:else if statusError === ''}
+					<tr>
+						<td colspan="2">loading...</td>
+					</tr>
+				{/if}
+			</tbody>
+
+			<thead>
+				<tr>
+					<th colspan="2">latest reading</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr>
+					<td colspan="2" class="reading">{latestReading !== '' ? latestReading : '-'}</td>
+				</tr>
+			</tbody>
+
+			<thead>
+				<tr>
+					<th colspan="2">simulated scan</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr>
+					<td>code</td>
+					<td>
+						<input type="text" bind:value={simulatedCode} placeholder="012345678901" />
+						<button type="button" class="random-button" on:click={didClickGenerate}>random</button>
 					</td>
 				</tr>
-				<tr>
-					<td>connected</td>
-					<td
-						class:status-ok={status.connected === true}
-						class:status-error={status.connected === false}
-					>
-						{status.connected ? 'yes' : 'no'}
-					</td>
-				</tr>
-			{:else if statusError === ''}
-				<tr>
-					<td colspan="2">loading...</td>
-				</tr>
-			{/if}
-		</tbody>
-
-		<thead>
-			<tr>
-				<th colspan="2">latest reading</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td colspan="2" class="reading">{latestReading !== '' ? latestReading : '-'}</td>
-			</tr>
-		</tbody>
-
-		<thead>
-			<tr>
-				<th colspan="2">simulated scan</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td>code</td>
-				<td>
-					<input type="text" bind:value={simulatedCode} placeholder="012345678901" />
-					<button type="button" class="random-button" on:click={didClickGenerate}>random</button>
-				</td>
-			</tr>
-		</tbody>
-	</table>
+			</tbody>
+		</table>
+	</div>
 
 	{#if statusError !== ''}
 		<ErrorMessage message={statusError} />

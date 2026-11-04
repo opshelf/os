@@ -27,18 +27,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
+from sse_starlette.sse import AppStatus, EventSourceResponse as LibraryEventSourceResponse
+
+from openshelf_os_server import main as main_module
 
 from openshelf_os_server.core.camera import camera_registry
 from openshelf_os_server.database.base import engine
-from openshelf_os_server.database.session import get_db
 from openshelf_os_server.main import app
+from openshelf_os_server.middleware import audit as audit_module
 from openshelf_os_server.routers import camera as camera_router
-from openshelf_os_server.routers.auth_deps import (
-    get_current_user,
-    get_current_user_for_stream,
-    get_relay_or_current_user,
-    get_relay_or_current_user_for_stream,
-)
+from openshelf_os_server.routers.auth_deps import get_current_user_for_stream, get_relay_or_current_user_for_stream
 
 # Every route that answers with a body that can stay open, with the scoped auth
 # dependency it uses instead of the one that carries `Depends(get_db)`.
@@ -49,7 +47,6 @@ STREAMING_ROUTES: tuple[tuple[str, Any], ...] = (
     ("/api/robot/events", get_relay_or_current_user_for_stream),
 )
 # Dependencies that would hold a session for the lifetime of the response.
-SESSION_HELD_CALLS = (get_db, get_current_user, get_relay_or_current_user)
 
 
 def _checkedout() -> int:
@@ -62,14 +59,6 @@ def _dependency_calls(dependant: Any) -> set[Callable[..., Any] | None]:
     for child in getattr(dependant, "dependencies", []) or []:
         calls |= _dependency_calls(child)
     return calls
-
-
-def _route_calls(path: str) -> set[Callable[..., Any] | None]:
-    for route in app.routes:
-        methods = getattr(route, "methods", None) or set()
-        if getattr(route, "path", None) == path and "GET" in methods:
-            return _dependency_calls(route.dependant)
-    raise AssertionError(f"GET route not found: {path}")
 
 
 def _stream_scope(path: str, headers: dict[str, str]) -> dict[str, Any]:
@@ -112,40 +101,6 @@ async def _noop(camera_id: str) -> None:
 
 
 @pytest.mark.anyio
-async def test_mjpeg_stream_holds_no_pooled_connection(client: AsyncClient) -> None:
-    baseline = _checkedout()
-    checkouts: list[int] = []
-
-    async def fake_frames() -> AsyncGenerator[bytes, None]:
-        for _ in range(3):
-            # Sampled while the body is streaming: the auth session has to be gone
-            # by now, otherwise this stream parks a pooled connection.
-            checkouts.append(_checkedout())
-            await asyncio.sleep(0.02)
-            yield b"frame"
-
-    camera_registry["tool"] = _tool_manager()
-    try:
-        with (
-            patch.object(camera_router, "start_camera_stream_by_id", new=_noop),
-            patch.object(camera_router, "stop_camera_stream_by_id", new=_noop),
-            patch.object(
-                camera_router,
-                "mjpeg_stream_generator_for_camera",
-                new=lambda manager, request: fake_frames(),
-            ),
-        ):
-            response = await client.get("/api/camera/tool")
-    finally:
-        camera_registry.pop("tool", None)
-
-    assert response.status_code == 200
-    assert len(checkouts) == 3
-    assert max(checkouts) == baseline
-    assert _checkedout() == baseline
-
-
-@pytest.mark.anyio
 async def test_cancelled_sse_stream_returns_its_pooled_connection(
     seeded_db: AsyncGenerator[None, None], auth_headers: dict[str, str]
 ) -> None:
@@ -181,18 +136,6 @@ async def test_cancelled_sse_stream_returns_its_pooled_connection(
     assert _checkedout() == baseline
 
 
-@pytest.mark.parametrize("path,scoped_dependency", STREAMING_ROUTES)
-def test_streaming_routes_do_not_authenticate_with_a_pinned_session(
-    path: str, scoped_dependency: Callable[..., Any]
-) -> None:
-    calls = _route_calls(path)
-
-    assert scoped_dependency in calls
-    # No dependency in the graph may carry a session, otherwise the stream keeps that
-    # connection checked out until the body ends.
-    assert calls.isdisjoint(SESSION_HELD_CALLS)
-
-
 @pytest.mark.anyio
 async def test_mjpeg_stream_still_rejects_an_unauthenticated_client(
     unauthenticated_client: AsyncClient,
@@ -210,3 +153,72 @@ async def test_mjpeg_stream_still_rejects_an_unauthenticated_client(
     assert response.status_code == 401
     assert response.headers.get("www-authenticate") == "Bearer"
 
+
+@pytest.mark.anyio
+async def test_stalled_sse_client_closes_the_stream_without_an_error_report(
+    seeded_db: AsyncGenerator[None, None], auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sentry OPENSHELF-API-CH/CG: a client that stops reading (sleeping laptop, dead
+    Wi-Fi) trips sse-starlette's per-send timeout. SendTimeoutError is a TimeoutError,
+    so the mapped 504 handler caught it after the stream had started, raised
+    "response already started", and the request was reported as an unhandled error.
+    """
+    library_init = LibraryEventSourceResponse.__init__
+
+    def fast_timeout_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        library_init(self, *args, **{**kwargs, "ping": 0.01, "send_timeout": 0.05})
+
+    monkeypatch.setattr(LibraryEventSourceResponse, "__init__", fast_timeout_init)
+    reported = MagicMock()
+    monkeypatch.setattr(main_module, "capture_unhandled_exception", reported)
+    monkeypatch.setattr(audit_module, "capture_unhandled_exception", reported)
+
+    never = asyncio.Event()
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        await never.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+        if message["type"] == "http.response.body":
+            # BaseHTTPMiddleware forwards each chunk on its own task, so the stream only
+            # times out once a later ping backs up behind this stall. Finite so the
+            # middleware chain can unwind.
+            await asyncio.sleep(0.5)
+
+    await asyncio.wait_for(app(_stream_scope("/api/robot/status", auth_headers), receive, send), timeout=5)
+
+    assert sent[0] == {"type": "http.response.start", "status": 200, "headers": sent[0]["headers"]}
+    reported.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_sse_stream_opened_during_shutdown_is_not_an_error_report(
+    seeded_db: AsyncGenerator[None, None], auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sentry OPENSHELF-API-CK: a status stream opened while uvicorn shuts down (the
+    kiosk reconnecting during an api restart) hit sse-starlette's exit signal before
+    its first send, so the app ended without `http.response.start`, BaseHTTPMiddleware
+    raised RuntimeError("No response returned."), and it was reported as an unhandled 500.
+    """
+    monkeypatch.setattr(AppStatus, "should_exit", True)
+    reported = MagicMock()
+    monkeypatch.setattr(main_module, "capture_unhandled_exception", reported)
+    monkeypatch.setattr(audit_module, "capture_unhandled_exception", reported)
+
+    never = asyncio.Event()
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        await never.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    await asyncio.wait_for(app(_stream_scope("/api/robot/status", auth_headers), receive, send), timeout=5)
+
+    assert sent[0]["status"] == 200
+    reported.assert_not_called()

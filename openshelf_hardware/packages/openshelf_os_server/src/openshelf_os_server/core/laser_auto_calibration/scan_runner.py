@@ -9,6 +9,46 @@ from openshelf_os.common import CONFIG_PATH
 from openshelf_os_server.core.logging_config import get_correlation_id
 
 
+def _clamp_bounds_to_axis_travel(bounds: ScanBounds, tool: Any) -> ScanBounds:
+    """Bounds past an axis limit name positions the gantry cannot reach.
+
+    The motor clamps such a target to its limit, so every grid position beyond it is probed at
+    the limit and recorded as if it were further out, and a flying pass leaves those bins empty
+    for a slow standstill resample of the same spot.
+    """
+    limits: dict[str, tuple[float, float]] = {}
+
+    for axis, motor in (("x", getattr(tool, "_mx", None)), ("y", getattr(tool, "_my", None))):
+        params = getattr(motor, "_params", None)
+        upper_mm = getattr(params, "lim", None)
+
+        if not isinstance(upper_mm, (int, float)):
+            continue
+
+        lower_mm = getattr(params, "lower_lim", 0.0)
+        limits[axis] = (float(lower_mm) if isinstance(lower_mm, (int, float)) else 0.0, float(upper_mm))
+
+    x_lo, x_hi = limits.get("x", (bounds.x_min, bounds.x_max))
+    y_lo, y_hi = limits.get("y", (bounds.y_min, bounds.y_max))
+    clamped = ScanBounds(
+        x_min=max(bounds.x_min, x_lo),
+        x_max=min(bounds.x_max, x_hi),
+        y_min=max(bounds.y_min, y_lo),
+        y_max=min(bounds.y_max, y_hi),
+    )
+
+    if clamped.x_max <= clamped.x_min or clamped.y_max <= clamped.y_min:
+        return bounds
+
+    if clamped != bounds:
+        logger.info(
+            "laser_auto_calibration_bounds_clamped_to_axis_travel",
+            extra={"bounds": bounds.model_dump(), "clamped": clamped.model_dump()},
+        )
+
+    return clamped
+
+
 class ScanRunnerMixin:
     async def _run_scan_analysis(
         self,
@@ -24,13 +64,13 @@ class ScanRunnerMixin:
         scan_config_override: Any | None = None,
     ) -> Any:
         side_name = _side_to_module_name(side)
+        bounds = _clamp_bounds_to_axis_travel(bounds, worker._robot._tool)
         config = get_root_config()
         scan_config = scan_config_override or config.robot.grid.scan
         base_settle_ms = int(laser_module.get_laser_sample_settle_ms())
         base_samples_per_point = int(laser_module.get_laser_samples_per_point())
-        # Fine and coarse scans both honor the shared settling and sample count. Reducing
-        # either pass to one read defeats the median filter and lets a transient laser reading
-        # erase a narrow wall or move a detected edge by one scan step.
+        # Settling and sample count apply only to standstill probes that fill bins a flying
+        # pass left empty; flown bins ignore them.
         settle_ms = int(laser_module.get_fine_settle_ms(base_settle_ms))
         samples_per_point = int(laser_module.get_fine_samples_per_point(base_samples_per_point))
         coarse_settle_ms = int(laser_module.get_coarse_settle_ms(base_settle_ms))
@@ -110,13 +150,8 @@ class ScanRunnerMixin:
             state="running",
             run_id=recorder.run_id,
             bounds=bounds,
-            stage_detail={
-                "side": side_name,
-                "phase": "scan-start",
-                "run_id": recorder.run_id,
-                "run_dir": str(recorder.run_dir),
-            },
         )
+        self._run_dir = recorder.run_dir
 
         scan_correlation_id = get_correlation_id()
 
@@ -164,6 +199,6 @@ class ScanRunnerMixin:
             state="running",
             run_id=analysis.run_id,
             bounds=bounds,
-            stage_detail={"side": side_name, "phase": "completed", "run_id": analysis.run_id},
         )
+        self._run_dir = None
         return analysis

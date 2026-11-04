@@ -6,14 +6,15 @@ from typing import Any, AsyncIterator, Callable, cast
 
 from fastapi import HTTPException, status
 
+from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE
+from openshelf_os_server.errors import api_error, error_detail
+
 _motion_lock = asyncio.Lock()
 _current_operation: str | None = None
 
-def _conflict_detail(message: str, *, reason: str | None = None) -> dict[str, str]:
-	detail = {"message": message, "code": "movement_in_progress"}
-	if reason is not None:
-		detail["reason"] = reason
-	return detail
+def _conflict_detail(message: str, *, reason: str | None = None) -> dict[str, Any]:
+	extra = {} if reason is None else {"reason": reason}
+	return error_detail(message, "movement_in_progress", **extra)
 
 
 def get_manual_motion_operation() -> str | None:
@@ -73,7 +74,7 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
-				"Robot is busy processing another command",
+				"The robot is busy with another task.",
 				reason="robot_command_in_progress",
 			),
 		)
@@ -82,7 +83,7 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
-				"Robot has queued commands",
+				"The robot has other tasks waiting.",
 				reason="robot_command_queued",
 			),
 		)
@@ -92,17 +93,38 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
-				"Demo cycle is already running",
+				"The robot is running the demo cycle.",
 				reason="demo_cycle_in_progress",
 			),
 		)
+
+
+async def ensure_no_tray_on_tool(worker, *, read_gripper: bool = True) -> None:
+	"""Reject motion while the gripper holds a tray. By default always re-reads the gripper: flows
+	outside the command queue (demo, calibration tests) can leave a tray held without updating the
+	cached flag. read_gripper=False reads it only when the cache says held, so a clear tool passes;
+	queued commands are gated by the worker, and a read while one carries a tray would misreport it."""
+	was_held = getattr(worker, "_tray_on_tool", False) is True
+	if read_gripper is False and was_held is False:
+		return
+	is_held = await worker.refresh_tray_on_tool()
+	if is_held is not was_held:
+		await worker.get_status_snapshot(force_refresh=True)
+	if is_held is False:
+		return
+	raise api_error(status.HTTP_409_CONFLICT, TRAY_ON_TOOL_CODE, "")
 
 
 @asynccontextmanager
 async def manual_motion_guard(
 	operation: str,
 	worker=None,
+	*,
+	allow_tray_on_tool: bool = False,
 ) -> AsyncIterator[None]:
+	"""allow_tray_on_tool admits the actions that recover a held tray: single-motor moves and the IO door
+	from the debug motor controls, release, homing, clearing alarms, power cycling, probing and unlocking
+	the cabinet. Calibration moves and jogs and automated sequences stay blocked."""
 	global _current_operation
 
 	if worker is not None:
@@ -112,7 +134,7 @@ async def manual_motion_guard(
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
-				"Movement already in progress",
+				"",
 				reason=_current_operation,
 			),
 		)
@@ -122,6 +144,8 @@ async def manual_motion_guard(
 	try:
 		if worker is not None:
 			ensure_robot_available_for_manual_motion(worker)
+			if allow_tray_on_tool is False:
+				await ensure_no_tray_on_tool(worker)
 
 		_current_operation = operation
 		yield
@@ -138,7 +162,7 @@ async def robot_command_enqueue_guard() -> AsyncIterator[None]:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(
-				"Movement already in progress",
+				"",
 				reason=_current_operation,
 			),
 		)

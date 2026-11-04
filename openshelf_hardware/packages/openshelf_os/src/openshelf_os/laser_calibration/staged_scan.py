@@ -4,8 +4,6 @@ from __future__ import annotations
 from openshelf_os.laser_calibration.defaults import (
 	EXPECTED_HOLE_HEIGHT_MM,
 	EXPECTED_HOLE_WIDTH_MM,
-	HOLE_HEIGHT_TOLERANCE_MM,
-	HOLE_WIDTH_TOLERANCE_MM,
 	MIN_HORIZONTAL_WALL_COVERAGE_MM,
 	MIN_VERTICAL_WALL_COVERAGE_MM,
 	WALL_DEPTH_TOLERANCE_MM,
@@ -153,15 +151,21 @@ async def run_staged_scan(
 
 
 				if wall_depth_mm <= 0.0:
+					def didRecordSeededFlyingLine(probe_label: str, flying_line: Any) -> None:
+						write_flying_line_samples(
+							run_dir=recorder.run_dir,
+							label=probe_label,
+							line=flying_line,
+						)
+
 					await estimate_seeded_candidate_wall_depths(
 						tool,
 						bounds=bounds,
 						candidates=candidates,
-						settle_ms=coarse_settle_ms,
-						samples_per_point=coarse_samples_per_point,
 						scan_config=scan_config,
 						coarse_scan=coarse_scan,
 						should_abort=should_abort,
+						on_flying_line=didRecordSeededFlyingLine,
 					)
 				if wall_depth_mm <= 0.0:
 					seeded_wall_depth_values = [
@@ -319,50 +323,61 @@ async def run_staged_scan(
 					fine_entries[candidate_idx - 1]["x_positions"] = partial_scan.x_positions
 					fine_entries[candidate_idx - 1]["y_positions"] = partial_scan.y_positions
 
-				fine_scan, detected_cells = await capture_cross_scan(
-					tool,
-					candidate=candidate,
-					bounds=selected_fine_bounds,
-					step_mm=fine_step_mm,
-					settle_ms=settle_ms,
-					samples_per_point=samples_per_point,
-					wall_depth_mm=candidate_wall_depth_mm,
-					scan_config=scan_config,
-					progress_prefix=f"fine_{candidate_idx}",
-					on_update=didUpdateFineScan,
-					should_abort=should_abort,
-				)
-				raise_if_cancelled(should_abort)
-
-				if len(detected_cells) == 0:
-					retry_fine_bounds = build_fine_scan_retry_bounds(
-						candidate,
-						current_bounds=selected_fine_bounds,
-						overall_bounds=bounds,
-						scan_config=scan_config,
+				def didRecordFlyingLine(probe_label: str, flying_line: Any) -> None:
+					write_flying_line_samples(
+						run_dir=recorder.run_dir,
+						label=probe_label,
+						line=flying_line,
 					)
 
-					if scan_bounds_match(retry_fine_bounds, selected_fine_bounds) is False:
-						print_status(
-							f"phase=fine-scan-retry candidate={candidate_idx}/{len(candidates)} "
-							f"bounds:x=({retry_fine_bounds.x_min:.2f},{retry_fine_bounds.x_max:.2f}) "
-							f"y=({retry_fine_bounds.y_min:.2f},{retry_fine_bounds.y_max:.2f})"
-						)
-						fine_scan, detected_cells = await capture_cross_scan(
-							tool,
-							candidate=candidate,
-							bounds=retry_fine_bounds,
-							step_mm=fine_step_mm,
-							settle_ms=settle_ms,
-							samples_per_point=samples_per_point,
-							wall_depth_mm=candidate_wall_depth_mm,
+				# A retry re-flies the same horizontal rows, so the first attempt's lines are kept for it.
+				with reuse_flown_fine_lines():
+					fine_scan, detected_cells = await capture_cross_scan(
+						tool,
+						candidate=candidate,
+						bounds=selected_fine_bounds,
+						step_mm=fine_step_mm,
+						settle_ms=settle_ms,
+						samples_per_point=samples_per_point,
+						wall_depth_mm=candidate_wall_depth_mm,
+						scan_config=scan_config,
+						progress_prefix=f"fine_{candidate_idx}",
+						on_update=didUpdateFineScan,
+						should_abort=should_abort,
+						on_flying_line=didRecordFlyingLine,
+					)
+					raise_if_cancelled(should_abort)
+
+					if len(detected_cells) == 0:
+						retry_fine_bounds = build_fine_scan_retry_bounds(
+							candidate,
+							current_bounds=selected_fine_bounds,
+							overall_bounds=bounds,
 							scan_config=scan_config,
-							progress_prefix=f"fine_{candidate_idx}_retry",
-							on_update=didUpdateFineScan,
-							should_abort=should_abort,
 						)
-						raise_if_cancelled(should_abort)
-						selected_fine_bounds = retry_fine_bounds
+
+						if scan_bounds_match(retry_fine_bounds, selected_fine_bounds) is False:
+							print_status(
+								f"phase=fine-scan-retry candidate={candidate_idx}/{len(candidates)} "
+								f"bounds:x=({retry_fine_bounds.x_min:.2f},{retry_fine_bounds.x_max:.2f}) "
+								f"y=({retry_fine_bounds.y_min:.2f},{retry_fine_bounds.y_max:.2f})"
+							)
+							fine_scan, detected_cells = await capture_cross_scan(
+								tool,
+								candidate=candidate,
+								bounds=retry_fine_bounds,
+								step_mm=fine_step_mm,
+								settle_ms=settle_ms,
+								samples_per_point=samples_per_point,
+								wall_depth_mm=candidate_wall_depth_mm,
+								scan_config=scan_config,
+								progress_prefix=f"fine_{candidate_idx}_retry",
+								on_update=didUpdateFineScan,
+								should_abort=should_abort,
+								on_flying_line=didRecordFlyingLine,
+							)
+							raise_if_cancelled(should_abort)
+							selected_fine_bounds = retry_fine_bounds
 
 				print_status(
 					f"fine_detected_cells={len(detected_cells)} "
@@ -665,11 +680,10 @@ async def estimate_seeded_candidate_wall_depths(
 	*,
 	bounds: ScanBounds,
 	candidates: list[GapCandidateRegion],
-	settle_ms: int,
-	samples_per_point: int,
 	scan_config: Any,
 	coarse_scan: GridScanResult,
 	should_abort: Callable[[], bool] | None = None,
+	on_flying_line: Optional[Callable[[str, Any], None]] = None,
 ) -> None:
 	x_positions = build_axis_positions(bounds.x_min, bounds.x_max, SHELF_SWEEP_X_STEP_MM)
 
@@ -685,16 +699,23 @@ async def estimate_seeded_candidate_wall_depths(
 
 		raise_if_cancelled(should_abort)
 		scan_y_mm = float((candidate.y_min + candidate.y_max) / 2.0)
-		depth_values = await scan_line_positions(
+		progress_label = f"seeded_wall_depth_{candidate_idx}"
+
+		depth_values, seeded_flying_line = await scan_line_positions_flying(
 			tool,
 			axis="x",
 			positions=x_positions,
 			fixed_mm=scan_y_mm,
-			settle_ms=settle_ms,
-			samples_per_point=samples_per_point,
-			progress_label=f"seeded_wall_depth_{candidate_idx}",
+			rpm=get_coarse_scan_rpm(scan_config),
+			progress_label=progress_label,
 			should_abort=should_abort,
+			bin_mode=get_coarse_scan_bin_mode(scan_config),
+			capture_latency_s=get_flying_capture_latency_s(scan_config),
 		)
+
+		if on_flying_line is not None:
+			on_flying_line(f"{progress_label}_flying", seeded_flying_line)
+
 		merge_line_scan_into_sparse_scan(
 			coarse_scan,
 			axis="x",
@@ -720,103 +741,8 @@ async def estimate_seeded_candidate_wall_depths(
 		)
 
 
-Z_DELTA_TILT_MIN_X_SPAN_MM = 300.0
-Z_DELTA_TILT_MIN_TOTAL_MM = 0.75
-Z_DELTA_TILT_MAX_TOTAL_MM = 4.0
 Z_DELTA_MAX_ABS_MM = 25.0
 
-
-def fit_z_delta_line(samples: list[tuple[float, float]]) -> tuple[float, float]:
-	"""Fit z-delta as a first-order line delta(x) = intercept + slope * x.
-
-	Returns (intercept_mm, slope_per_mm). Collapses to a constant (slope 0) when
-	there is a single sample, when the probed X span is too short to trust a
-	slope, or when the fitted tilt is negligible across that span.
-	"""
-	if len(samples) == 0:
-		raise ValueError("z delta fit requires at least one sample")
-
-	xs = [float(x) for x, _ in samples]
-	deltas = [float(delta) for _, delta in samples]
-	count = len(deltas)
-	mean_delta = sum(deltas) / count
-
-	if count == 1:
-		return mean_delta, 0.0
-
-	x_span = max(xs) - min(xs)
-
-	if x_span < Z_DELTA_TILT_MIN_X_SPAN_MM:
-		return mean_delta, 0.0
-
-	mean_x = sum(xs) / count
-	sxx = sum((x - mean_x) ** 2 for x in xs)
-
-	if sxx <= 0.0:
-		return mean_delta, 0.0
-
-	sxy = sum((x - mean_x) * (delta - mean_delta) for x, delta in zip(xs, deltas))
-	slope = sxy / sxx
-	fitted_tilt_mm = abs(slope) * x_span
-
-	# Below the floor the tilt is noise; above the ceiling it is implausible for a
-	# rack (a bad stall on debris/tray-lip) -- collapse to a safe constant either way.
-	if fitted_tilt_mm < Z_DELTA_TILT_MIN_TOTAL_MM or fitted_tilt_mm > Z_DELTA_TILT_MAX_TOTAL_MM:
-		return mean_delta, 0.0
-
-	intercept = mean_delta - slope * mean_x
-	return intercept, slope
-
-
-Z_DELTA_TILT_CORROBORATION_MM = 0.5
-
-
-def _median(values: list[float]) -> float:
-	ordered = sorted(values)
-	count = len(ordered)
-	mid = count // 2
-
-	if count % 2 == 1:
-		return ordered[mid]
-
-	return (ordered[mid - 1] + ordered[mid]) / 2.0
-
-
-def resolve_z_delta_model(samples: list[tuple[float, float]]) -> tuple[float, float]:
-	"""Resolve delta(x) = intercept + slope*x, requiring an interior probe to trust a tilt.
-
-	A tilt fit from only the two X extremes is unfalsifiable: a single shallow stall on
-	an end cell (caught on a rail/post) fabricates a slope. So a slope is accepted only
-	when at least one interior sample lies within Z_DELTA_TILT_CORROBORATION_MM of the
-	line through the two X extremes; otherwise we fall back to a constant (the median of
-	every sample), which one bad stall cannot drag.
-	"""
-	if len(samples) == 0:
-		raise ValueError("z delta resolve requires at least one sample")
-
-	deltas = [float(delta) for _, delta in samples]
-
-	if len(samples) == 1:
-		return deltas[0], 0.0
-
-	ordered = sorted(((float(x), float(delta)) for x, delta in samples), key=lambda pair: pair[0])
-	lo_x, lo_delta = ordered[0]
-	hi_x, hi_delta = ordered[-1]
-	intercept, slope = fit_z_delta_line([(lo_x, lo_delta), (hi_x, hi_delta)])
-
-	if slope == 0.0:
-		return _median(deltas), 0.0
-
-	interior = ordered[1:-1]
-	corroborated = any(
-		abs(delta - (intercept + slope * x)) <= Z_DELTA_TILT_CORROBORATION_MM
-		for x, delta in interior
-	)
-
-	if corroborated is False:
-		return _median(deltas), 0.0
-
-	return intercept, slope
 
 
 def disable_unreachable_cells(
@@ -862,7 +788,11 @@ def apply_wall_depth_z_offsets(
 	z_delta_mm: float,
 	z_delta_slope_per_mm: float = 0.0,
 	detected_cell_key_map: dict[tuple[int, int], tuple[int, int]] | None = None,
+	shelf_intercepts: list[tuple[float, float]] | None = None,
+	cell_z_offsets: dict[tuple[int, int], float] | None = None,
 	) -> None:
+	"""`cell_z_offsets` (analysis keys) are z values measured on the cell itself, e.g. by its grip
+	edge, and replace the model's z for those cells."""
 	metadata_file = Path(metadata_path)
 
 	if metadata_file.exists() is False:
@@ -883,6 +813,7 @@ def apply_wall_depth_z_offsets(
 		)
 
 	updated_cell_count = 0
+	measured_cell_count = 0
 	preserved_cell_count = 0
 	output_to_analysis_key: dict[tuple[int, int], tuple[int, int]] | None = None
 	if detected_cell_key_map is not None:
@@ -918,8 +849,18 @@ def apply_wall_depth_z_offsets(
 				missing_cells.append(f"{output_key[0]}:{output_key[1]}")
 				continue
 
-			cell_delta_mm = float(z_delta_mm) + float(z_delta_slope_per_mm) * float(cell.calibration_point.x)
+			cell_intercept_mm = z_intercept_for_y(
+				intercept_mm=float(z_delta_mm),
+				shelf_intercepts=shelf_intercepts,
+				y_mm=float(cell.calibration_point.y),
+			)
+			cell_delta_mm = cell_intercept_mm + float(z_delta_slope_per_mm) * float(cell.calibration_point.x)
 			cell.calibration_point.z_offset = float(candidate.wall_depth_mm) + cell_delta_mm
+
+			if cell_z_offsets is not None and analysis_key in cell_z_offsets:
+				cell.calibration_point.z_offset = float(cell_z_offsets[analysis_key])
+				measured_cell_count += 1
+
 			updated_cell_count += 1
 
 	if len(missing_cells) > 0:
@@ -931,8 +872,8 @@ def apply_wall_depth_z_offsets(
 
 	print_status(
 		f"z_offset_inference=applied intercept_mm={float(z_delta_mm):.3f} "
-		f"slope_per_mm={float(z_delta_slope_per_mm):.5f} updated_cells={updated_cell_count} "
-		f"preserved_cells={preserved_cell_count}"
+		f"slope_per_mm={float(z_delta_slope_per_mm):.5f} shelf_intercepts={len(shelf_intercepts or [])} "
+		f"updated_cells={updated_cell_count} measured_cells={measured_cell_count} preserved_cells={preserved_cell_count}"
 	)
 
 
@@ -977,33 +918,6 @@ def find_detected_cell_for_candidate(
 	return matched_cell
 
 
-def resolve_target_cell(
-	*,
-	grid: StorageGrid,
-	side: StorageModuleSide,
-	target: SingleCellRescanTarget,
-) -> Any:
-	target_shelf = resolve_target_shelf(
-		grid=grid,
-		side=side,
-		shelf_idx=target.shelf_idx,
-	)
-
-	try:
-		target_cell = target_shelf.get_cell(target.cell_idx)
-	except IndexError as exc:
-		raise ValueError(
-			f"Cell {target.cell_idx} does not exist on {side.value} shelf {target.shelf_idx}"
-		) from exc
-
-	if target_cell.calibration_point is None:
-		raise ValueError(
-			f"Cell {target.shelf_idx}:{target.cell_idx} has no calibration point"
-		)
-
-	return target_cell
-
-
 def resolve_target_shelf(
 	*,
 	grid: StorageGrid,
@@ -1018,6 +932,28 @@ def resolve_target_shelf(
 	return target_shelf
 
 
+def convert_stored_y_mm_to_laser_frame(
+	*,
+	stored_y_mm: float,
+	side: StorageModuleSide,
+	scan_config: Any,
+) -> float:
+	"""Convert a stored calibration y into the laser frame the scan moves in.
+
+	Stored calibration points already include the fixed laser-to-gripper reference correction,
+	so a stored y is a gripper coordinate. Scan bounds and seeded shelf edges are laser
+	coordinates; use this everywhere a stored y is turned into scan geometry.
+	"""
+	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
+	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
+	laser_y_mm = float(stored_y_mm) + float(laser_offset_y_mm)
+
+	if xy_offset is not None:
+		laser_y_mm -= float(xy_offset[1])
+
+	return laser_y_mm
+
+
 def build_single_shelf_known_edge_y(
 	*,
 	grid: StorageGrid,
@@ -1030,23 +966,19 @@ def build_single_shelf_known_edge_y(
 		side=side,
 		shelf_idx=shelf_idx,
 	)
-	laser_offset_y_mm = require_scan_config_parameter(scan_config, "laser_offset_y_mm")
-	xy_offset = get_gripper_xy_correction(scan_config=scan_config, side=side)
 	candidate_center_y_values: list[float] = []
 
 	for cell in target_shelf.cells:
 		if cell.calibration_point is None:
 			continue
 
-		candidate_center_y_mm = float(cell.calibration_point.y) + laser_offset_y_mm
-
-		# Stored calibration points already include the fixed laser-to-gripper reference
-		# correction. Convert them back into the laser frame before seeding a shelf scan,
-		# just as build_single_cell_rescan_candidate does for a cell-scoped scan.
-		if xy_offset is not None:
-			candidate_center_y_mm -= float(xy_offset[1])
-
-		candidate_center_y_values.append(candidate_center_y_mm)
+		candidate_center_y_values.append(
+			convert_stored_y_mm_to_laser_frame(
+				stored_y_mm=float(cell.calibration_point.y),
+				side=side,
+				scan_config=scan_config,
+			)
+		)
 
 	if len(candidate_center_y_values) == 0:
 		raise ValueError(f"Shelf {shelf_idx} has no calibration points on {side.value}")
@@ -1147,6 +1079,8 @@ def apply_single_shelf_analysis(
 	target_shelf_idx: int,
 	z_delta_override_mm: float | None = None,
 	z_delta_slope_per_mm: float = 0.0,
+	shelf_intercepts: list[tuple[float, float]] | None = None,
+	cell_z_offsets: dict[tuple[int, int], float] | None = None,
 	) -> None:
 	if len(analysis.shelves) == 0:
 		raise ValueError("No tray openings detected from scan")
@@ -1248,6 +1182,8 @@ def apply_single_shelf_analysis(
 			metadata_path=str(analysis.metadata_path),
 			z_delta_mm=z_delta_override_mm,
 			z_delta_slope_per_mm=z_delta_slope_per_mm,
+			shelf_intercepts=shelf_intercepts,
+			cell_z_offsets=cell_z_offsets,
 			**z_apply_kwargs,
 		)
 	else:
@@ -1278,496 +1214,3 @@ def apply_single_shelf_analysis(
 		filename=grid.filename if grid.filename != "" else str(grid_path),
 	)
 	storage_grid.save()
-
-
-def resolve_validation_coordinate(
-	*,
-	grid: StorageGrid,
-	side: StorageModuleSide,
-	target: SingleCellRescanTarget,
-) -> AxisCoordinate:
-	target_cell = resolve_target_cell(
-		grid=grid,
-		side=side,
-		target=target,
-	)
-
-	return AxisCoordinate(
-		x=float(target_cell.calibration_point.x),
-		y=float(target_cell.calibration_point.y),
-		s=0 if side == StorageModuleSide.FRONT else 1,
-		z_offset=float(target_cell.calibration_point.z_offset),
-	)
-
-
-async def run_fixed_xy_validation(
-	*,
-	robot: Robot,
-	grid: StorageGrid,
-	side: StorageModuleSide,
-	target: SingleCellRescanTarget,
-	cycles: int,
-) -> None:
-	if cycles <= 0:
-		raise ValueError("--validate-cycles must be greater than zero")
-
-	coordinate = resolve_validation_coordinate(
-		grid=grid,
-		side=side,
-		target=target,
-	)
-	tool = robot._tool
-	print_status(
-		f"validation_target side={side.value} cell={target.shelf_idx}:{target.cell_idx} "
-		f"x={coordinate.x:.3f} y={coordinate.y:.3f} z_offset={float(coordinate.z_offset):.3f} "
-		f"cycles={cycles}"
-	)
-
-	for cycle_idx in range(cycles):
-
-		current_cycle_idx = cycle_idx + 1
-
-		print_status(
-			f"validation_cycle={current_cycle_idx}/{cycles} phase=pick"
-		)
-		await tool.pick(coordinate)
-		print_status(
-			f"validation_cycle={current_cycle_idx}/{cycles} phase=place"
-		)
-		await tool.place(coordinate)
-
-	print_status("validation_status=completed")
-
-
-def apply_analysis(
-	*,
-	analysis: Any,
-	grid: StorageGrid,
-	grid_path: Path,
-	scan_config: Any,
-	side: StorageModuleSide,
-) -> None:
-	if len(analysis.shelves) == 0:
-		raise ValueError("No tray openings detected from scan")
-
-	scanned_shelves = build_shelves_from_scan(
-		side=side,
-		analysis=analysis,
-		existing_shelves=None,
-	)
-	apply_xy_reference_offsets(
-		scanned_shelves=scanned_shelves,
-		scan_config=scan_config,
-		side=side,
-	)
-	print_status("z_offset_inference=skipped reason=cli_scan_preserves_existing_z_offsets")
-	front_module = list(grid.front_module)
-	back_module = list(grid.back_module)
-
-	if side == StorageModuleSide.FRONT:
-		front_module = scanned_shelves
-	else:
-		back_module = scanned_shelves
-
-	storage_grid = StorageGrid(
-		front_module=front_module,
-		back_module=back_module,
-		filename=grid.filename if grid.filename != "" else str(grid_path),
-	)
-	storage_grid.save()
-
-
-def resolve_staged_run_dir(path: Path | str) -> Path:
-    run_path = Path(path)
-
-    if run_path.is_file() is True:
-        if run_path.name != "metadata.json":
-            raise ValueError("staged run file must be metadata.json")
-
-        return run_path.parent
-
-    return run_path
-
-
-def resolve_saved_raw_scan_path(
-    *,
-    run_dir: Path,
-    raw_scan_path: str,
-    label: str,
-    require_exists: bool,
-) -> Path:
-    saved_path = Path(raw_scan_path)
-
-    if saved_path.is_absolute() is False:
-        resolved_path = run_dir / saved_path
-
-        if resolved_path.exists() is True or require_exists is False:
-            return resolved_path
-
-        raise FileNotFoundError(f"Saved {label} raw scan file not found at {resolved_path}")
-
-    if saved_path.exists() is True:
-        return saved_path
-
-    local_path = run_dir / saved_path.name
-
-    if local_path.exists() is True:
-        return local_path
-
-    if require_exists is False:
-        return saved_path
-
-    raise FileNotFoundError(
-        f"Saved {label} raw scan file not found at {saved_path} or {local_path}"
-    )
-
-
-def find_replay_gap_segment(
-	*,
-	values: list[float | None],
-	positions: list[float],
-	step_mm: float,
-	wall_depth_mm: float,
-	expected_width_mm: float,
-	width_tolerance_mm: float,
-	center_mm: float,
-	scan_config: Any,
-) -> LineGapSegment | None:
-	if len(values) != len(positions):
-		raise ValueError("values and positions must have the same length")
-
-	matched_segments: list[LineGapSegment] = []
-	start_idx: int | None = None
-
-	for idx in range(len(values) + 1):
-		is_gap = False
-
-		if idx < len(values):
-			is_gap = is_hole_interior_depth(
-				values[idx],
-				wall_depth_mm=wall_depth_mm,
-			)
-
-		if is_gap is True and start_idx is None:
-			start_idx = idx
-			continue
-
-		if is_gap is True or start_idx is None:
-			continue
-
-		end_idx = idx - 1
-		left_idx = start_idx - 1
-		right_idx = end_idx + 1
-
-		if left_idx < 0 or right_idx >= len(values):
-			start_idx = None
-			continue
-
-		segment = build_line_run_segment(
-			positions=positions,
-			start_idx=start_idx,
-			end_idx=end_idx,
-			step_mm=step_mm,
-		)
-
-		if dimensions_match(
-			segment.width_mm,
-			expected_mm=expected_width_mm,
-			tolerance_mm=width_tolerance_mm,
-		) is False:
-			start_idx = None
-			continue
-
-		if has_wall_nearby(
-			values,
-			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
-			start_idx=left_idx,
-			direction=-1,
-		) is False:
-			start_idx = None
-			continue
-
-		if has_wall_nearby(
-			values,
-			wall_depth_mm=wall_depth_mm,
-			tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
-			start_idx=right_idx,
-			direction=1,
-		) is False:
-			start_idx = None
-			continue
-
-		matched_segments.append(segment)
-		start_idx = None
-
-	if len(matched_segments) == 0:
-		return None
-
-	return min(
-		matched_segments,
-		key=lambda segment: abs(float(segment.center_mm) - float(center_mm)),
-	)
-
-
-def build_detected_cell_from_saved_fine_scan(
-	*,
-	fine_scan: GridScanResult,
-	candidate: GapCandidateRegion,
-	fine_step_mm: float,
-	wall_depth_mm: float,
-	scan_config: Any,
-) -> ScanDetectedCell | None:
-	if wall_depth_mm <= 0.0:
-		return None
-
-	candidate_center_x_mm, candidate_center_y_mm = get_candidate_center(candidate)
-	horizontal_segments: list[LineGapSegment] = []
-
-	for row in fine_scan.depth_rows:
-		if any(value is not None for value in row) is False:
-			continue
-
-		segment = find_replay_gap_segment(
-			values=row,
-			positions=fine_scan.x_positions,
-			step_mm=fine_step_mm,
-			wall_depth_mm=wall_depth_mm,
-			expected_width_mm=EXPECTED_HOLE_WIDTH_MM,
-			width_tolerance_mm=HOLE_WIDTH_TOLERANCE_MM + fine_step_mm,
-			center_mm=candidate_center_x_mm,
-			scan_config=scan_config,
-		)
-
-		if segment is not None:
-			horizontal_segments.append(segment)
-
-	if len(horizontal_segments) == 0:
-		return None
-
-	horizontal_segment = min(
-		horizontal_segments,
-		key=lambda segment: abs(float(segment.center_mm) - candidate_center_x_mm),
-	)
-	vertical_segments: list[LineGapSegment] = []
-
-	for col_idx, _ in enumerate(fine_scan.x_positions):
-		column_values = [row[col_idx] for row in fine_scan.depth_rows]
-
-		if any(value is not None for value in column_values) is False:
-			continue
-
-		segment = find_replay_gap_segment(
-			values=column_values,
-			positions=fine_scan.y_positions,
-			step_mm=fine_step_mm,
-			wall_depth_mm=wall_depth_mm,
-			expected_width_mm=EXPECTED_HOLE_HEIGHT_MM,
-			width_tolerance_mm=HOLE_HEIGHT_TOLERANCE_MM + fine_step_mm,
-			center_mm=candidate_center_y_mm,
-			scan_config=scan_config,
-		)
-
-		if segment is None:
-			continue
-
-		vertical_segments.append(segment)
-
-	if len(vertical_segments) == 0:
-		return None
-
-	vertical_segment = min(
-		vertical_segments,
-		key=lambda segment: abs(float(segment.center_mm) - candidate_center_y_mm),
-	)
-	return build_detected_cell_from_segments(
-		x_segment=horizontal_segment,
-		y_segment=vertical_segment,
-		step_mm=fine_step_mm,
-		scan_config=scan_config,
-	)
-
-
-def load_staged_scan_analysis(
-    path: Path | str,
-    *,
-    scan_config: Any,
-    require_completed: bool = True,
-) -> ScanAnalysisResult:
-    run_dir = resolve_staged_run_dir(path)
-    metadata_path = run_dir / "metadata.json"
-
-    if metadata_path.exists() is False:
-        raise FileNotFoundError(f"No staged scan metadata found at {metadata_path}")
-
-    metadata = load_json_file(metadata_path)
-
-    if require_completed is True and metadata.get("status") != "completed":
-        raise ValueError(f"Staged scan {run_dir} is not completed")
-
-    side = StorageModuleSide(normalize_saved_side(metadata["side"]))
-    bounds = ScanBounds.model_validate(metadata["bounds"])
-    fine_step_mm = float(metadata["fine_step_mm"])
-    candidates = load_candidates_from_metadata(metadata)
-    detected_cells: list[ScanDetectedCell] = []
-
-    for fine_entry_idx, fine_entry in enumerate(metadata.get("fine_scans", [])):
-        if fine_entry.get("status") != "completed":
-            continue
-
-        raw_fine_path_value = str(fine_entry.get("raw_scan_path", ""))
-
-        if raw_fine_path_value == "":
-            continue
-
-        raw_fine_path = resolve_saved_raw_scan_path(
-            run_dir=run_dir,
-            raw_scan_path=raw_fine_path_value,
-            label="fine",
-            require_exists=True,
-        )
-
-        candidate_index = int(fine_entry.get("candidate_index", fine_entry_idx))
-
-        if candidate_index < 0 or candidate_index >= len(candidates):
-            continue
-
-        candidate = candidates[candidate_index]
-        fine_bounds = ScanBounds.model_validate(fine_entry["bounds"])
-        fine_scan = load_partial_grid_scan(
-            npy_path=raw_fine_path,
-            bounds=fine_bounds,
-            step_mm=fine_step_mm,
-        )
-        candidate_wall_depth_mm = float(metadata.get("wall_depth_mm", 0.0))
-
-        if candidate.wall_depth_mm is not None:
-            candidate_wall_depth_mm = float(candidate.wall_depth_mm)
-
-        detected_cell = build_detected_cell_from_saved_fine_scan(
-            fine_scan=fine_scan,
-            candidate=candidate,
-            fine_step_mm=fine_step_mm,
-            wall_depth_mm=candidate_wall_depth_mm,
-            scan_config=scan_config,
-        )
-
-        if detected_cell is not None:
-            detected_cells.append(detected_cell)
-
-    deduped_cells = dedupe_detected_cells(
-        detected_cells,
-        scan_config=scan_config,
-    )
-    shelves = build_detected_shelves(
-        deduped_cells,
-        side=side,
-        shelf_threshold_mm=get_shelf_grouping_threshold_mm(
-            step_mm=fine_step_mm,
-            scan_config=scan_config,
-        ),
-    )
-    raw_scan_path = str(metadata.get("coarse_scan", {}).get("raw_scan_path", run_dir / "coarse_depth.npy"))
-    coarse_raw_path = resolve_saved_raw_scan_path(
-        run_dir=run_dir,
-        raw_scan_path=raw_scan_path,
-        label="coarse",
-        require_exists=False,
-    )
-
-    raw_scan_path = str(coarse_raw_path)
-    created_at = datetime.now(timezone.utc)
-
-    if metadata.get("created_at") is not None:
-        created_at = datetime.fromisoformat(str(metadata["created_at"]))
-
-    total_points = 0
-    valid_points = 0
-
-    if coarse_raw_path.exists() is True:
-        coarse_scan = load_partial_grid_scan(
-            npy_path=coarse_raw_path,
-            bounds=bounds,
-            step_mm=float(metadata.get("coarse_step_mm", COARSE_SCAN_STEP_MM)),
-        )
-        total_points += count_valid_points(coarse_scan.depth_rows)
-        valid_points += count_valid_points(coarse_scan.depth_rows)
-
-    for fine_entry in metadata.get("fine_scans", []):
-        raw_fine_path_value = str(fine_entry.get("raw_scan_path", ""))
-
-        if raw_fine_path_value == "":
-            continue
-
-        if fine_entry.get("status") != "completed":
-            continue
-
-        raw_fine_path = resolve_saved_raw_scan_path(
-            run_dir=run_dir,
-            raw_scan_path=raw_fine_path_value,
-            label="fine",
-            require_exists=True,
-        )
-
-        fine_bounds = ScanBounds.model_validate(fine_entry["bounds"])
-        fine_scan = load_partial_grid_scan(
-            npy_path=raw_fine_path,
-            bounds=fine_bounds,
-            step_mm=fine_step_mm,
-        )
-        total_points += count_valid_points(fine_scan.depth_rows)
-        valid_points += count_valid_points(fine_scan.depth_rows)
-
-    return ScanAnalysisResult(
-        run_id=str(metadata.get("run_id", run_dir.name)),
-        side=side,
-        bounds=bounds,
-        step_mm=fine_step_mm,
-        samples_per_point=int(metadata["samples_per_point"]),
-        settle_ms=int(metadata["settle_ms"]),
-        wall_depth_mm=float(metadata.get("wall_depth_mm", 0.0)),
-        wall_depth_tolerance_mm=float(WALL_DEPTH_TOLERANCE_MM),
-        expected_hole_width_mm=float(EXPECTED_HOLE_WIDTH_MM),
-        expected_hole_height_mm=float(EXPECTED_HOLE_HEIGHT_MM),
-        min_vertical_wall_coverage_mm=float(MIN_VERTICAL_WALL_COVERAGE_MM),
-        min_horizontal_wall_coverage_mm=float(MIN_HORIZONTAL_WALL_COVERAGE_MM),
-        total_points=total_points,
-        valid_points=valid_points,
-        raw_scan_path=raw_scan_path,
-        metadata_path=str(metadata_path),
-        shelves=shelves,
-        created_at=created_at,
-    )
-
-
-def analyze_depth_rows(
-	*,
-	side: StorageModuleSide,
-	bounds: ScanBounds,
-	step_mm: float,
-	settle_ms: int,
-	samples_per_point: int,
-	scan_config: Any,
-	scans_dir: str,
-	depth_rows: list[list[float | None]],
-) -> Any:
-	laser_offset_x_mm, laser_offset_y_mm = require_laser_offsets(scan_config)
-	capture = create_scan_capture(
-		side=side,
-		bounds=bounds,
-		step_mm=step_mm,
-		settle_ms=settle_ms,
-		samples_per_point=samples_per_point,
-		laser_offset_x_mm=laser_offset_x_mm,
-		laser_offset_y_mm=laser_offset_y_mm,
-		wall_depth_tolerance_mm=WALL_DEPTH_TOLERANCE_MM,
-		expected_hole_width_mm=EXPECTED_HOLE_WIDTH_MM,
-		expected_hole_height_mm=EXPECTED_HOLE_HEIGHT_MM,
-		hole_width_tolerance_mm=HOLE_WIDTH_TOLERANCE_MM,
-		hole_height_tolerance_mm=HOLE_HEIGHT_TOLERANCE_MM,
-		min_vertical_wall_coverage_mm=MIN_VERTICAL_WALL_COVERAGE_MM,
-		min_horizontal_wall_coverage_mm=MIN_HORIZONTAL_WALL_COVERAGE_MM,
-		depth_rows=depth_rows,
-	)
-
-	return analyze_scan_capture(capture, base_dir=scans_dir)

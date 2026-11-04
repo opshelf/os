@@ -23,9 +23,9 @@ class ItemValidator:
         required_keys = ["width", "height", "length"]
         for key in required_keys:
             if key not in dimensions:
-                raise ValidationError(f"Missing required dimension: {key}")
+                raise ValidationError(f"Enter the item {key}.")
             if dimensions[key] <= 0:
-                raise ValidationError(f"{key} must be a positive number")
+                raise ValidationError(f"Enter a {key} greater than zero.")
 
     @staticmethod
     def validate_weight(weight: Optional[float]) -> None:

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import {
 		ApiError,
 		getCalibrationStatus,
@@ -13,7 +13,8 @@
 		type ApiErrorDetail,
 		type CalibrationStatus,
 		type Cell,
-		type StorageGrid
+		type StorageGrid,
+		HOME_REQUIRED_MESSAGE
 	} from '$lib/api';
 	import { activeVocabulary, activeVocabularyStore, isSideToken, sideIndex, sideLabel } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
@@ -43,10 +44,12 @@
 		vocabulary = v;
 	}));
 
-	const normalizedInitialSide =
+	// The initial side seeds the selection once; later prop changes must not reset it.
+	const normalizedInitialSide = untrack(() =>
 		initialSide !== undefined && sideIndex(initialSide) !== null
 			? (sideIndex(initialSide) === 1 ? 'back_module' : 'front_module')
-			: 'front_module';
+			: 'front_module'
+	);
 
 	let selectedSide = $state<'front_module' | 'back_module'>(normalizedInitialSide);
 	let selectedShelf = $state<number>(0);
@@ -59,7 +62,8 @@
 	let error = $state<string>('');
 	let message = $state<string>('');
 	let needsHome = $state<boolean>(false);
-	let needsHomeReason = $state<string>('');
+	// The error a needs-home refusal produced: the home banner already says it.
+	let homeError = $state<string>('');
 	let needsHomeAxes = $state<string[]>([]);
 
 	const TOOL_AXES = new Set(['z_axis', 'stage']);
@@ -67,9 +71,7 @@
 	const TEST_SELECTION_STORAGE_KEY = 'opshelf.calibration.test.selection';
 
 	const needsToolHome = $derived(needsHomeAxes.some((axis) => TOOL_AXES.has(axis)));
-	const homeMessage = $derived(
-		needsHome === true ? `home required${needsHomeReason !== '' ? `: ${needsHomeReason}` : ''}` : ''
-	);
+	const isHomeError = $derived(needsHome === true && error !== '' && error === homeError);
 	const isBusy = $derived(
 		isRunningQuick === true ||
 		isRunningCycle === true ||
@@ -115,7 +117,7 @@
 			persistSelection();
 		} catch (err) {
 			handleNeedsHomeError(err);
-			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
+			loadError = err instanceof Error ? err.message : 'Failed to load storage grid.';
 		} finally {
 			loading = false;
 		}
@@ -195,7 +197,6 @@
 
 	function applyNeedsHomeStatus(status: CalibrationStatus): void {
 		needsHome = status.needs_home;
-		needsHomeReason = status.needs_home_reason ?? '';
 		needsHomeAxes = status.needs_home_axes ?? [];
 	}
 
@@ -205,13 +206,13 @@
 		}
 
 		needsHome = true;
-		needsHomeReason = detail.reason ?? detail.message ?? needsHomeReason;
 		needsHomeAxes = detail.needs_home_axes ?? [];
 	}
 
 	function handleNeedsHomeError(err: unknown): void {
 		if (err instanceof ApiError) {
 			applyNeedsHomeDetail(err.detail);
+			homeError = err.detail?.code === 'home_required' ? err.message : '';
 		}
 	}
 
@@ -342,10 +343,10 @@
 		try {
 			await runCalibrationQuickTest(selectedSide, selectedShelf, selectedCell);
 			await didLoadCalibrationStatus();
-			message = 'quick test completed';
+			message = 'Quick test completed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to run quick test';
+			error = err instanceof Error ? err.message : 'Failed to run quick test.';
 		} finally {
 			isRunningQuick = false;
 		}
@@ -360,10 +361,10 @@
 			await runCalibrationCycleTest(selectedSide, selectedShelf, selectedCell);
 			await didLoadStorage();
 			await didLoadCalibrationStatus();
-			message = 'cycle test completed';
+			message = 'Cycle test completed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to run cycle test';
+			error = err instanceof Error ? err.message : 'Failed to run cycle test.';
 		} finally {
 			isRunningCycle = false;
 		}
@@ -371,7 +372,7 @@
 
 	async function didClickStore(): Promise<void> {
 		if (selectedCellData === null) {
-			error = 'selected cell not found';
+			error = 'Selected cell not found.';
 			return;
 		}
 
@@ -383,10 +384,10 @@
 			await storeItem(selectedSide, selectedShelf, selectedCell, buildMockStoreItem(selectedCellData));
 			await didLoadStorage();
 			await didLoadCalibrationStatus();
-			message = 'store command requested';
+			message = 'Store command requested.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to request store command';
+			error = err instanceof Error ? err.message : 'Failed to request store command.';
 		} finally {
 			isStoring = false;
 		}
@@ -401,10 +402,10 @@
 			await retrieveItem(selectedSide, selectedShelf, selectedCell);
 			await didLoadStorage();
 			await didLoadCalibrationStatus();
-			message = 'retrieve command requested';
+			message = 'Retrieve command requested.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to request retrieve command';
+			error = err instanceof Error ? err.message : 'Failed to request retrieve command.';
 		} finally {
 			isRetrieving = false;
 		}
@@ -418,10 +419,10 @@
 		try {
 			const status = await homeToolMotors();
 			applyNeedsHomeStatus(status);
-			message = 'tool motors homed';
+			message = 'Tool motors homed.';
 		} catch (err) {
 			handleNeedsHomeError(err);
-			error = err instanceof Error ? err.message : 'failed to home tool motors';
+			error = err instanceof Error ? err.message : 'Failed to home tool motors.';
 		} finally {
 			isHoming = false;
 		}
@@ -433,54 +434,56 @@
 {:else if loadError !== ''}
 	<ErrorMessage message={loadError} />
 {:else if storageGrid !== null}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="3">cell selection</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td>
-					<span class="field-label">side</span>
-					<select value={selectedSide} onchange={didChangeSide}>
-						<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
-						<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
-					</select>
-				</td>
-				<td>
-					<span class="field-label">shelf</span>
-					<select value={selectedShelf} onchange={didChangeShelf}>
-						{#each getShelves() as shelf}
-							<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
-						{/each}
-					</select>
-				</td>
-				<td>
-					<span class="field-label">cell</span>
-					<select value={selectedCell} onchange={didChangeCell}>
-						{#each getCells() as cell}
-							<option value={cell.cell_idx} disabled={isCellTestable(cell) === false}>
-								{cell.cell_idx}{isCellTestable(cell) === false ? ` (${cell.status})` : ''}
-							</option>
-						{/each}
-					</select>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
-					<div class="action-row">
-						<button type="button" onclick={didClickQuick} disabled={actionsDisabled}>quick</button>
-						<button type="button" onclick={didClickCycle} disabled={actionsDisabled}>cycle</button>
-						<button type="button" onclick={didClickStore} disabled={actionsDisabled}>STORE</button>
-						<button type="button" onclick={didClickRetrieve} disabled={actionsDisabled}>
-							RETRIEVE
-						</button>
-					</div>
-				</td>
-			</tr>
-		</tbody>
-	</table>
+	<div class="scroll-x">
+		<table>
+			<thead>
+				<tr>
+					<th colspan="3">cell selection</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr>
+					<td>
+						<span class="field-label">side</span>
+						<select value={selectedSide} onchange={didChangeSide}>
+							<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
+							<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
+						</select>
+					</td>
+					<td>
+						<span class="field-label">shelf</span>
+						<select value={selectedShelf} onchange={didChangeShelf}>
+							{#each getShelves() as shelf}
+								<option value={shelf.shelf_idx}>{shelf.shelf_idx}</option>
+							{/each}
+						</select>
+					</td>
+					<td>
+						<span class="field-label">cell</span>
+						<select value={selectedCell} onchange={didChangeCell}>
+							{#each getCells() as cell}
+								<option value={cell.cell_idx} disabled={isCellTestable(cell) === false}>
+									{cell.cell_idx}{isCellTestable(cell) === false ? ` (${cell.status})` : ''}
+								</option>
+							{/each}
+						</select>
+					</td>
+				</tr>
+				<tr>
+					<td colspan="3">
+						<div class="action-row">
+							<button type="button" onclick={didClickQuick} disabled={actionsDisabled}>quick</button>
+							<button type="button" onclick={didClickCycle} disabled={actionsDisabled}>cycle</button>
+							<button type="button" onclick={didClickStore} disabled={actionsDisabled}>STORE</button>
+							<button type="button" onclick={didClickRetrieve} disabled={actionsDisabled}>
+								RETRIEVE
+							</button>
+						</div>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
 {/if}
 
 {#if blockedCellMessage !== ''}
@@ -491,16 +494,16 @@
 	<StatusMessage {message} />
 {/if}
 
-{#if error !== ''}
+{#if error !== '' && isHomeError === false}
 	<ErrorMessage message={error} />
 {/if}
 
 {#if needsHome === true && needsToolHome === true}
 	<button type="button" onclick={didClickHomeToolMotors} disabled={homingDisabled}>home tool motors</button>
-	<ErrorMessage message={homeMessage} />
+	<ErrorMessage message={HOME_REQUIRED_MESSAGE} />
 {:else if needsHome === true}
-	<ErrorMessage message={homeMessage} />
-	<StatusMessage message="other motors require homing; use the motors page" />
+	<ErrorMessage message={HOME_REQUIRED_MESSAGE} />
+	<StatusMessage message="Other motors require homing. Use the motors page." />
 {/if}
 
 <style>

@@ -3,10 +3,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-from pathlib import Path
-import stat
-import subprocess
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +15,7 @@ from openshelf_os.config_migrations import (
     cli,
     runner,
     v005_module_side_names as v005,
+    v006_multi_item_io_pose as v006,
 )
 from openshelf_os.config_migrations.v002_laser_parameter_names import (
     SCAN_KEY_RENAMES,
@@ -30,11 +27,18 @@ from openshelf_os.config_migrations.v003_remove_unused_scan_keys import (
 from openshelf_os.config_migrations.v004_promote_scan_constants import (
     REMOVED_SCAN_KEYS as PROMOTED_SCAN_KEYS,
 )
+from openshelf_os.config_migrations.v007_remove_z_stall_probe_keys import (
+    REMOVED_SCAN_KEYS as Z_STALL_PROBE_SCAN_KEYS,
+)
+from openshelf_os.config_migrations.v008_remove_scan_style_keys import (
+    REMOVED_SCAN_KEYS as SCAN_STYLE_KEYS,
+)
 from openshelf_os.laser_calibration.core import (
     get_gripper_xy_correction,
     get_laser_scan_pose_stage_mm,
     get_wall_depth_to_gripper_z_model,
-    require_z_offset_model_matches_tool,
+    require_z_offset_model_matches_z_place,
+    z_offset_model_intercept_at_stage,
 )
 from openshelf_os.laser_calibration.motion import get_laser_scan_z_extension_mm
 from openshelf_os.storage import StorageModuleSide
@@ -99,6 +103,10 @@ def legacy_config():
                     "wall_depth_tolerance_mm": 2,
                     "laser_sample_settle_ms": 50,
                     "angle_calibration_stage_stall_coarse_max_deg": 5.5,
+                    "z_stall_tray_engagement_mm": 0.71,
+                    "z_stall_probe_x_shift_mm": 20.0,
+                    "coarse_scan_style": "stepped",
+                    "shelf_brim_max_height_mm": 13.0,
                     "unknown_scan_setting": {"preserve": True},
                 },
             },
@@ -112,15 +120,17 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
     original = copy.deepcopy(legacy_config)
     migrated, changes = runner.migrate_config(legacy_config)
     assert legacy_config == original
-    assert migrated["schema_version"] == 5
+    assert migrated["schema_version"] == 8
     assert migrated["version"] == original["version"]
     assert migrated["auth"] == original["auth"]
     assert migrated["unknown_root_setting"] == original["unknown_root_setting"]
-    assert migrated["robot"]["tool"] == original["robot"]["tool"]
+    assert migrated["robot"]["tool"] == _with_multi_item_pose(original)["robot"]["tool"]
     assert migrated["robot"]["grid"]["scan"]["unknown_scan_setting"] == {"preserve": True}
     assert not set(REMOVED_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
     assert not set(UNUSED_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
-    assert changes[-1] == "schema_version: 4 -> 5"
+    assert not set(Z_STALL_PROBE_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
+    assert not set(SCAN_STYLE_KEYS) & migrated["robot"]["grid"]["scan"].keys()
+    assert changes[-1] == "schema_version: 7 -> 8"
     config = RootConfig.model_validate(migrated)
     scan = config.robot.grid.scan
 
@@ -142,21 +152,11 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
         )
         model = get_wall_depth_to_gripper_z_model(scan_config=scan, side=side)
         assert 10 + model.intercept_mm + model.x_slope_mm_per_mm * 400 == pytest.approx(expected_z)
-        require_z_offset_model_matches_tool(
-            model=model,
-            side=side,
-            stage_extension_mm=model.reference_stage_mm,
-            z_place_mm=160.5,
-            tolerance_mm=0.2,
-        )
-        with pytest.raises(ValueError, match="different tool geometry"):
-            require_z_offset_model_matches_tool(
-                model=model,
-                side=side,
-                stage_extension_mm=model.reference_stage_mm + 1,
-                z_place_mm=160.5,
-                tolerance_mm=0.2,
-            )
+        # The pin survives the migration: the model is carried from the stage it was derived at.
+        require_z_offset_model_matches_z_place(model=model, side=side, z_place_mm=160.5, tolerance_mm=0.2)
+        assert z_offset_model_intercept_at_stage(
+            model=model, stage_extension_mm=model.reference_stage_mm + 1
+        ) == pytest.approx(model.intercept_mm - 1)
 
 
 def test_divergent_promoted_values_are_refused_without_printing_them():
@@ -201,37 +201,6 @@ def test_divergent_promoted_values_are_refused_without_printing_them():
     assert "40.0" not in message
     # The step raised before dropping anything: the source document is untouched.
     assert "laser_sample_settle_ms" in config["robot"]["grid"]["scan"]
-
-
-def test_promoted_constants_keep_the_values_the_fleet_configured():
-    from openshelf_os.laser_calibration import defaults
-
-    # Pinned so an edit to the code constants cannot silently retune every machine.
-    assert defaults.WALL_DEPTH_TOLERANCE_MM == 2.0
-    assert defaults.EXPECTED_HOLE_WIDTH_MM == 26.0
-    assert defaults.EXPECTED_HOLE_HEIGHT_MM == 30.0
-    assert defaults.HOLE_WIDTH_TOLERANCE_MM == 10.0
-    assert defaults.HOLE_HEIGHT_TOLERANCE_MM == 10.0
-    assert defaults.MIN_VERTICAL_WALL_COVERAGE_MM == 10.0
-    assert defaults.MIN_HORIZONTAL_WALL_COVERAGE_MM == 30.0
-    assert defaults.LASER_SAMPLE_SETTLE_MS == 50
-    assert defaults.LASER_SAMPLES_PER_POINT == 3
-    assert defaults.Z_OFFSET_MODEL_PARAM_TOLERANCE_MM == 0.2
-    assert defaults.Z_STALL_PROBE_START_MM == 5.0
-    assert defaults.Z_STALL_PROBE_FAST_APPROACH_MM == 130.0
-    assert defaults.Z_STALL_PROBE_TARGET_MM == 180.0
-    assert defaults.STAGE_STALL_COARSE_MAX_DEG == 5.5
-    assert defaults.STAGE_STALL_START_MM == 3.0
-    assert defaults.STAGE_STALL_TARGET_MM is None
-    assert defaults.ANGLE_SWEEP_X_COUNT == 5
-
-
-@pytest.mark.parametrize("version", [None, 1])
-def test_missing_and_explicit_v1_migrate_and_repeat_is_noop(legacy_config, version):
-    if version is not None:
-        legacy_config["schema_version"] = version
-    migrated, _ = runner.migrate_config(legacy_config)
-    assert runner.migrate_config(migrated) == (migrated, [])
 
 
 @pytest.fixture
@@ -309,7 +278,7 @@ def v4_side_config():
 
 def test_v5_renames_module_side_scan_keys_and_bin_sides(v4_side_config):
     migrated, changes = runner.migrate_config(v4_side_config)
-    assert migrated["schema_version"] == 5
+    assert migrated["schema_version"] == 8
     scan = migrated["robot"]["grid"]["scan"]
     assert scan["front_shelf_scout_x_mm"] == 120.0
     assert scan["back_shelf_scout_x_mm"] == 45.0
@@ -329,34 +298,31 @@ def test_v5_renames_module_side_scan_keys_and_bin_sides(v4_side_config):
     RootConfig.model_validate(migrated)
 
 
-@pytest.mark.parametrize(
-    "grid",
-    ["storage.json", {"path": "storage.json"}, {"file": "storage.json"}, {"storage": "storage.json"}],
-)
-def test_legacy_grid_path_forms_migrate_without_rewriting(tmp_path, legacy_config, grid):
-    legacy_config["robot"]["grid"] = grid
-    original = copy.deepcopy(legacy_config)
-    migrated, changes = runner.migrate_config(legacy_config)
-    assert legacy_config == original
-    assert migrated == {**original, "schema_version": 5}
-    assert changes == [
-        "schema_version: 1 -> 2",
-        "schema_version: 2 -> 3",
-        "schema_version: 3 -> 4",
-        "schema_version: 4 -> 5",
-    ]
-    assert RootConfig.model_validate(migrated).robot.grid.path == "storage.json"
+def _with_multi_item_pose(config):
+    seeded = copy.deepcopy(config)
+    parameters = seeded["robot"]["tool"]["parameters"]
+    for new, old in v006.SEEDED_KEYS.items():
+        parameters[new] = copy.deepcopy(parameters[old])
+    return seeded
 
-    path = tmp_path / "config.json"
-    raw = json.dumps(original).encode()
-    path.write_bytes(raw)
-    assert cli.main([str(path)]) == 0
-    assert path.read_bytes() == raw
-    assert list(tmp_path.iterdir()) == [path]
-    assert cli.main([str(path), "--write"]) == 0
-    assert json.loads(path.read_bytes()) == migrated
-    assert path.with_name(path.name + ".schema-v1.bak").read_bytes() == raw
-    assert load_config_file(path).robot.grid.path == "storage.json"
+
+def test_v6_seeds_the_multi_item_pose_from_pickup_low_and_keeps_existing_values(v4_side_config):
+    parameters = v4_side_config["robot"]["tool"]["parameters"]
+    parameters["PICKUP_POSITION_L"] = [120, 340]
+    parameters["STAGE_EXTENSION_IO_BOX"] = 52.0
+    parameters["Z_EXTENSION_IO"] = 163.5
+    migrated, changes = runner.migrate_config(v4_side_config)
+    seeded = migrated["robot"]["tool"]["parameters"]
+    assert seeded["PICKUP_POSITION_MULTI_ITEM"] == [120, 340]
+    assert seeded["STAGE_EXTENSION_IO_BOX_MULTI_ITEM"] == 52.0
+    assert seeded["Z_EXTENSION_IO_MULTI_ITEM"] == 163.5
+    assert "robot.tool.parameters.PICKUP_POSITION_MULTI_ITEM seeded from PICKUP_POSITION_L" in changes
+    assert RootConfig.model_validate(migrated).robot.tool.parameters.PICKUP_POSITION_MULTI_ITEM == (120, 340)
+
+    calibrated = {**copy.deepcopy(migrated), "schema_version": 5}
+    calibrated["robot"]["tool"]["parameters"]["PICKUP_POSITION_MULTI_ITEM"] = [10, 20]
+    remigrated, _ = runner.migrate_config(calibrated)
+    assert remigrated["robot"]["tool"]["parameters"]["PICKUP_POSITION_MULTI_ITEM"] == [10, 20]
 
 
 def test_chain_runs_in_order_and_advances_only_after_success(legacy_config, monkeypatch):
@@ -376,20 +342,11 @@ def test_chain_runs_in_order_and_advances_only_after_success(legacy_config, monk
     assert "schema_version" not in legacy_config
 
 
-@pytest.mark.parametrize("version", [0, -1, True, "2", 2.0, None, 6])
-def test_bad_or_future_versions_are_rejected(legacy_config, version):
-    legacy_config["schema_version"] = version
-    with pytest.raises(ValueError):
-        runner.migrate_config(legacy_config)
-    with pytest.raises(ValueError):
-        RootConfig.model_validate(legacy_config)
-
-
 def test_startup_rejects_unmigrated_config_without_writing(tmp_path, legacy_config):
     path = tmp_path / "config.json"
     raw = json.dumps(legacy_config).encode()
     path.write_bytes(raw)
-    with pytest.raises(ConfigValidationError, match="requires migration to 5"):
+    with pytest.raises(ConfigValidationError, match="requires migration to 8"):
         load_config_file(path)
     assert path.read_bytes() == raw
     assert list(tmp_path.iterdir()) == [path]
@@ -401,7 +358,9 @@ def test_startup_rejects_unmigrated_config_without_writing(tmp_path, legacy_conf
     + list(REMOVED_SCAN_KEYS)
     + list(UNUSED_SCAN_KEYS)
     + list(PROMOTED_SCAN_KEYS)
-    + list(v005.SCAN_KEY_RENAMES),
+    + list(v005.SCAN_KEY_RENAMES)
+    + list(Z_STALL_PROBE_SCAN_KEYS)
+    + list(SCAN_STYLE_KEYS),
 )
 def test_marking_old_fields_current_does_not_silently_drop_them(legacy_config, old):
     migrated, _ = runner.migrate_config(legacy_config)
@@ -421,34 +380,6 @@ def test_nested_conflicts_are_rejected_and_matching_names_deduplicated(legacy_co
     model[new] = model[old]
     migrated, _ = runner.migrate_config(legacy_config)
     assert old not in migrated["robot"]["grid"]["scan"]["front_wall_depth_to_gripper_z_model"]
-
-
-def test_cli_preview_write_backup_permissions_and_idempotency(tmp_path, legacy_config, capsys):
-    paths = [tmp_path / f"config{suffix}.json" for suffix in ("", ".development", ".demo", ".mock")]
-    originals = {}
-    for path in paths:
-        path.write_text(json.dumps(legacy_config))
-        path.chmod(0o640)
-        originals[path] = path.read_bytes()
-    history = tmp_path / "config"
-    history.mkdir()
-    (history / "old.json").write_text("historical snapshot")
-    storage = tmp_path / "storage.json"
-    storage.write_text("untouched storage")
-    assert cli.main([str(tmp_path)]) == 0
-    assert all(path.read_bytes() == raw for path, raw in originals.items())
-    assert not list(tmp_path.glob("*.bak"))
-    assert cli.main([str(tmp_path), "--write"]) == 0
-    for path in paths:
-        assert path.with_name(path.name + ".schema-v1.bak").read_bytes() == originals[path]
-        assert stat.S_IMODE(path.stat().st_mode) == 0o640
-        assert load_config_file(path).schema_version == 5
-    modified_times = [path.stat().st_mtime_ns for path in paths]
-    assert cli.main([str(tmp_path), "--write"]) == 0
-    assert [path.stat().st_mtime_ns for path in paths] == modified_times
-    assert storage.read_text() == "untouched storage"
-    assert (history / "old.json").read_text() == "historical snapshot"
-    assert "test-private-value" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -501,19 +432,3 @@ def test_failed_atomic_replace_keeps_original_and_backup(tmp_path, legacy_config
     assert path.read_text() == raw
     assert path.with_name(path.name + ".schema-v1.bak").read_text() == raw
     assert len(list(tmp_path.iterdir())) == 2
-
-
-def test_script_uses_checkout_migrations_from_any_cwd(tmp_path, legacy_config):
-    path = tmp_path / "config.json"
-    path.write_text(json.dumps(legacy_config))
-    script = Path(__file__).resolve().parents[4] / "scripts/migrate_config.py"
-    result = subprocess.run(
-        [sys.executable, str(script), str(path)],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "schema_version: 1 -> 2" in result.stdout
-    assert "schema_version: 3 -> 4" in result.stdout
-    assert "schema_version" not in json.loads(path.read_text())

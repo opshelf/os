@@ -48,13 +48,16 @@ def _worker(fridge) -> SimpleNamespace:
         needs_home=lambda: False,
         needs_home_axes=lambda: [],
         needs_home_reason=lambda: None,
+        needs_reset=lambda: False,
     )
 
 
 def _calibration_api() -> FastAPI:
     app = FastAPI()
     app.include_router(calibration.router)
-    app.dependency_overrides[calibration.get_current_user_for_stream] = lambda: None
+    app.dependency_overrides[calibration.get_current_user_for_stream] = lambda: SimpleNamespace(
+        role=SimpleNamespace(permissions=["robot:control"])
+    )
     return app
 
 
@@ -169,7 +172,7 @@ async def test_move_fridge_calibration_reports_safety_rejection_without_motor_fa
         )
 
     assert error.value.status_code == 409
-    assert error.value.detail == "Tool must be fully retracted before moving fridge door"
+    assert error.value.detail["code"] == "tool_not_retracted"
     worker.set_needs_home.assert_not_called()
 
 

@@ -32,17 +32,12 @@ class CurtainSensor:
     def __init__(self, *, input_device: DigitalInput) -> None:
         self._input = input_device
         self.pin = input_device.pin
-        self._last_state: Optional[bool] = None
 
     def read(self) -> bool:
-        result = self._input.read()
-        self._last_state = result
-
-        return result
+        return self._input.read()
 
     def subscribe(self, on_change: Callable[[bool], None]) -> GpioSubscription:
         def did_change(event: GpioEvent) -> None:
-            self._last_state = event.value
             on_change(event.value)
 
         return self._input.subscribe(did_change)

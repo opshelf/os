@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from openshelf_os.device import get_device_id
-from openshelf_os.operating_mode import should_enable_sentry
+from openshelf_os.operating_mode import is_sentry_reporting_enabled
 from openshelf_os_server.core.camera import (
     CameraManager,
     camera_registry,
@@ -136,7 +136,7 @@ async def submit_error_report(
 	"""Submit an operator error report.
 
 	Captures the supplied message with user, robot, system, and available camera context.
-	Sends it to Sentry when enabled and initialized for this mode. An `ok` acknowledgment
+	Sends it to Sentry when reporting is enabled and initialized. An `ok` acknowledgment
 	does not guarantee remote delivery.
 	"""
 	user_context = _build_user_context(current_user)
@@ -147,8 +147,7 @@ async def submit_error_report(
 	device_id = str(system_context["device_id"])
 	hostname = socket.gethostname()
 	user_name = f"{current_user.first_name} {current_user.last_name}"
-	mode = get_operating_mode()
-	sentry_enabled = should_enable_sentry(mode)
+	sentry_enabled = is_sentry_reporting_enabled()
 
 	logger.info(
 		"user_error_report_submitted",

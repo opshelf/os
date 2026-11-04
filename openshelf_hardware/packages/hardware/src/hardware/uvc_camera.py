@@ -31,39 +31,54 @@ class UvcCamera:
         self.buffer_size = buffer_size
         self._capture: cv2.VideoCapture | None = None
         self._lock = threading.Lock()
+        self._started = False
 
     def start(self) -> None:
         with self._lock:
-            if self._capture is not None and self._capture.isOpened() is True:
-                return
+            if self._capture is None or self._capture.isOpened() is False:
+                self._capture = self._open_capture()
 
-            capture = cv2.VideoCapture(self.device)
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            capture.set(cv2.CAP_PROP_FPS, self.fps)
-            capture.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
-
-            if capture.isOpened() is False:
-                capture.release()
-                raise CameraConnectionError(f"failed to open UVC camera {self.device!r}")
-
-            self._capture = capture
+            self._started = True
 
     def stop(self) -> None:
         with self._lock:
-            if self._capture is not None:
-                self._capture.release()
-                self._capture = None
+            self._started = False
+            self._release_locked()
+
+    def _open_capture(self) -> cv2.VideoCapture:
+        """Open and configure the device handle. Raises when the device cannot be opened."""
+        capture = cv2.VideoCapture(self.device)
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        capture.set(cv2.CAP_PROP_FPS, self.fps)
+        capture.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
+
+        if capture.isOpened() is False:
+            capture.release()
+            raise CameraConnectionError(f"failed to open UVC camera {self.device!r}")
+
+        return capture
+
+    def _release_locked(self) -> None:
+        if self._capture is not None:
+            self._capture.release()
+            self._capture = None
 
     def capture_raw(self) -> np.ndarray:
         with self._lock:
-            if self._capture is None or self._capture.isOpened() is False:
+            if self._started is False:
                 raise CameraConnectionError("UVC camera is not started")
+
+            # An unplugged USB camera's handle never reads again, even after a replug, so a failed
+            # read drops it and the next call re-opens the device.
+            if self._capture is None:
+                self._capture = self._open_capture()
 
             ok, frame = self._capture.read()
 
-        if ok is False or frame is None:
-            raise ImageError("failed to capture UVC camera frame")
+            if ok is False or frame is None:
+                self._release_locked()
+                raise ImageError("failed to capture UVC camera frame")
 
         normalized = self._normalize_frame(frame)
         if self.flip_horizontal is True:

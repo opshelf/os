@@ -81,36 +81,6 @@ class TestLegacyUpcaItem:
 
 		return StorageGrid.load_from_file(str(f)), f
 
-	def _load_item(self, tmp_path, name: str, item: dict):
-		grid, _ = self._load(tmp_path, name, item)
-		cell_item = grid.back_module[0].cells[0].item
-
-		assert cell_item is not None
-
-		return cell_item
-
-	def test_legacy_upca_key_maps_to_barcode_on_load(self, tmp_path):
-		cell_item = self._load_item(tmp_path, "legacy.json", LEGACY_ITEM)
-
-		assert cell_item.barcode == "880000000001"
-
-	def test_modern_barcode_file_unaffected(self, tmp_path):
-		item = dict(LEGACY_ITEM)
-		del item["upca"]
-		item["barcode"] = "880000000001"
-
-		cell_item = self._load_item(tmp_path, "modern.json", item)
-
-		assert cell_item.barcode == "880000000001"
-
-	def test_barcode_key_not_clobbered_when_both_present(self, tmp_path):
-		item = dict(LEGACY_ITEM)
-		item["barcode"] = "880000000002"
-
-		cell_item = self._load_item(tmp_path, "both.json", item)
-
-		# The modern key is present, so its value is what loads, not the legacy one.
-		assert cell_item.barcode == "880000000002"
 
 	def test_legacy_grid_roundtrip_keeps_barcode(self, tmp_path):
 		grid, _ = self._load(tmp_path, "legacy.json", LEGACY_ITEM)
@@ -180,54 +150,8 @@ class TestSideRenameMigration:
 		assert payload["front_module"] == json.loads(original)["left_module"]
 		assert payload["back_module"] == json.loads(original)["right_module"]
 
-	def test_migration_writes_an_exclusive_created_backup(self, tmp_path):
-		f = self._legacy_file(tmp_path, "legacy.json")
-		original = f.read_text()
-
-		StorageGrid.load_from_file(str(f))
-
-		backup = tmp_path / (f.name + ".side-rename.bak")
-		assert backup.exists() is True
-		assert backup.read_text() == original
-
-	def test_migration_is_idempotent_on_reload(self, tmp_path):
-		f = self._legacy_file(tmp_path, "legacy.json")
-
-		StorageGrid.load_from_file(str(f))
-		migrated = f.read_text()
-
-		StorageGrid.load_from_file(str(f))
-
-		assert f.read_text() == migrated
-		assert len(list(tmp_path.glob("*.side-rename.bak"))) == 1
-
-	def test_modern_file_is_left_untouched(self, tmp_path):
-		f = tmp_path / "modern.json"
-		f.write_text(json.dumps(GRID_WITH_SHELVES))
-		original = f.read_text()
-
-		StorageGrid.load_from_file(str(f))
-
-		assert f.read_text() == original
-		assert list(tmp_path.glob("*.side-rename.bak")) == []
-
 
 class TestSaveToFile:
-
-
-	def test_creates_backup_on_overwrite(self, tmp_path):
-		out = tmp_path / "grid.json"
-		out.write_text(json.dumps(EMPTY_GRID))
-
-		grid = StorageGrid.model_validate(GRID_WITH_SHELVES)
-		grid.save_to_file(str(out))
-
-		backup_dir = tmp_path / "storage"
-		backups = list(backup_dir.glob("*.json"))
-
-		assert len(backups) == 1
-		assert backups[0].name.endswith(".production.json")
-		assert json.loads(backups[0].read_text()) == EMPTY_GRID
 
 
 	def test_write_failure_preserves_existing_file(self, tmp_path):

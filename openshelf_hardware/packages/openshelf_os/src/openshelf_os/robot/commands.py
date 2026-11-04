@@ -1,8 +1,10 @@
-from typing import Any, Dict, Optional, Literal, Annotated, Union
+from typing import Any, Dict, Optional, Literal, Annotated, Union, List
 
 from pydantic import BaseModel, Field, model_validator
 
 from openshelf_os.common import AxisCoordinate
+
+MotorAxis = Literal["x_axis", "y_axis", "z_axis", "stage", "rotate", "door", "fridge_door"]
 
 
 class StopCommand(BaseModel):
@@ -19,6 +21,16 @@ class IdleCommand(BaseModel):
 
 class HomeCommand(BaseModel):
     command: Literal["home"] = "home"
+    # Axes to home; omit to home the whole machine. Never empty: a home that moves nothing would
+    # still clear the crash latch.
+    axes: Optional[List[MotorAxis]] = Field(default=None, min_length=1)
+
+
+class RecoverCommand(BaseModel):
+    """Reset after a grip fault, which loses no position: open the fingers, withdraw the tool,
+    close a door left open mid-cycle, then home only `axes` (motors that did lose position)."""
+    command: Literal["recover"] = "recover"
+    axes: Optional[List[MotorAxis]] = Field(default=None, min_length=1)
 
 
 class MoveCommand(BaseModel):
@@ -106,6 +118,7 @@ RobotCommands = Annotated[
         InitializeCommand,
         IdleCommand,
         HomeCommand,
+        RecoverCommand,
         MoveCommand,
         RetrieveItemCommand,
         StoreItemCommand,

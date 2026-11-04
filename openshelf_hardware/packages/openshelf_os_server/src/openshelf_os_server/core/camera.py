@@ -126,24 +126,6 @@ def _encode_nalu_frames(access_units: list[bytes]) -> bytes:
 	return bytes(out)
 
 
-def _decode_nalu_frames(data: bytes) -> list[bytes]:
-	units: list[bytes] = []
-	offset = 0
-
-	while offset + 4 <= len(data):
-		length = struct.unpack_from(">I", data, offset)[0]
-		offset += 4
-		if length == 0 or offset + length > len(data):
-			raise ValueError("malformed NALU frame message")
-		units.append(bytes(data[offset:offset + length]))
-		offset += length
-
-	if offset != len(data):
-		raise ValueError("trailing bytes in NALU frame message")
-
-	return units
-
-
 def _split_annexb_nalus(data: bytes) -> list[bytes]:
 	"""Split an Annex-B byte string into NAL units, start codes stripped.
 
@@ -533,6 +515,9 @@ class CameraStreamManager:
 		self.stale_frame_timeout = 5.0
 		self.lifecycle_lock = asyncio.Lock()
 		self.unregistered = asyncio.Event()
+		# Event and exception type of the current capture failure streak, and its length.
+		self.capture_failure_kind: Optional[str] = None
+		self.capture_failure_streak = 0
 
 	# run and then pull from this, or size separately
 	async def start(self) -> None:
@@ -635,6 +620,8 @@ class CameraStreamManager:
 		return buffer.tobytes()
 
 	async def _capture_loop(self) -> None:
+		self.capture_failure_kind = None
+		self.capture_failure_streak = 0
 		while self.is_running is True:
 			loop_start = asyncio.get_event_loop().time()
 
@@ -655,22 +642,58 @@ class CameraStreamManager:
 					self.latest_frame = frame_bytes
 					self.last_frame_at = time.monotonic()
 
+				if self.capture_failure_streak > 0:
+					logger.info(
+						"camera_capture_recovered",
+						camera_type=self.camera_type,
+						failed_attempts=self.capture_failure_streak,
+					)
+					self.capture_failure_streak = 0
+
 			except RuntimeError as e:
 				if "bad cam" in str(e):
-					logger.error("camera_connection_failed", error=str(e))
+					self.report_capture_failure("camera_connection_failed", e)
 					await asyncio.sleep(5.0)
 				else:
-					logger.error("camera_runtime_error", error=str(e), exc_info=True)
+					self.report_capture_failure("camera_runtime_error", e, exc_info=True)
 					await asyncio.sleep(1.0)
 				continue
 			except Exception as e:
-				logger.error("camera_frame_processing_error", error=str(e), error_type=type(e).__name__, exc_info=True)
+				self.report_capture_failure(
+					"camera_frame_processing_error", e, exc_info=True, error_type=type(e).__name__
+				)
 				await asyncio.sleep(1.0)
 				continue
 
 			elapsed = asyncio.get_event_loop().time() - loop_start
 			sleep_time = max(0.0, (1.0 / self.effective_target_fps()) - elapsed)
 			await asyncio.sleep(sleep_time)
+
+	def report_capture_failure(self, event: str, error: BaseException, exc_info: bool = False, **fields: Any) -> None:
+		"""Log a capture failure at ERROR (one Sentry event) only for the first of a streak.
+
+		The loop retries a broken camera every second, so retries log at WARNING until the
+		recovery event; a different event or exception type starts a new streak.
+		"""
+		failure_kind = f"{event}:{type(error).__name__}"
+
+		if self.capture_failure_kind != failure_kind:
+			self.capture_failure_kind = failure_kind
+			self.capture_failure_streak = 0
+
+		self.capture_failure_streak += 1
+
+		if self.capture_failure_streak > 1:
+			logger.warning(
+				event,
+				camera_type=self.camera_type,
+				error=str(error),
+				failed_attempts=self.capture_failure_streak,
+				**fields,
+			)
+			return
+
+		logger.error(event, camera_type=self.camera_type, error=str(error), exc_info=exc_info, **fields)
 
 	async def get_latest_frame(self) -> Optional[bytes]:
 		async with self.frame_lock:
@@ -886,13 +909,6 @@ class ToolCameraStreamManager:
 		self.nalu_process = None
 		self.nalu_stop_event = None
 		self.nalu_queue = None
-
-	def _prepare_frame(self, frame: np.ndarray) -> np.ndarray:
-		return _prepare_tool_camera_frame(frame, self.max_frame_width)
-
-	def _get_frames_to_skip(self, cap: cv2.VideoCapture) -> int:
-		source_fps = cap.get(cv2.CAP_PROP_FPS)
-		return _get_tool_camera_frames_to_skip(source_fps, self.target_fps)
 
 	def _drain_nalu_queue(self) -> list[bytes]:
 		"""Move queued items into the rings; returns this tick's view AUs."""
@@ -1181,17 +1197,8 @@ class ToolCameraStreamManager:
 			return self.latest_frame
 
 
-camera_manager: Optional[CameraStreamManager] = None
 tool_camera_manager: Optional[ToolCameraStreamManager] = None
 overhead_camera_manager: Optional[ToolCameraStreamManager] = None
-
-
-async def init_camera_manager(camera: RawCamera) -> None:
-	global camera_manager, camera_registry
-
-	camera_manager = CameraStreamManager(camera=camera)
-	camera_registry["io"] = camera_manager
-	logger.info("io_camera_registered")
 
 
 async def init_sizer_camera_manager(camera: RawCamera) -> None:
@@ -1376,7 +1383,7 @@ async def _probe_camera_for_init(camera_id: str) -> None:
 	manager = camera_registry.get(camera_id)
 
 	if manager is None:
-		tracker.report(component, "failed", reason="camera not registered")
+		tracker.report(component, "failed", reason="The camera is not set up.")
 		logger.warning("camera_init_unregistered", camera_id=camera_id)
 		return
 
@@ -1385,7 +1392,7 @@ async def _probe_camera_for_init(camera_id: str) -> None:
 	try:
 		is_delivering_frames = await probe_camera_frames(camera_id)
 	except Exception as e:
-		tracker.report(component, "failed", reason=str(e))
+		tracker.report(component, "failed", reason="The camera did not start. Check its cable.")
 		logger.warning("camera_init_probe_failed", camera_id=camera_id, error=str(e), exc_info=True)
 		return
 
@@ -1395,7 +1402,7 @@ async def _probe_camera_for_init(camera_id: str) -> None:
 		return
 
 	timeout_s = manager.first_frame_timeout
-	tracker.report(component, "failed", reason=f"no frames within {timeout_s:.0f}s")
+	tracker.report(component, "failed", reason=f"The camera sent no picture within {timeout_s:.0f} seconds.")
 	logger.warning("camera_init_no_frames", camera_id=camera_id, timeout_s=timeout_s)
 
 

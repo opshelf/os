@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.laser_calibration.defaults import (
+	FLYING_CAPTURE_LATENCY_MS,
 	LASER_SAMPLES_PER_POINT,
 	LASER_SAMPLE_SETTLE_MS,
 )
@@ -24,10 +25,8 @@ from openshelf_os.laser_calibration.scan import (
 	ScanAnalysisResult,
 	ScanDetectedCell,
 	ScanDetectedShelf,
-	analyze_scan_capture,
 	build_axis_positions,
 	build_shelves_from_scan,  # noqa: F401 - re-exported for server consumption
-	create_scan_capture,
 )
 import openshelf_os.common as common_module
 import openshelf_os.robot.core as robot_module
@@ -36,8 +35,6 @@ from openshelf_os.storage import StorageGrid, StorageModuleSide
 from openshelf_os.laser_calibration.shelf_scout import (
 	GAP_DEPTH_THRESHOLD_MM,
 	BACK_MODULE_SHELF_SCOUT_X_MM,
-	SHELF_BRIM_MAX_HEIGHT_MM,
-	SHELF_BRIM_MIN_HEIGHT_MM,
 	SHELF_EDGE_CONFIRMATION_COUNT,
 	SHELF_EDGE_TOP_MARGIN_MM,
 	SHELF_MIN_SPACING_MM,
@@ -50,6 +47,16 @@ from openshelf_os.laser_calibration.shelf_scout import (
 LASER_SCAN_STAGE_EXTENSION_MM = 13.0
 LASER_SCAN_Z_OFFSET_MM = 10.0
 COARSE_SCAN_STEP_MM = 4.0
+COARSE_SCAN_BIN_NEAREST = "nearest"
+COARSE_SCAN_BIN_MEDIAN = "median"
+COARSE_SCAN_BIN_MEDIAN3 = "median3"
+# Conservative first feed for a moving pass: 30rpm is 20mm/s on y (mpr 40mm) and 40mm/s on x
+# (mpr 80mm). Sample spacing is set by the bus loop time, not by this value, so raise it only
+# after the sample cadence logged in flying_samples.jsonl shows the grid is still covered.
+FLYING_COARSE_SCAN_RPM = 30
+# Fine line probes are short, so their speed is set in mm/s (converted to rpm per axis). 40mm/s
+# keeps the delay correction sub-0.5mm while halving the per-line travel time.
+FINE_SCAN_FEED_MM_S = 40.0
 BACK_MODULE_ROTATION_SAFE_X_MM = 475.0
 SHELF_SWEEP_X_STEP_MM = 4.0
 # Coarse sweep widths quantize to the 4mm step. Across two full hardware runs (43 confirmed
@@ -59,9 +66,12 @@ SHELF_SWEEP_X_STEP_MM = 4.0
 SHELF_SWEEP_MIN_CANDIDATE_WIDTH_MM = 22.0
 SHELF_HOLE_SWEEP_OFFSET_MM = 32.25
 SHELF_HOLE_SWEEP_OFFSETS_MM = [16.25, SHELF_HOLE_SWEEP_OFFSET_MM]
+Y_AXIS_FLOOR_MM = 0.0
 FILLED_HOLE_MIN_DEPTH_DELTA_MM = 0.4
 FINE_SCAN_MARGIN_X_MM = 10.0
 FINE_SCAN_MARGIN_Y_MM = 6.0
+# Wall the vertical fine window reads past a full hole height, so both edges are measured.
+FINE_SCAN_Y_WALL_MARGIN_MM = 4.0
 FINE_SCAN_RETRY_MIN_Y_MARGIN_MM = 36.0
 FINE_OPPOSITE_EDGE_MARGIN_MM = 5.0
 FINE_OPPOSITE_EDGE_BACKTRACK_MM = 8.0
@@ -269,38 +279,79 @@ def get_wall_depth_to_gripper_z_model(
 	return configured_model
 
 
-def require_z_offset_model_matches_tool(
+def require_z_offset_model_matches_z_place(
 	*,
 	model: Any,
 	side: StorageModuleSide,
-	stage_extension_mm: float,
 	z_place_mm: float,
 	tolerance_mm: float,
 ) -> None:
-	"""A z offset is relative to Z_EXTENSION_PLACE and measured at a given stage extension.
+	"""A z offset is relative to Z_EXTENSION_PLACE, so a model pinned at another place height is stale.
 
-	Either drifting shifts every cell's z offset one-for-one, and the auto calibration itself
-	re-derives stage extension each run, so a stale model would silently mis-place every cell.
+	Stage extension drift is not refused here: `z_offset_model_intercept_at_stage` absorbs it.
 	"""
-	prefix = "front" if side == StorageModuleSide.FRONT else "back"
-	drifted: list[str] = []
-
-	if abs(float(model.reference_stage_mm) - float(stage_extension_mm)) > tolerance_mm:
-		drifted.append(
-			f"stage extension {float(model.reference_stage_mm):.2f}mm -> {float(stage_extension_mm):.2f}mm"
-		)
-
-	if abs(float(model.reference_z_place_mm) - float(z_place_mm)) > tolerance_mm:
-		drifted.append(f"Z_EXTENSION_PLACE {float(model.reference_z_place_mm):.2f}mm -> {float(z_place_mm):.2f}mm")
-
-	if len(drifted) == 0:
+	if abs(float(model.reference_z_place_mm) - float(z_place_mm)) <= tolerance_mm:
 		return
 
+	prefix = "front" if side == StorageModuleSide.FRONT else "back"
 	raise ValueError(
-		f"robot.grid.scan.{prefix}_wall_depth_to_gripper_z_model was derived at a different tool geometry "
-		f"({', '.join(drifted)}). Every cell's z offset would be wrong by that difference. "
-		"Re-derive the model or restore the tool parameters."
+		f"robot.grid.scan.{prefix}_wall_depth_to_gripper_z_model was derived at Z_EXTENSION_PLACE "
+		f"{float(model.reference_z_place_mm):.2f}mm but the tool now places at {float(z_place_mm):.2f}mm. "
+		"Every cell's z offset would be wrong by that difference. Re-derive the model (enable the z "
+		"stall probe) or restore Z_EXTENSION_PLACE."
 	)
+
+
+def z_offset_at_stage(*, z_offset_mm: float, captured_stage_mm: float, stage_extension_mm: float) -> float:
+	"""The z offset that reaches the same tip position at another stage extension.
+
+	The z axis is mounted on the stage and both extend toward the rack, so the tip sits at
+	stage + Z_EXTENSION_PLACE + z_offset: one millimetre less stage needs one millimetre more z.
+	"""
+	return float(z_offset_mm) + float(captured_stage_mm) - float(stage_extension_mm)
+
+
+def z_offset_model_intercept_at_stage(*, model: Any, stage_extension_mm: float) -> float:
+	"""The model's intercept carried from the stage it was pinned at to the live one."""
+	return z_offset_at_stage(
+		z_offset_mm=float(model.intercept_mm),
+		captured_stage_mm=float(model.reference_stage_mm),
+		stage_extension_mm=stage_extension_mm,
+	)
+
+
+# A cell takes the intercept of a probed shelf within this much of its grab y, i.e. its own shelf:
+# well under the shelf pitch (~150mm) and well over a cell's y spread along a shelf.
+SHELF_INTERCEPT_MATCH_MM = 40.0
+
+
+def shelf_intercepts_at_stage(*, model: Any, stage_extension_mm: float) -> list[tuple[float, float]]:
+	"""The model's per-shelf intercepts as (grab y, intercept), carried to the live stage like the model."""
+	carry_mm = float(model.reference_stage_mm) - float(stage_extension_mm)
+
+	return [
+		(float(entry.y_mm), float(entry.intercept_mm) + carry_mm)
+		for entry in getattr(model, "shelf_intercepts", None) or []
+	]
+
+
+def z_intercept_for_y(
+	*,
+	intercept_mm: float,
+	shelf_intercepts: list[tuple[float, float]] | None,
+	y_mm: float,
+) -> float:
+	"""The intercept a cell at grab y uses: its shelf's probed one when there is one, else the model's."""
+	nearest: tuple[float, float] | None = None
+
+	for shelf_y_mm, shelf_intercept_mm in shelf_intercepts or []:
+		if abs(shelf_y_mm - float(y_mm)) > SHELF_INTERCEPT_MATCH_MM:
+			continue
+
+		if nearest is None or abs(shelf_y_mm - float(y_mm)) < abs(nearest[0] - float(y_mm)):
+			nearest = (shelf_y_mm, shelf_intercept_mm)
+
+	return float(intercept_mm) if nearest is None else float(nearest[1])
 
 
 def require_scan_xy_correction(
@@ -358,21 +409,75 @@ def get_shelf_scout_post_edge_skip_mm(scan_config: Any) -> float:
 	return validated_skip_mm
 
 
-def get_shelf_brim_max_height_mm(scan_config: Any) -> float:
-	configured_max_height_mm = getattr(scan_config, "shelf_brim_max_height_mm", None)
+def get_fine_scan_feed_mm_s(scan_config: Any) -> float:
+	configured_feed = getattr(scan_config, "fine_scan_feed_mm_s", None)
 
-	if configured_max_height_mm is None:
-		return SHELF_BRIM_MAX_HEIGHT_MM
+	if configured_feed is None:
+		return float(FINE_SCAN_FEED_MM_S)
 
-	validated_max_height_mm = validate_finite_value(
-		configured_max_height_mm,
-		"robot.grid.scan.shelf_brim_max_height_mm",
+	validated_feed = validate_finite_value(
+		configured_feed,
+		"robot.grid.scan.fine_scan_feed_mm_s",
 	)
 
-	if validated_max_height_mm <= 0.0:
-		raise ValueError("robot.grid.scan.shelf_brim_max_height_mm must be greater than zero")
+	if validated_feed <= 0.0:
+		raise ValueError("robot.grid.scan.fine_scan_feed_mm_s must be greater than zero")
 
-	return validated_max_height_mm
+	return validated_feed
+
+
+def get_flying_capture_latency_ms(scan_config: Any) -> float:
+	configured_latency_ms = getattr(scan_config, "flying_capture_latency_ms", None)
+
+	if configured_latency_ms is None:
+		return float(FLYING_CAPTURE_LATENCY_MS)
+
+	validated_latency_ms = validate_finite_value(
+		configured_latency_ms,
+		"robot.grid.scan.flying_capture_latency_ms",
+	)
+
+	if validated_latency_ms < 0.0:
+		raise ValueError("robot.grid.scan.flying_capture_latency_ms must be zero or greater")
+
+	return validated_latency_ms
+
+
+def get_flying_capture_latency_s(scan_config: Any) -> float:
+	return get_flying_capture_latency_ms(scan_config) / 1000.0
+
+
+def get_coarse_scan_rpm(scan_config: Any) -> int:
+	configured_rpm = getattr(scan_config, "coarse_scan_rpm", None)
+
+	if configured_rpm is None:
+		return int(FLYING_COARSE_SCAN_RPM)
+
+	validated_rpm = validate_finite_value(configured_rpm, "robot.grid.scan.coarse_scan_rpm")
+
+	if validated_rpm <= 0.0:
+		raise ValueError("robot.grid.scan.coarse_scan_rpm must be greater than zero")
+
+	return int(validated_rpm)
+
+
+def get_coarse_scan_bin_mode(scan_config: Any) -> str:
+	configured_mode = getattr(scan_config, "coarse_scan_bin_mode", None)
+
+	if configured_mode is None:
+		return COARSE_SCAN_BIN_NEAREST
+
+	if configured_mode not in (COARSE_SCAN_BIN_NEAREST, COARSE_SCAN_BIN_MEDIAN, COARSE_SCAN_BIN_MEDIAN3):
+		raise ValueError(
+			"robot.grid.scan.coarse_scan_bin_mode must be "
+			f"'{COARSE_SCAN_BIN_NEAREST}', '{COARSE_SCAN_BIN_MEDIAN}' or '{COARSE_SCAN_BIN_MEDIAN3}'"
+		)
+
+	return str(configured_mode)
+
+
+def get_coarse_scan_alternate_direction(scan_config: Any) -> bool:
+	return getattr(scan_config, "coarse_scan_alternate_direction", None) is True
 
 
 def get_fine_cell_scan_y_margin_mm(scan_config: Any) -> float:

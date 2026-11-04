@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -12,6 +13,8 @@ from typing import Any
 from sqlalchemy import delete, func, select
 
 from openshelf_os_server.core.bin_storage import reserved_bin_locations
+from openshelf_os_server.core.command_lifecycle import ensure_target_not_in_flight
+from openshelf_os_server.core.event_log import append_robot_event
 from openshelf_os_server.database.models import (
 	Item,
 	ItemLocation,
@@ -25,6 +28,8 @@ logger = logging.getLogger(__name__)
 MOCK_COMMAND_LIMIT = 32
 MOCK_COMMAND_RETENTION_DAYS = 7
 MOCK_EXECUTION_SECONDS = 30.0
+# Local walkthroughs may shorten the simulated command time; devices keep the default.
+MOCK_EXECUTION_SECONDS_ENV = "OPENSHELF_MOCK_EXECUTION_SECONDS"
 MOCK_SIDES = ("front_module", "back_module")
 MOCK_SHELVES_PER_SIDE = 4
 MOCK_CELLS_PER_SHELF = 10
@@ -192,6 +197,8 @@ class MockRobotRuntime:
 							raise MockRequestConflictError
 						return existing, True
 
+				await ensure_target_not_in_flight(session, payload, runtime="mock")
+
 				active_count = await session.scalar(
 					select(func.count())
 					.select_from(MockRobotCommand)
@@ -288,6 +295,9 @@ class MockRobotRuntime:
 				await self._wake.wait()
 				continue
 
+			if row.payload.get("command") == "store_item" and self._bin_io_box_occupied_override is True:
+				# The robot takes the stored item out of the IO box when the command starts.
+				self._bin_io_box_occupied_override = False
 			await self.publish_status()
 			try:
 				await asyncio.sleep(self.execution_seconds)
@@ -296,7 +306,7 @@ class MockRobotRuntime:
 			except asyncio.CancelledError:
 				raise
 			except Exception as exc:
-				logger.info("mock command failed: %s", exc)
+				logger.info("mock command failed: %s (correlation_id=%s)", exc, row.correlation_id)
 				result = {
 					"message": "failed",
 					"command": row.payload.get("command"),
@@ -305,9 +315,14 @@ class MockRobotRuntime:
 					"error": str(exc),
 					"code": "execution_conflict",
 				}
+				if row.correlation_id is not None:
+					result["correlation_id"] = row.correlation_id
 				await self._finish(row.command_id, "failed", result)
 			await self.publish_event({**result, "command_id": row.command_id})
 			await self.publish_status()
+			from openshelf_os_server.core.import_jobs import notify_command_result  # noqa: PLC0415
+
+			await notify_command_result(row.request_id, {**result, "command_id": row.command_id}, self)
 
 	async def _claim_next(self) -> MockRobotCommand | None:
 		async with self._lock:
@@ -366,14 +381,14 @@ class MockRobotRuntime:
 				).scalars().first()
 				if existing is not None:
 					raise MockCommandExecutionError(
-						"Item is already stored; retrieve it before storing again"
+						"This item is already stored. Retrieve it before storing it again."
 					)
 				dimensions = item.dimensions
 			else:
 				dimensions = item_payload.get("dimensions")
 
 			if not isinstance(dimensions, dict) or not mock_cell_fits(dimensions):
-				raise MockCommandExecutionError("No suitable storage location found")
+				raise MockCommandExecutionError("No open cell fits this item.")
 
 			occupied_result = await session.execute(
 				select(ItemLocation.side, ItemLocation.shelf_idx, ItemLocation.cell_idx)
@@ -387,7 +402,7 @@ class MockRobotRuntime:
 				if parsed_location is None:
 					raise MockCommandExecutionError("Invalid location")
 				if parsed_location in occupied:
-					raise MockCommandExecutionError("Requested storage cell is occupied")
+					raise MockCommandExecutionError("That cell is not available.")
 				location = parsed_location
 			else:
 				for side in MOCK_SIDES:
@@ -401,7 +416,7 @@ class MockRobotRuntime:
 					if location is not None:
 						break
 			if location is None:
-				raise MockCommandExecutionError("No suitable storage location found")
+				raise MockCommandExecutionError("No open cell fits this item.")
 
 			weight = item.weight if item is not None else item_payload.get("weight")
 			if (item is not None and item.tare_weight is not None) or (item is None and item_payload.get("tare_weight") is not None):
@@ -591,6 +606,9 @@ class MockRobotRuntime:
 
 	async def publish_event(self, payload: dict[str, Any]) -> None:
 		message = json.dumps(payload)
+		# The log row commits before the fan-out, so SSE clients see mock events
+		# only once they are durable and replayable.
+		await append_robot_event(payload)
 		for queue in list(self._event_subscribers):
 			await queue.put(message)
 
@@ -616,10 +634,22 @@ class MockRobotRuntime:
 mock_robot_runtime: MockRobotRuntime | None = None
 
 
+def _configured_execution_seconds() -> float:
+	raw = os.getenv(MOCK_EXECUTION_SECONDS_ENV, "").strip()
+	if raw == "":
+		return MOCK_EXECUTION_SECONDS
+	try:
+		value = float(raw)
+	except ValueError:
+		logger.warning("Ignoring invalid %s=%r", MOCK_EXECUTION_SECONDS_ENV, raw)
+		return MOCK_EXECUTION_SECONDS
+	return value if 0 <= value < 3600 else MOCK_EXECUTION_SECONDS
+
+
 async def start_mock_robot_runtime() -> MockRobotRuntime:
 	global mock_robot_runtime
 	if mock_robot_runtime is None:
-		mock_robot_runtime = MockRobotRuntime()
+		mock_robot_runtime = MockRobotRuntime(execution_seconds=_configured_execution_seconds())
 		await mock_robot_runtime.start()
 	return mock_robot_runtime
 
@@ -635,7 +665,3 @@ def get_mock_robot_runtime() -> MockRobotRuntime:
 	if mock_robot_runtime is None:
 		raise ValueError("Mock robot runtime is not initialized")
 	return mock_robot_runtime
-
-
-def serialize_mock_command(row: MockRobotCommand) -> dict[str, Any]:
-	return _command_response(row)

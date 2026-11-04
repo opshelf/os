@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from . import angle_runner as _angle_runner
 from . import apply_runner as _apply_runner
+from . import gripper_runner as _gripper_runner
 from . import manager as _manager
 from . import models as _models
 from . import scan_runner as _scan_runner
@@ -21,6 +22,7 @@ _PATCH_TARGETS = [
     _angle_runner,
     _stage_runner,
     _apply_runner,
+    _gripper_runner,
     _snapshot_runner,
 ]
 _PATCHED_NAMES = [

@@ -4,17 +4,22 @@
 	import {
 		abortLaserAutoCalibration,
 		buildLaserAutoCalibrationStreamUrl,
+		calibrateGripperOpenPosition,
 		getLaserAutoCalibrationStatus,
 		getLaserAutoCalibrationStreamError,
+		getLaserZStallEnabled,
 		getStorageGrid,
+		saveLaserZStallEnabled,
+		type GripperOpenPositionResult,
 		type LaserAutoCalibrationAngleResult,
 		type LaserAutoCalibrationRequest,
 		type LaserAutoCalibrationSnapshot,
 		type StorageGrid
 	} from '$lib/api';
-	import { normalizeLaserAutoCalibrationSnapshot } from '$lib/api';
+	import { formatLaserFailure, normalizeLaserAutoCalibrationSnapshot } from '$lib/api';
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideLabel } from '$lib/side';
 	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
+	import { postToast } from '$lib/toasts';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
 
@@ -36,6 +41,12 @@
 	let isExtensionCalibrationSelected = $state<boolean>(true);
 	let preferredAngleCalibration = $state<boolean>(true);
 	let preferredExtensionCalibration = $state<boolean>(true);
+	let isGripperCalibrationSelected = $state<boolean>(false);
+	let isMeasuringGripper = $state<boolean>(false);
+	// A measure-now result is newer than the run snapshot's until the next run starts.
+	let measuredGripperResult = $state<GripperOpenPositionResult | null>(null);
+	let isZStallEnabled = $state<boolean>(false);
+	let isSavingZStall = $state<boolean>(false);
 	let selectedSide = $state<'' | 'front_module' | 'back_module'>('');
 	let selectedShelf = $state<string>('');
 	let selectedCell = $state<string>('');
@@ -82,6 +93,12 @@
 		return selectedShelf !== '' || isSelectionDisabled === true;
 	});
 
+	const isGripperCalibrationDisabled = $derived.by(() => {
+		return selectedShelf !== '' || isSelectionDisabled === true;
+	});
+
+	const gripperResult = $derived(measuredGripperResult ?? snapshot?.gripper_open_position ?? null);
+
 	const isStartDisabled = $derived.by(() => {
 		if (isConnecting === true || isStreamOpen === true || isStreamReconnecting === true) {
 			return true;
@@ -118,12 +135,14 @@
 		error = '';
 
 		try {
-			const [nextSnapshot, nextStorageGrid] = await Promise.all([
+			const [nextSnapshot, nextStorageGrid, nextZStallEnabled] = await Promise.all([
 				getLaserAutoCalibrationStatus(),
-				getStorageGrid()
+				getStorageGrid(),
+				getLaserZStallEnabled()
 			]);
 
 			snapshot = nextSnapshot;
+			isZStallEnabled = nextZStallEnabled;
 
 			if (nextSnapshot.requested_scope !== undefined) {
 				activeRequestedScope = nextSnapshot.requested_scope;
@@ -136,7 +155,7 @@
 				void didConnectStream(true);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to load auto calibration status';
+			error = err instanceof Error ? err.message : 'Failed to load auto calibration status.';
 		} finally {
 			isLoading = false;
 		}
@@ -257,6 +276,7 @@
 	function syncScopeSelection(requestedScope: LaserAutoCalibrationRequest): void {
 		isAngleCalibrationSelected = requestedScope.include_angle_calibration !== false;
 		isExtensionCalibrationSelected = requestedScope.include_extension_calibration !== false;
+		isGripperCalibrationSelected = requestedScope.include_gripper_calibration === true;
 
 		// Shelf and cell scopes always drop both options, so only a scope that honours them
 		// may replace the remembered user choice.
@@ -295,6 +315,7 @@
 		if (requestedScope.mode === 'shelf' || requestedScope.mode === 'cell') {
 			isAngleCalibrationSelected = false;
 			isExtensionCalibrationSelected = false;
+			isGripperCalibrationSelected = false;
 		}
 	}
 
@@ -307,6 +328,7 @@
 		if (selectedShelf !== '' || selectedCell !== '') {
 			isAngleCalibrationSelected = false;
 			isExtensionCalibrationSelected = false;
+			isGripperCalibrationSelected = false;
 			return;
 		}
 
@@ -319,7 +341,8 @@
 			return {
 				mode: 'all',
 				include_angle_calibration: isAngleCalibrationSelected,
-				include_extension_calibration: isExtensionCalibrationSelected
+				include_extension_calibration: isExtensionCalibrationSelected,
+				include_gripper_calibration: isGripperCalibrationSelected
 			};
 		}
 
@@ -327,7 +350,8 @@
 			return {
 				mode: 'both',
 				include_angle_calibration: isAngleCalibrationSelected,
-				include_extension_calibration: isExtensionCalibrationSelected
+				include_extension_calibration: isExtensionCalibrationSelected,
+				include_gripper_calibration: isGripperCalibrationSelected
 			};
 		}
 
@@ -336,7 +360,8 @@
 				mode: 'side',
 				side: selectedSide,
 				include_angle_calibration: isAngleCalibrationSelected,
-				include_extension_calibration: isExtensionCalibrationSelected
+				include_extension_calibration: isExtensionCalibrationSelected,
+				include_gripper_calibration: isGripperCalibrationSelected
 			};
 		}
 
@@ -375,7 +400,7 @@
 		isConnecting = false;
 		isStreamOpen = true;
 		error = '';
-		message = 'auto calibration started';
+		message = 'Auto calibration started.';
 		isStreamSubscribeOnly = true;
 	}
 
@@ -399,24 +424,24 @@
 			isStreamSubscribeOnly = true;
 
 			if (snapshot.state === 'completed') {
-				message = 'laser auto calibration completed';
+				message = 'Laser auto calibration completed.';
 				didCloseStream();
 				return;
 			}
 
 			if (snapshot.state === 'cancelled') {
-				message = 'laser auto calibration cancelled';
+				message = 'Laser auto calibration cancelled.';
 				didCloseStream();
 				return;
 			}
 
 			if (snapshot.state === 'failed') {
 				message = '';
-				error = snapshot.error ?? 'laser auto calibration failed';
+				error = formatLaserFailure(snapshot);
 				didCloseStream();
 			}
 		} catch {
-			error = 'failed to parse laser auto calibration event';
+			error = 'Failed to parse laser auto calibration event.';
 		}
 	}
 
@@ -438,13 +463,13 @@
 			const streamError = await getLaserAutoCalibrationStreamError(request, {
 				subscribeOnly: shouldSubscribeOnly
 			});
-			error = streamError?.message ?? 'laser auto calibration stream disconnected';
+			error = streamError?.message ?? 'Laser auto calibration stream disconnected.';
 			message = '';
 			return;
 		}
 
 		error = '';
-		message = 'laser auto calibration stream reconnecting';
+		message = 'Laser auto calibration stream reconnecting.';
 	}
 
 	function didChangeAll(event: Event): void {
@@ -510,12 +535,68 @@
 		message = '';
 	}
 
+	function didChangeGripperCalibration(event: Event): void {
+		const target = event.target as HTMLInputElement;
+
+		isGripperCalibrationSelected = target.checked;
+		error = '';
+		message = '';
+	}
+
+	async function didClickMeasureGripper(): Promise<void> {
+		isMeasuringGripper = true;
+		error = '';
+		message = '';
+
+		try {
+			const result = await calibrateGripperOpenPosition(selectedSide === '' ? undefined : selectedSide);
+			measuredGripperResult = result;
+			message = formatGripperResult(result);
+		} catch (err) {
+			postToast('error', err instanceof Error ? err.message : 'Failed to measure the gripper open position.');
+		} finally {
+			isMeasuringGripper = false;
+		}
+	}
+
+	function formatGripperResult(result: GripperOpenPositionResult | null | undefined): string {
+		if (result === null || result === undefined) {
+			return '-';
+		}
+
+		const stops = result.samples
+			.map((sample) => `${sideLabel(sideIndex(sample.side) ?? 0, vocabulary).toLowerCase()} stop ${sample.stop_position ?? '-'}`)
+			.join(', ');
+		const target = result.open_position === null ? 'not measured' : String(result.open_position);
+		const outcome = result.applied ? 'saved' : 'kept';
+		const skipped = result.skipped.length > 0 ? ` (${result.skipped.join('; ')})` : '';
+
+		return `open position ${result.previous_open_position} -> ${target}, ${outcome}; ${stops}${skipped}`;
+	}
+
+	async function didChangeZStall(event: Event): Promise<void> {
+		const target = event.target as HTMLInputElement;
+		const requested = target.checked;
+
+		isSavingZStall = true;
+
+		try {
+			isZStallEnabled = await saveLaserZStallEnabled(requested);
+		} catch (err) {
+			target.checked = isZStallEnabled;
+			postToast('error', err instanceof Error ? err.message : 'Failed to save the grip edge setting.');
+		} finally {
+			isSavingZStall = false;
+		}
+	}
+
 	async function didClickStart(): Promise<void> {
 		if (browser === false) {
 			return;
 		}
 
 		activeRequestedScope = getRequestedScope();
+		measuredGripperResult = null;
 
 		didConnectStream(false);
 	}
@@ -545,7 +626,7 @@
 	async function didClickAbort(): Promise<void> {
 		isAborting = true;
 		error = '';
-		message = 'abort requested';
+		message = 'Abort requested.';
 
 		if (snapshot !== null) {
 			snapshot = {
@@ -566,7 +647,7 @@
 			}
 		} catch (err) {
 			message = '';
-			error = err instanceof Error ? err.message : 'failed to abort auto calibration';
+			error = err instanceof Error ? err.message : 'Failed to abort auto calibration.';
 		} finally {
 			isAborting = false;
 		}
@@ -603,226 +684,222 @@
 
 		return formatNumber(snapshot?.back_stage_extension_mm);
 	}
-
-	function formatStageDetailValue(value: unknown): string {
-		if (value === null || value === undefined) {
-			return '-';
-		}
-
-		if (typeof value === 'number') {
-			return formatNumber(value);
-		}
-
-		if (typeof value === 'string' || typeof value === 'boolean') {
-			return String(value);
-		}
-
-		return JSON.stringify(value);
-	}
-
-	function getStageDetailRows(): { key: string; value: string }[] {
-		if (snapshot === null) {
-			return [];
-		}
-
-		return Object.entries(snapshot.stage_detail).map(([key, value]) => ({
-			key,
-			value: formatStageDetailValue(value)
-		}));
-	}
 </script>
 
 {#if isLoading === true}
 	<p>loading auto calibration status...</p>
 {:else}
-	<table>
-		<thead>
-			<tr>
-				<th colspan="3">scan selection</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr>
-				<td colspan="3">
-					<label class="all-toggle">
-						<input
-							type="checkbox"
-							checked={isAllSelected}
-							onchange={didChangeAll}
-							disabled={isSelectionDisabled}
-						/>
-						<span>calibrate all</span>
-					</label>
-				</td>
-			</tr>
-			<tr>
-				<td>
-					<div class="selection-field">
-						<span class="field-label">side</span>
-						<select
-							value={selectedSide}
-							onchange={didChangeSide}
-							disabled={isAllSelected === true || isSelectionDisabled || storageGrid === null}
-						>
-							<option value="">-</option>
-							<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
-							<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
-						</select>
-					</div>
-				</td>
-				<td>
-					<div class="selection-field">
-						<span class="field-label">shelf</span>
-						<select
-							value={selectedShelf}
-							onchange={didChangeShelf}
-							disabled={isAllSelected === true ||
-								isSelectionDisabled ||
-								storageGrid === null ||
-								selectedSide === ''}
-						>
-							<option value="">-</option>
-							{#each getShelves() as shelf}
-								<option value={String(shelf.shelf_idx)}>{shelf.shelf_idx}</option>
-							{/each}
-						</select>
-					</div>
-				</td>
-				<td>
-					<div class="selection-field">
-						<span class="field-label">cell</span>
-						<select
-							value={selectedCell}
-							onchange={didChangeCell}
-							disabled={isAllSelected === true ||
-								isSelectionDisabled ||
-								storageGrid === null ||
-								selectedShelf === ''}
-						>
-							<option value="">-</option>
-							{#each getCells() as cell}
-								<option value={String(cell.cell_idx)}>{cell.cell_idx}</option>
-							{/each}
-						</select>
-					</div>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
-					<label class="all-toggle">
-						<input
-							type="checkbox"
-							checked={isAngleCalibrationSelected}
-							onchange={didChangeAngleCalibration}
-							disabled={isAngleCalibrationDisabled}
-						/>
-						<span>angle calibration</span>
-					</label>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
-					<label class="all-toggle">
-						<input
-							type="checkbox"
-							checked={isExtensionCalibrationSelected}
-							onchange={didChangeExtensionCalibration}
-							disabled={isExtensionCalibrationDisabled}
-						/>
-						<span>extension calibration</span>
-					</label>
-				</td>
-			</tr>
-			<tr>
-				<td colspan="3">
-					<div class="actions">
-						<button type="button" onclick={didClickStart} disabled={isStartDisabled}>
-							{startButtonLabel}
-						</button>
-						<button
-							type="button"
-							onclick={didClickAbort}
-							disabled={isAborting === true || isSessionActive === false}
-						>
-							abort
-						</button>
-					</div>
-				</td>
-			</tr>
-		</tbody>
-	</table>
-
-	{#if snapshot && snapshot.session_id !== null}
-		<table style="margin-top: 1.5em">
+	<div class="scroll-x">
+		<table>
 			<thead>
 				<tr>
-					<th>auto results</th>
-					<th>{sideLabel(0, vocabulary).toLowerCase()} / x</th>
-					<th>{sideLabel(1, vocabulary).toLowerCase()} / y</th>
+					<th colspan="3">scan selection</th>
 				</tr>
 			</thead>
 			<tbody>
 				<tr>
-					<td>state</td>
-					<td colspan="2">{snapshot?.state ?? 'idle'}</td>
+					<td colspan="3">
+						<label class="all-toggle">
+							<input
+								type="checkbox"
+								checked={isAllSelected}
+								onchange={didChangeAll}
+								disabled={isSelectionDisabled}
+							/>
+							<span>calibrate all</span>
+						</label>
+					</td>
 				</tr>
 				<tr>
-					<td>requested scope</td>
-					<td colspan="2">{getSnapshotRequestedScope(snapshot).mode}</td>
+					<td>
+						<div class="selection-field">
+							<span class="field-label">side</span>
+							<select
+								value={selectedSide}
+								onchange={didChangeSide}
+								disabled={isAllSelected === true || isSelectionDisabled || storageGrid === null}
+							>
+								<option value="">-</option>
+								<option value="front_module">{sideLabel(0, vocabulary).toLowerCase()} module</option>
+								<option value="back_module">{sideLabel(1, vocabulary).toLowerCase()} module</option>
+							</select>
+						</div>
+					</td>
+					<td>
+						<div class="selection-field">
+							<span class="field-label">shelf</span>
+							<select
+								value={selectedShelf}
+								onchange={didChangeShelf}
+								disabled={isAllSelected === true ||
+									isSelectionDisabled ||
+									storageGrid === null ||
+									selectedSide === ''}
+							>
+								<option value="">-</option>
+								{#each getShelves() as shelf}
+									<option value={String(shelf.shelf_idx)}>{shelf.shelf_idx}</option>
+								{/each}
+							</select>
+						</div>
+					</td>
+					<td>
+						<div class="selection-field">
+							<span class="field-label">cell</span>
+							<select
+								value={selectedCell}
+								onchange={didChangeCell}
+								disabled={isAllSelected === true ||
+									isSelectionDisabled ||
+									storageGrid === null ||
+									selectedShelf === ''}
+							>
+								<option value="">-</option>
+								{#each getCells() as cell}
+									<option value={String(cell.cell_idx)}>{cell.cell_idx}</option>
+								{/each}
+							</select>
+						</div>
+					</td>
 				</tr>
 				<tr>
-					<td>current stage</td>
-					<td colspan="2">{snapshot?.current_stage ?? '-'}</td>
+					<td colspan="3">
+						<label class="all-toggle">
+							<input
+								type="checkbox"
+								checked={isAngleCalibrationSelected}
+								onchange={didChangeAngleCalibration}
+								disabled={isAngleCalibrationDisabled}
+							/>
+							<span>angle calibration</span>
+						</label>
+					</td>
 				</tr>
 				<tr>
-					<td>scouted shelves</td>
-					<td>{snapshot?.front_scouted_shelf_count ?? 0}</td>
-					<td>{snapshot?.back_scouted_shelf_count ?? 0}</td>
+					<td colspan="3">
+						<label class="all-toggle">
+							<input
+								type="checkbox"
+								checked={isExtensionCalibrationSelected}
+								onchange={didChangeExtensionCalibration}
+								disabled={isExtensionCalibrationDisabled}
+							/>
+							<span>extension calibration</span>
+						</label>
+					</td>
 				</tr>
 				<tr>
-					<td>candidate cells</td>
-					<td>{snapshot?.front_candidate_count ?? 0}</td>
-					<td>{snapshot?.back_candidate_count ?? 0}</td>
+					<td colspan="3">
+						<div class="actions">
+							<label class="all-toggle">
+								<input
+									type="checkbox"
+									checked={isGripperCalibrationSelected}
+									onchange={didChangeGripperCalibration}
+									disabled={isGripperCalibrationDisabled}
+								/>
+								<span>gripper open position</span>
+							</label>
+							<button
+								type="button"
+								onclick={didClickMeasureGripper}
+								disabled={isMeasuringGripper === true || isSelectionDisabled === true}
+							>
+								measure now
+							</button>
+						</div>
+					</td>
 				</tr>
 				<tr>
-					<td>confirmed cells</td>
-					<td>{snapshot?.front_detected_cell_count ?? 0}</td>
-					<td>{snapshot?.back_detected_cell_count ?? 0}</td>
+					<td colspan="3">
+						<label class="all-toggle">
+							<input
+								type="checkbox"
+								checked={isZStallEnabled}
+								onchange={didChangeZStall}
+								disabled={isSavingZStall === true || isSelectionDisabled === true}
+							/>
+							<span>grip edge z</span>
+						</label>
+					</td>
 				</tr>
 				<tr>
-					<td>rotation angle</td>
-					<td>{getRotationValue('front_module')}</td>
-					<td>{getRotationValue('back_module')}</td>
-				</tr>
-				<tr>
-					<td>stage extension</td>
-					<td>{getStageExtensionValue('front_module')}</td>
-					<td>{getStageExtensionValue('back_module')}</td>
+					<td colspan="3">
+						<div class="actions">
+							<button type="button" onclick={didClickStart} disabled={isStartDisabled}>
+								{startButtonLabel}
+							</button>
+							<button
+								type="button"
+								onclick={didClickAbort}
+								disabled={isAborting === true || isSessionActive === false}
+							>
+								abort
+							</button>
+						</div>
+					</td>
 				</tr>
 			</tbody>
 		</table>
-	{/if}
+	</div>
 
 	{#if snapshot && snapshot.session_id !== null}
-		<table style="margin-top: 1.5em">
-			<thead>
-				<tr>
-					<th colspan="2">stage detail</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each getStageDetailRows() as row}
+		<div class="scroll-x result-table">
+			<table>
+				<thead>
 					<tr>
-						<td>{row.key}</td>
-						<td>{row.value}</td>
+						<th>auto results</th>
+						<th>{sideLabel(0, vocabulary).toLowerCase()} / x</th>
+						<th>{sideLabel(1, vocabulary).toLowerCase()} / y</th>
 					</tr>
-				{:else}
+				</thead>
+				<tbody>
 					<tr>
-						<td colspan="2">-</td>
+						<td>state</td>
+						<td colspan="2">{snapshot?.state ?? 'idle'}</td>
 					</tr>
-				{/each}
-			</tbody>
-		</table>
+					<tr>
+						<td>requested scope</td>
+						<td colspan="2">{getSnapshotRequestedScope(snapshot).mode}</td>
+					</tr>
+					<tr>
+						<td>current stage</td>
+						<td colspan="2">{snapshot?.current_stage ?? '-'}</td>
+					</tr>
+					<tr>
+						<td>scouted shelves</td>
+						<td>{snapshot?.front_scouted_shelf_count ?? 0}</td>
+						<td>{snapshot?.back_scouted_shelf_count ?? 0}</td>
+					</tr>
+					<tr>
+						<td>candidate cells</td>
+						<td>{snapshot?.front_candidate_count ?? 0}</td>
+						<td>{snapshot?.back_candidate_count ?? 0}</td>
+					</tr>
+					<tr>
+						<td>confirmed cells</td>
+						<td>{snapshot?.front_detected_cell_count ?? 0}</td>
+						<td>{snapshot?.back_detected_cell_count ?? 0}</td>
+					</tr>
+					<tr>
+						<td>rotation angle</td>
+						<td>{getRotationValue('front_module')}</td>
+						<td>{getRotationValue('back_module')}</td>
+					</tr>
+					<tr>
+						<td>stage extension</td>
+						<td>{getStageExtensionValue('front_module')}</td>
+						<td>{getStageExtensionValue('back_module')}</td>
+					</tr>
+					{#if gripperResult !== null}
+						<tr>
+							<td>gripper open position</td>
+							<td colspan="2">{formatGripperResult(gripperResult)}</td>
+						</tr>
+					{/if}
+				</tbody>
+			</table>
+		</div>
 	{/if}
 
 	{#if message !== ''}
@@ -835,6 +912,10 @@
 {/if}
 
 <style>
+	.result-table {
+		margin-top: 1.5em;
+	}
+
 	.actions {
 		display: flex;
 		gap: 1rem;

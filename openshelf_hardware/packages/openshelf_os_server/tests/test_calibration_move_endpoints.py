@@ -1,8 +1,9 @@
-import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from fastapi import HTTPException
+from hardware.servo import GripState
 
 from openshelf_os_server.routers import calibration
 
@@ -39,8 +40,10 @@ def _mock_worker(stage_position: float):
 	return SimpleNamespace(
 		_robot=robot,
 		needs_home=lambda: False,
+		needs_reset=lambda: False,
 		needs_home_reason=lambda: None,
 		needs_home_axes=lambda: [],
+		refresh_tray_on_tool=AsyncMock(return_value=False),
 	)
 
 
@@ -61,7 +64,7 @@ async def test_move_to_position_clamps_out_of_range_targets(client) -> None:
 	assert response.json()["z_offset"] == pytest.approx(9.5)
 	warnings = response.json()["warnings"]
 	assert warnings is not None
-	assert any("X axis limit reached" in w for w in warnings)
+	assert any("X axis range" in w for w in warnings)
 	assert len(response.json()["warnings"]) == 3
 
 	move_coordinate = worker._robot._tool.move.await_args.args[0]
@@ -71,56 +74,86 @@ async def test_move_to_position_clamps_out_of_range_targets(client) -> None:
 	assert move_coordinate.z_offset == pytest.approx(9.5)
 
 
-def _mock_iobox_worker():
-	z_motor = SimpleNamespace(
-		get_position=AsyncMock(return_value=10.123456),
-		move_to_position=AsyncMock(),
-		_params=SimpleNamespace(lim=170.0, lower_lim=0.0),
+def _mock_multi_item_worker(grip_state):
+	operations = Mock()
+	stage = SimpleNamespace(move_to_position=AsyncMock(), _params=SimpleNamespace(lim=170.0, lower_lim=0.0))
+	z_axis = SimpleNamespace(move_to_position=AsyncMock(), _params=SimpleNamespace(lim=170.0, lower_lim=0.0))
+	gripper = SimpleNamespace(
+		open=AsyncMock(return_value=grip_state),
+		close=AsyncMock(),
+		read_state=AsyncMock(return_value=grip_state),
 	)
 	tool = SimpleNamespace(
 		get_param=AsyncMock(side_effect=lambda name: {"Z_MOVE_RPM": 800, "Z_MOVE_ACCEL": 1200}.get(name)),
-		_mx=SimpleNamespace(_params=SimpleNamespace(lim=1000.0, lower_lim=0.0)),
-		_my=SimpleNamespace(_params=SimpleNamespace(lim=1500.0, lower_lim=0.0)),
-		_mg=z_motor,
-		_ms=SimpleNamespace(move_to_position=AsyncMock(), _params=SimpleNamespace(lim=170.0, lower_lim=0.0)),
+		move=AsyncMock(),
+		rotate_to_position=AsyncMock(),
+		retract=AsyncMock(),
+		retract_empty=AsyncMock(),
+		release=AsyncMock(),
+		is_grip_detection_enabled=True,
+		_mg=z_axis,
+		_ms=stage,
+		_gs=gripper,
 	)
-	robot = SimpleNamespace(_tool=tool)
-
-	return SimpleNamespace(
-		_robot=robot,
+	io = SimpleNamespace(open_door=AsyncMock())
+	for name, method in (
+		("move", tool.move),
+		("stage", stage.move_to_position),
+		("z", z_axis.move_to_position),
+		("grip", gripper.open),
+		("release", tool.release),
+		("retract", tool.retract),
+		("retract_empty", tool.retract_empty),
+	):
+		operations.attach_mock(method, name)
+	worker = SimpleNamespace(
+		_robot=SimpleNamespace(_tool=tool, _io=io),
 		needs_home=lambda: False,
+		needs_reset=lambda: False,
 		needs_home_reason=lambda: None,
 		needs_home_axes=lambda: [],
+		set_needs_home=lambda *args, **kwargs: None,
+		get_status_snapshot=AsyncMock(),
+		refresh_tray_on_tool=AsyncMock(return_value=False),
+	)
+	return worker, operations
+
+
+def _multi_item_position():
+	return calibration.IOBoxPositionResponse(
+		pickup_low_x=100.0,
+		pickup_low_y=200.0,
+		pickup_high_x=110.0,
+		pickup_high_y=210.0,
+		z_extension=10.0,
+		stage_extension=20.0,
+		multi_item_x=120.0,
+		multi_item_y=220.0,
+		multi_item_z_extension=30.0,
+		multi_item_stage_extension=40.0,
 	)
 
 
 @pytest.mark.anyio
-async def test_iobox_jog_initializes_cached_calibration_without_deadlock(client) -> None:
-	worker = _mock_iobox_worker()
-	calibration._iobox_current = None
-	params = SimpleNamespace(
-		PICKUP_POSITION_L=[100.0, 200.0],
-		PICKUP_POSITION_H=[110.0, 210.0],
-		Z_EXTENSION_IO=10.0,
-		STAGE_EXTENSION_IO_BOX=20.0,
-	)
-	config = SimpleNamespace(robot=SimpleNamespace(tool=SimpleNamespace(parameters=params)))
+async def test_iobox_multi_item_test_stops_when_no_tray_is_gripped(monkeypatch) -> None:
+	worker, operations = _mock_multi_item_worker(GripState(0xF1, 0, 0, 0))
+	retract_call_count = 0
 
-	try:
-		with patch("openshelf_os_server.routers.calibration.get_root_config", return_value=config):
-			with patch("openshelf_os_server.routers.calibration.get_robot_worker", AsyncMock(return_value=worker)):
-				with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", AsyncMock()):
-					response = await asyncio.wait_for(
-						client.post(
-							"/api/calibration/iobox/jog",
-							json={"position": "low", "axis": "z", "delta": 0.5},
-						),
-						timeout=1.0,
-					)
+	async def did_retract(*args, **kwargs):
+		nonlocal retract_call_count
+		retract_call_count += 1
 
-		assert response.status_code == 200
-		assert response.json()["z_extension"] == pytest.approx(10.5)
-	finally:
-		calibration._iobox_current = None
+	worker._robot._tool.retract = AsyncMock(side_effect=did_retract)
+	monkeypatch.setattr(calibration, "_iobox_current", _multi_item_position())
+	monkeypatch.setattr(calibration, "ensure_laser_auto_calibration_not_running", AsyncMock())
+	monkeypatch.setattr(calibration, "get_robot_worker", AsyncMock(return_value=worker))
+	monkeypatch.setattr(calibration, "_clear_motors_for_move", AsyncMock())
 
+	with pytest.raises(HTTPException) as raised:
+		await calibration.test_iobox_multi_item_cycle()
 
+	assert raised.value.status_code == 409
+	assert raised.value.detail["needs_home"] is True
+	# Only the safety retract the route runs before it rotates; the transfer itself has to
+	# stop at the failed tray grip without retracting onto the tray.
+	assert retract_call_count == 1

@@ -27,10 +27,6 @@ class CameraConnectionError(CameraError):
     pass
 
 
-class CameraNotPresentError(CameraConnectionError):
-    """Optional camera hardware was not detected."""
-    pass
-
 class CameraConfigError(CameraError):
     """Camera configuration error."""
     pass
@@ -94,12 +90,4 @@ class MotorLimitError(MotorError):
 
 class MotorConfigError(MotorError):
     """Error in motor configuration."""
-    pass
-
-class PrinterError(HardwareError):
-    """Base class for printer-related errors."""
-    pass
-
-class PrinterConnectionError(PrinterError):
-    """Printer connection or initialization failed."""
     pass

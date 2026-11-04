@@ -32,9 +32,6 @@ class _FtdiI2CBus:
         self._i2c = raw_i2c
         self._lock = threading.Lock()
 
-    def try_lock(self) -> bool:
-        return self._lock.acquire(blocking=False)
-
     def unlock(self) -> None:
         if self._lock.locked() is True:
             self._lock.release()

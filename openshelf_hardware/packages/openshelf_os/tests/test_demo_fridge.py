@@ -48,6 +48,9 @@ def config_dict() -> dict[str, object]:
                     "IDLE_POSITION": [0, 0],
                     "PICKUP_POSITION_L": [0, 0],
                     "PICKUP_POSITION_H": [0, 0],
+                    "PICKUP_POSITION_MULTI_ITEM": [0, 0],
+                    "STAGE_EXTENSION_IO_BOX_MULTI_ITEM": 0,
+                    "Z_EXTENSION_IO_MULTI_ITEM": 0,
                     "SCAN_POSITION": [0, 0],
                     "STAGE_EXTENSION_IO_BOX": 0,
                     "STAGE_NUDGE": 0,
@@ -565,7 +568,7 @@ async def test_fridge_access_opens_before_approach_and_closes_after_retraction()
     fridge.open_for_cell.side_effect = lambda *_args, **_kwargs: events.append("open")
     fridge.close_door.side_effect = lambda: events.append("close")
 
-    await robot._access_storage_cell("pick", AxisCoordinate(10, 20, 1), location)
+    await robot._access_storage_cell("pick", AxisCoordinate(10, 20, 1), location, loaded=False)
 
     assert events == ["approach", "open", "extend:95", "retract", "close"]
     fridge.open_for_cell.assert_awaited_once_with(location, cell_x_mm=10)
@@ -582,7 +585,7 @@ async def test_fridge_access_closes_after_failure_only_when_tool_is_retracted() 
     tool.pick.side_effect = failed_pick
 
     with pytest.raises(RuntimeError, match="transfer failed"):
-        await robot._access_storage_cell("pick", AxisCoordinate(10, 20, 1), location)
+        await robot._access_storage_cell("pick", AxisCoordinate(10, 20, 1), location, loaded=False)
 
     fridge.close_door.assert_awaited_once()
 
@@ -598,7 +601,7 @@ async def test_fridge_access_leaves_door_open_when_retraction_is_unknown() -> No
     tool.pick.side_effect = failed_pick
 
     with pytest.raises(RuntimeError, match="transfer failed"):
-        await robot._access_storage_cell("pick", AxisCoordinate(10, 20, 1), location)
+        await robot._access_storage_cell("pick", AxisCoordinate(10, 20, 1), location, loaded=False)
 
     fridge.close_door.assert_not_awaited()
 
@@ -615,7 +618,7 @@ async def test_tool_pick_runs_access_callbacks_around_extension_and_retraction()
     tool.move = AsyncMock(side_effect=lambda _coord: events.append("move"))
     tool.rotate_to_position = AsyncMock(side_effect=lambda _side: events.append("rotate"))
     tool.extend_empty = AsyncMock(side_effect=lambda *_args, **_kwargs: events.append("extend"))
-    tool.retract = AsyncMock(side_effect=lambda: events.append("retract"))
+    tool.retract = AsyncMock(side_effect=lambda **_kwargs: events.append("retract"))
     tool._handle_fault = AsyncMock()
 
     async def before_approach() -> None:
@@ -651,9 +654,7 @@ async def test_tool_pick_runs_access_callbacks_around_extension_and_retraction()
 async def test_tool_place_opens_door_before_rotation_and_extension() -> None:
     events: list[str] = []
     tool = Tool.__new__(Tool)
-    tool._gs = SimpleNamespace(
-        close=AsyncMock(side_effect=lambda: events.append("grip")),
-    )
+    tool.release = AsyncMock(side_effect=lambda _phase: events.append("release"))
     tool.move = AsyncMock(side_effect=lambda _coord: events.append("move"))
     tool.rotate_to_position = AsyncMock(side_effect=lambda _side: events.append("rotate"))
     tool.extend = AsyncMock(side_effect=lambda *_args, **_kwargs: events.append("extend"))
@@ -678,7 +679,7 @@ async def test_tool_place_opens_door_before_rotation_and_extension() -> None:
         "open_door",
         "rotate",
         "extend",
-        "grip",
+        "release",
         "retract",
         "close_door",
     ]
@@ -726,6 +727,7 @@ async def test_tool_access_callbacks_preserve_fridge_safety_rejections(
     tool.extend = AsyncMock()
     tool.retract = AsyncMock()
     tool.retract_empty = AsyncMock()
+    tool.release = AsyncMock()
     tool._handle_fault = AsyncMock()
 
     async def reject_door_motion() -> None:
@@ -830,6 +832,7 @@ async def test_io_transfer_accesses_fridge_for_pick_and_carrier_return() -> None
         extend_IO=AsyncMock(),
         retract=AsyncMock(),
         clear_alarms=AsyncMock(),
+        is_grip_detection_enabled=False,
     )
     robot = Robot.__new__(Robot)
     robot._tool = tool
@@ -859,7 +862,7 @@ async def test_io_transfer_accesses_fridge_for_pick_and_carrier_return() -> None
 async def test_home_command_homes_fridge_after_tool_and_io_door() -> None:
     events: list[str] = []
     robot = Robot.__new__(Robot)
-    robot._tool = SimpleNamespace(home=AsyncMock(side_effect=lambda: events.append("tool")))
+    robot._tool = SimpleNamespace(home=AsyncMock(side_effect=lambda **_kwargs: events.append("tool")))
     robot._io = SimpleNamespace(home_door=AsyncMock(side_effect=lambda: events.append("io_door")))
     robot._fridge = SimpleNamespace(
         home_door=AsyncMock(side_effect=lambda: events.append("fridge_door"))
@@ -918,13 +921,15 @@ async def test_startup_configures_fridge_last() -> None:
     robot._emit_init = lambda *_args, **_kwargs: None
     robot._get_motor_by_name = lambda _name: None
     robot._tool = SimpleNamespace(
-        configure=AsyncMock(side_effect=lambda **_kwargs: events.append("tool"))
+        configure=AsyncMock(side_effect=lambda **_kwargs: events.append("tool")),
+        is_tray_held=False,
     )
     robot._io = SimpleNamespace(
         configure=AsyncMock(side_effect=lambda **_kwargs: events.append("io_door"))
     )
     robot._cabinet = SimpleNamespace(
-        configure=AsyncMock(side_effect=lambda: events.append("cabinet"))
+        configure=AsyncMock(side_effect=lambda: events.append("cabinet")),
+        is_configured=lambda: False,
     )
     robot._fridge = SimpleNamespace(
         configure=AsyncMock(side_effect=lambda **_kwargs: events.append("fridge_door"))

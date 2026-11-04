@@ -10,14 +10,20 @@
 		controlDoor,
 		moveMotor,
 		probeMotors,
+		getMotorLimitSwitches,
+		getMotorLimitSwitch,
 		apiFetch,
 		type MotorList,
+		type MotorLimitSwitchState,
 		type MotorInfo,
 		type GripperState,
 		type DoorAction
 	} from '$lib/api';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
+	import { orderSectionMoves, type MotorMove } from '$lib/motor-order';
+	import { robotStatus } from '$lib/stores';
+	import { createToastSource, postToast } from '$lib/toasts';
 
 	let motors: MotorList | null = null;
 	let isLoading = true;
@@ -36,7 +42,9 @@
 	let isProbing = false;
 	let sectionAction: string | null = null;
 	let motorPositions: Record<string, string> = {};
-	let pollError = '';
+	let limitSwitches: Record<string, MotorLimitSwitchState> = {};
+	// The poll repeats every second, so a failing probe is one condition, not a toast per tick.
+	const pollState = createToastSource('error');
 
 	const POSITION_POLL_INTERVAL_MS = 1000;
 
@@ -50,12 +58,32 @@
 		return 'mm';
 	}
 
+	function motorLabel(motorName: string): string {
+		return motorName.replace(/_/g, ' ');
+	}
+
+	function sectionLabel(sectionName: string): string {
+		return sectionName === 'io' ? 'IO' : sectionName;
+	}
+
 	function positionLabelForMotor(motorName: string, position: string | undefined): string {
 		if (position === undefined) {
 			return '-';
 		}
 
 		return `${position} ${unitForMotor(motorName)}`;
+	}
+
+	function minLimitLabel(state: MotorLimitSwitchState | undefined): string {
+		if (state === undefined || state.enabled === false) {
+			return '-';
+		}
+
+		if (state.min_engaged === null) {
+			return '?';
+		}
+
+		return state.min_engaged === true ? 'H' : 'L';
 	}
 
 	function gantryMotors(): MotorInfo[] {
@@ -111,7 +139,7 @@
 			motors = await getMotors();
 			error = '';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to load motors';
+			error = err instanceof Error ? err.message : 'Failed to load motors.';
 		}
 	}
 
@@ -131,7 +159,7 @@
 			if (result.busy === true) {
 				return;
 			}
-			pollError = '';
+			pollState.report('');
 
 			const nextPositions = { ...motorPositions };
 			const nextTargets = { ...moveTargets };
@@ -150,9 +178,50 @@
 			motorPositions = nextPositions;
 			moveTargets = nextTargets;
 		} catch (err) {
-			pollError = err instanceof Error ? err.message : 'failed to probe motors';
+			pollState.report(err instanceof Error ? err.message : 'The motor positions could not be read.');
 		} finally {
 			isProbing = false;
+		}
+	}
+
+	async function fetchLimitSwitches(): Promise<void> {
+		if (browser === true && document.visibilityState !== 'visible') {
+			return;
+		}
+
+		try {
+			const result = await getMotorLimitSwitches();
+			const next: Record<string, MotorLimitSwitchState> = {};
+
+			for (const state of result.results) {
+				next[state.motor_name] = state;
+			}
+
+			limitSwitches = next;
+		} catch {
+			limitSwitches = {};
+		}
+	}
+
+	// A motor without an enabled min limit switch has nothing to check.
+	async function expectMinLimit(motorName: string, isHomed: boolean): Promise<void> {
+		const state = await getMotorLimitSwitch(motorName);
+		limitSwitches = { ...limitSwitches, [motorName]: state };
+
+		if (state.enabled === false) {
+			return;
+		}
+
+		if (state.min_engaged === null) {
+			throw new Error(`The ${motorLabel(motorName)} min limit switch could not be read.`);
+		}
+
+		if (state.min_engaged !== isHomed) {
+			const where = isHomed === true ? 'after homing' : 'away from home';
+			const expected = isHomed === true ? 'H' : 'L';
+			throw new Error(
+				`The ${motorLabel(motorName)} min limit switch reads ${minLimitLabel(state)} ${where}, expected ${expected}.`
+			);
 		}
 	}
 
@@ -166,12 +235,12 @@
 			const result = await simulateMotorCrash(motorName);
 
 			if (result.success === true) {
-				message = `crash simulated for ${motorName}`;
+				message = `Crash simulated for ${motorLabel(motorName)}.`;
 			} else {
-				error = `failed to simulate crash for ${motorName}`;
+				error = `Failed to simulate crash for ${motorLabel(motorName)}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `crash failed for ${motorName}`;
+			error = err instanceof Error ? err.message : `Crash failed for ${motorLabel(motorName)}.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -188,12 +257,12 @@
 			const result = await clearMotorAlarm(motorName);
 
 			if (result.success === true) {
-				message = `alarm cleared for ${motorName}`;
+				message = `Alarm cleared for ${motorLabel(motorName)}.`;
 			} else {
-				error = `failed to clear alarm for ${motorName}`;
+				error = `Failed to clear alarm for ${motorLabel(motorName)}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `clear alarm failed for ${motorName}`;
+			error = err instanceof Error ? err.message : `Clear alarm failed for ${motorLabel(motorName)}.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -210,12 +279,12 @@
 			const result = await homeMotor(motorName);
 
 			if (result.success === true) {
-				message = `${motorName} homed`;
+				message = `Homed ${motorLabel(motorName)}.`;
 			} else {
-				error = `failed to home ${motorName}`;
+				error = `Failed to home ${motorLabel(motorName)}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `home failed for ${motorName}`;
+			error = err instanceof Error ? err.message : `Home failed for ${motorLabel(motorName)}.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -229,9 +298,9 @@
 
 		try {
 			await controlGripper(state);
-			message = `gripper ${state}`;
+			message = `Gripper ${state}.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : `gripper ${state} failed`;
+			error = err instanceof Error ? err.message : `Gripper ${state} failed.`;
 		} finally {
 			gripperAction = null;
 		}
@@ -244,9 +313,9 @@
 
 		try {
 			await controlDoor(action);
-			message = `door ${action} complete`;
+			message = `Door ${action} complete.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : `door ${action} failed`;
+			error = err instanceof Error ? err.message : `Door ${action} failed.`;
 		} finally {
 			doorAction = null;
 		}
@@ -257,7 +326,7 @@
 
 		try {
 			await fetchMotors();
-			await fetchPositions();
+			await Promise.all([fetchPositions(), fetchLimitSwitches()]);
 		} finally {
 			isLoading = false;
 		}
@@ -267,13 +336,15 @@
 		testingMotor = motorName;
 
 		try {
-			const testDistance = motorName === 'rotate' ? 1 : 10;
-
-			await moveMotor(motorName, testDistance);
+			// Far enough to release the min switch; on rotate it stays engaged past 3 deg.
+			await moveMotor(motorName, 10);
+			await expectMinLimit(motorName, false);
 			await homeMotor(motorName);
+			await expectMinLimit(motorName, true);
 			testResults[motorName] = 'ok';
-		} catch {
+		} catch (err) {
 			testResults[motorName] = 'err';
+			postToast('error', err instanceof Error ? err.message : `The ${motorLabel(motorName)} test failed.`);
 		}
 	}
 
@@ -303,7 +374,7 @@
 
 		try {
 			await testSingleMotor(motorName);
-			message = `${motorName} test complete`;
+			message = `The ${motorLabel(motorName)} test is complete.`;
 		} finally {
 			testingMotor = null;
 			isTesting = false;
@@ -318,7 +389,7 @@
 
 		try {
 			await testGripper();
-			message = 'gripper test complete';
+			message = 'Gripper test complete.';
 		} finally {
 			testingMotor = null;
 			isTesting = false;
@@ -345,7 +416,7 @@
 
 		testingMotor = null;
 		isTesting = false;
-		message = 'test complete';
+		message = 'Test complete.';
 	}
 
 	async function didClickHomeAll(): Promise<void> {
@@ -359,9 +430,9 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ command: 'home' })
 			});
-			message = 'home command sent';
+			message = 'Home command sent.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'home command failed';
+			error = err instanceof Error ? err.message : 'Home command failed.';
 		} finally {
 			isHomingAll = false;
 		}
@@ -382,17 +453,39 @@
 				const result = await homeMotor(motor.name);
 
 				if (result.success !== true) {
-					error = `failed to home ${motor.name}`;
+					error = `Failed to home ${motorLabel(motor.name)}.`;
 					return;
 				}
 			}
 
-			message = `${sectionName} motors homed`;
+			message = `Homed the ${sectionLabel(sectionName)} motors.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : `${sectionName} home failed`;
+			error = err instanceof Error ? err.message : `Homing the ${sectionLabel(sectionName)} motors failed.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
+			sectionAction = null;
+		}
+	}
+
+	// Recover opens the fingers and withdraws the tool without homing, then homes only the axes
+	// the robot reports as having lost position.
+	async function didClickRecoverTool(): Promise<void> {
+		sectionAction = 'tool:recover';
+		error = '';
+		message = '';
+		const axes = $robotStatus?.needs_home_axes ?? [];
+
+		try {
+			await apiFetch('/robot/commands', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(axes.length > 0 ? { command: 'recover', axes } : { command: 'recover' })
+			});
+			message = 'Recover command sent.';
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Recover command failed.';
+		} finally {
 			sectionAction = null;
 		}
 	}
@@ -401,24 +494,37 @@
 		sectionName: string,
 		sectionMotors: MotorInfo[]
 	): Promise<void> {
-		const targets: { motor: MotorInfo; positionMm: number }[] = [];
+		const targets: MotorMove[] = [];
 
 		for (const motor of sectionMotors) {
 			const targetValue = moveTargets[motor.name];
 
 			if (targetValue === undefined || targetValue === '') {
-				error = `enter a position for ${motor.name}`;
+				error = `Enter a position for ${motorLabel(motor.name)}.`;
 				return;
 			}
 
 			const positionMm = parseFloat(targetValue);
 
 			if (Number.isNaN(positionMm) === true) {
-				error = `invalid position value for ${motor.name}`;
+				error = `Invalid position value for ${motorLabel(motor.name)}.`;
 				return;
 			}
 
-			targets.push({ motor, positionMm });
+			targets.push({ name: motor.name, positionMm });
+		}
+
+		const currentMm: Record<string, number | undefined> = {};
+
+		for (const [name, position] of Object.entries(motorPositions)) {
+			currentMm[name] = parseFloat(position);
+		}
+
+		const ordered = orderSectionMoves(targets, currentMm);
+
+		if ('unknown' in ordered) {
+			error = `The ${motorLabel(ordered.unknown)} position is unknown. Wait for the position readout.`;
+			return;
 		}
 
 		sectionAction = `${sectionName}:move`;
@@ -426,19 +532,19 @@
 		message = '';
 
 		try {
-			for (const target of targets) {
-				movingMotor = target.motor.name;
-				const result = await moveMotor(target.motor.name, target.positionMm);
+			for (const target of ordered) {
+				movingMotor = target.name;
+				const result = await moveMotor(target.name, target.positionMm);
 
 				if (result.success !== true) {
-					error = `failed to move ${target.motor.name}`;
+					error = `Failed to move ${motorLabel(target.name)}.`;
 					return;
 				}
 			}
 
-			message = `${sectionName} motors moved`;
+			message = `Moved the ${sectionLabel(sectionName)} motors.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : `${sectionName} move failed`;
+			error = err instanceof Error ? err.message : `Moving the ${sectionLabel(sectionName)} motors failed.`;
 		} finally {
 			movingMotor = null;
 			sectionAction = null;
@@ -449,14 +555,14 @@
 		const targetValue = moveTargets[motorName];
 
 		if (targetValue === undefined || targetValue === '') {
-			error = `enter a position for ${motorName}`;
+			error = `Enter a position for ${motorLabel(motorName)}.`;
 			return;
 		}
 
 		const positionMm = parseFloat(targetValue);
 
 		if (Number.isNaN(positionMm) === true) {
-			error = `invalid position value for ${motorName}`;
+			error = `Invalid position value for ${motorLabel(motorName)}.`;
 			return;
 		}
 
@@ -468,12 +574,12 @@
 			const result = await moveMotor(motorName, positionMm);
 
 			if (result.success === true) {
-				message = `${motorName} moved to ${positionMm}${unitForMotor(motorName)}`;
+				message = `Moved ${motorLabel(motorName)} to ${positionMm} ${unitForMotor(motorName)}.`;
 			} else {
-				error = `failed to move ${motorName}`;
+				error = `Failed to move ${motorLabel(motorName)}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `move failed for ${motorName}`;
+			error = err instanceof Error ? err.message : `Move failed for ${motorLabel(motorName)}.`;
 		} finally {
 			movingMotor = null;
 		}
@@ -494,11 +600,13 @@
 		const didChangeVisibility = (): void => {
 			if (document.visibilityState === 'visible') {
 				void fetchPositions();
+				void fetchLimitSwitches();
 			}
 		};
 
 		const interval = setInterval(() => {
 			void fetchPositions();
+			void fetchLimitSwitches();
 		}, POSITION_POLL_INTERVAL_MS);
 
 		document.addEventListener('visibilitychange', didChangeVisibility);
@@ -506,9 +614,14 @@
 		return () => {
 			clearInterval(interval);
 			document.removeEventListener('visibilitychange', didChangeVisibility);
+			pollState.release();
 		};
 	});
 </script>
+
+<svelte:head>
+	<title>Motors • Openshelf</title>
+</svelte:head>
 
 {#if isLoading === true}
 	<p>loading motors...</p>
@@ -536,347 +649,86 @@
 		</button>
 	</div>
 
-	<table class="motor-table">
-		<thead>
-			<tr>
-				<th colspan="6">
-					<div class="section-heading">
-						<span>gantry motors</span>
-						<span>
-							<button
-								type="button"
-								on:click={() => didClickHomeSection('gantry', gantryMotors())}
-								disabled={isActionDisabled()}>HOME</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickMoveSection('gantry', gantryMotors())}
-								disabled={isActionDisabled()}>MOVE</button
-							>
-						</span>
-					</div>
-				</th>
-			</tr>
-			<tr>
-				<th>id</th>
-				<th class="motor-name">motor</th>
-				<th>status</th>
-				<th class="position-column">POSITION</th>
-				<th>move to</th>
-				<th>actions</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each gantryMotors() as motor (motor.name)}
+	<div class="scroll-x motor-table-scroll">
+		<table class="motor-table">
+			<thead>
 				<tr>
-					<td class="motor-id">{motor.motor_id}</td>
-					<td class="motor-name">{motor.name}</td>
-					<td>
-						{#if testingMotor === motor.name}
-							<span class="status-testing">TEST</span>
-						{:else if testResults[motor.name] === 'ok'}
-							<span class="status-ok">OK</span>
-						{:else if testResults[motor.name] === 'err'}
-							<span class="status-error">ERR</span>
-						{:else}
-							<span class="status-unknown">-</span>
-						{/if}
-					</td>
-					<td class="position-column"
-						>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
-					>
-					<td>
-						<input
-							type="number"
-							step="0.1"
-							placeholder={unitForMotor(motor.name)}
-							value={moveTargets[motor.name] ?? ''}
-							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						/>
-						<button
-							type="button"
-							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						>
-							go
-						</button>
-					</td>
-					<td>
-						<button
-							type="button"
-							on:click={() => didClickTestMotor(motor.name)}
-							disabled={isActionDisabled()}
-						>
-							TEST
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickHome(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								doorAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							home
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickCrash(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								doorAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							crash
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickClear(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								doorAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							clear
-						</button>
-					</td>
+					<th colspan="7">
+						<div class="section-heading">
+							<span>gantry motors</span>
+							<span>
+								<button
+									type="button"
+									on:click={() => didClickHomeSection('gantry', gantryMotors())}
+									disabled={isActionDisabled()}>HOME</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickMoveSection('gantry', gantryMotors())}
+									disabled={isActionDisabled()}>MOVE</button
+								>
+							</span>
+						</div>
+					</th>
 				</tr>
-			{/each}
-		</tbody>
-	</table>
-
-	<table class="motor-table">
-		<thead>
-			<tr>
-				<th colspan="6">
-					<div class="section-heading">
-						<span>tool motors</span>
-						<span>
-							<button
-								type="button"
-								on:click={() => didClickHomeSection('tool', toolMotors())}
-								disabled={isActionDisabled()}>HOME</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickMoveSection('tool', toolMotors())}
-								disabled={isActionDisabled()}>MOVE</button
-							>
-						</span>
-					</div>
-				</th>
-			</tr>
-			<tr>
-				<th>id</th>
-				<th class="motor-name">motor</th>
-				<th>status</th>
-				<th class="position-column">POSITION</th>
-				<th>move to</th>
-				<th>actions</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each toolMotors() as motor (motor.name)}
 				<tr>
-					<td class="motor-id">{motor.motor_id}</td>
-					<td class="motor-name">{motor.name}</td>
-					<td>
-						{#if testingMotor === motor.name}
-							<span class="status-testing">TEST</span>
-						{:else if testResults[motor.name] === 'ok'}
-							<span class="status-ok">OK</span>
-						{:else if testResults[motor.name] === 'err'}
-							<span class="status-error">ERR</span>
-						{:else}
-							<span class="status-unknown">-</span>
-						{/if}
-					</td>
-					<td class="position-column"
-						>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
-					>
-					<td>
-						<input
-							type="number"
-							step="0.1"
-							placeholder={unitForMotor(motor.name)}
-							value={moveTargets[motor.name] ?? ''}
-							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						/>
-						<button
-							type="button"
-							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						>
-							go
-						</button>
-					</td>
-					<td>
-						<button
-							type="button"
-							on:click={() => didClickTestMotor(motor.name)}
-							disabled={isActionDisabled()}
-						>
-							TEST
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickHome(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							home
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickCrash(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							crash
-						</button>
-						<button
-							type="button"
-							on:click={() => didClickClear(motor.name)}
-							disabled={activeMotor !== null ||
-								gripperAction !== null ||
-								movingMotor !== null ||
-								isTesting === true}
-						>
-							clear
-						</button>
-					</td>
+					<th>id</th>
+					<th>motor</th>
+					<th>status</th>
+					<th>min</th>
+					<th>POSITION</th>
+					<th>move to</th>
+					<th>actions</th>
 				</tr>
-			{/each}
-			<tr>
-				<td class="motor-id">9</td>
-				<td class="motor-name">gripper</td>
-				<td>
-					{#if testingMotor === 'gripper'}
-						<span class="status-testing">TEST</span>
-					{:else if testResults['gripper'] === 'ok'}
-						<span class="status-ok">OK</span>
-					{:else if testResults['gripper'] === 'err'}
-						<span class="status-error">ERR</span>
-					{:else}
-						<span class="status-unknown">-</span>
-					{/if}
-				</td>
-				<td class="position-column">-</td>
-				<td>-</td>
-				<td>
-					<button type="button" on:click={didClickTestGripper} disabled={isActionDisabled()}>
-						TEST
-					</button>
-					<button
-						type="button"
-						on:click={() => didClickGripper('grip')}
-						disabled={gripperAction !== null ||
-							activeMotor !== null ||
-							movingMotor !== null ||
-							isTesting === true}
-					>
-						grip
-					</button>
-					<button
-						type="button"
-						on:click={() => didClickGripper('release')}
-						disabled={gripperAction !== null ||
-							activeMotor !== null ||
-							movingMotor !== null ||
-							isTesting === true}
-					>
-						release
-					</button>
-				</td>
-			</tr>
-		</tbody>
-	</table>
-
-	<table class="motor-table">
-		<thead>
-			<tr>
-				<th colspan="6">
-					<div class="section-heading">
-						<span>io motors</span>
-						<span>
+			</thead>
+			<tbody>
+				{#each gantryMotors() as motor (motor.name)}
+					<tr>
+						<td class="motor-id">{motor.motor_id}</td>
+						<td>{motor.name}</td>
+						<td>
+							{#if testingMotor === motor.name}
+								<span class="status-testing">TEST</span>
+							{:else if testResults[motor.name] === 'ok'}
+								<span class="status-ok">OK</span>
+							{:else if testResults[motor.name] === 'err'}
+								<span class="status-error">ERR</span>
+							{:else}
+								<span class="status-unknown">-</span>
+							{/if}
+						</td>
+						<td>{minLimitLabel(limitSwitches[motor.name])}</td>
+						<td>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td>
+						<td>
+							<input
+								type="number"
+								step="0.1"
+								placeholder={unitForMotor(motor.name)}
+								value={moveTargets[motor.name] ?? ''}
+								on:input={(e) => didInputTarget(motor.name, e)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							/>
 							<button
 								type="button"
-								on:click={() => didClickHomeSection('io', ioMotors())}
-								disabled={isActionDisabled()}>HOME</button
+								on:click={() => didClickMove(motor.name)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
 							>
-							<button
-								type="button"
-								on:click={() => didClickMoveSection('io', ioMotors())}
-								disabled={isActionDisabled()}>MOVE</button
-							>
-						</span>
-					</div>
-				</th>
-			</tr>
-			<tr>
-				<th>id</th>
-				<th class="motor-name">motor</th>
-				<th>status</th>
-				<th class="position-column">POSITION</th>
-				<th>move to</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each ioMotors() as motor (motor.name)}
-				<tr>
-					<td class="motor-id">{motor.motor_id}</td>
-					<td class="motor-name">{motor.name}</td>
-					<td>
-						{#if testingMotor === motor.name}
-							<span class="status-testing">TEST</span>
-						{:else if testResults[motor.name] === 'ok'}
-							<span class="status-ok">OK</span>
-						{:else if testResults[motor.name] === 'err'}
-							<span class="status-error">ERR</span>
-						{:else}
-							<span class="status-unknown">-</span>
-						{/if}
-					</td>
-					<td class="position-column"
-						>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
-					>
-					<td>
-						<input
-							type="number"
-							step="0.1"
-							placeholder="mm"
-							value={moveTargets[motor.name] ?? ''}
-							on:input={(e) => didInputTarget(motor.name, e)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						/>
-						<button
-							type="button"
-							on:click={() => didClickMove(motor.name)}
-							disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-						>
-							go
-						</button>
-					</td>
-					{#if motor.name !== 'door'}
+								go
+							</button>
+						</td>
 						<td>
 							<button
 								type="button"
 								on:click={() => didClickTestMotor(motor.name)}
-								disabled={isActionDisabled()}>TEST</button
+								disabled={isActionDisabled()}
 							>
+								TEST
+							</button>
 							<button
 								type="button"
 								on:click={() => didClickHome(motor.name)}
 								disabled={activeMotor !== null ||
+									gripperAction !== null ||
 									doorAction !== null ||
 									movingMotor !== null ||
 									isTesting === true}
@@ -887,6 +739,7 @@
 								type="button"
 								on:click={() => didClickCrash(motor.name)}
 								disabled={activeMotor !== null ||
+									gripperAction !== null ||
 									doorAction !== null ||
 									movingMotor !== null ||
 									isTesting === true}
@@ -897,6 +750,7 @@
 								type="button"
 								on:click={() => didClickClear(motor.name)}
 								disabled={activeMotor !== null ||
+									gripperAction !== null ||
 									doorAction !== null ||
 									movingMotor !== null ||
 									isTesting === true}
@@ -904,64 +758,335 @@
 								clear
 							</button>
 						</td>
-					{/if}
-				</tr>
-				{#if motor.name === 'door'}
-					<tr>
-						<td colspan="5">
-							<div class="door-actions">
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
+
+	<div class="scroll-x motor-table-scroll">
+		<table class="motor-table">
+			<thead>
+				<tr>
+					<th colspan="7">
+						<div class="section-heading">
+							<span>tool motors</span>
+							<span>
 								<button
 									type="button"
-									on:click={() => didClickTestMotor('door')}
+									on:click={() => didClickHomeSection('tool', toolMotors())}
+									disabled={isActionDisabled()}>HOME</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickMoveSection('tool', toolMotors())}
+									disabled={isActionDisabled()}>MOVE</button
+								>
+								<button
+									type="button"
+									on:click={didClickRecoverTool}
+									disabled={isActionDisabled()}>RECOVER</button
+								>
+							</span>
+						</div>
+					</th>
+				</tr>
+				<tr>
+					<th>id</th>
+					<th>motor</th>
+					<th>status</th>
+					<th>min</th>
+					<th>POSITION</th>
+					<th>move to</th>
+					<th>actions</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each toolMotors() as motor (motor.name)}
+					<tr>
+						<td class="motor-id">{motor.motor_id}</td>
+						<td>{motor.name}</td>
+						<td>
+							{#if testingMotor === motor.name}
+								<span class="status-testing">TEST</span>
+							{:else if testResults[motor.name] === 'ok'}
+								<span class="status-ok">OK</span>
+							{:else if testResults[motor.name] === 'err'}
+								<span class="status-error">ERR</span>
+							{:else}
+								<span class="status-unknown">-</span>
+							{/if}
+						</td>
+						<td>{minLimitLabel(limitSwitches[motor.name])}</td>
+						<td>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td>
+						<td>
+							<input
+								type="number"
+								step="0.1"
+								placeholder={unitForMotor(motor.name)}
+								value={moveTargets[motor.name] ?? ''}
+								on:input={(e) => didInputTarget(motor.name, e)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							/>
+							<button
+								type="button"
+								on:click={() => didClickMove(motor.name)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							>
+								go
+							</button>
+						</td>
+						<td>
+							<button
+								type="button"
+								on:click={() => didClickTestMotor(motor.name)}
+								disabled={isActionDisabled()}
+							>
+								TEST
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickHome(motor.name)}
+								disabled={activeMotor !== null ||
+									gripperAction !== null ||
+									movingMotor !== null ||
+									isTesting === true}
+							>
+								home
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickCrash(motor.name)}
+								disabled={activeMotor !== null ||
+									gripperAction !== null ||
+									movingMotor !== null ||
+									isTesting === true}
+							>
+								crash
+							</button>
+							<button
+								type="button"
+								on:click={() => didClickClear(motor.name)}
+								disabled={activeMotor !== null ||
+									gripperAction !== null ||
+									movingMotor !== null ||
+									isTesting === true}
+							>
+								clear
+							</button>
+						</td>
+					</tr>
+				{/each}
+				<tr>
+					<td class="motor-id">9</td>
+					<td>gripper</td>
+					<td>
+						{#if testingMotor === 'gripper'}
+							<span class="status-testing">TEST</span>
+						{:else if testResults['gripper'] === 'ok'}
+							<span class="status-ok">OK</span>
+						{:else if testResults['gripper'] === 'err'}
+							<span class="status-error">ERR</span>
+						{:else}
+							<span class="status-unknown">-</span>
+						{/if}
+					</td>
+					<td>-</td>
+					<td>-</td>
+					<td>-</td>
+					<td>
+						<button type="button" on:click={didClickTestGripper} disabled={isActionDisabled()}>
+							TEST
+						</button>
+						<button
+							type="button"
+							on:click={() => didClickGripper('grip')}
+							disabled={gripperAction !== null ||
+								activeMotor !== null ||
+								movingMotor !== null ||
+								isTesting === true}
+						>
+							grip
+						</button>
+						<button
+							type="button"
+							on:click={() => didClickGripper('release')}
+							disabled={gripperAction !== null ||
+								activeMotor !== null ||
+								movingMotor !== null ||
+								isTesting === true}
+						>
+							release
+						</button>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
+
+	<div class="scroll-x motor-table-scroll">
+		<table class="motor-table">
+			<thead>
+				<tr>
+					<th colspan="7">
+						<div class="section-heading">
+							<span>io motors</span>
+							<span>
+								<button
+									type="button"
+									on:click={() => didClickHomeSection('io', ioMotors())}
+									disabled={isActionDisabled()}>HOME</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickMoveSection('io', ioMotors())}
+									disabled={isActionDisabled()}>MOVE</button
+								>
+							</span>
+						</div>
+					</th>
+				</tr>
+				<tr>
+					<th>id</th>
+					<th>motor</th>
+					<th>status</th>
+					<th>min</th>
+					<th>POSITION</th>
+					<th>move to</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each ioMotors() as motor (motor.name)}
+					<tr>
+						<td class="motor-id">{motor.motor_id}</td>
+						<td>{motor.name}</td>
+						<td>
+							{#if testingMotor === motor.name}
+								<span class="status-testing">TEST</span>
+							{:else if testResults[motor.name] === 'ok'}
+								<span class="status-ok">OK</span>
+							{:else if testResults[motor.name] === 'err'}
+								<span class="status-error">ERR</span>
+							{:else}
+								<span class="status-unknown">-</span>
+							{/if}
+						</td>
+						<td>{minLimitLabel(limitSwitches[motor.name])}</td>
+						<td>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td>
+						<td>
+							<input
+								type="number"
+								step="0.1"
+								placeholder="mm"
+								value={moveTargets[motor.name] ?? ''}
+								on:input={(e) => didInputTarget(motor.name, e)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							/>
+							<button
+								type="button"
+								on:click={() => didClickMove(motor.name)}
+								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+							>
+								go
+							</button>
+						</td>
+						{#if motor.name !== 'door'}
+							<td>
+								<button
+									type="button"
+									on:click={() => didClickTestMotor(motor.name)}
 									disabled={isActionDisabled()}>TEST</button
 								>
 								<button
 									type="button"
-									on:click={() => didClickHome('door')}
+									on:click={() => didClickHome(motor.name)}
 									disabled={activeMotor !== null ||
 										doorAction !== null ||
 										movingMotor !== null ||
-										isTesting === true}>home</button
+										isTesting === true}
 								>
+									home
+								</button>
 								<button
 									type="button"
-									on:click={() => didClickCrash('door')}
+									on:click={() => didClickCrash(motor.name)}
 									disabled={activeMotor !== null ||
 										doorAction !== null ||
 										movingMotor !== null ||
-										isTesting === true}>crash</button
+										isTesting === true}
 								>
+									crash
+								</button>
 								<button
 									type="button"
-									on:click={() => didClickClear('door')}
+									on:click={() => didClickClear(motor.name)}
 									disabled={activeMotor !== null ||
 										doorAction !== null ||
 										movingMotor !== null ||
-										isTesting === true}>clear</button
+										isTesting === true}
 								>
-								<button
-									type="button"
-									on:click={() => didClickDoor('open')}
-									disabled={doorAction !== null ||
-										activeMotor !== null ||
-										movingMotor !== null ||
-										isTesting === true}>open</button
-								>
-								<button
-									type="button"
-									on:click={() => didClickDoor('close')}
-									disabled={doorAction !== null ||
-										activeMotor !== null ||
-										movingMotor !== null ||
-										isTesting === true}>close</button
-								>
-							</div>
-						</td>
+									clear
+								</button>
+							</td>
+						{/if}
 					</tr>
-				{/if}
-			{/each}
-		</tbody>
-	</table>
+					{#if motor.name === 'door'}
+						<tr>
+							<td colspan="6">
+								<div class="door-actions">
+									<button
+										type="button"
+										on:click={() => didClickTestMotor('door')}
+										disabled={isActionDisabled()}>TEST</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickHome('door')}
+										disabled={activeMotor !== null ||
+											doorAction !== null ||
+											movingMotor !== null ||
+											isTesting === true}>home</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickCrash('door')}
+										disabled={activeMotor !== null ||
+											doorAction !== null ||
+											movingMotor !== null ||
+											isTesting === true}>crash</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickClear('door')}
+										disabled={activeMotor !== null ||
+											doorAction !== null ||
+											movingMotor !== null ||
+											isTesting === true}>clear</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickDoor('open')}
+										disabled={doorAction !== null ||
+											activeMotor !== null ||
+											movingMotor !== null ||
+											isTesting === true}>open</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickDoor('close')}
+										disabled={doorAction !== null ||
+											activeMotor !== null ||
+											movingMotor !== null ||
+											isTesting === true}>close</button
+									>
+								</div>
+							</td>
+						</tr>
+					{/if}
+				{/each}
+			</tbody>
+		</table>
+	</div>
 
 	<table class="motor-table">
 		<thead>
@@ -1082,15 +1207,7 @@
 		white-space: nowrap;
 	}
 
-	.motor-name {
-		width: 120px;
-	}
-
-	.position-column {
-		width: 120px;
-	}
-
-	.motor-table + .motor-table {
+	.motor-table-scroll + .motor-table-scroll {
 		margin-top: 1.5em;
 	}
 

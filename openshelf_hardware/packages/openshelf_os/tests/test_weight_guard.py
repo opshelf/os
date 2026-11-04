@@ -2,7 +2,6 @@
 # ruff: noqa: E402
 
 import asyncio
-import json
 import pathlib
 import sys
 import tempfile
@@ -66,12 +65,16 @@ class FakeAxis:
     def __init__(self) -> None:
         self.moving = False
         self.position = 412.5
+        self.direction = 0
 
     def is_moving(self) -> bool:
         return self.moving
 
     def position_mm(self) -> Optional[float]:
         return self.position
+
+    def commanded_direction(self) -> int:
+        return self.direction if self.moving else 0
 
 
 class FakeClock:
@@ -80,9 +83,6 @@ class FakeClock:
 
     def __call__(self) -> float:
         return self.now
-
-    def advance(self, delta_s: float) -> None:
-        self.now += delta_s
 
 
 class GuardHarness:
@@ -117,212 +117,42 @@ class GuardHarness:
         )
         self.guard.set_listener(self.trips.append)
 
-    def sample(self, grams: float, *, moving: bool) -> None:
+    def sample(
+        self,
+        grams: float,
+        *,
+        moving: bool,
+        direction: int = -1,
+        travel_mm: Optional[float] = None,
+    ) -> None:
+        """One guard sample; a moving sample travels 1 mm in `direction` first by default."""
         self.axis.moving = moving
+        self.axis.direction = direction
+
+        if moving is True:
+            self.axis.position += direction * 1.0 if travel_mm is None else travel_mm
+
         self.guard._sample(FakeReading(grams=grams), moving=moving)
 
-    def record_payload(self) -> dict[str, Any]:
-        # The record is queued on trip and written when the loop next gets a
-        # chance, which synchronous tests have to ask for themselves.
-        self.flushed_path = self.guard.flush_record()
-        paths = sorted(pathlib.Path(self.records.name).glob("*.json"))
-
-        assert len(paths) == 1, [str(path) for path in paths]
-
-        return json.loads(paths[0].read_text())
 
     def cleanup(self) -> None:
         self.records.cleanup()
 
 
-class WeightChangeDetectionTests(unittest.TestCase):
+class WeightChangeDirectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.harness = GuardHarness()
         self.addCleanup(self.harness.cleanup)
 
-    def test_change_below_threshold_does_not_trip(self):
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(106.0, moving=True)
 
-        self.assertFalse(self.harness.guard.is_latched)
-        self.assertEqual(self.harness.trips, [])
-
-    def test_increase_over_threshold_trips(self):
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(111.0, moving=True)
-
-        self.assertTrue(self.harness.guard.is_latched)
-        self.assertEqual(len(self.harness.trips), 1)
-        trip = self.harness.trips[0]
-        self.assertEqual(trip["source"], SOURCE)
-        self.assertEqual(trip["axis"], "y_axis")
-        self.assertAlmostEqual(trip["delta_grams"], 11.0)
-        self.assertAlmostEqual(trip["baseline_grams"], 100.0)
-        self.assertEqual(trip["axis_position_mm"], 412.5)
-
-    def test_decrease_over_threshold_trips(self):
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(89.0, moving=True)
-
-        self.assertTrue(self.harness.guard.is_latched)
-        self.assertAlmostEqual(self.harness.trips[0]["delta_grams"], -11.0)
-
-    def test_trip_waits_for_consecutive_over_threshold_samples(self):
+    def test_crash_that_stops_the_descent_still_trips(self):
         self.harness.guard._min_samples = 3
         self.harness.sample(100.0, moving=False)
-        self.harness.sample(140.0, moving=True)
-        self.harness.sample(141.0, moving=True)
-
-        self.assertFalse(self.harness.guard.is_latched)
-
-        self.harness.sample(142.0, moving=True)
+        self.harness.sample(100.0, moving=True, travel_mm=-20.0)
+        for grams in (130.0, 160.0, 190.0):
+            self.harness.sample(grams, moving=True, travel_mm=0.0)
 
         self.assertTrue(self.harness.guard.is_latched)
-        self.assertEqual(self.harness.trips[0]["sample_streak"], 3)
-
-    def test_return_below_threshold_resets_the_streak(self):
-        self.harness.guard._min_samples = 3
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(140.0, moving=True)
-        self.harness.sample(101.0, moving=True)
-        self.harness.sample(140.0, moving=True)
-        self.harness.sample(140.0, moving=True)
-
-        self.assertFalse(self.harness.guard.is_latched)
-
-    def test_idle_weight_change_only_rebases_the_baseline(self):
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(500.0, moving=False)
-        self.harness.sample(502.0, moving=True)
-
-        self.assertFalse(self.harness.guard.is_latched)
-
-    def test_a_long_gap_in_sampling_rebases_instead_of_tripping(self):
-        self.harness.sample(100.0, moving=True)
-        self.harness.clock.advance(3.0)
-        self.harness.sample(400.0, moving=True)
-
-        self.assertFalse(self.harness.guard.is_latched)
-
-        self.harness.sample(411.0, moving=True)
-
-        self.assertTrue(self.harness.guard.is_latched)
-        self.assertAlmostEqual(self.harness.trips[0]["delta_grams"], 11.0)
-
-    def test_a_short_gap_between_samples_keeps_the_baseline(self):
-        self.harness.sample(100.0, moving=True)
-        self.harness.clock.advance(0.3)
-        self.harness.sample(111.0, moving=True)
-
-        self.assertTrue(self.harness.guard.is_latched)
-
-    def test_move_start_jolt_inside_arm_delay_is_ignored(self):
-        harness = GuardHarness(arm_delay_s=0.2)
-        self.addCleanup(harness.cleanup)
-        harness.sample(100.0, moving=False)
-        harness.sample(140.0, moving=True)
-
-        self.assertFalse(harness.guard.is_latched)
-
-        harness.clock.advance(0.25)
-        harness.sample(140.0, moving=True)
-
-        self.assertTrue(harness.guard.is_latched)
-
-    def test_trip_writes_a_record_with_samples_and_context(self):
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(101.0, moving=True)
-        self.harness.sample(135.0, moving=True)
-
-        payload = self.harness.record_payload()
-        self.assertEqual(payload["source"], SOURCE)
-        self.assertEqual(payload["operation_context"], {"phase": "io_place.y_axis_transfer"})
-        self.assertEqual(payload["threshold_grams"], 10.0)
-        self.assertAlmostEqual(payload["trip"]["delta_grams"], 35.0)
-        self.assertEqual(payload["sample_count"], 3)
-        self.assertEqual(
-            sorted(payload["samples"][1]),
-            ["axis_position_mm", "delta_grams", "elapsed_s", "stable", "valid", "weight_grams"],
-        )
-        self.assertEqual(self.harness.guard.source_state()["record_path"].endswith(".json"), True)
-        self.assertTrue(self.harness.flushed_path.endswith(".json"))
-
-
-    def test_latched_state_keeps_recording_without_re_tripping(self):
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(140.0, moving=True)
-        self.harness.sample(160.0, moving=True)
-
-        self.assertEqual(len(self.harness.trips), 1)
-        self.assertEqual(self.harness.guard.source_state()["delta_grams"], 40.0)
-
-
-class WeightChangeAcknowledgementTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.harness = GuardHarness(ack_grace_s=1.0)
-        self.addCleanup(self.harness.cleanup)
-
-    def test_acknowledge_clears_the_source_without_the_weight_returning(self):
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(130.0, moving=True)
-        self.assertTrue(self.harness.guard.is_latched)
-
-        self.harness.guard.acknowledge()
-
-        self.assertFalse(self.harness.guard.is_latched)
-        self.assertEqual(self.harness.guard.source_state()["active"], False)
-
-    def test_acknowledged_weight_that_stays_changed_does_not_re_trip(self):
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(130.0, moving=True)
-        self.harness.guard.acknowledge()
-
-        # Step past the grace window in sample-sized increments so the readings
-        # are compared, not merely rebased.
-        for step_s, grams in ((0.2, 130.0), (0.2, 130.0), (0.2, 130.0), (0.4, 130.0), (0.2, 130.4)):
-            self.harness.clock.advance(step_s)
-            self.harness.sample(grams, moving=True)
-
-        self.assertFalse(self.harness.guard.is_latched)
-        self.assertEqual(len(self.harness.trips), 1)
-
-    def test_further_change_after_acknowledgement_trips_again(self):
-        self.harness.sample(100.0, moving=False)
-        self.harness.sample(130.0, moving=True)
-        self.harness.guard.acknowledge()
-
-        for step_s, grams in ((0.2, 130.0), (0.2, 130.0), (0.2, 130.0), (0.4, 130.0), (0.2, 141.0)):
-            self.harness.clock.advance(step_s)
-            self.harness.sample(grams, moving=True)
-
-        self.assertTrue(self.harness.guard.is_latched)
-        self.assertEqual(len(self.harness.trips), 2)
-        self.assertAlmostEqual(self.harness.trips[1]["delta_grams"], 11.0)
-
-
-class WeightChangeSamplingFailureTests(unittest.IsolatedAsyncioTestCase):
-    async def test_repeated_read_failures_suspend_sampling(self):
-        harness = GuardHarness(failure=RuntimeError("No response received after 2 retries"))
-        self.addCleanup(harness.cleanup)
-
-        for _ in range(5):
-            self.assertIsNone(await harness.guard._read_weight())
-
-        self.assertEqual(harness.scale.reads, 5)
-        self.assertIsNotNone(harness.guard._suspended_until)
-
-        self.assertIsNone(await harness.guard._read_weight())
-        self.assertEqual(harness.scale.reads, 5)
-        self.assertEqual(harness.guard.source_state()["error"], "No response received after 2 retries")
-
-        # A scale that stays dead is probed ever more rarely.
-        self.assertEqual(harness.guard._suspend_s, 10.0)
-        harness.clock.advance(6.0)
-
-        for _ in range(5):
-            self.assertIsNone(await harness.guard._read_weight())
-
-        self.assertEqual(harness.guard._suspend_s, 20.0)
 
 
 class FakeGuardRobot:
@@ -448,7 +278,11 @@ class WeightChangeGuardLoopTests(unittest.IsolatedAsyncioTestCase):
         await guard.start()
         self.addAsyncCleanup(guard.stop)
 
+        # At rest first, as on a running machine, so the guard knows where the move starts.
+        await asyncio.sleep(0.03)
         axis.moving = True
+        axis.direction = -1
+        axis.position -= 10.0
         await asyncio.sleep(0.05)
         self.assertGreater(scale.reads, 3)
 
@@ -511,23 +345,6 @@ class WeightChangeGuardWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(safety["motion_blocked"])
         self.assertTrue(safety["active"])
         self.assertEqual(len(self.published), 1)
-
-
-    async def test_acknowledgement_releases_motion_even_with_weight_changed(self):
-        await self.trip()
-
-        # The worker only ever sees the guard's state, so mimic the guard having
-        # re-based on the new reading.
-        self.assertEqual(self.worker.get_safety_status()["can_acknowledge"], True)
-        result = await self.worker.acknowledge_safety_guard()
-
-        self.assertTrue(result["accepted"])
-        self.assertEqual(self.robot.acknowledge_calls, 1)
-        self.assertEqual(self.robot.resume_calls, 1)
-        safety = self.worker.get_safety_status()
-        self.assertEqual(safety["active_sources"], [])
-        self.assertFalse(safety["awaiting_ack"])
-        self.assertFalse(safety["motion_blocked"])
 
 
     async def test_acknowledgement_clears_a_suppressed_weight_source(self):

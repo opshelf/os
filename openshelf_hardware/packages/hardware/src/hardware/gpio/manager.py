@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from collections.abc import Mapping
 from typing import Any, Callable, cast
 
@@ -22,6 +24,11 @@ from hardware.gpio.types import (
 
 logger = logging.getLogger(__name__)
 
+# A chattering input (y_lim_minunsafe on lb4a-3 toggles ~70 times a second) would flood the
+# log; after a logged change, a pin's further changes within this window are only counted and
+# reported by one trailing line at the end of the window.
+INPUT_LOG_WINDOW_S = 5.0
+
 
 class GpioManager:
     def __init__(
@@ -40,6 +47,7 @@ class GpioManager:
         self._inputs: dict[str, DigitalInput] = {}
         self._outputs: dict[str, DigitalOutput] = {}
         self._input_log_subscriptions: list[GpioSubscription] = []
+        self._log_input_change = _InputChangeLog()
         self._closed = False
         self._validate_unique_physical_pins()
 
@@ -80,7 +88,7 @@ class GpioManager:
             digital_input = DigitalInput(spec, backend)
             self._inputs[name] = digital_input
             try:
-                subscription = digital_input.subscribe(_log_input_change)
+                subscription = digital_input.subscribe(self._log_input_change)
             except Exception:
                 logger.warning(
                     "Failed to subscribe to GPIO input '%s' for diagnostic logging",
@@ -134,19 +142,6 @@ class GpioManager:
 
             self.input(name)
 
-    def set_fake_input(self, name: str, value: bool, *, raw: bool = False) -> None:
-        spec = self._require_pin(name)
-
-        if self._fake is False:
-            raise GpioConfigError("set_fake_input is only available on fake GPIO managers")
-
-        backend = self._backend_for(spec)
-
-        if not isinstance(backend, FakeGpioBackend):
-            raise GpioConfigError("GPIO manager is not using the fake backend")
-
-        backend.set_raw(spec, value if raw is True else spec.to_raw(value))
-
     def close(self) -> None:
         if self._closed is True:
             return
@@ -161,6 +156,7 @@ class GpioManager:
         for subscription in self._input_log_subscriptions:
             subscription.close()
         self._input_log_subscriptions.clear()
+        self._log_input_change.close()
 
         for backend in self._unique_backends():
             try:
@@ -296,8 +292,83 @@ class GpioManager:
                 )
 
 
-def _log_input_change(event: GpioEvent) -> None:
-    logger.info("%s: %s", event.name, "HIGH" if event.value else "LOW")
+class _InputChangeLog:
+    """Log input changes, at most one line per pin per window.
+
+    Changes inside the window are counted; a one-shot timer then logs the pin's latest
+    state with that count, so a clean edge pair never leaves the log showing a stale state.
+    Callbacks arrive on hardware threads, hence the lock and threading timers.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._logged_at: dict[str, float] = {}
+        self._suppressed: dict[str, int] = {}
+        self._latest: dict[str, bool] = {}
+        self._timers: dict[str, threading.Timer] = {}
+        self._closed = False
+
+    def __call__(self, event: GpioEvent) -> None:
+        name = event.name
+        with self._lock:
+            if self._closed is True:
+                return
+            now = time.monotonic()
+            logged_at = self._logged_at.get(name)
+            if logged_at is not None and now - logged_at < INPUT_LOG_WINDOW_S:
+                self._suppressed[name] = self._suppressed.get(name, 0) + 1
+                self._latest[name] = event.value
+                if name not in self._timers:
+                    timer = threading.Timer(
+                        logged_at + INPUT_LOG_WINDOW_S - now, self._flush, args=(name,)
+                    )
+                    timer.daemon = True
+                    self._timers[name] = timer
+                    timer.start()
+                return
+            timer = self._timers.pop(name, None)
+            if timer is not None:
+                timer.cancel()
+            self._latest.pop(name, None)
+            suppressed = self._suppressed.pop(name, 0)
+            self._logged_at[name] = now
+
+        self._emit(name, event.value, suppressed)
+
+    def _flush(self, name: str) -> None:
+        with self._lock:
+            # A timer already running when a newer change replaced it must not flush its successor.
+            if self._timers.get(name) is not threading.current_thread() or self._closed is True:
+                return
+            del self._timers[name]
+            value = self._latest.pop(name)
+            suppressed = self._suppressed.pop(name, 0)
+            self._logged_at[name] = time.monotonic()
+
+        self._emit(name, value, suppressed)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            timers = list(self._timers.values())
+            self._timers.clear()
+        for timer in timers:
+            timer.cancel()
+
+    @staticmethod
+    def _emit(name: str, value: bool, suppressed: int) -> None:
+        state = "HIGH" if value else "LOW"
+        if suppressed == 0:
+            logger.info("%s: %s", name, state)
+        else:
+            logger.info(
+                "%s: %s (%d more change%s since the last line%s)",
+                name,
+                state,
+                suppressed,
+                "" if suppressed == 1 else "s",
+                "; input is chattering" if suppressed > 1 else "",
+            )
 
 
 def _to_dict(value: Any | None) -> dict[str, Any] | None:

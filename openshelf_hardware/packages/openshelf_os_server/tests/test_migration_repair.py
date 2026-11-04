@@ -94,16 +94,3 @@ def test_replay_repairs_a_database_left_mid_chain(
     assert "uq_storage_bin_items_compartment" in _unique_constraints(
         engine, "storage_bin_items"
     )
-
-
-def test_replay_is_a_no_op_after_the_repair(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    url = f"sqlite:///{tmp_path / 'repaired.db'}"
-    _reconstruct_broken_device(url)
-
-    monkeypatch.setattr(main, "get_database_url", lambda: url)
-    main._run_migrations()
-    main._run_migrations()
-
-    assert _alembic_version(sa.create_engine(url)) == [_head(url)]

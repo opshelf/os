@@ -21,23 +21,21 @@ from openshelf_os.serial_ports import (
     MOTOR_PORT_CANDIDATES,
     SCALE_PORT_CANDIDATES,
 )
+from openshelf_os.faults import (
+    EXECUTION_ERROR_CODE,
+    RETRIEVE_FAILED_CODE,
+    STORE_FAILED_CODE,
+    fault_failure,
+)
 from openshelf_os.exceptions import (
-    ConfigError as CabinetConfigError,
-    FridgeSafetyError,
-    GripperError,
-    MotorError,
-    MovementError,
-    ToolError,
+    ConfigError as CabinetConfigError, FridgeSafetyError, GRIP_DROPPED_CODE, GRIP_IO_BOX_FAILED_CODE,
+    MotorError, MovementError, ToolError,
 )
 from openshelf_os.fridge import DemoFridge
 from openshelf_os.iobox import IOBox
-from openshelf_os.laser_calibration.scan import (
-    ScanAnalysisResult, ScanBounds, analyze_scan_capture,
-    build_axis_positions, build_shelves_from_scan, create_scan_capture,
-)
 from openshelf_os.operating_mode import should_enable_demo_features, should_enable_demo_fridge
 from openshelf_os.robot.commands import (
-    RobotCommands, StopCommand, InitializeCommand, IdleCommand, HomeCommand,
+    RobotCommands, StopCommand, InitializeCommand, IdleCommand, HomeCommand, RecoverCommand,
     MoveCommand, RetrieveItemCommand, StoreItemCommand, DeliverTrayCommand, ReturnTrayCommand,
 )
 from openshelf_os.robot.status import (
@@ -49,7 +47,7 @@ from openshelf_os.storage import (
     StorageGrid, Dimensions, StorageModuleSide, CellItem, StorageModuleCellLocation, CellStatus,
     StorageValidationError,
 )
-from openshelf_os.tool import Tool, require_grip
+from openshelf_os.tool import Tool, require_grip, rewrap_gripper_fault, run_together
 
 _GpioManager: Any
 try:
@@ -99,6 +97,12 @@ POWER_RAILS: Dict[str, PowerRail] = {
 POWER_CYCLE_HOLD_S = 3.0
 POWER_CYCLE_BOOT_TIMEOUT_S = 20.0
 POWER_CYCLE_BOOT_POLL_S = 0.25
+
+
+STARTUP_HOME_SKIPPED_CABINET_OPEN = "Startup homing skipped because the cabinet doors were open"
+STARTUP_HOME_SKIPPED_TRAY_ON_TOOL = "Startup homing skipped because the gripper holds a tray"
+# Tail of the refusal for a barcode missing from the demo cell map; callers match on it, so edit it here only.
+DEMO_MAP_MISSING_SUFFIX = " is not in the demo cell map."
 
 
 class Robot:
@@ -164,7 +168,7 @@ class Robot:
         try:
             self._grid = StorageGrid.load_from_file(self._grid_path)
         except StorageValidationError as e:
-            self._logger.warning("storage_load_failed: %s - %s", self._grid_path, str(e))
+            self._logger.warning("storage_load_failed: %s - %s", self._grid_path, str(e), exc_info=e)
             self._grid = StorageGrid()
 
         self._init_reporter: Optional[InitProgressReporter] = None
@@ -278,15 +282,22 @@ class Robot:
             return False
         return bool(getattr(curtain_cfg, "enabled", False))
 
-    async def configure(self, isolate: bool = False, home_on_init: bool = True):
+    async def configure(self, isolate: bool = False, home_on_init: bool = True) -> Optional[str]:
+        """Connect and configure the hardware, homing it if asked.
+
+        Returns why a requested startup home was skipped, or None. The safety
+        guard only starts with the worker, after this returns, so nothing else
+        stops a startup home from running with the cabinet open.
+        """
+        startup_home_skip_reason: Optional[str] = None
         self._emit_init("motor_bus", "connecting")
         try:
             await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
-        except Exception as exc:
-            self._emit_init("motor_bus", "failed", reason=str(exc))
+        except Exception:
+            self._emit_init("motor_bus", "failed", reason="The motor bus did not connect. Check its cable and power.")
             for name in _INIT_MOTOR_COMPONENTS:
                 if self._get_motor_by_name(name) is not None:
-                    self._emit_init(name, "failed", reason="motor bus down")
+                    self._emit_init(name, "failed", reason="The motor bus is not connected.")
             raise
         self._emit_init("motor_bus", "ready")
 
@@ -330,7 +341,16 @@ class Robot:
             weight_guard.set_listener(self._stop_motion_on_weight_change)
             await weight_guard.start()
 
+        if home_on_init is True and self._are_cabinet_doors_open_at_startup() is True:
+            self._logger.warning("Startup homing skipped: cabinet doors are open")
+            home_on_init = False
+            startup_home_skip_reason = STARTUP_HOME_SKIPPED_CABINET_OPEN
+
         await self._tool.configure(isolate=isolate, home_on_init=home_on_init)
+        if home_on_init is True and self._tool.is_tray_held is True:
+            # The tool may still be in a cell or the IO box, so the door stays put as well.
+            home_on_init = False
+            startup_home_skip_reason = STARTUP_HOME_SKIPPED_TRAY_ON_TOOL
         await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready, home_on_init=home_on_init)
         cabinet = getattr(self, "_cabinet", None)
         if cabinet is not None:
@@ -339,9 +359,10 @@ class Robot:
                 await cabinet.configure()
                 self._emit_init("cabinet", "ready")
             except Exception as exc:
-                self._emit_init("cabinet", "failed", reason=str(exc))
+                self._emit_init("cabinet", "failed", reason="The cabinet did not start. Check its connection.")
                 if isolate is False:
                     raise
+                self._logger.warning("Cabinet configure failed", exc_info=exc)
 
         fridge = getattr(self, "_fridge", None)
         if fridge is not None:
@@ -352,6 +373,19 @@ class Robot:
             if motor is not None:
                 motor._on_move_complete = self._did_complete_motor_move
 
+        return startup_home_skip_reason
+
+    def _are_cabinet_doors_open_at_startup(self) -> bool:
+        cabinet = getattr(self, "_cabinet", None)
+        if cabinet is None or cabinet.is_configured() is False:
+            return False
+
+        try:
+            return cabinet.get_door_state()["open"] is True
+        except Exception:
+            self._logger.warning("Cabinet door read failed before startup homing", exc_info=True)
+            return True
+
     async def _connect_optional_bus(self, label: str, controller: Controller, isolate: bool) -> bool:
         self._emit_init(f"{label}_bus", "connecting")
         try:
@@ -359,9 +393,10 @@ class Robot:
             self._emit_init(f"{label}_bus", "ready")
             return True
         except Exception as exc:
-            self._emit_init(f"{label}_bus", "failed", reason=str(exc))
+            self._emit_init(f"{label}_bus", "failed", reason=f"The {label} bus did not connect. Check its cable and power.")
             if isolate is False:
                 raise
+            self._logger.warning("%s bus connect failed", label, exc_info=exc)
             return False
 
     async def shutdown(self) -> None:
@@ -464,8 +499,7 @@ class Robot:
             except Exception as e:
                 self._logger.error(
                     "failed to reconfigure after power cycle",
-                    extra={"motor_name": name, "error": str(e)},
-                )
+                    extra={"motor_name": name, "error": str(e)}, exc_info=e)
                 failed_axes.append(name)
 
         if failed_axes:
@@ -994,28 +1028,15 @@ class Robot:
             except (ValueError, IndexError) as e:
                 self._logger.warning(
                     "sync_occupied_cells_skip: side=%s shelf=%d cell=%d error=%s",
-                    side, shelf_idx, cell_idx, str(e)
-                )
-
-    def set_cell_status(self, side: str, shelf_idx: int, cell_idx: int, status: CellStatus) -> None:
-        """Apply a server-owned reservation without presenting it as physical inventory."""
-        if self._grid is None:
-            return
-        location = StorageModuleCellLocation(
-            side=StorageModuleSide(side), shelf_idx=shelf_idx, cell_idx=cell_idx
-        )
-        cell = self._grid.get_cell(location)
-        cell.status = status
-        if status != CellStatus.OCCUPIED:
-            cell.item = None
+                    side, shelf_idx, cell_idx, str(e), exc_info=e)
 
     def set_reserved_cell_locations(self, locations: Iterable[tuple[str, int, int]]) -> None:
-        """Set server-owned homes that automatic storage allocation must avoid."""
-        configured_locations: set[tuple[str, int, int]] = {
-            (entry.home_location.side, entry.home_location.shelf_idx, entry.home_location.cell_idx)
-            for entry in self._config.storage.bins
-        }
-        self._reserved_cell_locations = configured_locations | set(locations)
+        """Replace the bin homes that ordinary stores and allocation must avoid.
+
+        The caller passes the complete set; the robot's own config is the startup copy and
+        would keep a since-removed bin's home reserved.
+        """
+        self._reserved_cell_locations = set(locations)
 
 
     # ------------------------------------------------------------------ #
@@ -1106,7 +1127,7 @@ class Robot:
         self._logger.info("Safety guard cleared")
 
     def _build_weight_guard(self) -> Optional[WeightChangeGuard]:
-        """Watch the scale during y travel so a crash into the cell stops motion.
+        """Watch the scale during downward y travel so a crash into the cell stops motion.
 
         Returns None when the scale or the y axis is absent, or when the guard is
         switched off in config, in which case the safety sources simply omit it.
@@ -1209,6 +1230,8 @@ class Robot:
         operation: Literal["pick", "place"],
         coord: AxisCoordinate,
         location: StorageModuleCellLocation | None,
+        *,
+        loaded: bool,
     ) -> None:
         fridge = getattr(self, "_fridge", None)
         cell_settings = (
@@ -1219,7 +1242,7 @@ class Robot:
         tool_operation = self._tool.pick if operation == "pick" else self._tool.place
 
         if fridge is None or cell_settings is None or location is None:
-            await tool_operation(coord)
+            await tool_operation(coord, loaded=loaded)
             return
 
         door_may_be_open = False
@@ -1246,6 +1269,7 @@ class Robot:
         try:
             await tool_operation(
                 coord,
+                loaded=loaded,
                 stage_extension_mm=cell_settings.stage_extension_mm,
                 before_approach=open_door,
                 after_retract=close_door,
@@ -1292,28 +1316,31 @@ class Robot:
         self.set_operation_context(phase="io_place.ensure_door_homed")
         await self._io.ensure_door_homed()
         self.set_operation_context(phase="io_place.pick_from_shelf", target_coordinate=coord)
-        await self._access_storage_cell("pick", coord, location)
+        await self._access_storage_cell("pick", coord, location, loaded=True)
         self.set_operation_context(phase="io_place.rotate_to_front")
         await self._tool.rotate_to_position("front")
-        self.set_operation_context(phase="io_place.move_to_io_position")
-        await self._tool.move(AxisCoordinate(ppl[0], ppl[1]))
+        # The door opens while the gantry approaches. The phase keeps its open_door name
+        # for the whole step: the light curtain blocks motion during an opening door.
         self.set_operation_context(phase="io_place.open_door")
-        await self._io.open_door()
+        await run_together(self._tool.move(AxisCoordinate(ppl[0], ppl[1])), self._io.open_door())
         self.set_operation_context(phase="io_place.extend_into_io", nudge_override=nudge_override)
-        await self._tool.extend_IO(nudge_override=nudge_override)
+        await self._tool.extend_IO(nudge_override=nudge_override, loaded=True)
         self.set_operation_context(phase="io_place.y_axis_transfer")
         await self._tool._my.move_to_position(pph[1])
         self.set_operation_context(phase="io_place.retract")
-        await self._tool.retract()
+        # The item stays in the IO box, so the empty tray may leave on both axes at once.
+        await self._tool.retract(loaded=False)
+        # A tray left in the IO box would meet the closing door.
+        await self._require_tray_held("io place retract", GRIP_IO_BOX_FAILED_CODE)
+        # The tool is clear of the IO box, so the door closes while the gantry returns.
         self.set_operation_context(phase="io_place.close_door")
-        await self._io.close_door()
-        self.set_operation_context(phase="io_place.return_to_shelf_coordinate")
-        await self._tool.move(coord)
+        await run_together(self._io.close_door(), self._tool.move(coord))
+        # The closed door re-homes while the tool places; neither crosses the other's path.
         self.set_operation_context(phase="io_place.place_at_shelf_coordinate")
-        await self._access_storage_cell("place", coord, location)
-
-        self.set_operation_context(phase="io_place.home_door")
-        await self._io.home_door_after_cycle()
+        await run_together(
+            self._access_storage_cell("place", coord, location, loaded=False),
+            self._io.home_door_after_cycle(),
+        )
         self.set_operation_context(phase="io_place.clear_alarms")
         await self._tool.clear_alarms()
 
@@ -1333,59 +1360,78 @@ class Robot:
         self.set_operation_context(phase="io_pick.ensure_door_homed")
         await self._io.ensure_door_homed()
         self.set_operation_context(phase="io_pick.pick_from_shelf_cell", target_coordinate=coord)
-        await self._access_storage_cell("pick", coord, location)
+        # A store targets an available cell, so its tray comes off the shelf empty.
+        await self._access_storage_cell("pick", coord, location, loaded=False)
         self.set_operation_context(phase="io_pick.rotate_to_front")
         await self._tool.rotate_to_position("front")
-        self.set_operation_context(phase="io_pick.move_to_io_high_position")
-        await self._tool.move(AxisCoordinate(pph[0], pph[1]))
         self.set_operation_context(phase="io_pick.open_door")
-        await self._io.open_door()
+        await run_together(self._tool.move(AxisCoordinate(pph[0], pph[1])), self._io.open_door())
         self.set_operation_context(phase="io_pick.extend_into_io")
-        await self._tool.extend()
+        await self._tool.extend(loaded=False)
         self.set_operation_context(phase="io_pick.y_axis_transfer")
         await self._tool._my.move_to_position(ppl[1])
         self.set_operation_context(phase="io_pick.retract")
-        await self._tool.retract()
+        await self._tool.retract(loaded=True)
+        await self._require_tray_held("io pick retract", GRIP_IO_BOX_FAILED_CODE)
         self.set_operation_context(phase="io_pick.close_door")
-        await self._io.close_door()
-        self.set_operation_context(phase="io_pick.return_to_shelf_coordinate")
-        await self._tool.move(coord)
+        await run_together(self._io.close_door(), self._tool.move(coord))
         self.set_operation_context(phase="io_pick.place_back_at_shelf_coordinate")
-        await self._access_storage_cell("place", coord, location)
-
-        self.set_operation_context(phase="io_pick.home_door")
-        await self._io.home_door_after_cycle()
+        await run_together(
+            self._access_storage_cell("place", coord, location, loaded=True),
+            self._io.home_door_after_cycle(),
+        )
         self.set_operation_context(phase="io_pick.clear_alarms")
         await self._tool.clear_alarms()
 
+    async def _require_tray_held(self, phase: str, failure_code: str) -> None:
+        """Raise unless the tool still holds the tray it is carrying."""
+        if self._tool.is_grip_detection_enabled is False:
+            return
+        try:
+            require_grip(await self._tool._gs.read_state(), phase, failure_code=failure_code)
+        except Exception as exc:
+            raise rewrap_gripper_fault(exc, "Tray grip verification failed") from exc
+
     async def _set_tray_grip(self, *, engaged: bool) -> None:
-        """Route tray servo failures through the command hardware-fault interlock."""
+        """Route tray servo failures through the command hardware-fault interlock.
+
+        The tray sits in the IO box here, so a failed grip check leaves it there: the operator
+        has to clear the IO box, and the door has to home again with the tool.
+        """
         try:
             if engaged:
-                require_grip(await self._tool._gs.open(), "tray grip")
+                require_grip(
+                    await self._tool._gs.open(),
+                    "bin grip",
+                    is_enabled=self._tool.is_grip_detection_enabled,
+                    failure_code=GRIP_IO_BOX_FAILED_CODE,
+                )
             else:
-                await self.release_gripper()
+                await self._tool.release("bin release")
         except Exception as exc:
             action = "grip" if engaged else "release"
-            raise GripperError(f"Tray {action} failed: {exc}") from exc
-
+            raise rewrap_gripper_fault(exc, f"Bin {action} failed") from exc
     async def deliver_tray(self, coord: AxisCoordinate) -> None:
         """Leave the entire tray supported in the IO box, with the tool clear."""
-        position = await self._tool.get_param("PICKUP_POSITION_L")
+        position = await self._tool.get_param("PICKUP_POSITION_MULTI_ITEM")
         if position is None:
-            raise ConfigError("Missing PICKUP_POSITION_L parameter")
+            raise ConfigError("Missing PICKUP_POSITION_MULTI_ITEM parameter")
+        self.set_operation_context(phase="deliver_tray.ensure_door_homed")
+        await self._io.ensure_door_homed()
         self.set_operation_context(phase="deliver_tray.pick_from_shelf", target_coordinate=coord)
-        await self._tool.pick(coord)
+        await self._tool.pick(coord, loaded=True)
         self.set_operation_context(phase="deliver_tray.rotate_to_front")
         await self._tool.rotate_to_position("front")
         self.set_operation_context(phase="deliver_tray.move_to_io")
         await self._tool.move(AxisCoordinate(position[0], position[1]))
+        # A tray dropped on the way must not be reported as delivered; the door is still closed.
+        await self._require_tray_held("bin delivery", GRIP_DROPPED_CODE)
         self.set_operation_context(phase="deliver_tray.open_door")
         await self._io.open_door()
         self.set_operation_context(phase="deliver_tray.extend_into_io")
         # Use the same supported pose for delivery and collection. No item-transfer
         # Y motion: the tray itself stays here instead of lifting off its contents.
-        await self._tool.extend_IO(nudge_override=0.0)
+        await self._tool.extend_IO_multi_item(loaded=True)
         self.set_operation_context(phase="deliver_tray.release")
         await self._set_tray_grip(engaged=False)
         self.set_operation_context(phase="deliver_tray.retract_empty")
@@ -1398,9 +1444,11 @@ class Robot:
 
     async def return_tray(self, coord: AxisCoordinate) -> None:
         """Collect the released tray at the delivery pose, then replace it at home."""
-        position = await self._tool.get_param("PICKUP_POSITION_L")
+        position = await self._tool.get_param("PICKUP_POSITION_MULTI_ITEM")
         if position is None:
-            raise ConfigError("Missing PICKUP_POSITION_L parameter")
+            raise ConfigError("Missing PICKUP_POSITION_MULTI_ITEM parameter")
+        self.set_operation_context(phase="return_tray.ensure_door_homed")
+        await self._io.ensure_door_homed()
         self.set_operation_context(phase="return_tray.release")
         await self._set_tray_grip(engaged=False)
         self.set_operation_context(phase="return_tray.rotate_to_front")
@@ -1410,19 +1458,17 @@ class Robot:
         self.set_operation_context(phase="return_tray.open_door")
         await self._io.open_door()
         self.set_operation_context(phase="return_tray.extend_into_io")
-        await self._tool.extend_IO(nudge_override=0.0)
+        # The gripper is released, so the empty tool reaches the tray on both axes at once.
+        await self._tool.extend_IO_multi_item(loaded=False)
         self.set_operation_context(phase="return_tray.grip")
         await self._set_tray_grip(engaged=True)
         self.set_operation_context(phase="return_tray.retract")
-        await self._tool.retract()
-        try:
-            require_grip(await self._tool._gs.read_state(), "tray retract")
-        except Exception as exc:
-            raise GripperError(f"Tray retract grip verification failed: {exc}") from exc
+        await self._tool.retract(loaded=True)
+        await self._require_tray_held("bin retract", GRIP_IO_BOX_FAILED_CODE)
         self.set_operation_context(phase="return_tray.close_door")
         await self._io.close_door()
         self.set_operation_context(phase="return_tray.place_at_home", target_coordinate=coord)
-        await self._tool.place(coord)
+        await self._tool.place(coord, loaded=True)
         self.set_operation_context(phase="return_tray.home_door")
         await self._io.home_door()
         await self._tool.clear_alarms()
@@ -1435,7 +1481,7 @@ class Robot:
         command_name = "store_item"
 
         if not self._grid:
-            return RobotCommandError(command=command_name, error="Storage grid not calibrated")
+            return RobotCommandError(command=command_name, error="The machine's storage is not ready. Reset it and try again.")
 
         resolved_barcode: str
         resolved_item_name: str
@@ -1459,7 +1505,7 @@ class Robot:
             item={"barcode": resolved_barcode, "name": resolved_item_name},
         )
         if provided_dimensions is None:
-            return RobotCommandError(command=command_name, error="Item dimensions required")
+            return RobotCommandError(command=command_name, error="This item needs its size before it can be stored.")
 
         self._logger.info("Using provided dimensions: %s", provided_dimensions)
         width = float(provided_dimensions.get("width", 0))
@@ -1467,7 +1513,7 @@ class Robot:
         length = float(provided_dimensions.get("length", 0))
 
         if width <= 0 or height <= 0 or length <= 0:
-            return RobotCommandError(command=command_name, error="Invalid dimensions provided")
+            return RobotCommandError(command=command_name, error="Check the item size and try again.")
 
         weight = await self._io.get_weight()
 
@@ -1496,7 +1542,7 @@ class Robot:
                     cell_idx=int(provided_location.get("cell_idx", 0)),
                 )
             except (AttributeError, TypeError, ValueError):
-                return RobotCommandError(command=command_name, error="Invalid storage location provided")
+                return RobotCommandError(command=command_name, error="That cell is not valid.")
 
             is_reserved = (
                 parsed_location.side.value,
@@ -1504,22 +1550,25 @@ class Robot:
                 parsed_location.cell_idx,
             ) in reserved_locations
 
-            # Demo mode keeps its barcode-to-cell mapping for ordinary items. Reserved bin
-            # homes stay trusted explicit destinations for the bin workflow, and a tray
-            # return targets a workflow-chosen home rather than a client-requested cell, so
-            # the availability and fit checks apply only to ordinary explicit stores.
+            # A tray home holds its tray, so only that tray's return may target it; the cell's
+            # status does not mark it.
+            if is_reserved and not tray:
+                self._logger.info("Store refused: cell %s is a bin home", parsed_location)
+                return RobotCommandError(command=command_name, error="That cell is not available.")
+
+            # Demo mode keeps its barcode-to-cell mapping for ordinary items. A tray return
+            # targets a workflow-chosen home rather than a client-requested cell, so the
+            # availability and fit checks apply only to ordinary explicit stores.
             if self._demo_cell_map is None or is_reserved:
                 if is_reserved is False and tray is False:
                     cell = self._grid.get_cell_if_present(parsed_location)
                     if cell is None:
-                        return RobotCommandError(command=command_name, error="Requested storage cell does not exist")
+                        return RobotCommandError(command=command_name, error="That cell does not exist.")
                     if cell.status != CellStatus.AVAILABLE:
-                        return RobotCommandError(
-                            command=command_name,
-                            error=f"Requested storage cell is {cell.status.value}",
-                        )
+                        self._logger.info("Store refused: cell %s is %s", parsed_location, cell.status.value)
+                        return RobotCommandError(command=command_name, error="That cell is not available.")
                     if self._grid.cell_fits_item(cell, item) is False:
-                        return RobotCommandError(command=command_name, error="Item does not fit the requested storage cell")
+                        return RobotCommandError(command=command_name, error="The item does not fit that cell.")
                 location = parsed_location
 
         if location is None and self._demo_cell_map is not None:
@@ -1527,7 +1576,7 @@ class Robot:
             if demo_location is None:
                 return RobotCommandError(
                     command=command_name,
-                    error=f"barcode {resolved_barcode} not in demo mapping",
+                    error=f"Barcode {resolved_barcode}{DEMO_MAP_MISSING_SUFFIX}",
                 )
             if (
                 demo_location.side.value,
@@ -1536,7 +1585,7 @@ class Robot:
             ) in reserved_locations:
                 return RobotCommandError(
                     command=command_name,
-                    error="Demo storage location is reserved",
+                    error="That cell is reserved for the demo.",
                 )
             location = demo_location
         elif location is None:
@@ -1546,7 +1595,7 @@ class Robot:
             )
 
         if not location:
-            return RobotCommandError(command=command_name, error="No suitable storage location found")
+            return RobotCommandError(command=command_name, error="No open cell fits this item.")
 
         if tray is False and (blocked := self._blocked_fridge_cell_error(command_name, location)) is not None:
             return blocked
@@ -1571,7 +1620,10 @@ class Robot:
                 await self.io_pick(coord.to_axis_coordinate())
             self._logger.info("Store: io_pick completed")
             self.set_operation_context(phase="store.grid_update_commit")
-            self._grid.store_item(location, item)
+            # A tray home is a reservation, not inventory: its members are the items, so the
+            # tray's return leaves the home cell's status and item untouched.
+            if not tray:
+                self._grid.store_item(location, item)
             self._logger.info("Store: command successful for %s at %s", resolved_item_name, location)
             return RobotCommandSuccessful(command=command_name, location=location, barcode=resolved_barcode, weight=weight)
         except (MotorError, MovementError, ToolError) as err:
@@ -1582,16 +1634,18 @@ class Robot:
         except Exception as exc:
             self._logger.exception("Store command failed for %s", resolved_item_name)
             sentry_sdk.capture_exception(exc)
+            cause, message = fault_failure(exc, STORE_FAILED_CODE)
             return RobotCommandError(
                 command=command_name,
-                error=f"{type(exc).__name__}: {exc}"
+                error=message,
+                fault_code=cause,
             )
 
     async def retrieve(self, item_name: str) -> RobotResponse:
         command_name = "retrieve_item"
 
         if not self._grid:
-            return RobotCommandError(command=command_name, error="Storage grid not initialized")
+            return RobotCommandError(command=command_name, error="The machine's storage is not ready. Reset it and try again.")
 
         location = next(
             (
@@ -1605,7 +1659,7 @@ class Robot:
             None,
         )
         if location is None:
-            return RobotCommandError(command=command_name, error=f"Item '{item_name}' not found in storage")
+            return RobotCommandError(command=command_name, error=f"Item {item_name} is not in storage.")
 
         return await self.retrieve_by_location(location.model_dump())
 
@@ -1633,7 +1687,7 @@ class Robot:
         command_name = "retrieve_item"
 
         if not self._grid:
-            return RobotCommandError(command=command_name, error="Storage grid not initialized")
+            return RobotCommandError(command=command_name, error="The machine's storage is not ready. Reset it and try again.")
 
         resolved_location: Optional[StorageModuleCellLocation] = None
 
@@ -1641,12 +1695,12 @@ class Robot:
             try:
                 resolved_location = StorageModuleCellLocation(**location_payload)
             except Exception:
-                return RobotCommandError(command=command_name, error="Invalid location payload")
+                return RobotCommandError(command=command_name, error="That cell is not valid.")
 
         if resolved_location is None:
             resolved_location = await self._find_location_for_barcode(barcode)
             if resolved_location is None:
-                return RobotCommandError(command=command_name, error=f"Item '{barcode}' not found in storage")
+                return RobotCommandError(command=command_name, error=f"Item {barcode} is not in storage.")
 
         return await self.retrieve_by_location(resolved_location.model_dump(), barcode_hint=barcode)
 
@@ -1659,18 +1713,18 @@ class Robot:
         command_name = "retrieve_item"
 
         if not self._grid:
-            return RobotCommandError(command=command_name, error="Storage grid not initialized")
+            return RobotCommandError(command=command_name, error="The machine's storage is not ready. Reset it and try again.")
 
         self.set_operation_context(command=command_name, phase="retrieve.resolving_cell_location")
         try:
             location = StorageModuleCellLocation(**location_payload)
         except Exception:
-            return RobotCommandError(command=command_name, error="Invalid location payload")
+            return RobotCommandError(command=command_name, error="That cell is not valid.")
 
         try:
             cell = self._grid.get_cell(location)
         except Exception:
-            return RobotCommandError(command=command_name, error="Location out of range")
+            return RobotCommandError(command=command_name, error="That cell is not valid.")
 
         cached_item = cell.item
         if cached_item is None and barcode_hint is None:
@@ -1711,7 +1765,8 @@ class Robot:
                 await self.io_place(coord, nudge_override=nudge_override)
             self.set_operation_context(phase="retrieve.grid_clear_commit")
             self._grid.clear_item(location)
-            return RobotCommandSuccessful(command=command_name, location=location, barcode=retrieved_barcode)
+            weight = await self._io.get_weight()
+            return RobotCommandSuccessful(command=command_name, location=location, barcode=retrieved_barcode, weight=weight)
         except (MotorError, MovementError, ToolError) as err:
             self._capture_fault_context(err)
             raise
@@ -1724,9 +1779,11 @@ class Robot:
                 location.cell_idx,
             )
             sentry_sdk.capture_exception(exc)
+            cause, message = fault_failure(exc, RETRIEVE_FAILED_CODE)
             return RobotCommandError(
                 command=command_name,
-                error=f"{type(exc).__name__}: {exc}"
+                error=message,
+                fault_code=cause,
             )
 
     # ------------------------------------------------------------------ #
@@ -1746,11 +1803,15 @@ class Robot:
                 await self.idle()
                 result = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, HomeCommand):
-                await self._tool.home()
-                await self._io.home_door()
+                await self._tool.home(axes=command.axes)
+                if command.axes is None or "door" in command.axes:
+                    await self._io.home_door()
                 fridge = getattr(self, "_fridge", None)
-                if fridge is not None:
+                if fridge is not None and (command.axes is None or "fridge_door" in command.axes):
                     await fridge.home_door()
+                result = RobotCommandSuccessful(command=command_name)
+            elif isinstance(command, RecoverCommand):
+                await self.recover(command.axes)
                 result = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, MoveCommand):
                 self.set_operation_context(command=command_name, phase="move", target_coordinate=command.coordinate)
@@ -1760,7 +1821,7 @@ class Robot:
                 result = await self.store(command.item, tray=True)
             elif isinstance(command, DeliverTrayCommand):
                 if command.location is None:
-                    result = RobotCommandError(command=command_name, error="Tray home location required")
+                    result = RobotCommandError(command=command_name, error="The bin's cell is missing.")
                 else:
                     result = await self.retrieve_by_location(command.location, command.barcode, tray=True)
             elif isinstance(command, StoreItemCommand):
@@ -1774,9 +1835,10 @@ class Robot:
                 elif command.location:
                     result = await self.retrieve_by_location(command.location)
                 else:
-                    result = RobotCommandError(command=command_name, error="Missing barcode or location for retrieval")
+                    result = RobotCommandError(command=command_name, error="This item has no cell to retrieve from.")
             else:
-                result = RobotCommandError(command=command_name, error="Invalid Robot Command")
+                self._logger.warning("Unknown robot command %s", command_name)
+                result = RobotCommandError(command=command_name, error="That robot command does not exist.")
             self.clear_operation_context()
             return result
         except (FridgeSafetyError, MotorError, MovementError, ToolError):
@@ -1785,9 +1847,11 @@ class Robot:
             self.clear_operation_context()
             self._logger.exception("Unhandled error while processing command %s", command_name)
             sentry_sdk.capture_exception(exc)
+            cause, message = fault_failure(exc, EXECUTION_ERROR_CODE)
             return RobotCommandError(
                 command=command_name,
-                error=f"{type(exc).__name__}: {exc}"
+                error=message,
+                fault_code=cause,
             )
 
     # ------------------------------------------------------------------ #
@@ -1796,7 +1860,7 @@ class Robot:
 
     def _require_scale(self):
         if self._io._scale is None:
-            raise ConfigError("Scale is not enabled")
+            raise ConfigError("The scale is not available on this machine.")
         return self._io._scale
 
     async def get_scale_data(self) -> Dict[str, Any]:
@@ -1842,107 +1906,6 @@ class Robot:
 
     async def get_laser_distance(self) -> float:
         return await self._require_laser().read_distance_mm()
-
-    async def scan_storage(
-        self,
-        *,
-        side: StorageModuleSide | str,
-        bounds: ScanBounds,
-        step_mm: float,
-        settle_ms: int,
-        samples_per_point: int,
-        laser_offset_x_mm: float,
-        laser_offset_y_mm: float,
-        wall_depth_tolerance_mm: float = 2.0,
-        expected_hole_width_mm: float = 26.0,
-        expected_hole_height_mm: float = 30.0,
-        hole_width_tolerance_mm: float = 10.0,
-        hole_height_tolerance_mm: float = 10.0,
-        min_vertical_wall_coverage_mm: float = 10.0,
-        min_horizontal_wall_coverage_mm: float = 30.0,
-        scans_dir: str = "data/scans",
-        apply: bool = True,
-        stage_extension_mm: Optional[float] = None,
-        z_extension_mm: Optional[float] = None,
-        progress_callback: Optional[Any] = None,
-    ) -> ScanAnalysisResult:
-        if isinstance(side, str):
-            side = StorageModuleSide(side)
-
-        side_number = 0 if side == StorageModuleSide.FRONT else 1
-
-        if stage_extension_mm is None:
-            stage_param = "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.FRONT else "STAGE_EXTENSION_SHELF_BACK"
-            stage_value = await self._tool.get_param(stage_param)
-            if stage_value is not None:
-                stage_extension_mm = float(stage_value)
-
-        x_positions = build_axis_positions(bounds.x_min, bounds.x_max, step_mm)
-        y_positions = build_axis_positions(bounds.y_min, bounds.y_max, step_mm)
-
-        depth_rows = await self._tool.capture_laser_scan(
-            side=side_number,
-            x_positions=x_positions,
-            y_positions=y_positions,
-            settle_ms=settle_ms,
-            samples_per_point=samples_per_point,
-            stage_extension_mm=stage_extension_mm,
-            z_extension_mm=z_extension_mm,
-            progress_callback=progress_callback,
-        )
-
-        capture = create_scan_capture(
-            side=side,
-            bounds=bounds,
-            step_mm=step_mm,
-            settle_ms=settle_ms,
-            samples_per_point=samples_per_point,
-            laser_offset_x_mm=laser_offset_x_mm,
-            laser_offset_y_mm=laser_offset_y_mm,
-            wall_depth_tolerance_mm=wall_depth_tolerance_mm,
-            expected_hole_width_mm=expected_hole_width_mm,
-            expected_hole_height_mm=expected_hole_height_mm,
-            hole_width_tolerance_mm=hole_width_tolerance_mm,
-            hole_height_tolerance_mm=hole_height_tolerance_mm,
-            min_vertical_wall_coverage_mm=min_vertical_wall_coverage_mm,
-            min_horizontal_wall_coverage_mm=min_horizontal_wall_coverage_mm,
-            depth_rows=depth_rows,
-        )
-
-        analysis = analyze_scan_capture(capture, base_dir=scans_dir)
-
-        if apply is False:
-            return analysis
-
-        if len(analysis.shelves) == 0:
-            raise ValueError("No tray openings detected from scan")
-
-        existing_shelves = None if self._grid is None else self._grid.get_side(side)
-        scanned_shelves = build_shelves_from_scan(
-            side=side,
-            analysis=analysis,
-            existing_shelves=existing_shelves,
-        )
-
-        current_front = [] if self._grid is None else self._grid.front_module
-        current_back = [] if self._grid is None else self._grid.back_module
-
-        if side == StorageModuleSide.FRONT:
-            front_module = scanned_shelves
-            back_module = current_back
-        else:
-            front_module = current_front
-            back_module = scanned_shelves
-
-        storage_grid = StorageGrid(
-            front_module=front_module,
-            back_module=back_module,
-            filename=self._grid_path,
-        )
-        storage_grid.save()
-        self._grid = storage_grid
-
-        return analysis
 
     # ------------------------------------------------------------------ #
     #  Motor diagnostics
@@ -1999,6 +1962,33 @@ class Robot:
 
     async def release_gripper(self) -> None:
         await self._tool._gs.close()
+
+    async def recover(self, axes: Optional[List[str]] = None) -> None:
+        """Withdraw the tool after a grip fault without homing what kept its position.
+
+        The fingers open first: a failed grip can leave them touching the tray or the cell, and
+        withdrawing would drag it. The door closes through its home, as at the end of every IO
+        cycle, only when it is open, its last home did not finish, or it is in `axes`. The other
+        `axes` lost their position for another reason and home once the tool is out.
+        """
+        await self.release_gripper()
+        await self._tool.retract_empty()
+        if self._io.get_door_state() is True or (axes is not None and "door" in axes):
+            await self._io.home_door()
+        else:
+            await self._io.ensure_door_homed()
+        # A grip fault inside the fridge leaves its door open; the tool is out now, so close it.
+        fridge = getattr(self, "_fridge", None)
+        if fridge is not None and axes is not None and "fridge_door" in axes:
+            await fridge.home_door()
+        elif fridge is not None and fridge._door.is_homed() is True:
+            await fridge.close_door()
+        tool_axes = [axis for axis in axes or [] if axis not in ("door", "fridge_door")]
+        if tool_axes:
+            await self._tool.home(axes=tool_axes)
+
+    async def read_tray_held(self) -> bool:
+        return await self._tool.read_tray_held()
 
     async def grip(self) -> None:
         await self._tool._gs.open()

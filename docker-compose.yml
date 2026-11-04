@@ -40,10 +40,12 @@ services:
       # auth.jwt_secret or generates a strong one, and audit_integrity keeps its own
       # audit key, so no weak default is injected here.
       # AUDIT_HMAC_KEY_ID must reach the container with its key or rotated audit rows
-      # verify against the wrong key.
+      # verify against the wrong key. DEVELOPER_PIN sets the developer user's PIN;
+      # without it production and demo lock that user with a random PIN.
       - JWT_SECRET
       - AUDIT_HMAC_KEY
       - AUDIT_HMAC_KEY_ID
+      - DEVELOPER_PIN
       - OPSHELF_RELAY_SERVICE_TOKEN_SHA256=${OPSHELF_RELAY_SERVICE_TOKEN_SHA256:-}
       - CAS_COMMON_CHEMISTRY_API_KEY=${CAS_COMMON_CHEMISTRY_API_KEY:-}
       - SENTRY_DSN_API=${SENTRY_DSN_API:-}

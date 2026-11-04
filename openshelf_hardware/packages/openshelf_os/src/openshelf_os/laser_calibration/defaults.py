@@ -20,6 +20,11 @@ EXPECTED_HOLE_WIDTH_MM = 26.0
 EXPECTED_HOLE_HEIGHT_MM = 30.0
 HOLE_WIDTH_TOLERANCE_MM = 10.0
 HOLE_HEIGHT_TOLERANCE_MM = 10.0
+# An engagement hole measures 26mm or more across every scanned cell, while the joint between two
+# shelf plates reads about 14mm and otherwise passes the width tolerance at a 2mm fine step
+# (lb4a-4 back 3:7, 2026-10-22: 14.4mm accepted at the 14.0mm floor). Anything narrower is a gap,
+# not a hole a gripper can catch.
+MIN_DETECTED_HOLE_WIDTH_MM = 20.0
 MIN_VERTICAL_WALL_COVERAGE_MM = 10.0
 MIN_HORIZONTAL_WALL_COVERAGE_MM = 30.0
 
@@ -27,9 +32,18 @@ MIN_HORIZONTAL_WALL_COVERAGE_MM = 30.0
 LASER_SAMPLE_SETTLE_MS = 50
 LASER_SAMPLES_PER_POINT = 3
 
+# A moving pass reads the laser and then the encoder, so each depth is assigned to a position
+# read a fixed interval later. The distance error is feed x latency: fitting that delay against
+# hole-edge midpoints on lb4a-2 at 40mm/s and 79mm/s gives 42ms (mean residual <=0.03mm at both
+# feeds; the per-hole scatter that remains is edge-detection noise, not delay). It scales with
+# feed, so it is subtracted per sample from the measured velocity. Re-measure it per sensor with
+# a stopped-vs-moving edge comparison before trusting the default, and store the result in
+# `robot.grid.scan.flying_capture_latency_ms`; this is only the fallback when that is unset.
+FLYING_CAPTURE_LATENCY_MS = 42.0
+
 # A wall depth reading is turned into a gripper z offset by a per-machine model. The
-# model records the stage extension it was derived at; this is how far the live tool
-# parameter may drift before the model is refused as stale.
+# model records the tool geometry it was derived at; this is how far the live
+# Z_EXTENSION_PLACE may drift before the model is refused as stale (stage drift is carried).
 Z_OFFSET_MODEL_PARAM_TOLERANCE_MM = 0.2
 
 # Z stall anchor probe: drive z down until the gripper pin stalls against the tray.

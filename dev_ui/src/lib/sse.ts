@@ -1,5 +1,9 @@
 import { buildAuthenticatedUrl } from './api';
-import { ensureValidToken, isAuthenticated, loginAsDeveloper, logout } from './auth';
+import { developerPin, ensureValidToken, isAuthenticated, loginAsDeveloper, logout } from './auth';
+
+// A hidden page whose timers stalled this long was suspended (iOS), not just throttled.
+const SUSPENDED_TIMER_GAP_MS = 5000;
+const HIDDEN_TICK_MS = 1000;
 
 type EventHandler = (event: MessageEvent<string>) => void;
 
@@ -28,6 +32,10 @@ export function createReconnectingEventSource(
 	let shouldRefreshAuthentication = false;
 	let isProbingLoginRedirect = false;
 	let didTriggerReload = false;
+	let hiddenTimer: ReturnType<typeof setInterval> | null = null;
+	let hiddenLastTickAt = 0;
+	let hiddenMaxTickGapMs = 0;
+	let isConnecting = false;
 	const reconnectDelayMs = options.reconnectDelayMs ?? 2000;
 
 	function clearReconnectTimer(): void {
@@ -138,6 +146,13 @@ export function createReconnectingEventSource(
 	}
 
 	async function authenticateForConnection(): Promise<void> {
+		// Without the relay's cookie (the device kiosk, direct LAN access) the API serves
+		// the stream without a token, and signing in would throw before it connects.
+		if (developerPin() === null) {
+			shouldRefreshAuthentication = false;
+			return;
+		}
+
 		try {
 			if (shouldRefreshAuthentication === true) {
 				logout();
@@ -159,16 +174,19 @@ export function createReconnectingEventSource(
 	}
 
 	async function reconnect(): Promise<void> {
-		if (shouldStopReconnecting() === true) {
+		if (shouldStopReconnecting() === true || isConnecting === true) {
 			return;
 		}
 
+		isConnecting = true;
 		try {
 			await authenticateForConnection();
 		} catch {
 			options.onError?.();
 			scheduleReconnect();
 			return;
+		} finally {
+			isConnecting = false;
 		}
 
 		if (shouldStopReconnecting() === true) {
@@ -212,13 +230,78 @@ export function createReconnectingEventSource(
 		};
 	}
 
+	function stopHiddenTimer(): number {
+		if (hiddenTimer === null) {
+			return 0;
+		}
+
+		clearInterval(hiddenTimer);
+		hiddenTimer = null;
+		return Math.max(hiddenMaxTickGapMs, Date.now() - hiddenLastTickAt);
+	}
+
+	function startHiddenTimer(): void {
+		if (hiddenTimer !== null) {
+			return;
+		}
+
+		hiddenLastTickAt = Date.now();
+		hiddenMaxTickGapMs = 0;
+		hiddenTimer = setInterval(() => {
+			const now = Date.now();
+			hiddenMaxTickGapMs = Math.max(hiddenMaxTickGapMs, now - hiddenLastTickAt);
+			hiddenLastTickAt = now;
+		}, HIDDEN_TICK_MS);
+	}
+
+	// Safari can resume a suspended page with the old connection still reporting OPEN
+	// while nothing arrives on it. Suspension shows as a stalled timer, so only a page
+	// that was actually suspended drops a healthy-looking connection. iOS also freezes
+	// the reconnect timer of a hidden page, so showing it reconnects at once.
+	function didChangeLifecycle(event: Event): void {
+		if (document.visibilityState === 'hidden') {
+			startHiddenTimer();
+			return;
+		}
+
+		const hiddenTickGapMs = stopHiddenTimer();
+
+		const isStale =
+			source === null ||
+			source.readyState === EventSource.CLOSED ||
+			hiddenTickGapMs >= SUSPENDED_TIMER_GAP_MS ||
+			event.type === 'online' ||
+			(event instanceof PageTransitionEvent && event.persisted === true);
+
+		if (shouldReconnect === false || isStale === false) {
+			return;
+		}
+
+		clearReconnectTimer();
+		closeSource();
+		void reconnect();
+	}
+
+	function setLifecycleListeners(isListening: boolean): void {
+		const method = isListening ? 'addEventListener' : 'removeEventListener';
+		document[method]('visibilitychange', didChangeLifecycle);
+		window[method]('pageshow', didChangeLifecycle);
+		window[method]('online', didChangeLifecycle);
+	}
+
 	return {
 		connect: () => {
 			shouldReconnect = true;
+			setLifecycleListeners(true);
+			if (document.visibilityState === 'hidden') {
+				startHiddenTimer();
+			}
 			void reconnect();
 		},
 		close: () => {
 			shouldReconnect = false;
+			setLifecycleListeners(false);
+			stopHiddenTimer();
 			clearReconnectTimer();
 			closeSource();
 		},

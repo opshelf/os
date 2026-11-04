@@ -3,7 +3,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-from openshelf_os.exceptions import ConfigError, MotorError, MovementError
+from openshelf_os.exceptions import MotorError, MovementError
+
+from openshelf_os_server.routers import calibration
 
 
 def _mock_worker_for_move(stage_position: float = 0.0):
@@ -57,6 +59,7 @@ def _mock_worker_for_move(stage_position: float = 0.0):
 	worker.set_needs_home = MagicMock()
 	worker.needs_home_axes = MagicMock(return_value=[])
 	worker.get_status_snapshot = AsyncMock(return_value={})
+	worker.refresh_tray_on_tool = AsyncMock(return_value=False)
 
 	return worker, tool, order
 
@@ -96,35 +99,6 @@ async def test_move_to_cell_rotates_before_z_extension(
 	tool.rotate_to_position.assert_awaited_once_with(expected_rotation)
 
 
-@pytest.mark.anyio
-async def test_move_to_cell_returns_conflict_for_tool_rotation_fault(client: AsyncClient) -> None:
-	worker, tool, _order = _mock_worker_for_move()
-	tool._ms._motor_id = 3
-	tool.rotate_to_position.side_effect = MovementError(
-		"Tool rotation failed: Movement failed for motor 3 (status=FAULT)"
-	)
-	worker.needs_home_axes.return_value = ["stage"]
-
-	with patch("openshelf_os_server.routers.calibration.get_robot_worker", return_value=worker):
-		with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", new=AsyncMock()):
-			response = await client.post(
-				"/api/calibration/move",
-				json={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
-			)
-
-	assert response.status_code == 409
-	assert response.json()["detail"] == {
-		"message": "Failed to move to cell: Tool rotation failed: Movement failed for motor 3 (status=FAULT)",
-		"code": "motor_fault",
-		"needs_home": True,
-		"needs_home_axes": ["stage"],
-	}
-	worker.set_needs_home.assert_called_once_with(
-		"Failed to move to cell: Tool rotation failed: Movement failed for motor 3 (status=FAULT)",
-		axes=["stage"],
-	)
-
-
 def _mock_worker_for_rotation() -> tuple[MagicMock, MagicMock]:
 	worker = MagicMock()
 	worker.needs_home.return_value = False
@@ -132,6 +106,7 @@ def _mock_worker_for_rotation() -> tuple[MagicMock, MagicMock]:
 	worker.needs_home_reason.return_value = None
 	worker.set_needs_home = MagicMock()
 	worker.get_status_snapshot = AsyncMock(return_value={})
+	worker.refresh_tray_on_tool = AsyncMock(return_value=False)
 	worker._current_command = None
 	worker._demo_cycling = False
 	worker._safety_guard_bypassed = False
@@ -154,6 +129,7 @@ def _mock_worker_for_rotation() -> tuple[MagicMock, MagicMock]:
 	tool._mr.clear_alarm = AsyncMock()
 	tool._mr.move_to_position = AsyncMock()
 	tool.is_rotation_at_position = AsyncMock(return_value=False)
+	tool.retract = AsyncMock()
 	tool.ensure_safe_rotation_x_position = AsyncMock(return_value=5.0)
 	tool.ensure_safe_rotation_stage_extension = AsyncMock()
 	tool.restore_safe_rotation_x_position = AsyncMock()
@@ -161,26 +137,6 @@ def _mock_worker_for_rotation() -> tuple[MagicMock, MagicMock]:
 	worker._robot = MagicMock()
 	worker._robot._tool = tool
 	return worker, tool
-
-
-@pytest.mark.anyio
-async def test_rotate_to_angle_clears_safe_motion_motors(client: AsyncClient) -> None:
-	worker, tool = _mock_worker_for_rotation()
-	clear_motors = AsyncMock()
-
-	with patch("openshelf_os_server.routers.calibration.get_robot_worker", return_value=worker):
-		with patch("openshelf_os_server.routers.calibration.ensure_laser_auto_calibration_not_running", new=AsyncMock()):
-			with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", new=clear_motors):
-				response = await client.post("/api/calibration/rotation/rotate?angle=42")
-
-	assert response.status_code == 200
-	clear_motors.assert_awaited_once_with(
-		tool,
-		gantry=True,
-		stage=True,
-		rotation=True,
-	)
-	tool._mr.move_to_position.assert_awaited_once_with(42.0)
 
 
 @pytest.mark.anyio
@@ -198,6 +154,9 @@ async def test_rotate_to_angle_marks_failed_safe_axis(client: AsyncClient) -> No
 	assert response.status_code == 409
 	worker.set_needs_home.assert_called_once()
 	assert worker.set_needs_home.call_args.kwargs["axes"] == ["x_axis"]
+	reason = worker.set_needs_home.call_args.args[0]
+	assert "motor 11" in reason
+	assert "could not" not in reason
 	assert response.json()["detail"]["needs_home_axes"] == ["x_axis"]
 
 
@@ -215,23 +174,79 @@ async def test_rotate_to_angle_clearance_blocked_returns_409(client: AsyncClient
 	assert response.status_code == 409
 	detail = response.json()["detail"]
 	assert detail["code"] == "rotation_blocked"
-	assert "z_axis=162.470mm exceeds maximum 5.000mm" in detail["message"]
+	# The axis and limit stay in the server log, not the message.
+	assert "z_axis" not in detail["message"]
 	assert "needs_home" not in detail
 	worker.set_needs_home.assert_not_called()
 
 
 @pytest.mark.anyio
-async def test_rotate_to_angle_config_error_returns_400(client: AsyncClient) -> None:
+async def test_rotate_to_angle_retracts_an_extended_tool_before_rotating(client: AsyncClient) -> None:
 	worker, tool = _mock_worker_for_rotation()
-	tool.ensure_safe_rotation_x_position.side_effect = ConfigError(
-		"X axis limit is too small for safe rotation margin (10.0 < 20.0)"
+	order: list[str] = []
+	tool.retract = AsyncMock(side_effect=lambda: order.append("retract"))
+	tool.ensure_safe_rotation_x_position = AsyncMock(
+		side_effect=lambda: order.append("x") or 5.0
 	)
+	tool.ensure_safe_rotation_stage_extension = AsyncMock(side_effect=lambda: order.append("clearance"))
+	tool._mr.move_to_position = AsyncMock(side_effect=lambda angle: order.append("rotate"))
 
 	with patch("openshelf_os_server.routers.calibration.get_robot_worker", return_value=worker):
 		with patch("openshelf_os_server.routers.calibration.ensure_laser_auto_calibration_not_running", new=AsyncMock()):
 			response = await client.post("/api/calibration/rotation/rotate?angle=42")
 
-	assert response.status_code == 400
-	detail = response.json()["detail"]
-	assert detail["code"] == "config_error"
-	assert "(10.0 < 20.0)" in detail["message"]
+	assert response.status_code == 200
+	assert order == ["retract", "x", "clearance", "rotate"]
+
+
+@pytest.mark.anyio
+async def test_iobox_move_retracts_an_extended_tool_before_rotating() -> None:
+	"""A jogged-away Z has to retract first: the rotation guard rejects the whole move otherwise."""
+	order: list[str] = []
+
+	async def did_retract(*args, **kwargs):
+		order.append("retract")
+
+	async def did_rotate(*args, **kwargs):
+		order.append("rotate")
+
+	async def did_move(*args, **kwargs):
+		order.append("move")
+
+	tool = MagicMock()
+	tool.retract = AsyncMock(side_effect=did_retract)
+	tool.rotate_to_position = AsyncMock(side_effect=did_rotate)
+	tool.move = AsyncMock(side_effect=did_move)
+
+	io = MagicMock()
+	io.open_door = AsyncMock()
+
+	worker = MagicMock()
+	worker.refresh_tray_on_tool = AsyncMock(return_value=False)
+	worker.needs_home.return_value = False
+	worker.needs_home_axes.return_value = []
+	worker.needs_home_reason.return_value = None
+	worker._robot = MagicMock()
+	worker._robot._tool = tool
+	worker._robot._io = io
+
+	with patch("openshelf_os_server.routers.calibration.get_robot_worker", return_value=worker):
+		with patch("openshelf_os_server.routers.calibration.ensure_laser_auto_calibration_not_running", new=AsyncMock()):
+			with patch("openshelf_os_server.routers.calibration._clear_motors_for_move", new=AsyncMock()):
+				with patch.object(calibration, "_iobox_current", None):
+					with patch.object(calibration, "_load_iobox_calibration") as load:
+						load.return_value = calibration.IOBoxPositionResponse(
+							pickup_low_x=100.0,
+							pickup_low_y=200.0,
+							pickup_high_x=110.0,
+							pickup_high_y=210.0,
+							z_extension=10.0,
+							stage_extension=20.0,
+							multi_item_x=120.0,
+							multi_item_y=220.0,
+							multi_item_z_extension=30.0,
+							multi_item_stage_extension=40.0,
+						)
+						await calibration.move_to_iobox_position("low")
+
+	assert order == ["retract", "rotate", "move"]

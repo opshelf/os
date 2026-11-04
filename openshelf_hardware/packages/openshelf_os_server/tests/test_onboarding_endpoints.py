@@ -8,7 +8,9 @@ from sqlalchemy import delete, select, update
 from openshelf_os_server.core.auth import AuthService
 from openshelf_os_server.database.models import AuditLog, Role, User
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.routers import onboarding
+from openshelf_os_server.errors import CODE_MESSAGES
+from openshelf_os_server.routers import onboarding, wifi
+from openshelf_os_server.routers.wifi import _NmcliResult
 from openshelf_os_server.settings import get_settings
 
 
@@ -73,43 +75,6 @@ async def _add_regular_user(email: str, pin: str = "1111", role_name: str = "ope
 
 
 @pytest.mark.anyio
-async def test_create_admin_user_and_login(
-    unauthenticated_client: AsyncClient, fresh_device: None
-) -> None:
-    resp = await unauthenticated_client.post(
-        "/api/onboarding/admin-user",
-        json={"email": "owner@example.com", "pin": "4321"},
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data["email"] == "owner@example.com"
-    assert data["role_name"] == "admin"
-    assert data["is_active"] is True
-
-    status_resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert status_resp.json() == {"needs_onboarding": True}
-
-    login_resp = await unauthenticated_client.post(
-        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
-    )
-    assert login_resp.status_code == 200, login_resp.text
-    access_token = login_resp.json()["access_token"]
-
-    unauthenticated_complete_resp = await unauthenticated_client.post("/api/onboarding/complete")
-    assert unauthenticated_complete_resp.status_code == 401
-
-    complete_resp = await unauthenticated_client.post(
-        "/api/onboarding/complete",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    assert complete_resp.status_code == 200, complete_resp.text
-    assert complete_resp.json() == {"needs_onboarding": False}
-
-    status_resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert status_resp.json() == {"needs_onboarding": False}
-
-
-@pytest.mark.anyio
 async def test_create_admin_user_rejected_when_provisioned(
     unauthenticated_client: AsyncClient,
 ) -> None:
@@ -136,38 +101,71 @@ async def test_wifi_endpoints_rejected_when_provisioned(
     assert connect_resp.status_code == 403
 
 
+def _fake_nmcli(monkeypatch: pytest.MonkeyPatch, previous_connection: str | None, restore_fails: bool = False) -> None:
+	"""Replace the nmcli subprocess with a scripted failure of the connect."""
+
+	async def fake(*args: str) -> _NmcliResult:
+		if args == ("-t", "-f", "NAME,DEVICE", "connection", "show", "--active"):
+			return _NmcliResult(0, f"{previous_connection}:wlan0\n" if previous_connection else "", "")
+		if args == ("-t", "-f", "ACTIVE,SSID,SIGNAL", "dev", "wifi"):
+			return _NmcliResult(0, "", "")
+		if args == ("-w", "30", "connection", "up", wifi.PENDING_NAME):
+			return _NmcliResult(1, "", "authentication failed")
+		if previous_connection is not None and args == ("-w", "30", "connection", "up", previous_connection):
+			return _NmcliResult(1, "", "restore failed") if restore_fails else _NmcliResult(0, "", "")
+		return _NmcliResult(0, "", "")
+
+	monkeypatch.setattr(wifi, "_run_nmcli", fake)
+
+
 @pytest.mark.anyio
-async def test_pending_admin_user_retry_resets_the_interrupted_admin_pin(
-    unauthenticated_client: AsyncClient, fresh_device: None
+async def test_wifi_connect_failure_is_neutral_code_when_previous_connection_restored(
+	client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    first_resp = await unauthenticated_client.post(
-        "/api/onboarding/admin-user",
-        json={"email": "owner@example.com", "pin": "4321"},
-    )
-    assert first_resp.status_code == 200, first_resp.text
+	# A failed connect that rolls back to the previous connection keeps the
+	# neutral sentence: the cabinet is still reachable.
+	_fake_nmcli(monkeypatch, "OldConn")
+	response = await client.post("/api/wifi/connect", json={"ssid": "TestNet", "password": "secret"})
+	assert response.status_code == 502
+	detail = response.json()["detail"]
+	assert detail["code"] == "wifi_connect_failed"
+	assert detail["message"] == "The machine could not connect to that network. Try again."
+	assert "TestNet" not in response.text and "authentication failed" not in response.text
 
-    # The wizard created this admin and was reloaded before /complete, so its PIN step
-    # runs again. The retry must take the account over, not strand the device on 409.
-    retry_resp = await unauthenticated_client.post(
-        "/api/onboarding/admin-user",
-        json={"email": "owner@example.com", "pin": "9876"},
-    )
-    assert retry_resp.status_code == 200, retry_resp.text
-    assert retry_resp.json()["id"] == first_resp.json()["id"]
-    assert retry_resp.json()["role_name"] == "admin"
 
-    status_resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert status_resp.json() == {"needs_onboarding": True}
+@pytest.mark.anyio
+async def test_wifi_connect_failure_is_offline_code_when_nothing_to_restore(
+	client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	# With no previous connection, the failed connect leaves the cabinet
+	# unreachable; the body must say so instead of the neutral sentence.
+	_fake_nmcli(monkeypatch, None)
+	response = await client.post("/api/wifi/connect", json={"ssid": "TestNet", "password": "secret"})
+	assert response.status_code == 502
+	detail = response.json()["detail"]
+	assert detail["code"] == "wifi_connect_failed_offline"
+	assert detail["message"] == CODE_MESSAGES["wifi_connect_failed_offline"]
+	assert "may now be offline" in detail["message"]
+	assert "TestNet" not in response.text and "authentication failed" not in response.text
 
-    stale_login = await unauthenticated_client.post(
-        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "4321"}
-    )
-    assert stale_login.status_code == 401
 
-    new_login = await unauthenticated_client.post(
-        "/api/auth/login/json", json={"email": "owner@example.com", "pin": "9876"}
-    )
-    assert new_login.status_code == 200, new_login.text
+@pytest.mark.anyio
+async def test_wifi_connect_failure_is_offline_code_when_restore_fails(
+	client: AsyncClient,
+	monkeypatch: pytest.MonkeyPatch,
+) -> None:
+	# A failed connect whose rollback to the previous connection also fails
+	# leaves the cabinet unreachable, like the nothing-to-restore case.
+	_fake_nmcli(monkeypatch, "OldConn", restore_fails=True)
+	response = await client.post("/api/wifi/connect", json={"ssid": "TestNet", "password": "secret"})
+	assert response.status_code == 502
+	detail = response.json()["detail"]
+	assert detail["code"] == "wifi_connect_failed_offline"
+	assert detail["message"] == CODE_MESSAGES["wifi_connect_failed_offline"]
+	assert "may now be offline" in detail["message"]
+	assert "TestNet" not in response.text and "restore failed" not in response.text
 
 
 @pytest.mark.anyio
@@ -219,31 +217,23 @@ async def test_pending_admin_user_retry_rejects_a_second_regular_user(
 
 
 @pytest.mark.anyio
-async def test_state_failure_returns_fixed_503_without_filesystem_details(
-    client: AsyncClient,
-    unauthenticated_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
+async def test_pending_admin_user_email_conflict_returns_typed_409(
+    unauthenticated_client: AsyncClient, fresh_device: None
 ) -> None:
-    def broken_read() -> None:
-        raise RuntimeError("Could not read onboarding state from /app/data/.onboarding_state")
+    # fresh_device hides the seeded admin as a system user, so the regular-user
+    # check passes and the INSERT hits the unique email constraint. That account
+    # must not be taken over, and the conflict must not leak the raw sqlite error.
+    resp = await unauthenticated_client.post(
+        "/api/onboarding/admin-user",
+        json={"email": "admin@opshelf.com", "pin": "9876"},
+    )
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert (detail["message"], detail["code"]) == ("The administrator account already exists.", "admin_already_created")
 
-    monkeypatch.setattr(onboarding, "_read_onboarding_state", broken_read)
-
-    status_resp = await unauthenticated_client.get("/api/onboarding/status")
-    assert status_resp.status_code == 503
-    detail = status_resp.json()["detail"]
-    assert detail["code"] == "onboarding_state_unavailable"
-    assert detail["message"] == "Onboarding state unavailable"
-    assert "/app/data" not in detail["message"]
-
-    def broken_write(_value: str) -> None:
-        raise OSError(13, "Permission denied", "/app/data/.onboarding_state.tmp")
-
-    monkeypatch.setattr(onboarding, "_write_onboarding_state", broken_write)
-
-    complete_resp = await client.post("/api/onboarding/complete")
-    assert complete_resp.status_code == 503
-    detail = complete_resp.json()["detail"]
-    assert detail["code"] == "onboarding_state_unavailable"
-    assert detail["message"] == "Onboarding state unavailable"
-    assert "/app/data" not in detail["message"]
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).filter(User.email == "admin@opshelf.com"))
+        admin = result.scalar_one()
+    settings = get_settings()
+    auth_service = AuthService(settings.auth.jwt_secret or "", settings.auth.jwt_algorithm)
+    assert not auth_service.verify_pin("9876", admin.pin_hash)

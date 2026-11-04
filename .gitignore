@@ -35,6 +35,3 @@ docs/
 
 # Agent instruction files and local agent settings.
 .pi/*
-!.pi/settings.json
-CLAUDE.md
-.claude/

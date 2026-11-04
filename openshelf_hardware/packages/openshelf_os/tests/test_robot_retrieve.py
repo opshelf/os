@@ -1,23 +1,23 @@
+import asyncio
 import logging
 from types import SimpleNamespace
 
 import pytest
 
+from hardware.exceptions import ModbusConnectionError
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.robot import Robot, RobotCommandError, RobotCommandSuccessful
+from openshelf_os.faults import FAULT_MESSAGES
+from openshelf_os.robot import Robot
+from openshelf_os.robot.commands import MoveCommand
+from openshelf_os.robot.status import RobotCommandError, RobotCommandSuccessful
 from openshelf_os.storage import CellItem, Dimensions, StorageModuleCellLocation, StorageModuleSide
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "cached_barcode",
-    # A placeholder with no barcode, and an item the grid still remembers after the
-    # cell was reassigned through the API: the commanded barcode wins either way.
-    (None, "999900000002"),
-)
-async def test_retrieve_reports_the_commanded_barcode_over_the_cached_item(
-    cached_barcode: str | None,
-) -> None:
+def build_robot(
+    *, weight: float | None, cached_barcode: str | None = None
+) -> tuple[Robot, list[str], list[StorageModuleCellLocation]]:
+    calls: list[str] = []
+
     location = StorageModuleCellLocation(
         side=StorageModuleSide.FRONT,
         shelf_idx=0,
@@ -48,17 +48,40 @@ async def test_retrieve_reports_the_commanded_barcode_over_the_cached_item(
     async def io_place(coordinate: AxisCoordinate, nudge_override=None) -> None:
         assert coordinate == AxisCoordinate(x=10, y=20, s=0, z_offset=1)
         assert nudge_override is None
+        calls.append("io_place")
+
+    async def get_weight() -> float | None:
+        calls.append("get_weight")
+        return weight
 
     robot.io_place = io_place
+    robot._io = SimpleNamespace(get_weight=get_weight)
+    return robot, calls, cleared_locations
 
-    result = await robot.retrieve_by_location(
-        location.model_dump(),
-        barcode_hint="999900000001",
+
+@pytest.mark.asyncio
+async def test_retrieve_cancelled_while_weighing_still_clears_grid_cell() -> None:
+    awaiting_weight = asyncio.Event()
+    robot, _, cleared_locations = build_robot(weight=42.0)
+    location = StorageModuleCellLocation(
+        side=StorageModuleSide.FRONT,
+        shelf_idx=0,
+        cell_idx=1,
     )
 
-    assert isinstance(result, RobotCommandSuccessful)
-    assert result.barcode == "999900000001"
-    assert result.location == location
+    async def get_weight() -> float | None:
+        awaiting_weight.set()
+        await asyncio.Event().wait()  # simulate the 15s stable-weight wait never returning
+        return 42.0
+
+    robot._io = SimpleNamespace(get_weight=get_weight)
+
+    task = asyncio.create_task(robot.retrieve_by_location(location.model_dump()))
+    await awaiting_weight.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
     assert cleared_locations == [location]
 
 
@@ -69,6 +92,7 @@ async def test_io_cycle_homes_the_door_first_and_survives_a_failed_final_home(cy
 
     class Tool:
         _my = SimpleNamespace(move_to_position=lambda *_: _record("y_transfer"))
+        is_grip_detection_enabled = False
 
         async def get_param(self, name: str) -> tuple[float, float]:
             return (1.0, 2.0)
@@ -114,33 +138,20 @@ async def test_io_cycle_homes_the_door_first_and_survives_a_failed_final_home(cy
 async def test_retrieve_refuses_a_fridge_cell_while_the_fridge_is_disabled(fridge_active: bool) -> None:
     # With demo.fridge.enabled false nothing opens the fridge door, so a normal pick at a
     # configured fridge cell would drive the gripper into it.
-    fridge_cell = StorageModuleCellLocation(side=StorageModuleSide.BACK, shelf_idx=0, cell_idx=0)
-    placed: list[AxisCoordinate] = []
-
-    robot = Robot.__new__(Robot)
-    robot._logger = logging.getLogger("test_fridge_disabled")
-    robot._state = SimpleNamespace(current_cell=None)
-    robot._operation_context = {}
-    robot._last_fault_context = None
-    robot._demo_cell_map = None
+    robot, _, _ = build_robot(weight=None)
+    fridge_cell = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=1)
+    placed: list[StorageModuleCellLocation | None] = []
     robot._config = SimpleNamespace(
         demo=SimpleNamespace(
             fridge=SimpleNamespace(
-                cells=[SimpleNamespace(location=SimpleNamespace(side="back_module", shelf_idx=0, cell_idx=0))]
+                cells=[SimpleNamespace(location=SimpleNamespace(side="front_module", shelf_idx=0, cell_idx=1))]
             )
         )
     )
     robot._fridge = SimpleNamespace(is_fridge_cell=lambda location: True) if fridge_active else None
-    robot._grid = SimpleNamespace(
-        get_cell=lambda location: SimpleNamespace(item=None),
-        get_cell_coordinate=lambda location: SimpleNamespace(
-            to_axis_coordinate=lambda: AxisCoordinate(x=10, y=20, s=1, z_offset=0),
-        ),
-        clear_item=lambda location: None,
-    )
 
     async def io_place(coordinate: AxisCoordinate, nudge_override=None, location=None) -> None:
-        placed.append(coordinate)
+        placed.append(location)
 
     robot.io_place = io_place
 
@@ -148,8 +159,24 @@ async def test_retrieve_refuses_a_fridge_cell_while_the_fridge_is_disabled(fridg
 
     if fridge_active:
         assert isinstance(result, RobotCommandSuccessful)
-        assert len(placed) == 1
+        assert placed == [fridge_cell]
     else:
         assert isinstance(result, RobotCommandError)
         assert "fridge is disabled" in result.error
         assert placed == []
+
+
+@pytest.mark.asyncio
+async def test_direct_hardware_bus_loss_returns_classified_command_error() -> None:
+    robot, _, _ = build_robot(weight=None)
+
+    async def move(_coordinate) -> None:
+        raise ModbusConnectionError("device 3 unreachable")
+
+    robot._tool = SimpleNamespace(move=move)
+    result = await robot.handle_command(MoveCommand(coordinate=AxisCoordinate(x=1, y=2, s=0, z_offset=0)))
+
+    assert isinstance(result, RobotCommandError)
+    assert result.fault_code == "motor_bus_disconnected"
+    assert result.error == FAULT_MESSAGES["motor_bus_disconnected"]
+    assert "device 3" not in result.model_dump_json()

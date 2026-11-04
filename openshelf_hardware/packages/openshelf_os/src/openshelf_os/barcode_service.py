@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__).getChild("barcode")
 
 HIDRAW_ROOT = Path("/sys/class/hidraw")
 DEFAULT_BARCODE_PORT = "/dev/serial/by-id/usb-Linux_4.9.84_Barcode_Scanner-if00"
-SCANNER_NOT_DETECTED_REASON = "scanner not detected"
-SCANNER_HID_MODE_REASON = "scanner is in usb hid keyboard mode; switch it to usb-com (serial) mode"
+SCANNER_NOT_DETECTED_REASON = "The barcode scanner is not detected. Check its cable."
+SCANNER_HID_MODE_REASON = "The barcode scanner is in USB HID keyboard mode. Switch it to USB COM (serial) mode."
 
 
 def find_hid_scanner_names(root: Path = HIDRAW_ROOT) -> list[str]:
@@ -97,7 +97,6 @@ class BarcodeService:
         self.prefer_vid_pid = prefer_vid_pid
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=queue_maxsize)
         self._transport = None
-        self._protocol = None
         self._runner_task: asyncio.Task | None = None
         self._stop_evt = asyncio.Event()
         self._connected_evt = asyncio.Event()
@@ -186,7 +185,7 @@ class BarcodeService:
                     baudrate=self.baudrate,
                 )
 
-                self._transport, self._protocol = await coro
+                self._transport = (await coro)[0]
                 backoff = 0.5
                 self._connected_evt.set()
 

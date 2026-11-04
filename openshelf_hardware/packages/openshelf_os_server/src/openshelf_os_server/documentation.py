@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from openshelf_os_server.errors import CODE_MESSAGES
+
 DESCRIPTION = """Local device API for engineers working on inventory, robot control, calibration,
 and diagnostics. All application routes, including engineering and development operations,
 are documented here. Cloud integrators should use the
@@ -57,6 +59,10 @@ TAGS = [
         ),
         ("storage", STORAGE_DESCRIPTION),
         (
+            "import-jobs",
+            "Relay-created inventory imports. The device owns each job; the kiosk walks it unit by unit (measure, print, scan, store) and fills trays with small units. One job runs at a time.",
+        ),
+        (
             "printer",
             "Barcode labels and printer diagnostics. Mock printing produces no physical label.",
         ),
@@ -98,7 +104,7 @@ class ErrorResponse(BaseModel):
 
     detail: str | dict[str, Any] | list[Any] = Field(
         description="Text, an operation-specific error object, or request validation errors.",
-        examples=[{"message": "Home required before robot commands.", "code": "home_required"}],
+        examples=[{"message": CODE_MESSAGES["home_required"], "code": "home_required"}],
     )
 
 
@@ -182,6 +188,7 @@ PARAMETER_DESCRIPTIONS = {
     "offset": "Number of records to skip before returning results.",
     "skip": "Number of records to skip before returning results.",
     "limit": "Maximum number of records to return.",
+    "since": "Exclusive lower bound on the event log `seq`; only events with a higher `seq` are returned.",
 }
 
 

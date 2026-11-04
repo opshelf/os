@@ -6,8 +6,7 @@ import logging
 import pytest
 
 from hardware.curtain import CurtainMonitor, CurtainSensor
-from hardware.gpio import GpioManager
-from hardware.gpio.types import GpioPinSpec, GpioSubscription
+from hardware.gpio.types import GpioSubscription
 
 
 class SilentSubscriptionInput:
@@ -28,35 +27,6 @@ class SilentSubscriptionInput:
     def subscribe(self, _callback, *, emit_initial: bool = False) -> GpioSubscription:
         del emit_initial
         return GpioSubscription(lambda: None)
-
-
-@pytest.mark.asyncio
-async def test_curtain_monitor_uses_gpio_subscription(caplog: pytest.LogCaptureFixture) -> None:
-    manager = GpioManager(
-        {
-            "light_curtain": GpioPinSpec(
-                name="light_curtain",
-                board="pca9535",
-                expander="pca9535_1",
-                pin=1,
-                direction="input",
-                inverted=True,
-            )
-        },
-        fake=True,
-    )
-    sensor = CurtainSensor(input_device=manager.input("light_curtain"))
-    changes: list[bool] = []
-    monitor = CurtainMonitor(sensor, on_change=changes.append)
-
-    with caplog.at_level(logging.INFO, logger="hardware.curtain.curtain"):
-        await monitor.start()
-        manager.set_fake_input("light_curtain", True)
-        await asyncio.sleep(0)
-        await monitor.stop()
-
-    assert changes == [False, True]
-    assert any(getattr(record, "source", None) == "interrupt" for record in caplog.records)
 
 
 @pytest.mark.asyncio

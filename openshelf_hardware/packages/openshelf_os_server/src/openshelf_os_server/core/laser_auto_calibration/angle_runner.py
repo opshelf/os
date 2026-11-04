@@ -373,7 +373,7 @@ class AngleRunnerMixin:
                         )
                         angle_module.print_status(f"shelf_scout=debug path={debug_path}")
                     except Exception as debug_exc:
-                        logger.warning("Failed to write shelf-scout angle debug document: %s", debug_exc)
+                        logger.warning("Failed to write shelf-scout angle debug document: %s", debug_exc, exc_info=debug_exc)
 
                     raise
                 current_probe_start_mm = probe_start_mm
@@ -692,7 +692,7 @@ class AngleRunnerMixin:
                 )
                 angle_module.print_status(f"stage_probe=debug path={debug_path}")
             except Exception as exc:
-                logger.warning("Failed to write stage-stall angle debug document: %s", exc)
+                logger.warning("Failed to write stage-stall angle debug document: %s", exc, exc_info=exc)
 
             raise ValueError("stage-stall angle calibration did not detect any valid stage contacts")
 
@@ -726,7 +726,7 @@ class AngleRunnerMixin:
             )
             angle_module.print_status(f"stage_probe=debug path={debug_path}")
         except Exception as exc:
-            logger.warning("Failed to write stage-stall angle debug document: %s", exc)
+            logger.warning("Failed to write stage-stall angle debug document: %s", exc, exc_info=exc)
 
         if validation_reject_error is not None:
             raise ValueError(validation_reject_error)
@@ -761,11 +761,5 @@ class AngleRunnerMixin:
             current_side=side_name,
             current_stage="angle-calibration",
             state="running",
-            stage_detail={
-                "side": side_name,
-                "phase": "angle-applied",
-                "alpha_deg": result.alpha_deg,
-                "updated_rotation_deg": result.updated_rotation_deg,
-            },
         )
 

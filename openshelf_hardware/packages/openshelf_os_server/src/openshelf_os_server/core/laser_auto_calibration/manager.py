@@ -7,15 +7,18 @@ from uuid import uuid4
 from pathlib import Path
 
 from .models import *
-from .models import LaserAutoCalibrationError
+from .models import LaserAutoCalibrationError, LaserAutoCalibrationErrorRef
 from .scope_runner import ScopeRunnerMixin
 from .scan_runner import ScanRunnerMixin
 from .angle_runner import AngleRunnerMixin
 from .stage_runner import StageRunnerMixin
 from .apply_runner import ApplyRunnerMixin
+from .gripper_runner import GripperRunnerMixin
 from openshelf_os_server.core.logging_config import get_correlation_id
 from openshelf_os_server.core.manual_motion import manual_motion_guard
+from openshelf_os_server.errors import failure_detail
 from .snapshot_runner import SnapshotRunnerMixin
+from openshelf_os.robot.worker import fault_needs_home_axes
 
 
 class LaserAutoCalibrationManager(
@@ -24,6 +27,7 @@ class LaserAutoCalibrationManager(
     AngleRunnerMixin,
     StageRunnerMixin,
     ApplyRunnerMixin,
+    GripperRunnerMixin,
     SnapshotRunnerMixin,
 ):
     def __init__(self) -> None:
@@ -33,12 +37,13 @@ class LaserAutoCalibrationManager(
         self._snapshot = LaserAutoCalibrationSnapshot(updated_at=_get_timestamp())
         self._side_states: dict[str, _SideState] = {}
         self._reference_offset_entries: list[LaserAutoCalibrationReferenceOffset] = []
-        self._z_stall_entries: list[LaserAutoCalibrationZStallResult] = []
         self._active_worker: RobotWorker | None = None
         self._abort_requested = False
         self._scans_dir = _build_default_scans_dir()
         self._motion_diagnostic_session_id: str | None = None
         self._motion_diagnostic_correlation_id: str | None = None
+        # Scan run directory, set only while a scan is in progress.
+        self._run_dir: Path | None = None
 
     async def get_snapshot(self) -> LaserAutoCalibrationSnapshot:
         async with self._lock:
@@ -63,9 +68,9 @@ class LaserAutoCalibrationManager(
             started_at = _get_timestamp()
             self._side_states = {}
             self._reference_offset_entries = []
-            self._z_stall_entries = []
             self._active_worker = worker
             self._abort_requested = False
+            self._run_dir = None
             self._snapshot = LaserAutoCalibrationSnapshot(
                 state="starting",
                 session_id=uuid4().hex,
@@ -180,9 +185,15 @@ class LaserAutoCalibrationManager(
                 await self._home_after_abort(worker)
             except Exception as exc:
                 logger.error("laser_auto_calibration_abort_home_failed", exc_info=True)
-                worker.set_needs_home("Laser auto calibration abort homing failed")
+                worker.set_needs_home(
+                    "Laser auto calibration abort homing failed",
+                    axes=fault_needs_home_axes(worker._robot, exc),
+                )
                 await worker.get_status_snapshot(force_refresh=True)
-                await self._set_terminal_state("failed", f"Abort homing failed: {exc}")
+                await self._set_terminal_state(
+                    "failed",
+                    "The laser calibration stopped, but the robot could not be homed. Reset the robot before continuing.",
+                )
                 return
 
             await self._set_terminal_state("cancelled", None)
@@ -198,7 +209,14 @@ class LaserAutoCalibrationManager(
                 exc_info=True,
             )
             await self._persist_failure_metadata(error_detail)
-            await self._set_terminal_state("failed", str(exc), error_detail=error_detail)
+            # error is operator copy; the exception stays in the log line and run metadata.
+            await self._set_terminal_state(
+                "failed",
+                failure_detail(exc, "laser_calibration_failed")[1],
+                error_detail=LaserAutoCalibrationErrorRef(
+                    phase=error_detail.phase, correlation_id=error_detail.correlation_id
+                ),
+            )
         finally:
             self._set_motion_diagnostic_context(worker)
 
@@ -259,12 +277,10 @@ class LaserAutoCalibrationManager(
         )
 
     async def _persist_failure_metadata(self, error_detail: LaserAutoCalibrationError) -> None:
-        run_dir_value = self._snapshot.stage_detail.get("run_dir")
+        run_dir = self._run_dir
 
-        if run_dir_value is None:
+        if run_dir is None:
             return
-
-        run_dir = Path(str(run_dir_value))
 
         metadata_path = run_dir / "metadata.json"
         if metadata_path.exists() is False:

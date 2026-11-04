@@ -1,8 +1,10 @@
 import asyncio
+import contextlib
 import logging
+import time
 import pymodbus
 
-from typing import Any, Awaitable, Callable, List, Optional, Sequence, TypeVar
+from typing import Any, Awaitable, Callable, Optional, Sequence, TypeVar
 from pymodbus.client import AsyncModbusSerialClient
 from pymodbus.exceptions import ModbusException, ModbusIOException
 
@@ -38,6 +40,34 @@ class SharedModbusController:
         self.parity = parity
         self.client = None
         self.lock = asyncio.Lock()
+        self._unit_ready_at: dict[int, float] = {}
+
+    def is_unit_busy(self, unit_id: int) -> bool:
+        """Whether a busy write holds frames to `unit_id` back right now."""
+        return self._unit_ready_at.get(int(unit_id), 0.0) > time.monotonic()
+
+    @contextlib.asynccontextmanager
+    async def _port_for_unit(self, unit_id: int):
+        """Hold the port lock once `unit_id` is out of its busy window.
+
+        Waits outside the lock, so other units keep the bus while this one is busy. The
+        window is re-checked under the lock: a busy write queued ahead of this caller can
+        start it after the first check.
+        """
+        unit_id = int(unit_id)
+        while True:
+            delay = self._unit_ready_at.get(unit_id, 0.0) - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+                continue
+            await self.lock.acquire()
+            if self._unit_ready_at.get(unit_id, 0.0) <= time.monotonic():
+                break
+            self.lock.release()
+        try:
+            yield
+        finally:
+            self.lock.release()
 
     def _require_connected(self) -> AsyncModbusSerialClient:
         if self.client is None or self.client.connected is not True:
@@ -252,7 +282,7 @@ class SharedModbusController:
 
             return registers
 
-        async with self.lock:
+        async with self._port_for_unit(unit_id):
             if modbus_retries is None and modbus_timeout_s is None:
                 return await self._run_with_reconnect_retry(
                     read_operation,
@@ -343,8 +373,12 @@ class SharedModbusController:
         self,
         unit_id: int,
         address: int,
-        value: int
+        value: int,
+        *,
+        busy_after_s: float = 0.0,
     ) -> None:
+        """Write one register. `busy_after_s` keeps every later frame to this unit back for
+        that long, for writes after which the device stops answering for a while."""
         self._require_connected()
 
         async def write_operation(client: AsyncModbusSerialClient) -> None:
@@ -363,45 +397,12 @@ class SharedModbusController:
                 error_message=f"Write error to unit {unit_id}, register {address}",
             )
 
-        async with self.lock:
+        async with self._port_for_unit(unit_id):
             await self._run_with_reconnect_retry(
                 write_operation,
                 attempts=2,
                 failure_message="Modbus write failed after reconnect",
                 unexpected_message=f"Unexpected error writing to unit {unit_id}",
             )
-
-    async def write_multiple_registers(
-        self,
-        unit_id: int,
-        address: int,
-        values: List[int]
-    ) -> None:
-        self._require_connected()
-
-        if not values:
-            raise ValueError("Values list cannot be empty")
-
-        async def write_operation(client: AsyncModbusSerialClient) -> None:
-            result = await client.write_registers(
-                address=address,
-                values=values,
-                device_id=int(unit_id)
-            )
-
-            self._validate_modbus_response(
-                result,
-                no_response_message=(
-                    f"No response from unit {unit_id} while writing "
-                    f"{len(values)} values starting at register {address}"
-                ),
-                error_message=f"Write error to unit {unit_id}, registers {address}-{address+len(values)-1}",
-            )
-
-        async with self.lock:
-            await self._run_with_reconnect_retry(
-                write_operation,
-                attempts=2,
-                failure_message="Modbus multi-write failed after reconnect",
-                unexpected_message=f"Unexpected error writing to unit {unit_id}",
-            )
+            if busy_after_s > 0:
+                self._unit_ready_at[int(unit_id)] = time.monotonic() + busy_after_s

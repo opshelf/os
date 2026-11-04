@@ -8,8 +8,6 @@ logger = logging.getLogger(__name__)
 
 PENDING = "pending"
 CONNECTING = "connecting"
-CONFIGURING = "configuring"
-HOMING = "homing"
 READY = "ready"
 FAILED = "failed"
 
@@ -103,6 +101,13 @@ class RobotInitTracker:
                 if name in self._degrading and self._components[name].get("phase") == FAILED
             ]
         return [name for name in self._order if self._components[name].get("phase") == FAILED]
+
+    def failure_reasons(self, names: list[str]) -> dict[str, str]:
+        return {
+            name: str(self._components[name].get("reason") or "")
+            for name in names
+            if name in self._components
+        }
 
     def _all_components_ready(self) -> bool:
         return all(

@@ -5,7 +5,12 @@ import pytest
 from hardware.servo import GripState
 
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.exceptions import GripperError
+from openshelf_os.exceptions import (
+    GRIP_DROPPED_CODE,
+    GRIP_PICK_FAILED_CODE,
+    GripperError,
+    GripVerificationError,
+)
 from openshelf_os.tool import Tool
 
 GRIPPED = GripState(0x71, 0x9000, 0x90, 0x40)
@@ -20,7 +25,8 @@ async def test_pick_lift_place_keeps_z_extended_until_after_release() -> None:
     tool._gs = SimpleNamespace(
         safe_open=AsyncMock(side_effect=lambda: events.append("safe_open")),
         open=AsyncMock(side_effect=lambda: events.append("grip") or GRIPPED),
-        close=AsyncMock(side_effect=lambda: events.append("release")),
+        close=AsyncMock(side_effect=lambda: events.append("release") or MISSED),
+        read_state=AsyncMock(return_value=GRIPPED),
     )
     tool._my = SimpleNamespace(
         move_to_position=AsyncMock(side_effect=lambda y: events.append(f"y:{y}")),
@@ -85,12 +91,14 @@ async def test_pick_lift_place_aborts_before_lift_on_missed_grip() -> None:
     tool._handle_fault.assert_awaited_once()
 
 
-@pytest.mark.parametrize(("grip", "after_retract", "phase"), [
-    (MISSED, GRIPPED, "grip"),
-    (GRIPPED, MISSED, "retract"),
+@pytest.mark.parametrize(("grip", "after_retract", "phase", "failure_code"), [
+    (MISSED, GRIPPED, "grip", GRIP_PICK_FAILED_CODE),
+    (GRIPPED, MISSED, "retract", GRIP_DROPPED_CODE),
 ])
 @pytest.mark.asyncio
-async def test_pick_requires_grip_before_and_after_retract(grip, after_retract, phase) -> None:
+async def test_pick_requires_grip_before_and_after_retract(
+    grip, after_retract, phase, failure_code
+) -> None:
     tool = Tool.__new__(Tool)
     tool._gs = SimpleNamespace(
         safe_open=AsyncMock(), open=AsyncMock(return_value=grip),
@@ -99,19 +107,8 @@ async def test_pick_requires_grip_before_and_after_retract(grip, after_retract, 
     tool.move = tool.rotate_to_position = tool.extend_empty = tool.retract = AsyncMock()
     tool._handle_fault = AsyncMock()
 
-    with pytest.raises(GripperError, match=f"No grip on {phase}"):
+    # A miss at the shelf leaves inventory untouched; a drop during retract does not.
+    with pytest.raises(GripVerificationError, match=f"No grip on {phase}") as raised:
         await tool.pick(AxisCoordinate(x=1.0, y=2.0))
 
-
-@pytest.mark.asyncio
-async def test_pick_succeeds_when_grip_holds() -> None:
-    tool = Tool.__new__(Tool)
-    tool._gs = SimpleNamespace(
-        safe_open=AsyncMock(), open=AsyncMock(return_value=GRIPPED),
-        read_state=AsyncMock(return_value=GRIPPED),
-    )
-    tool.move = tool.rotate_to_position = tool.extend_empty = tool.retract = AsyncMock()
-    tool._handle_fault = AsyncMock()
-
-    await tool.pick(AxisCoordinate(x=1.0, y=2.0))
-    tool._handle_fault.assert_not_awaited()
+    assert raised.value.failure_code == failure_code

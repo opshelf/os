@@ -1,75 +1,24 @@
 import asyncio
 import json
 import logging
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from sqlalchemy import select
 
 import openshelf_os_server.core.robot as robot_core
 
 from openshelf_os.robot.worker import RobotWorker
+from openshelf_os_server.core.event_log import append_robot_event
 from openshelf_os_server.core.mass import apply_cycle_mass
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import BinStorageService, RobotEventPublisher
+from openshelf_os_server.core.import_jobs import notify_command_result
 from openshelf_os_server.database.models import Telemetry
 from openshelf_os_server.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 EVENT_DRAIN_TIMEOUT_S = 5.0
 EVENT_FORWARD_WAIT_TIMEOUT_S = 5.0
-
-
-class EventProcessingTracker:
-    """Track worker events whose side effects have finished.
-
-    The event listener commits DB state after the worker emits an event, so SSE
-    clients must not observe an event before that commit. The event stream waits
-    on this tracker before forwarding each payload; fan-out preserves order in
-    every subscriber queue, so a connection's n-th event is the listener's
-    `received_count()` at subscribe time plus n. Counting from zero instead lets
-    every connection opened after the first event skip the wait entirely.
-    """
-
-    def __init__(self) -> None:
-        self._lock = asyncio.Condition()
-        self._processed = 0
-        self._active = False
-        self._pending: Callable[[], int] = lambda: 0
-
-    def activate(self, pending: Callable[[], int]) -> None:
-        self._pending = pending
-        self._active = True
-
-    def deactivate(self) -> None:
-        self._active = False
-        self._pending = lambda: 0
-
-    def received_count(self) -> int:
-        """Events the listener has received: processed plus queued or in progress.
-
-        Read it right after subscribing, with no await in between, so no event can
-        be fanned out to one queue but not the other.
-        """
-        return self._processed + self._pending()
-
-    async def record_processed(self) -> None:
-        async with self._lock:
-            self._processed += 1
-            self._lock.notify_all()
-
-    async def wait_until_processed(self, target: int, timeout_s: float) -> bool:
-        async with self._lock:
-            if self._active is False or self._processed >= target:
-                return True
-            try:
-                while self._processed < target:
-                    await asyncio.wait_for(self._lock.wait(), timeout_s)
-            except asyncio.TimeoutError:
-                return False
-            return self._processed >= target
-
-
-event_processing_tracker = EventProcessingTracker()
 
 
 async def _refresh_status_after_commit(worker: Optional[RobotEventPublisher]) -> None:
@@ -88,7 +37,7 @@ async def _refresh_status_after_commit(worker: Optional[RobotEventPublisher]) ->
     try:
         await snapshot(force_refresh=True)
     except Exception as err:
-        logger.warning("Failed to refresh robot status after commit: %s", err)
+        logger.warning("Failed to refresh robot status after commit: %s", err, exc_info=err)
 
 
 async def flush_telemetry(is_cycle: bool) -> None:
@@ -115,7 +64,7 @@ async def flush_telemetry(is_cycle: bool) -> None:
 
             await session.commit()
     except Exception as err:
-        logger.warning("Failed to flush telemetry: %s", err)
+        logger.warning("Failed to flush telemetry: %s", err, exc_info=err)
 
 
 async def process_robot_event(
@@ -123,7 +72,26 @@ async def process_robot_event(
 ) -> None:
     """
     Handle a single robot event payload, updating storage state when retrieval completes.
+
+    Import jobs follow terminal store and tray results once inventory is committed, so a
+    unit is reported loaded only after its location or tray membership is durable.
     """
+    await _apply_robot_event(payload, worker)
+    if payload.get("command") in {"store_item", "retrieve_item"} and payload.get("message") in {
+        "success",
+        "failed",
+    }:
+        request_id = payload.get("request_id")
+        await notify_command_result(
+            request_id if isinstance(request_id, str) else None,
+            payload,
+            worker or robot_core.robot_worker,
+        )
+
+
+async def _apply_robot_event(
+    payload: dict[str, Any], worker: Optional[RobotEventPublisher] = None
+) -> None:
     active_worker = worker or robot_core.robot_worker
     if active_worker is not None:
         bin_owned = False
@@ -305,7 +273,6 @@ class RobotEventListener:
         self._worker = worker
         self._queue: Optional[asyncio.Queue[str]] = None
         self._task: Optional[asyncio.Task[None]] = None
-        self._in_progress = 0
 
     async def start(self) -> None:
         if self._task is not None:
@@ -315,18 +282,13 @@ class RobotEventListener:
         logger.info("Starting robot event listener")
         self._queue = await self._worker.subscribe_events()
         self._task = asyncio.create_task(self._consume_events(), name="robot-event-listener")
-        event_processing_tracker.activate(self._pending_count)
-
-    def _pending_count(self) -> int:
-        queued = self._queue.qsize() if self._queue is not None else 0
-        return queued + self._in_progress
 
     async def stop(self) -> None:
         if self._queue is not None:
             try:
                 await self._worker.unsubscribe_events(self._queue)
             except Exception as err:
-                logger.warning("Failed to unsubscribe from robot events: %s", err)
+                logger.warning("Failed to unsubscribe from robot events: %s", err, exc_info=err)
             self._queue = None
 
         if self._task is not None:
@@ -337,11 +299,9 @@ class RobotEventListener:
             except asyncio.CancelledError:
                 pass
             except Exception as err:
-                logger.warning("Failed to stop robot event listener task: %s", err)
+                logger.warning("Failed to stop robot event listener task: %s", err, exc_info=err)
 
             self._task = None
-
-        event_processing_tracker.deactivate()
 
     async def drain(self) -> None:
         """Wait briefly for events already emitted by the worker to be persisted."""
@@ -364,7 +324,6 @@ class RobotEventListener:
 
         while True:
             payload_json = await queue.get()
-            self._in_progress = 1
             try:
                 logger.info("Received robot event message: %s", payload_json[:200] if payload_json else None)
 
@@ -374,12 +333,15 @@ class RobotEventListener:
                     logger.warning("Received malformed robot event: %s", payload_json)
                     continue
 
-                await process_robot_event(payload, self._worker)
-            except Exception as err:
-                # An escaping error would end this task and silently stop every later
-                # inventory update while commands keep reporting success.
-                logger.exception("Failed to process robot event %s: %s", payload_json[:200], err)
+                try:
+                    await process_robot_event(payload, self._worker)
+                except Exception as err:
+                    # An escaping error would end this task and silently stop every later
+                    # inventory update while commands keep reporting success.
+                    logger.exception("Failed to process robot event %s: %s", payload_json[:200], err)
+                # The log row commits after the side effects, and is written even when
+                # they failed so clients still get the command result. SSE clients can
+                # only observe the event once it is durable and replayable.
+                await append_robot_event(payload)
             finally:
-                self._in_progress = 0
                 queue.task_done()
-                await event_processing_tracker.record_processed()

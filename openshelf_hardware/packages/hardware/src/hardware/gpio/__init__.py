@@ -1,4 +1,3 @@
-from hardware.gpio.door_release import DoorRelease
 from hardware.gpio.fake import FakeGpioBackend
 from hardware.gpio.manager import GpioManager
 from hardware.gpio.pca9535 import Pca9535Backend
@@ -17,7 +16,6 @@ from hardware.gpio.types import (
 __all__ = [
     "DigitalInput",
     "DigitalOutput",
-    "DoorRelease",
     "FakeGpioBackend",
     "GpioEvent",
     "GpioExpanderSpec",

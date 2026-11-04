@@ -16,9 +16,6 @@ class DetectionResult:
     height_px: int | None = None
     center_x: float | None = None
     center_y: float | None = None
-    bbox_x: int | None = None
-    bbox_y: int | None = None
-    area_px: float | None = None
 
 
 def _clip_roi(frame: np.ndarray, config: IOBoxSizerDetectionConfig) -> tuple[np.ndarray, int, int]:
@@ -151,7 +148,7 @@ def _detect_from_mask(
     if selected is None:
         return DetectionResult(detected=False)
 
-    contour, area = selected
+    contour, _ = selected
     if use_circle is True:
         (center_x, center_y), radius = cv2.minEnclosingCircle(contour)
         diameter = max(1, int(round(radius * 2)))
@@ -161,9 +158,6 @@ def _detect_from_mask(
             height_px=diameter,
             center_x=float(offset_x + center_x),
             center_y=float(offset_y + center_y),
-            bbox_x=offset_x + int(round(center_x - radius)),
-            bbox_y=offset_y + int(round(center_y - radius)),
-            area_px=area,
         )
 
     x, y, width, height = cv2.boundingRect(contour)
@@ -173,9 +167,6 @@ def _detect_from_mask(
         height_px=int(height),
         center_x=float(offset_x + x + width / 2),
         center_y=float(offset_y + y + height / 2),
-        bbox_x=offset_x + int(x),
-        bbox_y=offset_y + int(y),
-        area_px=area,
     )
 
 
@@ -241,9 +232,6 @@ def detect_rectangle(frame: np.ndarray, config: IOBoxSizerDetectionConfig) -> De
         height_px=int(height),
         center_x=float(offset_x + x + width / 2),
         center_y=float(offset_y + y + height / 2),
-        bbox_x=offset_x + int(x),
-        bbox_y=offset_y + int(y),
-        area_px=float(cv2.contourArea(contour)),
     )
 
 

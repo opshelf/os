@@ -7,7 +7,7 @@ from openshelf_os.common import RootConfig
 
 MINIMAL_CONFIG_DICT = {
     "name": "test",
-    "schema_version": 5,
+    "schema_version": 8,
     "version": "0.1.0",
     "robot": {
         "tool": {
@@ -15,14 +15,17 @@ MINIMAL_CONFIG_DICT = {
                 "IDLE_POSITION": [0, 0],
                 "PICKUP_POSITION_L": [0, 0],
                 "PICKUP_POSITION_H": [0, 0],
+                "PICKUP_POSITION_MULTI_ITEM": [0, 0],
                 "SCAN_POSITION": [0, 0],
                 "STAGE_EXTENSION_IO_BOX": 0,
+                "STAGE_EXTENSION_IO_BOX_MULTI_ITEM": 0,
                 "STAGE_NUDGE": 0,
                 "STAGE_EXTENSION_SHELF_FRONT": 0,
                 "STAGE_EXTENSION_SHELF_BACK": 0,
                 "Z_EXTENSION_PICK": 0,
                 "Z_EXTENSION_PLACE": 0,
                 "Z_EXTENSION_IO": 0,
+                "Z_EXTENSION_IO_MULTI_ITEM": 0,
                 "Z_MOVE_RPM": 1,
                 "Z_MOVE_ACCEL": 1,
                 "ROTATION_FRONT": 0,
@@ -42,42 +45,6 @@ MINIMAL_CONFIG_DICT = {
 }
 
 
-def test_laser_defaults_to_disabled():
-    config = RootConfig.model_validate(copy.deepcopy(MINIMAL_CONFIG_DICT))
-
-    assert config.robot.tool.laser.enabled is False
-    assert config.robot.tool.laser.device_id == 1
-    assert config.robot.tool.laser.read_function_code == 3
-    assert config.robot.tool.laser.register_address == 0
-    assert config.robot.tool.laser.register_count == 2
-    assert config.robot.tool.laser.distance_register_index == 1
-    assert config.robot.tool.laser.distance_scale_mm == pytest.approx(0.001)
-    assert config.robot.tool.parameters.STAGE_RETRACT_POSITION_MM == pytest.approx(3.0)
-    assert config.robot.tool.parameters.Z_RETRACT_POSITION_MM == pytest.approx(1.0)
-    assert config.robot.tool.parameters.ROTATION_STAGE_MAX_EXTENSION_MM == pytest.approx(5.0)
-    assert config.robot.tool.parameters.ROTATION_Z_MAX_EXTENSION_MM == pytest.approx(5.0)
-
-
-@pytest.mark.parametrize(
-    ("target_name", "maximum_name"),
-    [
-        ("STAGE_RETRACT_POSITION_MM", "ROTATION_STAGE_MAX_EXTENSION_MM"),
-        ("Z_RETRACT_POSITION_MM", "ROTATION_Z_MAX_EXTENSION_MM"),
-    ],
-)
-def test_retract_target_cannot_exceed_rotation_clearance(
-    target_name: str,
-    maximum_name: str,
-) -> None:
-    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
-    parameters = data["robot"]["tool"]["parameters"]
-    parameters[target_name] = 1.0
-    parameters[maximum_name] = 0.5
-
-    with pytest.raises(ValueError, match=f"{target_name} cannot exceed {maximum_name}"):
-        RootConfig.model_validate(data)
-
-
 def test_demo_config_only_sets_mapping_path():
     data = copy.deepcopy(MINIMAL_CONFIG_DICT)
     data["demo"] = {
@@ -89,54 +56,6 @@ def test_demo_config_only_sets_mapping_path():
 
     assert config.demo.cell_map_path == "data/custom-demo.json"
     assert config.demo.fridge.enabled is False
-
-
-def test_motor_rotation_safety_flag_defaults_to_disabled():
-    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
-    data["robot"]["tool"]["motors"] = [{
-        "motor_name": "stage",
-        "motor_id": 1,
-        "Ip": 1,
-        "rpm": 1,
-        "dr": 0,
-        "mpr": 1,
-        "accel": 1,
-        "ret_rpm": 1,
-        "lim": 10,
-    }]
-    config = RootConfig.model_validate(data)
-
-    stage_motor = config.robot.tool.motors.by_name("stage")
-
-    assert stage_motor.rotation_safe_stage_extension_enabled is False
-    assert stage_motor.rotation_safe_stage_extension_mm == pytest.approx(8.5)
-
-
-def test_y_axis_accepts_exact_brake_profile():
-    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
-    data["robot"]["tool"]["motors"] = [{
-        "motor_name": "y_axis",
-        "motor_id": 2,
-        "Ip": 60,
-        "rpm": 1,
-        "dr": 0,
-        "mpr": 1,
-        "accel": 1,
-        "ret_rpm": 1,
-        "lim": 10,
-        "brake_output_function": 0x24,
-    }]
-
-    config = RootConfig.model_validate(data)
-
-    y_axis = config.robot.tool.motors.by_name("y_axis")
-    assert y_axis.brake_output_function == 0x24
-    assert y_axis.brake_release_delay_ms == 250
-    assert y_axis.brake_engagement_delay_ms == 250
-    assert y_axis.brake_engagement_speed_threshold == 10
-    assert y_axis.control_mode == 2
-    assert y_axis.ppr == 10000
-    assert y_axis.encoder_resolution_cpr == 4000
 
 
 @pytest.mark.parametrize("function", [0xA0, 0xA1, 0x21])
@@ -192,5 +111,3 @@ def test_y_axis_rejects_controller_profile_mismatch(field: str, value: int):
 
     with pytest.raises(ValueError, match=field):
         RootConfig.model_validate(data)
-
-

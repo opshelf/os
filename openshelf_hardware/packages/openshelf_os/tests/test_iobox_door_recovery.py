@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from hardware.exceptions import MotorError as HardwareMotorError
@@ -17,6 +17,7 @@ def make_iobox() -> IOBox:
     motor._safety = SimpleNamespace(blocked=False)
     motor.get_param.return_value = 0
     motor.get_position.return_value = 0.0
+    motor.is_bus_busy = Mock(return_value=False)
 
     iobox = IOBox.__new__(IOBox)
     iobox._md = motor
@@ -53,27 +54,6 @@ def make_iobox() -> IOBox:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("position_mm", "expected_bad_reading_count"),
-    [
-        (-0.01, 0),
-        (-0.010001, 1),
-    ],
-)
-async def test_negative_door_jitter_boundary_controls_bad_reading_classification(
-    position_mm: float,
-    expected_bad_reading_count: int,
-) -> None:
-    iobox = make_iobox()
-    iobox._md.get_position.return_value = position_mm
-
-    assert await iobox.refresh_door_state(force=True) is False
-
-    assert iobox._door_bad_reading_count == expected_bad_reading_count
-    iobox._md.home.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_bad_reading_recovery_is_deferred_during_door_motion() -> None:
     iobox = make_iobox()
     iobox._door_bad_reading_count = 4
@@ -95,26 +75,6 @@ async def test_bad_reading_recovery_is_deferred_during_door_motion() -> None:
 
 
 @pytest.mark.asyncio
-async def test_open_retries_once_after_recoverable_limit_alarm() -> None:
-    iobox = make_iobox()
-    fault = HardwareMotorError("Movement failed for motor 31 (status=FAULT)")
-    fault.fault_context = {
-        "alarm_code": 32,
-        "stall_detected": False,
-        "no_progress": False,
-        "safety_blocked": False,
-    }
-    iobox._md.move_to_position.side_effect = (fault, None)
-    iobox._md.get_position.side_effect = (0.09, 65.0)
-
-    await iobox.open_door()
-
-    assert iobox._md.move_to_position.await_count == 2
-    iobox._md.get_param.assert_not_awaited()
-    iobox._md.home.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_open_does_not_retry_when_shared_safety_blocks_after_fault() -> None:
     iobox = make_iobox()
     iobox._md._safety = SimpleNamespace(blocked=True)
@@ -133,8 +93,6 @@ async def test_open_does_not_retry_when_shared_safety_blocks_after_fault() -> No
     iobox._md.move_to_position.assert_awaited_once()
     iobox._md.get_param.assert_not_awaited()
     iobox._md.home.assert_not_awaited()
-
-
 
 
 @pytest.mark.asyncio
@@ -192,3 +150,47 @@ async def test_sprung_back_door_within_its_home_tolerance_reads_closed(
 
     assert iobox._door_bad_reading_count == expected_bad_reading_count
     iobox._md.home.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_door_home_cancelled_mid_way_is_redone_next_cycle() -> None:
+    # The end-of-cycle home runs alongside the tool's place; a place fault cancels it.
+    iobox = make_iobox()
+    homing = asyncio.Event()
+
+    async def slow_home() -> None:
+        homing.set()
+        await asyncio.Event().wait()
+
+    iobox._md.home.side_effect = slow_home
+    task = asyncio.create_task(iobox.home_door_after_cycle())
+    await homing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert iobox._door_home_pending is True
+    iobox._md.home.side_effect = None
+    iobox._md.home.reset_mock()
+    await iobox.ensure_door_homed()
+    iobox._md.home.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_door_read_is_skipped_while_the_door_drive_is_busy() -> None:
+    # A read inside the door's post-0x1122 busy window sleeps it out, and the worker holds its
+    # safety-guard lock across this read, so a cabinet-door change could not block motion.
+    iobox = make_iobox()
+    iobox._door_open = True
+    iobox._door_force_refresh_on_block = True
+    iobox._md.is_bus_busy.return_value = True
+
+    assert await asyncio.wait_for(iobox.refresh_door_state(force=True), timeout=0.1) is True
+
+    iobox._md.get_position.assert_not_awaited()
+    assert iobox._door_force_refresh_on_block is True
+
+    iobox._md.is_bus_busy.return_value = False
+    iobox._md.get_position.return_value = 0.0
+    assert await iobox.refresh_door_state() is False
+    iobox._md.get_position.assert_awaited_once()

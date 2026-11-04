@@ -5,22 +5,19 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from openshelf_os.config.laser_scan import LaserScanXYOffsetConfig, LaserScanZOffsetModelConfig
+from openshelf_os.config.laser_scan import (
+    LaserScanShelfInterceptConfig,
+    LaserScanXYOffsetConfig,
+    LaserScanZOffsetModelConfig,
+)
 from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
 from openshelf_os.laser_calibration.defaults import Z_OFFSET_MODEL_PARAM_TOLERANCE_MM
-from openshelf_os.laser_calibration.angle.robot_ops import probe_z_until_stall
 
 from .models import *
 
 
 _MANUAL_SHELF_MATCH_TOLERANCE_MM = 60.0
 _MANUAL_CELL_MATCH_TOLERANCE_MM = 40.0
-
-
-def _z_stall_requested(scan_config: Any) -> bool:
-    """`z_stall_anchor_enabled` is the machine's setting: a probed model is only valid for the
-    machine it was probed on, so fitting one is an explicit per-machine choice, not a per-run one."""
-    return getattr(scan_config, "z_stall_anchor_enabled", False) is True
 
 
 def _reference_derivation_scope(
@@ -127,9 +124,12 @@ def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[An
 
     result = list(scanned_shelves)
     modified_shelf_ids: set[int] = set()
+    appended_shelf = False
 
     for source_shelf, manual_cells in manual_groups:
-        source_y = _shelf_center_y(source_shelf)
+        # Match on the manual cells alone: the stale auto cells of the old shelf can sit on a
+        # different row and drag its center away from the opening the datum actually belongs to.
+        source_y = sum(float(cell.calibration_point.y) for cell in manual_cells) / len(manual_cells)
         target = None
 
         if source_y is not None:
@@ -147,6 +147,7 @@ def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[An
             preserved.cells = [cell.model_copy(deep=True) for cell in manual_cells]
             result.append(preserved)
             modified_shelf_ids.add(id(preserved))
+            appended_shelf = True
             continue
 
         for manual_cell in manual_cells:
@@ -170,6 +171,12 @@ def _preserve_manual_cells(scanned_shelves: list[Any], existing_shelves: list[An
         for idx, cell in enumerate(calibrated):
             cell.cell_idx = idx
         shelf.cells = calibrated + uncalibrated
+
+    # An appended shelf still carries its old index, which can collide with a scanned one.
+    if appended_shelf is True:
+        result.sort(key=lambda shelf: _shelf_center_y(shelf) or float("inf"))
+        for idx, shelf in enumerate(result):
+            shelf.shelf_idx = idx
 
     return result
 
@@ -197,55 +204,8 @@ def _get_x_axis_lower_limit_mm(worker: RobotWorker) -> float | None:
     return float(limit)
 
 
-def _get_z_axis_limit_mm(worker: RobotWorker) -> float | None:
-    """Max reachable Z for the gripper, or None when the motor does not expose it."""
-    motor = getattr(getattr(worker._robot, "_tool", None), "_mg", None)
-    limit = getattr(getattr(motor, "_params", None), "lim", None)
-
-    if limit is None:
-        return None
-
-    return float(limit)
-
-
 class ApplyRunnerMixin:
     _reference_offset_entries: list[LaserAutoCalibrationReferenceOffset]
-    _z_stall_entries: list[LaserAutoCalibrationZStallResult]
-
-    def _record_z_stall_result(
-        self,
-        entry: LaserAutoCalibrationZStallResult,
-    ) -> list[LaserAutoCalibrationZStallResult]:
-        entries: list[LaserAutoCalibrationZStallResult] = [
-            existing
-            for existing in self._z_stall_entries
-            if existing.side != entry.side
-        ]
-        entries.append(entry)
-        self._z_stall_entries = entries
-
-        return [stored.model_copy(deep=True) for stored in entries]
-
-    def _install_z_offset_model(
-        self,
-        scan_config: Any,
-        result: laser_module.ZStallResult,
-        *,
-        intercept_mm: float | None = None,
-        slope_per_mm: float | None = None,
-    ) -> None:
-        """Write the probed model onto the run's config, pinned to the geometry it was probed at."""
-        model = LaserScanZOffsetModelConfig(
-            intercept_mm=float(result.intercept_mm if intercept_mm is None else intercept_mm),
-            x_slope_mm_per_mm=float(result.slope_per_mm if slope_per_mm is None else slope_per_mm),
-            reference_stage_mm=float(result.stage_extension_mm),
-            reference_z_place_mm=float(result.z_place_mm),
-        )
-
-        if result.side == StorageModuleSide.FRONT:
-            scan_config.front_wall_depth_to_gripper_z_model = model
-        else:
-            scan_config.back_wall_depth_to_gripper_z_model = model
 
     def _resolve_manual_z_intercept(
         self,
@@ -261,178 +221,11 @@ class ApplyRunnerMixin:
                 "(cell calibration, 'keep manual') before probing"
             )
 
+        laser_module.check_datum_stage_carry(manual_reference)
+
         return float(manual_reference.intercept_mm)
 
-    def _z_stall_datum_agreement_mm(
-        self,
-        *,
-        side: StorageModuleSide,
-        decision: laser_module.ZStallDecision,
-        manual_reference: laser_module.ReferenceOffsetResult | None,
-        manual_intercept_mm: float | None,
-        scan_config: Any,
-    ) -> float | None:
-        """How far the model about to be installed misses the hand-calibrated datum, in mm.
-
-        The datum intercept was derived with the slope that was configured, so comparing
-        intercepts alone would let a probe-fitted tilt move the model away from the datum
-        unchecked: what has to agree is where the two models PUT the datum cells, i.e.
-        `intercept + slope * grab_x` at each reference sample. The worst cell is what the gate
-        judges, and the same number is what the operator sees.
-        """
-        if manual_reference is None or manual_intercept_mm is None:
-            return None
-
-        configured_model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
-        configured_slope_mm = (
-            0.0 if configured_model is None else float(configured_model.x_slope_mm_per_mm)
-        )
-
-        return laser_module.z_model_datum_agreement_mm(
-            intercept_mm=float(decision.intercept_mm),
-            slope_per_mm=float(decision.slope_per_mm),
-            configured_slope_per_mm=configured_slope_mm,
-            manual_reference=manual_reference,
-        )
-
-    def _validate_z_stall_against_manual_datum(
-        self,
-        *,
-        side: StorageModuleSide,
-        result: laser_module.ZStallResult,
-        decision: laser_module.ZStallDecision,
-        manual_reference: laser_module.ReferenceOffsetResult,
-        manual_intercept_mm: float,
-        scan_config: Any,
-    ) -> None:
-        """Refuse a probed model the hand-calibrated datum does not corroborate.
-
-        The probe presses the shelf plate, so it measures the rack's stiffness as much as the
-        tool's geometry, while the manual datum is the one z value a person stood behind. When
-        the two disagree the rack moved under load or the datum was saved with the stage
-        somewhere else - both need looking at rather than modelling over.
-        """
-        side_name = "front" if side == StorageModuleSide.FRONT else "back"
-        tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
-        agreement_mm = self._z_stall_datum_agreement_mm(
-            side=side,
-            decision=decision,
-            manual_reference=manual_reference,
-            manual_intercept_mm=manual_intercept_mm,
-            scan_config=scan_config,
-        )
-        agreement_mm = 0.0 if agreement_mm is None else agreement_mm
-        laser_module.print_status(
-            f"z_stall_anchor=manual_check side={side_name} "
-            f"installed_intercept_mm={float(decision.intercept_mm):.3f} "
-            f"installed_slope_per_mm={float(decision.slope_per_mm):.5f} "
-            f"manual_intercept_mm={manual_intercept_mm:.3f} agreement_mm={agreement_mm:.3f} "
-            f"tolerance_mm={tolerance_mm:.3f} manual_cells={manual_reference.sample_count}"
-        )
-
-        if agreement_mm > tolerance_mm:
-            direction = "deeper" if float(decision.intercept_mm) > manual_intercept_mm else "shallower"
-            raise ValueError(
-                f"z stall anchor: the probe fit is {agreement_mm:.2f}mm {direction} than the "
-                f"hand-calibrated {side.value} datum ({float(decision.intercept_mm):.3f} vs "
-                f"{manual_intercept_mm:.3f}, "
-                f"tolerance {tolerance_mm:.2f}mm). Probe contact deeper than the datum means the shelf "
-                "moved under load; shallower means the tip met something in front of the plate. "
-                "Neither is a z model - check the reference cell and the shelf before retrying"
-            )
-
-        captured_stage_mm = manual_reference.z_captured_stage_mm
-        pin_tolerance_mm = float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM)
-
-        if captured_stage_mm is not None and abs(float(captured_stage_mm) - float(result.stage_extension_mm)) > pin_tolerance_mm:
-            raise ValueError(
-                f"z stall anchor: the hand-calibrated reference cell was saved with the stage at "
-                f"{float(captured_stage_mm):.2f}mm but the probe ran at {float(result.stage_extension_mm):.2f}mm, "
-                "so its z offset is not comparable; re-save the reference cell with the stage at the "
-                "shelf extension (or fix the tool parameter) and probe again"
-            )
-
-        if manual_reference.z_capture_conditions_missing > 0:
-            logger.warning(
-                "z_stall_reference_capture_conditions_missing",
-                extra={
-                    "side": side.value,
-                    "missing": manual_reference.z_capture_conditions_missing,
-                    "samples": manual_reference.sample_count,
-                    "stage_extension_mm": float(result.stage_extension_mm),
-                },
-            )
-            laser_module.print_status(
-                f"z_stall_anchor=warning side={side_name} "
-                f"unstamped_reference_cells={manual_reference.z_capture_conditions_missing} "
-                "(saved before the capture stage was recorded; the stage extension could not be checked)"
-            )
-
-    async def _publish_z_stall_result(
-        self,
-        *,
-        result: laser_module.ZStallResult,
-        decision: laser_module.ZStallDecision,
-        manual_intercept_mm: float | None,
-        manual_reference: laser_module.ReferenceOffsetResult | None,
-        scan_config: Any,
-        applied: bool,
-        persisted: bool,
-        agreement_mm: float | None = None,
-    ) -> None:
-        # The install overwrites the configured model on the run's config, so a recomputation here
-        # would judge the datum against the slope that was just written while the datum's intercept
-        # was derived with the previous one. The caller therefore hands over the number the gate
-        # used; only the refusal publish, which has not judged, leaves it unset and falls back.
-        if agreement_mm is None:
-            agreement_mm = self._z_stall_datum_agreement_mm(
-                side=result.side,
-                decision=decision,
-                manual_reference=manual_reference,
-                manual_intercept_mm=manual_intercept_mm,
-                scan_config=scan_config,
-            )
-        entry = LaserAutoCalibrationZStallResult(
-            side=result.side,
-            intercept_mm=float(decision.intercept_mm),
-            slope_per_mm=float(decision.slope_per_mm),
-            slope_source=str(decision.source),
-            fit_source=str(result.fit_source),
-            sample_count=int(result.sample_count),
-            x_span_mm=float(result.x_span_mm),
-            stage_extension_mm=float(result.stage_extension_mm),
-            z_place_mm=float(result.z_place_mm),
-            manual_intercept_mm=manual_intercept_mm,
-            manual_agreement_mm=agreement_mm,
-            manual_agreement_tolerance_mm=float(scan_config.z_stall_manual_agreement_mm),
-            manual_captured_stage_mm=(
-                None if manual_reference is None else manual_reference.z_captured_stage_mm
-            ),
-            manual_capture_unstamped=(
-                0 if manual_reference is None else manual_reference.z_capture_conditions_missing
-            ),
-            applied=applied,
-            persisted=persisted,
-            samples=[
-                LaserAutoCalibrationZStallSample(
-                    shelf_idx=int(sample.shelf_idx),
-                    cell_idx=int(sample.cell_idx),
-                    probe_x_mm=float(sample.probe_x_mm),
-                    probe_y_mm=float(sample.probe_y_mm),
-                    wall_depth_mm=float(sample.wall_depth_mm),
-                    z_contact_mm=float(sample.z_contact_mm),
-                    z_contact_repeat_mm=sample.z_contact_repeat_mm,
-                    delta_mm=float(sample.delta_mm),
-                )
-                for sample in result.samples
-            ],
-            skipped=list(result.skipped),
-            dropped_repeats=list(result.dropped_repeats),
-        )
-        entries = self._record_z_stall_result(entry)
-        await self._update_snapshot(z_stall_results=entries)
-
-    async def _derive_z_model_from_stall(
+    async def _derive_z_model_from_grip_edge(
         self,
         worker: RobotWorker,
         side: StorageModuleSide,
@@ -441,115 +234,142 @@ class ApplyRunnerMixin:
         *,
         source_grid: Any,
         manual_reference: laser_module.ReferenceOffsetResult | None,
-    ) -> tuple[float, float]:
-        """Probe the plate for this side's z model, validated against the hand-calibrated datum."""
+    ) -> tuple[float, float, list[tuple[float, float]], dict[tuple[int, int], float]]:
+        """Give every regular cell its own z from where the gripper starts to grip it.
+
+        The laser sees each tray face, but where the hook-shaped fingers catch the hole shifts per
+        shelf (lb4a-3: 1.2-3.9mm against the wall) and by up to 1.25mm between trays on one shelf,
+        so one intercept cannot place every cell. Each cell's edge is found with the gripper's
+        object detection (`run_grip_edge_sweep`) and its z is set mid-way to where the grip gives out
+        deeper in; the datum check compares edge + GRIP_EDGE_TARGET_MARGIN_MM; each shelf's stored
+        intercept is its deepest cell's, since the hook tolerates overshoot but not falling short,
+        and places what was not measured (single-shelf rescans). The datum's own edge is checked against its hand-set z, which
+        refuses the run when they disagree by more than z_stall_manual_agreement_mm. A shelf where
+        no cell grips steadily (multi-item bins) keeps the datum's intercept and is reported.
+        """
+        # Refused before any motion: the datum is what the measured edges are checked against.
+        manual_intercept_mm = self._resolve_manual_z_intercept(side=side, manual_reference=manual_reference)
         device_grid = getattr(worker._robot, "_grid", None) or source_grid
-        # The probe can only judge the datum against what the scope actually detected: a run
-        # scoped to the manual cell holds nothing but the datum, and the probe of that datum is
-        # the point of the run.
-        # The exclusion is decided in the analysis' own key space: a single-shelf scan re-indexes
-        # its shelf to 0 and `build_detected_shelves` renumbers the openings it saw, so matching
-        # stored keys alone would either exclude nothing (the probe presses the datum) or exclude
-        # a cell the scope does not hold. `excluded_probe_cells` matches stored shields to detected
-        # openings by key and by predicted position.
-        excluded_cells = laser_module.excluded_probe_cells(
-            grid=device_grid,
-            side=side,
-            analysis=analysis,
-            scan_config=scan_config,
+        datum_cells = laser_module.datum_probe_cells(
+            grid=device_grid, side=side, analysis=analysis, scan_config=scan_config
         )
-        result = await laser_module.run_z_stall_anchor(
+        disabled_cells = (
+            laser_module.excluded_probe_cells(grid=device_grid, side=side, analysis=analysis, scan_config=scan_config)
+            - datum_cells
+        )
+        configured_model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
+        slope_per_mm = 0.0 if configured_model is None else float(configured_model.x_slope_mm_per_mm)
+        metadata_path = getattr(analysis, "metadata_path", None)
+        candidates = (
+            laser_module.load_candidates_from_metadata(laser_module.load_json_file(metadata_path))
+            if metadata_path is not None and Path(metadata_path).exists()
+            else []
+        )
+
+        def sample_intercept_mm(sample: Any) -> float:
+            return float(sample.target_z_mm) - float(sample.wall_depth_mm) - slope_per_mm * float(sample.grab_x_mm)
+
+        tolerance_mm = float(scan_config.z_stall_manual_agreement_mm)
+        datum_checked = False
+
+        def check_datum(sample: Any) -> None:
+            # Runs as soon as the first datum is probed: a datum several mm off would otherwise steer
+            # every later search, and a too-deep one lets the hook push trays on the other shelves.
+            nonlocal datum_checked
+
+            if datum_checked:
+                return
+
+            if sample is None:
+                raise ValueError(
+                    "grip edge: the datum cell gave no steady grip within its search window; re-check its "
+                    "hand-set z and the gripper (open position, object detection) before retrying"
+                )
+
+            disagreement_mm = sample_intercept_mm(sample) - manual_intercept_mm
+
+            if abs(disagreement_mm) > tolerance_mm:
+                raise ValueError(
+                    f"grip edge: the datum cell's grip edge puts its z {abs(disagreement_mm):.2f}mm "
+                    f"{'deeper' if disagreement_mm > 0 else 'shallower'} than its hand-set z (tolerance "
+                    f"{tolerance_mm:.2f}mm); re-check the datum's z or its tray before retrying"
+                )
+
+            datum_checked = True
+
+        result = await laser_module.run_grip_edge_sweep(
             tool=worker._robot._tool,
             analysis=analysis,
-            scan_config=scan_config,
+            wall_depths=laser_module.wall_depths_by_cell(analysis=analysis, candidates=candidates),
             side=side,
-            excluded_cells=excluded_cells,
+            xy_offset=laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side),
+            intercept_mm=manual_intercept_mm,
+            slope_per_mm=slope_per_mm,
+            preferred_cells=datum_cells,
+            excluded_cells=disabled_cells,
             x_axis_limit_mm=_get_x_axis_limit_mm(worker),
             x_axis_lower_limit_mm=_get_x_axis_lower_limit_mm(worker),
-            z_axis_limit_mm=_get_z_axis_limit_mm(worker),
-            xy_offset=laser_module.get_gripper_xy_correction(scan_config=scan_config, side=side),
             should_abort=self._should_abort_work,
+            check_preferred=check_datum,
         )
-        try:
-            manual_intercept_mm = self._resolve_manual_z_intercept(
-                side=side, manual_reference=manual_reference
+
+        if len(datum_cells) > 0 and not datum_checked:
+            # The sweep never reached a datum (e.g. past the x travel): nothing anchored the edges.
+            check_datum(None)
+
+        deepest_by_shelf: dict[int, Any] = {}
+
+        for sample in result.samples:
+            current = deepest_by_shelf.get(int(sample.shelf_idx))
+
+            if current is None or sample_intercept_mm(sample) > sample_intercept_mm(current):
+                deepest_by_shelf[int(sample.shelf_idx)] = sample
+
+        shelf_intercepts = [
+            (float(sample.grab_y_mm), sample_intercept_mm(sample)) for sample in deepest_by_shelf.values()
+        ]
+        cell_z_offsets = {
+            (int(sample.shelf_idx), int(sample.cell_idx)): float(sample.target_z_mm) for sample in result.samples
+        }
+        sampled_shelves = {int(sample.shelf_idx) for sample in result.samples}
+
+        for shelf in analysis.shelves:
+            if len(shelf.cells) > 0 and int(shelf.shelf_idx) not in sampled_shelves:
+                laser_module.print_status(
+                    f"grip_edge=shelf_unmeasured side={side.value} shelf={int(shelf.shelf_idx)} "
+                    f"y_mm={float(shelf.center_y_mm):.1f} uses_intercept_mm={manual_intercept_mm:.3f}"
+                )
+
+        stage_extension_mm = float(await worker._robot._tool.get_param(_side_to_stage_extension_param_name(side)))
+        z_place_mm = float(await worker._robot._tool.get_param("Z_EXTENSION_PLACE"))
+        # A partial scope measures only its own shelves: the stored entries of the others stay.
+        stored_shelves = (
+            []
+            if configured_model is None
+            else laser_module.shelf_intercepts_at_stage(model=configured_model, stage_extension_mm=stage_extension_mm)
+        )
+        shelf_intercepts += [
+            (y_mm, intercept_mm)
+            for y_mm, intercept_mm in stored_shelves
+            if all(abs(y_mm - measured_y_mm) > laser_module.SHELF_INTERCEPT_MATCH_MM for measured_y_mm, _ in shelf_intercepts)
+        ]
+
+        for y_mm, intercept_mm in sorted(shelf_intercepts):
+            laser_module.print_status(
+                f"grip_edge=shelf_intercept side={side.value} y_mm={y_mm:.1f} intercept_mm={intercept_mm:.3f}"
             )
-        except ValueError:
-            # The probe has already moved, so the measurement must still reach the operator even
-            # though it cannot be judged: publish the model that would have been installed, then
-            # let the refusal out.
-            await self._publish_z_stall_result(
-                result=result,
-                decision=self._resolve_z_stall_model(result=result, scan_config=scan_config, side=side),
-                manual_intercept_mm=None,
-                manual_reference=manual_reference,
-                scan_config=scan_config,
-                applied=False,
-                persisted=False,
-            )
-            raise
-        # Resolve the model once, before anything is judged or published: the datum comparison has
-        # to be made against the pair that gets installed (including a re-based intercept when the
-        # configured slope stands in for one the probe could not measure), and the operator's
-        # agreement number has to be the one the gate used.
-        decision = self._resolve_z_stall_model(result=result, scan_config=scan_config, side=side)
-        # The agreement is computed while the config still carries the slope the datum was derived
-        # with, and reused for every publication, so the operator's number is the gate's number.
-        agreement_mm = self._z_stall_datum_agreement_mm(
-            side=side,
-            decision=decision,
-            manual_reference=manual_reference,
-            manual_intercept_mm=manual_intercept_mm,
-            scan_config=scan_config,
-        )
-        # Publish before judging: a refusal is exactly when the operator needs both numbers.
-        await self._publish_z_stall_result(
-            result=result,
-            decision=decision,
-            manual_intercept_mm=manual_intercept_mm,
-            manual_reference=manual_reference,
-            scan_config=scan_config,
-            applied=False,
-            persisted=False,
-            agreement_mm=agreement_mm,
-        )
-        self._validate_z_stall_against_manual_datum(
-            side=side,
-            result=result,
-            decision=decision,
-            manual_reference=manual_reference,
-            manual_intercept_mm=manual_intercept_mm,
-            scan_config=scan_config,
-        )
-        # Installing on the run's config is what persists it: the callers save that same object.
-        self._install_z_offset_model(
+
+        self._install_shelf_z_model(
             scan_config,
-            result,
-            intercept_mm=float(decision.intercept_mm),
-            slope_per_mm=float(decision.slope_per_mm),
-        )
-        await self._publish_z_stall_result(
-            result=result,
-            decision=decision,
-            manual_intercept_mm=manual_intercept_mm,
-            manual_reference=manual_reference,
-            scan_config=scan_config,
-            applied=True,
-            persisted=True,
-            agreement_mm=agreement_mm,
+            side,
+            intercept_mm=manual_intercept_mm,
+            slope_per_mm=slope_per_mm,
+            stage_extension_mm=stage_extension_mm,
+            z_place_mm=z_place_mm,
+            shelf_intercepts=shelf_intercepts,
         )
 
-        return float(decision.intercept_mm), float(decision.slope_per_mm)
-
-    def _resolve_z_stall_model(
-        self,
-        *,
-        side: StorageModuleSide,
-        result: laser_module.ZStallResult,
-        scan_config: Any,
-    ) -> laser_module.ZStallDecision:
-        """Which (intercept, slope) the probed fit installs with - the package owns the rule."""
-        return laser_module.resolve_z_stall_model(result=result, scan_config=scan_config, side=side)
+        return float(manual_intercept_mm), slope_per_mm, shelf_intercepts, cell_z_offsets
 
     def _record_reference_offset_result(
         self,
@@ -592,13 +412,20 @@ class ApplyRunnerMixin:
             return None
 
         shelf_idx, cell_idx = derivation_scope
+        config = get_root_config()
+        stage_extension_value = getattr(
+            config.robot.tool.parameters, _side_to_stage_extension_param_name(side), None
+        )
+        # Stamped datums are carried to the stage the apply places at, so the intercept they imply
+        # is the one the probe is judged against and the one a probe-less run installs.
         result = laser_module.derive_reference_offsets(
             grid=source_grid,
             analysis=analysis,
             side=side,
-            scan_config=get_root_config().robot.grid.scan,
+            scan_config=config.robot.grid.scan,
             shelf_idx=shelf_idx,
             cell_idx=cell_idx,
+            stage_extension_mm=None if stage_extension_value is None else float(stage_extension_value),
         )
         laser_module.print_status(
             f"reference_offset_derivation side={side_name} "
@@ -646,18 +473,24 @@ class ApplyRunnerMixin:
         source_grid: Any = None,
         manual_reference: laser_module.ReferenceOffsetResult | None = None,
         allow_probe: bool = True,
-    ) -> tuple[float, float] | None:
-        """Resolve (intercept, slope) for z_offset = wall_depth + intercept + slope * grab_x.
+    ) -> tuple[float, float, list[tuple[float, float]], dict[tuple[int, int], float]] | None:
+        """Resolve (intercept, slope, shelf intercepts, measured cell z) for z_offset = wall_depth +
+        intercept + slope * grab_x; measured cell z (analysis keys) replaces that for its cells.
+
+        A cell's intercept is its shelf's entry in the (grab y, intercept) list when it has one: the
+        z stall probe measures every shelf, and the other paths carry what it stored.
 
         `z_stall_anchor_enabled` re-derives the model by probing the plate and replaces the
         configured one: a probed model is only valid for the machine it was probed on, which is
-        the point of asking for it. Otherwise the configured model is used as-is once its pin
-        still matches the live tool geometry. `allow_probe` is False for a scan whose scope does
-        not hold the datum the probed model is judged against, so a partial rescan keeps the
+        the point of asking for it. Without the probe, a stamped hand-calibrated datum in the scan
+        sets the intercept (keeping the configured slope) and is installed pinned to the live
+        geometry; otherwise the configured model is carried to the live stage extension, and
+        refused only when Z_EXTENSION_PLACE moved. `allow_probe` is False for a scan whose scope
+        does not hold the datum the probed model is judged against, so a partial rescan keeps the
         model the machine already has.
         """
         if allow_probe is True and _z_stall_requested(scan_config) is True:
-            return await self._derive_z_model_from_stall(
+            return await self._derive_z_model_from_grip_edge(
                 worker,
                 side,
                 analysis,
@@ -667,43 +500,117 @@ class ApplyRunnerMixin:
             )
 
         configured_model = laser_module.get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=side)
-
-        if configured_model is not None:
-            tool = worker._robot._tool
-            stage_param = (
-                "STAGE_EXTENSION_SHELF_FRONT" if side == StorageModuleSide.FRONT else "STAGE_EXTENSION_SHELF_BACK"
-            )
-            stage_extension_value = await tool.get_param(stage_param)
-            z_place_value = await tool.get_param("Z_EXTENSION_PLACE")
-
-            if stage_extension_value is None or z_place_value is None:
-                raise ValueError(f"{stage_param} and Z_EXTENSION_PLACE are required to apply the z offset model")
-
-            laser_module.require_z_offset_model_matches_tool(
-                model=configured_model,
-                side=side,
-                stage_extension_mm=float(stage_extension_value),
-                z_place_mm=float(z_place_value),
-                tolerance_mm=float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM),
-            )
-
-            intercept_mm = float(configured_model.intercept_mm)
-            slope_per_mm = float(configured_model.x_slope_mm_per_mm)
-            laser_module.print_status(
-                f"z_offset_model=config side={'front' if side == StorageModuleSide.FRONT else 'back'} "
-                f"intercept_mm={intercept_mm:.3f} slope_per_mm={slope_per_mm:.6f} "
-                f"stage_extension_mm={float(stage_extension_value):.2f} z_place_mm={float(z_place_value):.2f}"
-            )
-            return intercept_mm, slope_per_mm
-
-        if allow_missing is True:
-            return None
+        datum_intercept_mm = laser_module.stamped_datum_intercept_mm(manual_reference)
 
         side_name = "front" if side == StorageModuleSide.FRONT else "back"
-        raise ValueError(
-            f"no z offset source for the {side_name} module: configure "
-            f"robot.grid.scan.{side_name}_z_offset_model, or enable robot.grid.scan.z_stall_anchor_enabled. "
-            "Persisting without one would write z_offset=0 to every cell."
+
+        if configured_model is None and datum_intercept_mm is None:
+            if allow_missing is True:
+                return None
+
+            raise ValueError(
+                f"no z offset source for the {side_name} module: configure "
+                f"robot.grid.scan.{side_name}_wall_depth_to_gripper_z_model, extend the stage to the "
+                "shelf extension in cell calibration and jog the bottom-left reference cell's z onto the "
+                "tray and save it (the stage extension is recorded only when the z changes), or enable "
+                "the z stall probe. "
+                "Persisting without one would write z_offset=0 to every cell."
+            )
+
+        tool = worker._robot._tool
+        stage_param = _side_to_stage_extension_param_name(side)
+        stage_extension_value = await tool.get_param(stage_param)
+        z_place_value = await tool.get_param("Z_EXTENSION_PLACE")
+
+        if stage_extension_value is None or z_place_value is None:
+            raise ValueError(f"{stage_param} and Z_EXTENSION_PLACE are required to apply the z offset model")
+
+        stage_extension_mm = float(stage_extension_value)
+        z_place_mm = float(z_place_value)
+
+        slope_per_mm = 0.0 if configured_model is None else float(configured_model.x_slope_mm_per_mm)
+        configured_intercept_mm = (
+            None
+            if configured_model is None
+            else laser_module.z_offset_model_intercept_at_stage(
+                model=configured_model,
+                stage_extension_mm=stage_extension_mm,
+            )
+        )
+
+        configured_shelves = (
+            []
+            if configured_model is None
+            else laser_module.shelf_intercepts_at_stage(model=configured_model, stage_extension_mm=stage_extension_mm)
+        )
+
+        if datum_intercept_mm is not None:
+            # The hand-calibrated datum is this machine's own z, so it sets the intercept; the
+            # configured slope is kept because one opening cannot measure a tilt. Shelf intercepts
+            # keep their offsets from the model intercept, which is the datum's on every install
+            # path (a shelf entry is its deepest cell, not the datum). Installed on the run's
+            # config, pinned to the live geometry, so later rescans stay consistent.
+            shift_mm = 0.0 if configured_intercept_mm is None else datum_intercept_mm - configured_intercept_mm
+            shelf_intercepts = [(y_mm, intercept_mm + shift_mm) for y_mm, intercept_mm in configured_shelves]
+            self._install_shelf_z_model(
+                scan_config,
+                side,
+                intercept_mm=datum_intercept_mm,
+                slope_per_mm=slope_per_mm,
+                stage_extension_mm=stage_extension_mm,
+                z_place_mm=z_place_mm,
+                shelf_intercepts=shelf_intercepts,
+            )
+
+            laser_module.print_status(
+                f"z_offset_model=datum side={side_name} intercept_mm={datum_intercept_mm:.3f} "
+                f"slope_per_mm={slope_per_mm:.6f} stage_extension_mm={stage_extension_mm:.2f} "
+                f"z_place_mm={z_place_mm:.2f} configured_intercept_mm="
+                f"{'none' if configured_intercept_mm is None else f'{configured_intercept_mm:.3f}'} "
+                f"shelf_intercepts={len(shelf_intercepts)}"
+            )
+            return datum_intercept_mm, slope_per_mm, shelf_intercepts, {}
+
+        assert configured_model is not None and configured_intercept_mm is not None
+        laser_module.require_z_offset_model_matches_z_place(
+            model=configured_model,
+            side=side,
+            z_place_mm=z_place_mm,
+            tolerance_mm=float(Z_OFFSET_MODEL_PARAM_TOLERANCE_MM),
+        )
+        laser_module.print_status(
+            f"z_offset_model=config side={side_name} intercept_mm={configured_intercept_mm:.3f} "
+            f"slope_per_mm={slope_per_mm:.6f} stage_extension_mm={stage_extension_mm:.2f} "
+            f"pinned_stage_mm={float(configured_model.reference_stage_mm):.2f} z_place_mm={z_place_mm:.2f} "
+            f"shelf_intercepts={len(configured_shelves)}"
+        )
+        return configured_intercept_mm, slope_per_mm, configured_shelves, {}
+
+    def _install_shelf_z_model(
+        self,
+        scan_config: Any,
+        side: StorageModuleSide,
+        *,
+        intercept_mm: float,
+        slope_per_mm: float,
+        stage_extension_mm: float,
+        z_place_mm: float,
+        shelf_intercepts: list[tuple[float, float]],
+    ) -> None:
+        side_name = "front" if side == StorageModuleSide.FRONT else "back"
+        setattr(
+            scan_config,
+            f"{side_name}_wall_depth_to_gripper_z_model",
+            LaserScanZOffsetModelConfig(
+                intercept_mm=float(intercept_mm),
+                x_slope_mm_per_mm=float(slope_per_mm),
+                reference_stage_mm=float(stage_extension_mm),
+                reference_z_place_mm=float(z_place_mm),
+                shelf_intercepts=[
+                    LaserScanShelfInterceptConfig(y_mm=float(y_mm), intercept_mm=float(shelf_mm))
+                    for y_mm, shelf_mm in sorted(shelf_intercepts)
+                ],
+            ),
         )
 
 
@@ -715,10 +622,6 @@ class ApplyRunnerMixin:
         await self._update_snapshot(
             state="applying",
             current_stage="apply",
-            stage_detail={
-                "phase": "apply",
-                "side_count": len(completed_results),
-            },
         )
 
         config = get_root_config()
@@ -783,13 +686,15 @@ class ApplyRunnerMixin:
             if z_delta_model is None:
                 raise ValueError("z offset model could not be resolved for a full side rebuild")
 
-            z_delta_intercept_mm, z_delta_slope_per_mm = z_delta_model
+            z_delta_intercept_mm, z_delta_slope_per_mm, z_shelf_intercepts, z_cell_offsets = z_delta_model
             laser_module.apply_wall_depth_z_offsets(
                 analysis=completed_result.analysis,
                 scanned_shelves=scanned_shelves,
                 metadata_path=str(completed_result.analysis.metadata_path),
                 z_delta_mm=z_delta_intercept_mm,
                 z_delta_slope_per_mm=z_delta_slope_per_mm,
+                shelf_intercepts=z_shelf_intercepts,
+                cell_z_offsets=z_cell_offsets,
             )
 
             existing_side_shelves = (
@@ -859,12 +764,6 @@ class ApplyRunnerMixin:
         await self._update_snapshot(
             state="applying",
             current_stage="apply",
-            stage_detail={
-                "phase": "apply",
-                "scope": "shelf",
-                "side": _side_to_module_name(side),
-                "shelf_idx": shelf_idx,
-            },
         )
 
         config = get_root_config()
@@ -912,6 +811,8 @@ class ApplyRunnerMixin:
             target_shelf_idx=shelf_idx,
             z_delta_override_mm=None if z_delta_model is None else z_delta_model[0],
             z_delta_slope_per_mm=0.0 if z_delta_model is None else z_delta_model[1],
+            shelf_intercepts=None if z_delta_model is None else z_delta_model[2],
+            cell_z_offsets=None if z_delta_model is None else z_delta_model[3],
         )
 
         if apply_config is not config:
@@ -934,13 +835,6 @@ class ApplyRunnerMixin:
         await self._update_snapshot(
             state="applying",
             current_stage="apply",
-            stage_detail={
-                "phase": "apply",
-                "scope": "cell",
-                "side": _side_to_module_name(side),
-                "shelf_idx": int(target.shelf_idx),
-                "cell_idx": int(target.cell_idx),
-            },
         )
 
         config = get_root_config()

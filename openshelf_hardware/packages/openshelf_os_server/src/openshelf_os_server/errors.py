@@ -6,56 +6,58 @@ problems or known device states (rather than internal bugs) are registered on
 the app with :func:`register_mapped_handlers`, so they become typed responses
 without per-route ``try/except`` conversion. Starlette resolves the most
 specific registered handler via the exception MRO, so subclasses keep their own
-more specific mapping.
+more specific mapping. ``RequestValidationError`` is registered there as well,
+so FastAPI's raw list-of-field-problems 422 body is replaced by the shared
+serializer instead of reaching the client.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from http import HTTPStatus
 import re
 from typing import Any, cast
 
 import sentry_sdk
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.exceptions import ConfigError as HardwareConfigError
+from openshelf_os.faults import FAULT_MESSAGES, fault_code
+from openshelf_os.robot.worker import IO_BOX_OCCUPIED_ERROR, PHYSICAL_ESTOP_REASON, TRAY_ON_TOOL_CODE, TRAY_ON_TOOL_ERROR
 from openshelf_os_server.core.chemicals import ChemicalNotFound, ChemicalUnavailable
+from openshelf_os_server.core.command_lifecycle import (
+	CommandQueueFullError,
+	CommandRequestConflictError,
+	CommandTargetInFlightError,
+)
 from openshelf_os_server.core.validation import CellOccupiedError, ValidationError
 
 logger = logging.getLogger(__name__)
 
 # Exception types that are not code bugs. In an unhandled 500 they get a
-# derived code and, when listed, a message that is safe to surface; everything
-# else stays generic. Full detail remains in the log and Sentry, tied to the
-# client by the correlation id.
-SAFE_500_TYPES: tuple[tuple[type[BaseException], str, str | None, bool], ...] = (
-	# (exception type, code, fallback message, surface str(exc)?)
-	# surface str=True -> str(exc), or the fallback when empty
-	# surface str=False -> the fallback text, or the generic message when None
-	# (str(exc) is not safe to surface: config loader
-	# messages embed absolute paths; SQLAlchemy messages
-	# embed the statement and bound parameters)
-	(TimeoutError, "timeout", "Operation timed out", True),
-	(ConfigError, "config_error", "Invalid device configuration", False),
-	(HardwareConfigError, "config_error", "Invalid device configuration", False),
-	(SQLAlchemyError, "db_error", None, False),
+# derived code and its CODE_MESSAGES sentence; str(exc) never reaches the
+# message (config loader text embeds absolute paths, SQLAlchemy text the
+# statement and bound parameters). Full detail remains in the log and Sentry,
+# tied to the client by the correlation id.
+SAFE_500_TYPES: tuple[tuple[type[BaseException], str], ...] = (
+	(TimeoutError, "timeout"),
+	(ConfigError, "config_error"),
+	(HardwareConfigError, "config_error"),
+	(SQLAlchemyError, "db_error"),
 )
 
 
 def internal_error_detail(exc: BaseException) -> tuple[str, str]:
 	"""Return the (code, message) for an unhandled exception's 500 body."""
-	for exc_type, code, fallback, surface_str in SAFE_500_TYPES:
+	for exc_type, code in SAFE_500_TYPES:
 		if isinstance(exc, exc_type):
-			if surface_str:
-				message = str(exc) or (fallback or "Internal server error")
-			else:
-				message = fallback or "Internal server error"
-			return code, message
-	return "internal_error", "Internal server error"
+			return code, CODE_MESSAGES.get(code, GENERIC_ERROR_MESSAGE)
+	return "internal_error", CODE_MESSAGES["internal_error"]
 
 
 def capture_unhandled_exception(
@@ -105,9 +107,323 @@ DEFAULT_STATUS_CODES: dict[int, str] = {
 }
 
 
+# Text shown when a message arrived empty, was a bare code word, or turned out
+# to be server-side detail with nothing operator-usable left in it.
+CODE_MESSAGES: dict[str, str] = {
+	"fridge_not_calibrated": "Calibrate the fridge door positions first.",
+	"fridge_not_configured": "The demo fridge is not enabled on this machine.",
+	"tool_not_retracted": "Retract the tool before moving the fridge door.",
+	"access_level_invalid": "Choose an access level and try again.",
+	"access_level_not_found": "That access level no longer exists.",
+	"admin_already_created": "The administrator account already exists.",
+	"admin_role_unavailable": "The robot is not ready to create the administrator yet. Try again in a moment.",
+	"audit_log_not_found": "That audit entry no longer exists.",
+	"bad_gateway": "The machine could not reach a part it needs. Try again in a moment.",
+	"bad_request": "The machine could not do what you asked. Reload and try again.",
+	"barcode_required": "Enter the item barcode.",
+	"barcode_taken": "That barcode is already in use.",
+	"bin_access_denied": "This bin also holds items you cannot access. Ask a supervisor to retrieve it.",
+	"bin_home_missing": "The bin's home cell is missing from storage.",
+	"bin_item_delete_requires_admin": "Only an admin can delete an item that is in a bin.",
+	"bin_item_edit_requires_admin": "Only an admin can change the size or access level of an item in a bin.",
+	"bin_not_assigned": "No bin is assigned to this cell.",
+	"bin_not_empty": "Empty the bin and return it first.",
+	"bin_not_found": "That barcode is not a bin.",
+	"bin_workflow_conflict": "The robot cannot do that right now. Wait for it to finish and try again.",
+	"bin_workflow_not_found": "This bin task no longer exists.",
+	"cabinet_not_configured": "This machine cannot open its doors.",
+	"cabinet_release_control_failed": "The machine did not release. Check the machine status before releasing it again.",
+	"cabinet_status_failed": "The machine's status could not be read. Try again.",
+	"calibration_running": "The robot is calibrating.",
+	"calibration_session_required": "No calibration session is active. Move to a cell first.",
+	"calibration_test_failed": "The cycle test did not finish. Check the robot before continuing.",
+	"calibration_test_not_running": "No calibration test queue is running.",
+	"calibration_test_running": "A calibration test queue is already running.",
+	"camera_not_found": "That camera is not set up on this machine.",
+	"camera_unavailable": "That camera is not delivering frames.",
+	"cas_number_invalid": "That CAS number is not valid.",
+	"cell_assigned": "This cell is already assigned to a bin.",
+	"cell_not_calibrated": "That cell has no calibration point. Calibrate it first.",
+	"cell_not_found": "That cell does not exist.",
+	"cell_occupied": "This cell holds a bin or a stored item. Move or remove it first.",
+	"cell_size_required": "Set the cell's size before assigning a bin.",
+	"cell_status_invalid": "That cell's status is not valid.",
+	"cell_too_small": "The item does not fit in that cell. Choose a larger one.",
+	"cell_unavailable": "That cell is not available. Choose another one.",
+	"cells_required": "Choose at least one cell to update.",
+	"chemical_not_found": "That chemical is not in the database.",
+	"chemical_query_too_short": "Enter at least two characters.",
+	"chemical_unavailable": "Chemical lookup is not available right now. Try again in a moment.",
+	"command_not_found": "That robot command does not exist.",
+	"conflict": "The robot cannot do that right now. Wait for it to finish and try again.",
+	"cycle_test_barcode_unavailable": "A test barcode could not be generated. Clear old test items, then run the test again.",
+	"cycle_test_clear_failed": "The items could not be cleared before the test.",
+	"cycle_test_location_mismatch": "The robot finished the move, but the database does not show the item where it should be.",
+	"cycle_test_mode": "Cycle tests run only in development or mock mode because they create and delete items.",
+	"cycle_test_no_cells": "No cells match the test settings.",
+	"cycle_test_not_paused": "The cycle test is not paused.",
+	"cycle_test_not_running": "No cycle test is running.",
+	"cycle_test_request_failed": "The cycle test could not reach the device API.",
+	"cycle_test_running": "A cycle test is already running.",
+	"db_error": "The machine could not save the change. Try again.",
+	"demo_map_missing": "This barcode is not in the demo cell map. Turn off demo mode in the settings and restart the API to test any barcode.",
+	"demo_not_configured": "The demo cell map is not set up on this machine.",
+	"demo_not_running": "The demo cycle is not running.",
+	"demo_running": "The robot is running the demo cycle.",
+	"dev_user_missing": "The developer user is missing on this machine.",
+	"development_mode_only": "That is available only in development mode.",
+	"dimension_invalid": "Enter a size greater than zero.",
+	"door_control_failed": "The machine's door did not move. Check that nothing blocks it before moving it again.",
+	"door_positions_invalid": "Those IO door positions are not valid.",
+	"email_in_use": "That email already belongs to another operator.",
+	"enqueue_failed": "The robot could not queue the command. Try again.",
+	"emergency_stop": PHYSICAL_ESTOP_REASON,
+	"error": "The machine could not complete the action. Check the machine status before trying again.",
+	"forbidden": "You do not have permission to do that.",
+	"frame_encode_failed": "The IO box camera image could not be read. Try again.",
+	"grip_detection_disabled": "Gripper object detection is turned off on this machine, so the gripper cannot measure its open position.",
+	"grid_load_failed": "The shelf layout could not be read. Try again.",
+	"grid_update_failed": "The shelf layout could not be saved. Try again.",
+	"hardware_io": "A part of the machine did not respond. Check the machine and try again.",
+	"home_required": "The robot needs to be reset before this can continue.",
+	"internal_error": "The machine could not complete the action. Check the machine status before trying again.",
+	"invalid_location": "That cell is not valid.",
+	"io_box_occupied": IO_BOX_OCCUPIED_ERROR,
+	"iobox_sizer_unavailable": "The IO box measure tool is not available. Try again.",
+	"item_access_denied": "You do not have permission to retrieve this item.",
+	"item_already_stored": "This item is already stored. Retrieve it before storing it again.",
+	"item_details_required": "This item needs a name and size before it can be stored.",
+	"item_not_found": "There is no item in that cell.",
+	"label_print_failed": "The new label code is saved, but the printer did not print. The old label no longer works.",
+	"label_scan_failed": "The label scan could not be sent. Try again.",
+	"laser_calibration_failed": "The laser calibration failed. Check the robot, then run it again.",
+	"laser_calibration_not_running": "No laser auto calibration is running.",
+	"laser_calibration_running": "Laser auto calibration is already running.",
+	"laser_read_failed": "The laser distance could not be read. Check that the laser is connected and its path is clear.",
+	"laser_scope_invalid": "The laser calibration cannot start with these settings. Check the scope and the robot settings.",
+	"location_add_failed": "The location could not be added.",
+	"location_not_found": "That location does not exist.",
+	"login_failed": "That sign-in did not work. Try again.",
+	"login_rate_limited": "Too many sign-in attempts. Wait a moment and try again.",
+	"method_not_allowed": "The machine could not do what you asked. Reload and try again.",
+	"mock_mode_only": "That is available only in mock mode.",
+	"mock_mode_unsupported": "Mock mode supports only store and retrieve.",
+	"motor_alarm_clear_failed": "The robot's alarm could not be cleared. Find the cause on the drive before clearing it again.",
+	"motor_home_failed": "The robot could not be reset. Check the robot status before resetting it again.",
+	"motor_move_failed": "The robot could not move. Check the robot status before moving it again.",
+	"motor_not_configured": "That motor is not configured on this machine.",
+	"movement_in_progress": "The robot is already moving. Wait for it to finish.",
+	"no_compatible_bin": "No bin can take that item right now.",
+	"not_found": "The machine could not find what you asked for. Reload and try again.",
+	"offsets_incomplete": "Enter the X, Y and Z offset values together.",
+	"onboarding_completed": "Setup is already finished.",
+	"onboarding_state_unavailable": "The robot could not read its setup state. Try again.",
+	"power_cycle_failed": "The machine could not power cycle that part. Check its power rail settings.",
+	"power_rail_not_configured": "That power rail is not configured on this machine.",
+	"queue_full": "The robot is busy. Wait for the current move to finish.",
+	"reference_cell_missing": "That side has no hand-calibrated reference cell. Calibrate its bottom-left cell with keep manual ticked first.",
+	"refresh_token_invalid": "Your sign-in expired. Sign in again.",
+	"relay_identity_unavailable": "The relay service identity is not available.",
+	"request_invalid": "That request could not be sent. Reload and try again.",
+	"request_replay": "That request was already sent. Reload and try again.",
+	"reserved_bin_barcode": "That barcode belongs to a bin. Scan the item barcode instead.",
+	"reserved_tray_item": "That item is already stored in a bin. Use the bin workflow instead.",
+	"reset_required": "The robot needs to be reset before this can continue.",
+	"robot_busy": "The robot is busy with another task.",
+	"robot_crashed": "The robot stopped on a fault. Inspect it and home it before running again.",
+	"robot_disabled": "The robot is not set up to move. Check its settings.",
+	"robot_not_initialized": "The robot has not started. Check the robot status.",
+	"role_in_use": "This role still has operators assigned to it. Reassign them first.",
+	"role_name_in_use": "That role name is already in use.",
+	"role_not_found": "That role no longer exists.",
+	"safety_interruption_active": "The robot is still stopped. Clear the reason and try again.",
+	"scale_calibration_failed": "The scale could not be calibrated. Check that it is steady and holds only the reference weight, then calibrate again.",
+	"scale_config_failed": "The scale is not available on this machine.",
+	"scale_not_enabled": "The machine scale is turned off in the settings.",
+	"scale_read_failed": "Could not read the scale. Try again.",
+	"scale_settings_failed": "The scale settings could not be saved. Try again.",
+	"scale_tare_failed": "The scale could not be zeroed. Check that it is empty and steady, then zero it again.",
+	"self_delete_forbidden": "You cannot delete the account you are signed in with.",
+	"service_unavailable": "The machine is not ready. Try again in a moment.",
+	"shelf_not_found": "That shelf does not exist.",
+	"shelf_occupied": "This shelf, or one above it, holds a bin or a stored item. Move or remove them first.",
+	"target_in_flight": "The robot is already working on this item or cell. Wait for it to finish.",
+	"timeout": "The robot took too long to respond. Check the robot status before trying again.",
+	"token_invalid": "Your sign-in expired. Sign in again.",
+	"tray_config_conflict": "The bin's settings conflict with the stored items. Check the bin's barcode and settings.",
+	"tray_fetch_failed": "The bin could not be fetched. Check the robot status before fetching it again.",
+	TRAY_ON_TOOL_CODE: TRAY_ON_TOOL_ERROR,
+	"tray_return_failed": "The bin could not be returned. Check the robot status before returning it again.",
+	"unauthorized": "Your sign-in expired. Sign in again.",
+	"unknown_item": "That item could not be found.",
+	"user_not_found": "That operator account no longer exists.",
+	"validation_failed": "Check the details you entered and try again.",
+	"wifi_connect_failed": "The machine could not connect to that network. Try again.",
+	"wifi_connect_failed_offline": "The machine could not connect and may now be offline.",
+	"wifi_list_failed": "The network list could not be read. Try again.",
+	"wifi_network_required": "Choose a network to connect to.",
+	"wifi_unavailable": "Network settings are not available on this machine.",
+	# Robot fault codes, shared with the worker's failure events.
+	**FAULT_MESSAGES,
+}
+
+GENERIC_ERROR_MESSAGE = CODE_MESSAGES["error"]
+
+# Text that is never worth showing: a traceback, a formatted statement, or a
+# stack frame. The server log and Sentry keep the real detail.
+_TECHNICAL_MARKERS = ("Traceback (most recent call last)", "[SQL:", '.py", line ', ".py', line ")
+
+# Absolute paths on the device: a slash not glued to a preceding word, then a
+# lowercase root (or macOS /Users), so "3/4 inch", "tray/bin" and relative
+# paths like data/config.json are left alone.
+_SERVER_PATH = re.compile(
+	r"(?<![\w./])['\"]?/(?:[a-z][\w.@+-]*|Users)(?:/[\w.@+-]+)*/?['\"]?"
+)
+
+# A leading identifier token, e.g. "Z_EXTENSION_PLACE not configured" or
+# "shelf_idx must be non-negative". An identifier token carries an underscore
+# before its end; a trailing underscore ("shelf_ a") is an ordinary word and
+# gets sentence-cased like the rest of the text.
+_IDENTIFIER_START = re.compile(r"^[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+(?=\s|$)")
+
+# The whole message is one identifier: a route sent a code word, not a sentence.
+_CODE_WORD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# Function words left dangling when the path that was their object is removed
+# ("reading from /dev/ttyUSB0", "failed on /proc/self/status"). "to" is also
+# an infinitive marker ("failed to write"), so it only dangles as the final
+# word or directly before the removed path.
+_DANGLING_WORDS = frozenset({
+	"a", "an", "and", "at", "before", "for", "from", "in", "on", "to", "the", "with",
+	"after",
+})
+# Prepositions that may stand one content word away from their object
+# ("after clearing /dev/usb/lp0"); articles and "to" never do.
+_DANGLING_PREPOSITIONS = frozenset({
+	"after", "at", "before", "for", "from", "in", "on", "with",
+})
+
+
+def _path_removal_dangles(words: list[str], preceding: list[tuple[str, str]]) -> bool:
+	"""True when removing the path left a function word without its object."""
+	if len(words) == 0 or words[-1].lower() in _DANGLING_WORDS:
+		return True
+	for immediate, one_before in preceding:
+		if immediate in _DANGLING_WORDS or one_before in _DANGLING_PREPOSITIONS:
+			return True
+	return False
+
+
+def normalize_operator_message(message: str, code: str) -> str:
+	"""Return one sentence-case operator sentence for a client-visible message.
+
+	Messages reach here from routes, mapped exceptions and 500 handlers, so the
+	input ranges from hand-written copy to a driver exception. Client text is
+	always a sentence; the technical detail stays in the log, tied to the client
+	by the correlation id.
+	"""
+	fallback = CODE_MESSAGES.get(code, GENERIC_ERROR_MESSAGE)
+	text = " ".join((message or "").split("\n")[0].split())
+	if text == "":
+		return fallback
+	if _CODE_WORD.match(text) is not None:
+		# A route that had nothing to say sent a code as the message.
+		return CODE_MESSAGES.get(text.lower(), fallback)
+	if any(marker in text for marker in _TECHNICAL_MARKERS):
+		return fallback
+	if _SERVER_PATH.search(text) is not None:
+		# Words immediately before each removed path, so a function word that
+		# lost its object ("reading from /dev/ttyUSB0") is still detectable
+		# after the path is gone.
+		preceding = []
+		for match in _SERVER_PATH.finditer(text):
+			before = text[: match.start()].split()
+			preceding.append(
+				(
+					before[-1].lower() if before else "",
+					before[-2].lower() if len(before) >= 2 else "",
+				)
+			)
+		text = " ".join(_SERVER_PATH.sub("", text).split()).strip(":,-;'\" ")
+		if len(text) < 4:
+			return fallback
+		if _path_removal_dangles(text.split(), preceding):
+			return fallback
+	if _IDENTIFIER_START.match(text) is None:
+		text = text[0].upper() + text[1:]
+	if not text.endswith((".", "?", "!")):
+		text = f"{text}."
+	return text
+
+
+# Exceptions whose text is empty or driver output, by the code that describes them.
+_FAILURE_TYPE_CODES: tuple[tuple[type[BaseException], str], ...] = (
+	(asyncio.QueueFull, "queue_full"),
+	(CommandQueueFullError, "queue_full"),
+	(CommandTargetInFlightError, "target_in_flight"),
+	(CommandRequestConflictError, "request_replay"),
+	(TimeoutError, "timeout"),
+	(OSError, "hardware_io"),
+)
+
+
+def failure_detail(exc: BaseException, fallback_code: str) -> tuple[str, str]:
+	"""(code, operator sentence) for a failure recorded outside an HTTP body: a workflow
+	error, a command result. The exception itself belongs in the log."""
+	code = fault_code(exc) or next(
+		(code for exc_type, code in _FAILURE_TYPE_CODES if isinstance(exc, exc_type)), fallback_code
+	)
+	return code, CODE_MESSAGES[code]
+
+
+def strip_legacy_debug(payload: Any) -> Any:
+	"""Robot events and command results persisted before the developer `debug` channel
+	was removed still carry the exception chain under `debug`; it never reaches a client.
+	The event log has no retention, so those rows stay readable."""
+	if isinstance(payload, dict) is False or "debug" not in payload:
+		return payload
+	return {key: value for key, value in payload.items() if key != "debug"}
+
+
+def client_detail(request: Request, detail: dict[str, Any]) -> dict[str, Any]:
+	"""Add the correlation id that ties a body to the server log."""
+	correlation_id = request_correlation_id(request)
+	if correlation_id:
+		detail["correlation_id"] = correlation_id
+	return detail
+
+
+# Status per robot fault code when a route surfaces one; anything else is a 503.
+_FAULT_STATUS: dict[str, int] = {
+	"motor_timeout": status.HTTP_504_GATEWAY_TIMEOUT,
+	"rotation_blocked": status.HTTP_409_CONFLICT,
+	"grip_dropped": status.HTTP_409_CONFLICT,
+	"grip_io_box_failed": status.HTTP_409_CONFLICT,
+	"grip_pick_failed": status.HTTP_409_CONFLICT,
+	"grip_release_failed": status.HTTP_409_CONFLICT,
+}
+
+
+def classify_hardware_error(exc: BaseException) -> tuple[int, str] | None:
+	"""Return a (status, code) more specific than a route's catch-all, if the chain has one."""
+	code = fault_code(exc)
+	if code is None:
+		return None
+	return _FAULT_STATUS.get(code, status.HTTP_503_SERVICE_UNAVAILABLE), code
+
+
+def hardware_api_error(exc: BaseException, status_code: int, code: str, message: str) -> HTTPException:
+	"""``api_error`` for a failed hardware action, under the most specific code the
+	exception chain supports; the route's own code and copy are the fallback."""
+	classified = classify_hardware_error(exc)
+	if classified is None:
+		return api_error(status_code, code, message)
+	return api_error(classified[0], classified[1], CODE_MESSAGES[classified[1]])
+
+
 def error_detail(message: str, code: str, **extra: Any) -> dict[str, Any]:
 	"""Build the structured error body: ``{"message": ..., "code": ...}``."""
-	detail: dict[str, Any] = {"message": message, "code": code}
+	detail: dict[str, Any] = {"message": normalize_operator_message(message, code), "code": code}
 	detail.update(extra)
 	return detail
 
@@ -118,9 +434,24 @@ def api_error(status_code: int, code: str, message: str, **extra: Any) -> HTTPEx
 
 
 def standardize_http_detail(exc: StarletteHTTPException) -> Any:
-	"""Wrap string details into the structured form; dict/list pass through."""
+	"""Wrap string details into the structured form; dict/list pass through.
+
+	A dict detail keeps its own keys but always ends up with a usable ``message``
+	and ``code``, because both the kiosk and the developer UI show them as they
+	arrive.
+	"""
 	if isinstance(exc.detail, str):
-		return error_detail(exc.detail, DEFAULT_STATUS_CODES.get(exc.status_code, "error"))
+		# Starlette's own 404/405 carry the bare reason phrase ("Not Found"), not copy.
+		is_reason_phrase = exc.detail == HTTPStatus(exc.status_code).phrase
+		return error_detail("" if is_reason_phrase else exc.detail, DEFAULT_STATUS_CODES.get(exc.status_code, "error"))
+	if isinstance(exc.detail, dict):
+		detail = dict(exc.detail)
+		code = str(detail.get("code") or DEFAULT_STATUS_CODES.get(exc.status_code, "error"))
+		detail["code"] = code
+		message = detail.get("message")
+		# A non-string message is not operator copy; its repr must not reach the wire.
+		detail["message"] = normalize_operator_message(message if isinstance(message, str) else "", code)
+		return detail
 	return exc.detail
 
 
@@ -128,8 +459,21 @@ async def http_exception_handler(request: Request, exc: Exception) -> JSONRespon
 	# Mirrors Starlette's default HTTPException handler, but standardizes
 	# string details into the structured {message, code} form.
 	http_exc = cast(StarletteHTTPException, exc)
+	detail = standardize_http_detail(http_exc)
+	# Only an explicit `raise ... from exc`: an implicit __context__ is usually a 4xx or polled lookup.
+	cause = http_exc.__cause__
+	if cause is not None:
+		# Clients get one sentence and a correlation id; the failure behind it lives here.
+		code = detail.get("code") if isinstance(detail, dict) else None
+		logger.warning(
+			f"{http_exc.status_code} {code} {request.method} {request.url.path} "
+			f"(correlation_id={request_correlation_id(request)})",
+			exc_info=cause,
+		)
+	if isinstance(detail, dict):
+		detail = client_detail(request, detail)
 	return JSONResponse(
-		content={"detail": standardize_http_detail(http_exc)},
+		content={"detail": detail},
 		status_code=http_exc.status_code,
 		headers=http_exc.headers or {},
 	)
@@ -154,26 +498,19 @@ MAPPED_HEADERS: dict[str, dict[str, str]] = {"chemical_unavailable": {"Retry-Aft
 
 
 def _clean_message(exc: BaseException) -> str:
-	# SQLAlchemy DBAPIError messages carry a formatted [SQL: ...] tail. Prefer
-	# the original database exception; for manually constructed errors strip the
-	# "(module.Class) " prefix from the first line.
+	# SQLAlchemy DBAPIError messages carry a formatted [SQL: ...] tail and the
+	# database text names tables and columns, so the client gets the conflict
+	# sentence; the mapped handler logs the exception with its traceback.
 	if isinstance(exc, IntegrityError):
-		orig = getattr(exc, "orig", None)
-		message = str(orig) if orig is not None else ""
-		if not message:
-			first_line = str(exc).splitlines()[0] if str(exc) else ""
-			message = re.sub(r"^\(\S+\) ", "", first_line)
-		return message or "conflict"
-	# OSError str() prefixes the errno, e.g. "[Errno 5] short write to printer",
-	# and appends the offending path, e.g. "...: '/dev/usb/lp0'". The path is a
-	# server-side detail, so a filename-bearing OSError surfaces only strerror.
+		return CODE_MESSAGES["conflict"]
+	# Driver and timeout text ("[Errno 5] short write to printer: '/dev/usb/lp0'",
+	# "Gantry wait exceeded 30s timeout") is not operator copy; it reaches the log.
+	# TimeoutError is an OSError, so it is checked first.
+	if isinstance(exc, TimeoutError):
+		return CODE_MESSAGES["timeout"]
 	if isinstance(exc, OSError):
-		if getattr(exc, "filename", None) is not None:
-			# strerror is None for raw-errno constructions like OSError(28, None, path).
-			return exc.strerror or "hardware_io"
-		message = re.sub(r"^\[Errno \d+\] ", "", str(exc))
-		return message or "error"
-	return str(exc) or "error"
+		return CODE_MESSAGES["hardware_io"]
+	return str(exc) or CODE_MESSAGES["error"]
 
 
 def _make_mapped_handler(status_code: int, code: str):
@@ -182,7 +519,17 @@ def _make_mapped_handler(status_code: int, code: str):
 		# These mapped types never reach the 500 fallback, so the server-side
 		# diagnostic they logged before the mapping has to be emitted here.
 		# Client-input and normal-lookup outcomes (422/404) stay unlogged.
-		if code in {"hardware_io", "timeout", "conflict"}:
+		# A conflict is a handled client outcome: keep it out of Sentry, whose
+		# LoggingIntegration turns every ERROR log into an issue event.
+		# An IntegrityError is an unexpected constraint violation, so its
+		# exception (and constraint text) goes to the log.
+		if code == "conflict":
+			logger.warning(
+				f"{status_code} {code}: {message} "
+				f"(correlation_id={request_correlation_id(request)})",
+				exc_info=exc if isinstance(exc, IntegrityError) else None,
+			)
+		elif code in {"hardware_io", "timeout"}:
 			logger.error(
 				f"{status_code} {code}: {message} "
 				f"(correlation_id={request_correlation_id(request)})",
@@ -190,11 +537,29 @@ def _make_mapped_handler(status_code: int, code: str):
 			)
 		return JSONResponse(
 			status_code=status_code,
-			content={"detail": error_detail(message, code)},
+			content={"detail": client_detail(request, error_detail(message, code))},
 			headers=MAPPED_HEADERS.get(code, {}),
 		)
 
 	return handler
+
+
+async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+	# FastAPI's own handler answers this with a raw list of field problems;
+	# the shared serializer only has a dict form, so the structured problems
+	# stay in the log and the client gets the code's sentence. Submitted values (a PIN, a
+	# password) stay out of the log too: field path and problem only.
+	problems = "; ".join(
+		f"{'.'.join(str(part) for part in error.get('loc', ()))}: {error.get('msg', '')}" for error in exc.errors()
+	)
+	logger.warning(
+		f"422 validation_failed: {problems} "
+		f"(correlation_id={request_correlation_id(request)})",
+	)
+	return JSONResponse(
+		status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+		content={"detail": client_detail(request, error_detail("", "validation_failed"))},
+	)
 
 
 def register_mapped_handlers(app: FastAPI) -> None:
@@ -202,5 +567,9 @@ def register_mapped_handlers(app: FastAPI) -> None:
 	# Register on the Starlette base class: the router raises 404/405 as base
 	# instances, and the MRO lookup then also covers FastAPI-subclass raises.
 	app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+	# FastAPI registers its own RequestValidationError handler at construction;
+	# this replaces it so a failed pydantic validation becomes a standard
+	# {message, code} body instead of a raw list of field problems.
+	app.add_exception_handler(RequestValidationError, request_validation_handler)
 	for exc_type, status_code, code in MAPPED_EXCEPTIONS:
 		app.add_exception_handler(exc_type, _make_mapped_handler(status_code, code))

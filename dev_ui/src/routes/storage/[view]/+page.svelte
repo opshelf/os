@@ -29,11 +29,15 @@
 		const view = viewParam ? views[viewParam] : undefined;
 
 		if (view === undefined) {
-			error(404, 'calibration tab not found');
+			error(404, 'Calibration tab not found.');
 		}
 
 		return view;
 	});
 </script>
+
+<svelte:head>
+	<title>Storage • Openshelf</title>
+</svelte:head>
 
 <CalibrationPage {selectedView} />

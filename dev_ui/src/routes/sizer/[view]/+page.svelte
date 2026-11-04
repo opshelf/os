@@ -19,7 +19,7 @@
 		const view = viewParam ? views[viewParam] : undefined;
 
 		if (view === undefined) {
-			error(404, 'sizer tab not found');
+			error(404, 'Sizer tab not found.');
 		}
 
 		return view;
@@ -29,6 +29,10 @@
 		return `${devicePath(path)}${page.url.search}`;
 	}
 </script>
+
+<svelte:head>
+	<title>Sizer • Openshelf</title>
+</svelte:head>
 
 <div class="toggle-group">
 	<a class:selected={selectedView === 'status'} href={tabHref('/sizer/status')}>status</a>

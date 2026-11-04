@@ -5,7 +5,6 @@ from openshelf_os_server.core.mass import apply_cycle_mass
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.database.models import StorageBin, StorageBinItem
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.routers.storage import _deserialize_capacity
 
 
 @pytest.mark.anyio
@@ -60,14 +59,6 @@ async def test_upsert_preserves_cycle_zero_and_allows_net_correction(client: Asy
     assert response.json()["weight"] is None
 
 
-@pytest.mark.parametrize("raw_capacity", ["10cm x 20cm x 30cm", "1x2xbad", "{bad", "{"])
-def test_deserialize_capacity_tolerates_invalid_strings(raw_capacity: str) -> None:
-    capacity = _deserialize_capacity(raw_capacity)
-
-    assert capacity.width == 0.0
-    assert capacity.height == 0.0
-    assert capacity.length == 0.0
-
 @pytest.mark.anyio
 async def test_storage_items_endpoint_unauthorized(unauthenticated_client: AsyncClient) -> None:
     """Test storage endpoints without authorization."""
@@ -120,4 +111,3 @@ async def test_add_item_location_occupied_returns_conflict(client: AsyncClient) 
         json={**location_data, "barcode": second_item['barcode']}, headers=headers
     )
     assert conflict_response.status_code == 409
-

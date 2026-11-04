@@ -36,7 +36,7 @@
 			setCalibrationInputs(await getSizerConfig());
 			configError = '';
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to read calibration parameters';
+			configError = err instanceof Error ? err.message : 'Failed to read calibration parameters.';
 		}
 	}
 
@@ -65,12 +65,12 @@
 			const result = await setSizerConfig(nextConfig);
 			if (result.success === true) {
 				setCalibrationInputs(result.config);
-				message = 'calibration parameters applied';
+				message = 'Calibration parameters applied.';
 			} else {
-				configError = 'failed to apply calibration parameters';
+				configError = 'Failed to apply calibration parameters.';
 			}
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to apply calibration parameters';
+			configError = err instanceof Error ? err.message : 'Failed to apply calibration parameters.';
 		} finally {
 			isApplying = false;
 		}
@@ -84,9 +84,9 @@
 		try {
 			await calibrateSizerTofBlank();
 			await fetchConfig();
-			message = 'tof blank calibrated';
+			message = 'ToF blank calibrated.';
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to calibrate tof blank';
+			configError = err instanceof Error ? err.message : 'Failed to calibrate ToF blank.';
 		} finally {
 			isCalibratingTof = false;
 		}
@@ -100,9 +100,9 @@
 		try {
 			await captureSizerCameraBlank();
 			await fetchConfig();
-			message = 'camera blank captured';
+			message = 'Camera blank captured.';
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'failed to capture camera blank';
+			configError = err instanceof Error ? err.message : 'Failed to capture camera blank.';
 		} finally {
 			isCapturingBlank = false;
 		}
@@ -110,7 +110,7 @@
 
 	function buildConfig(): SizerConfig | null {
 		if (config === null) {
-			configError = 'sizer config not loaded';
+			configError = 'Sizer config is not loaded.';
 			return null;
 		}
 
@@ -168,37 +168,39 @@
 {#if isLoading === true}
 	<p>loading sizer data...</p>
 {:else}
-	<table style="margin-bottom: 1.5em">
-		<thead>
-			<tr>
-				<th colspan="2">dimension calibration</th>
-			</tr>
-		</thead>
-		<tbody>
-			<tr
-				><td>mm per px x</td><td
-					><input
-						type="number"
-						bind:value={mmPerPxX}
-						min="0"
-						step="0.0001"
-						placeholder="none"
-					/></td
-				></tr
-			>
-			<tr
-				><td>mm per px y</td><td
-					><input
-						type="number"
-						bind:value={mmPerPxY}
-						min="0"
-						step="0.0001"
-						placeholder="none"
-					/></td
-				></tr
-			>
-		</tbody>
-	</table>
+	<div class="scroll-x" style="margin-bottom: 1.5em">
+		<table>
+			<thead>
+				<tr>
+					<th colspan="2">dimension calibration</th>
+				</tr>
+			</thead>
+			<tbody>
+				<tr
+					><td>mm per px x</td><td
+						><input
+							type="number"
+							bind:value={mmPerPxX}
+							min="0"
+							step="0.0001"
+							placeholder="none"
+						/></td
+					></tr
+				>
+				<tr
+					><td>mm per px y</td><td
+						><input
+							type="number"
+							bind:value={mmPerPxY}
+							min="0"
+							step="0.0001"
+							placeholder="none"
+						/></td
+					></tr
+				>
+			</tbody>
+		</table>
+	</div>
 
 	<div class="action-buttons">
 		<button type="button" onclick={didClickCaptureCameraBlank} disabled={isCapturingBlank === true}

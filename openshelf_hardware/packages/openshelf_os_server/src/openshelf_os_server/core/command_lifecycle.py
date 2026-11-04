@@ -25,6 +25,10 @@ class CommandRequestConflictError(Exception):
 	pass
 
 
+class CommandTargetInFlightError(Exception):
+	"""Another queued or running command already targets the same item or cell."""
+
+
 _admission_lock = asyncio.Lock()
 
 
@@ -121,6 +125,9 @@ async def admit(
 						raise CommandRequestConflictError
 					return existing, True
 
+			if visibility == "public":
+				await ensure_target_not_in_flight(session, payload, runtime="production")
+
 			active_count = await session.scalar(
 				select(func.count())
 				.select_from(RobotCommand)
@@ -151,12 +158,67 @@ async def admit(
 			return row, False
 
 
+def _command_targets(payload: dict[str, Any]) -> tuple[set[str], set[tuple[str, int, int]]]:
+	barcodes: set[str] = set()
+	locations: set[tuple[str, int, int]] = set()
+	sources = [payload]
+	if isinstance(payload.get("item"), dict):
+		sources.append(payload["item"])
+	for source in sources:
+		barcode = source.get("barcode")
+		if isinstance(barcode, str) and barcode != "":
+			barcodes.add(barcode)
+		location = source.get("location")
+		if isinstance(location, dict):
+			side = location.get("side")
+			shelf_idx = location.get("shelf_idx")
+			cell_idx = location.get("cell_idx")
+			if isinstance(side, str) and isinstance(shelf_idx, int) and isinstance(cell_idx, int):
+				locations.add((side, shelf_idx, cell_idx))
+	return barcodes, locations
+
+
+async def ensure_target_not_in_flight(
+	session: Any,
+	payload: dict[str, Any],
+	*,
+	runtime: str,
+) -> None:
+	"""Reject a store or retrieval whose item or cell an active command already targets.
+
+	Admission validates against committed inventory, which only changes when a command
+	finishes, so two clients could otherwise queue the same retrieval or store twice.
+	"""
+	if payload.get("command") not in {"store_item", "retrieve_item"}:
+		return
+	barcodes, locations = _command_targets(payload)
+	if not barcodes and not locations:
+		return
+	rows = (
+		await session.execute(
+			select(RobotCommand).where(
+				RobotCommand.runtime == runtime,
+				RobotCommand.status.in_(ACTIVE_STATUSES),
+			)
+		)
+	).scalars().all()
+	for row in rows:
+		row_barcodes, row_locations = _command_targets(row.payload)
+		if barcodes & row_barcodes or locations & row_locations:
+			raise CommandTargetInFlightError
+
+
 async def get_command(command_id: str) -> RobotCommand | None:
 	async with AsyncSessionLocal() as session:
 		return await session.get(RobotCommand, command_id)
 
 
-async def fail_before_enqueue(command_id: str, error: str) -> None:
+async def fail_before_enqueue(
+	command_id: str,
+	error: str,
+	*,
+	fault_code: str | None = None,
+) -> None:
 	row = await get_command(command_id)
 	if row is None:
 		return
@@ -168,6 +230,10 @@ async def fail_before_enqueue(command_id: str, error: str) -> None:
 		"error": error,
 		"code": "enqueue_failed",
 	}
+	if fault_code is not None:
+		result["fault_code"] = fault_code
+	if row.correlation_id is not None:
+		result["correlation_id"] = row.correlation_id
 	if row.visibility == "internal":
 		result["visibility"] = "internal"
 	await finish_command(command_id, "failed", result)
@@ -244,10 +310,15 @@ async def enqueue_persisted(
 			await worker.enqueue_command(
 				command,
 				command_id=row.command_id,
+				correlation_id=row.correlation_id,
 				visibility=visibility,
 			)
 		else:  # Lightweight service test doubles use the legacy one-argument shape.
 			await worker.enqueue_command(command)
 	except Exception as exc:
-		await fail_before_enqueue(row.command_id, str(exc))
+		# errors imports this module for its exception types.
+		from openshelf_os_server.errors import failure_detail  # noqa: PLC0415
+
+		code, message = failure_detail(exc, "enqueue_failed")
+		await fail_before_enqueue(row.command_id, message, fault_code=code)
 		raise

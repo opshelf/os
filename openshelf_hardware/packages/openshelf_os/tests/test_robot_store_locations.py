@@ -6,7 +6,7 @@ import pytest
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.exceptions import FridgeSafetyError
 from openshelf_os.robot.core import Robot
-from openshelf_os.robot.status import RobotCommandError, RobotCommandSuccessful
+from openshelf_os.robot.status import RobotCommandError
 from openshelf_os.storage import (
     CalibrationCoordinate,
     Cell,
@@ -74,14 +74,6 @@ def build_store_robot(
     return robot
 
 
-def build_demo_store_robot(
-    demo_cell_map: dict[str, StorageModuleCellLocation] | None,
-    reserved_locations: set[tuple[str, int, int]],
-) -> tuple[Robot, StoreGrid]:
-    grid = StoreGrid()
-    return build_store_robot(grid, demo_cell_map, reserved_locations), grid
-
-
 def item_payload(barcode: str, location: StorageModuleCellLocation | None = None) -> dict[str, object]:
     payload: dict[str, object] = {
         "barcode": barcode,
@@ -94,117 +86,19 @@ def item_payload(barcode: str, location: StorageModuleCellLocation | None = None
 
 
 @pytest.mark.asyncio
-async def test_demo_store_allows_trusted_explicit_home() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
-    robot, grid = build_demo_store_robot(
-        {},
-        {(home.side.value, home.shelf_idx, home.cell_idx)},
-    )
-
-    result = await robot.store(item_payload("bin-123", home))
-
-    assert isinstance(result, RobotCommandSuccessful)
-    assert result.location == home
-    assert grid.stored_locations == [home]
-
-
-@pytest.mark.asyncio
-async def test_demo_store_preserves_fridge_safety_rejection() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
-    robot, grid = build_demo_store_robot(
-        {},
-        {(home.side.value, home.shelf_idx, home.cell_idx)},
-    )
-    robot._fridge = SimpleNamespace(is_fridge_cell=lambda location: location == home)
+async def test_store_preserves_fridge_safety_rejection() -> None:
+    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
+    grid = build_grid()
+    robot = build_store_robot(grid)
+    robot._fridge = SimpleNamespace(is_fridge_cell=lambda cell: cell == location)
     robot.io_pick = AsyncMock(
         side_effect=FridgeSafetyError("Tool must be fully retracted before moving fridge door")
     )
 
     with pytest.raises(FridgeSafetyError, match="fully retracted"):
-        await robot.store(item_payload("bin-123", home))
+        await robot.store(item_payload("ordinary-item", location))
 
-    assert grid.stored_locations == []
-
-
-@pytest.mark.asyncio
-async def test_demo_store_uses_explicit_home_over_conflicting_demo_mapping() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
-    mapped_location = StorageModuleCellLocation(side=StorageModuleSide.BACK, shelf_idx=3, cell_idx=4)
-    robot, grid = build_demo_store_robot(
-        {"bin-123": mapped_location},
-        {(home.side.value, home.shelf_idx, home.cell_idx)},
-    )
-
-    result = await robot.store(item_payload("bin-123", home))
-
-    assert isinstance(result, RobotCommandSuccessful)
-    assert result.location == home
-    assert grid.stored_locations == [home]
-    robot.io_pick.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_demo_store_allows_explicit_home_for_unmapped_bin_barcode() -> None:
-    home = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2)
-    robot, grid = build_demo_store_robot(
-        {"ordinary-item": StorageModuleCellLocation(side=StorageModuleSide.BACK, shelf_idx=0, cell_idx=0)},
-        {(home.side.value, home.shelf_idx, home.cell_idx)},
-    )
-
-    result = await robot.store(item_payload("bin-456", home))
-
-    assert isinstance(result, RobotCommandSuccessful)
-    assert result.location == home
-    assert grid.stored_locations == [home]
-
-
-@pytest.mark.asyncio
-async def test_demo_store_uses_mapping_over_ordinary_explicit_location() -> None:
-    mapped_location = StorageModuleCellLocation(
-        side=StorageModuleSide.FRONT, shelf_idx=1, cell_idx=2
-    )
-    ordinary_location = StorageModuleCellLocation(
-        side=StorageModuleSide.BACK, shelf_idx=3, cell_idx=4
-    )
-    robot, grid = build_demo_store_robot(
-        {"ordinary-item": mapped_location},
-        set(),
-    )
-
-    result = await robot.store(item_payload("ordinary-item", ordinary_location))
-
-    assert isinstance(result, RobotCommandSuccessful)
-    assert result.location == mapped_location
-    assert grid.stored_locations == [mapped_location]
-
-
-@pytest.mark.asyncio
-async def test_non_demo_store_rejects_unknown_explicit_location() -> None:
-    explicit_location = StorageModuleCellLocation(
-        side=StorageModuleSide.BACK, shelf_idx=3, cell_idx=4
-    )
-    grid = build_grid()
-    robot = build_store_robot(grid)
-
-    result = await robot.store(item_payload("ordinary-item", explicit_location))
-
-    assert isinstance(result, RobotCommandError)
-    assert result.error == "Requested storage cell does not exist"
-    robot.io_pick.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_non_demo_store_stores_to_available_explicit_location() -> None:
-    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
-    grid = build_grid()
-    robot = build_store_robot(grid)
-
-    result = await robot.store(item_payload("ordinary-item", location))
-
-    assert isinstance(result, RobotCommandSuccessful)
-    assert result.location == location
-    assert grid.get_cell(location).status == CellStatus.OCCUPIED
-    robot.io_pick.assert_awaited_once()
+    assert grid.get_cell(location).status == CellStatus.AVAILABLE
 
 
 @pytest.mark.asyncio
@@ -215,7 +109,7 @@ async def test_non_demo_store_rejects_occupied_explicit_location() -> None:
     result = await robot.store(item_payload("ordinary-item", location))
 
     assert isinstance(result, RobotCommandError)
-    assert result.error == "Requested storage cell is occupied"
+    assert result.error == "That cell is not available."
     robot.io_pick.assert_not_awaited()
 
 
@@ -227,20 +121,33 @@ async def test_non_demo_store_rejects_too_small_explicit_location() -> None:
     result = await robot.store(item_payload("ordinary-item", location))
 
     assert isinstance(result, RobotCommandError)
-    assert result.error == "Item does not fit the requested storage cell"
+    assert result.error == "The item does not fit that cell."
     robot.io_pick.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_non_demo_store_rejects_malformed_explicit_location() -> None:
-    robot = build_store_robot(build_grid())
-    payload = item_payload("ordinary-item")
-    payload["location"] = {"side": "middle_module", "shelf_idx": 0, "cell_idx": 0}
+async def test_tray_return_keeps_the_tray_out_of_the_cell_inventory() -> None:
+    """A returned tray must not show up as an inventory item at its home cell."""
+    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
+    grid = build_grid()
+    robot = build_store_robot(grid, reserved_locations={("front_module", 0, 0)})
+    robot.return_tray = AsyncMock()
 
-    result = await robot.store(payload)
+    await robot.store(item_payload("0000000003", location), tray=True)
+
+    robot.return_tray.assert_awaited_once()
+    assert grid.get_cell(location).item is None
+    assert grid.get_cell(location).status == CellStatus.AVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_ordinary_store_rejects_tray_home() -> None:
+    """A tray home looks available in the grid, but its tray is physically in the cell."""
+    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
+    robot = build_store_robot(build_grid(), reserved_locations={("front_module", 0, 0)})
+
+    result = await robot.store(item_payload("ordinary-item", location))
 
     assert isinstance(result, RobotCommandError)
-    assert result.error == "Invalid storage location provided"
+    assert result.error == "That cell is not available."
     robot.io_pick.assert_not_awaited()
-
-

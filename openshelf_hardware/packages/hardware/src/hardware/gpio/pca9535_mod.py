@@ -11,16 +11,6 @@ try:
 except (ModuleNotFoundError, RuntimeError):
     GPIO = None
 
-# PCA9535 Register Addresses
-REG_INPUT_PORT0     = 0x00
-REG_INPUT_PORT1     = 0x01
-REG_OUTPUT_PORT0    = 0x02
-REG_OUTPUT_PORT1    = 0x03
-REG_INVERSION_PORT0 = 0x04
-REG_INVERSION_PORT1 = 0x05
-REG_CONFIG_PORT0    = 0x06
-REG_CONFIG_PORT1    = 0x07
-
 # PCA9535 Auto-Increment Register Pairs (Command Bytes)
 REG_INPUT_PAIR    = 0x00  # Maps to Input Port 0, Input Port 1
 REG_OUTPUT_PAIR   = 0x02  # Maps to Output Port 0, Output Port 1
@@ -55,9 +45,6 @@ class PCA9535:
 
         # Lock to ensure mutual exclusion across threads and ISR contexts during I2C operations
         self._lock = threading.Lock()
-
-        # Instance variable to store the latest raw input register values
-        self.latest_input = [0x00, 0x00]
 
         try:
             # Writing output/inversion values without also setting direction leaves the
@@ -107,7 +94,7 @@ class PCA9535:
     def service_interrupt(self, pin):
         """
         ISR function to handle falling-edge interrupt events (INT asserted).
-        Thread-safe read clears the chip flag and updates internal cache state.
+        Thread-safe read clears the chip flag.
         """
         pin_state = GPIO.input(pin)
         self.logger.debug(f"PCA9535 Interrupt event triggered on GPIO pin {pin}. Pin level: {pin_state}")
@@ -121,15 +108,7 @@ class PCA9535:
             self.logger.exception("PCA9535 failed to read input registers during interrupt handling")
             return
 
-        with self._lock:
-            self.latest_input = [p0, p1]
-
-        self.logger.info(f"Interrupt handled. Latest input cache updated to: Port0=0x{p0:02X}, Port1=0x{p1:02X}")
-
-    def get_latest_input(self):
-        """Thread-safe accessor for the input values most recently cached by service_interrupt()."""
-        with self._lock:
-            return tuple(self.latest_input)
+        self.logger.info(f"Interrupt handled. Input registers: Port0=0x{p0:02X}, Port1=0x{p1:02X}")
 
     def close(self):
         """Tears down owned GPIO and I2C resources."""
@@ -168,12 +147,6 @@ class PCA9535:
             data = self.bus.read_i2c_block_data(self.address, REG_INPUT_PAIR, 2)
         return data[0], data[1]
 
-    def port_output_read(self):
-        """Thread-safe block read of current configured Output Port 0 and Output Port 1 data."""
-        with self._lock:
-            data = self.bus.read_i2c_block_data(self.address, REG_OUTPUT_PAIR, 2)
-        return data[0], data[1]
-
     def port_output_write(self, port0_val, port1_val):
         """Thread-safe block write of values to Output Port 0 and Output Port 1 registers."""
         _validate_byte("port0_val", port0_val)
@@ -181,24 +154,12 @@ class PCA9535:
         with self._lock:
             self.bus.write_i2c_block_data(self.address, REG_OUTPUT_PAIR, [port0_val, port1_val])
 
-    def config_read(self):
-        """Thread-safe block read of Configuration Register 0 and Configuration Register 1 values."""
-        with self._lock:
-            data = self.bus.read_i2c_block_data(self.address, REG_CONFIG_PAIR, 2)
-        return data[0], data[1]
-
     def config_write(self, port0_config, port1_config):
         """Thread-safe block write setup to Configuration Register 0 and Configuration Register 1 (0=Output, 1=Input)."""
         _validate_byte("port0_config", port0_config)
         _validate_byte("port1_config", port1_config)
         with self._lock:
             self.bus.write_i2c_block_data(self.address, REG_CONFIG_PAIR, [port0_config, port1_config])
-
-    def port_invert_read(self):
-        """Thread-safe block read of Polarity Inversion Register 0 and Polarity Inversion Register 1."""
-        with self._lock:
-            data = self.bus.read_i2c_block_data(self.address, REG_INVERSION_PAIR, 2)
-        return data[0], data[1]
 
     def port_invert_write(self, port0_inv, port1_inv):
         """Thread-safe block write setup to Polarity Inversion Register 0 and Polarity Inversion Register 1."""
@@ -234,32 +195,6 @@ class PCA9535:
 
             # Commit the update atomically using block write
             self.bus.write_i2c_block_data(self.address, REG_CONFIG_PAIR, [p0, p1])
-
-    def pin_invert_write(self, pin_index, invert):
-        """
-        Configures the polarity inversion of a specific pin index from 0 to 15.
-        Uses a thread-safe read-modify-write cycle.
-
-        :param pin_index: Integer index (0 to 15).
-        :param invert: 0 for Normal polarity, 1 for Inverted polarity.
-        """
-        if not (0 <= pin_index <= 15):
-            raise ValueError("pin_index must be an integer between 0 and 15")
-        if invert not in (0, 1):
-            raise ValueError("invert must be 0 (Normal) or 1 (Inverted)")
-
-        with self._lock:
-            # Perform a block read to get current inversion state atomically
-            data = self.bus.read_i2c_block_data(self.address, REG_INVERSION_PAIR, 2)
-            p0, p1 = data[0], data[1]
-
-            if pin_index < 8:
-                p0 = (p0 & ~(1 << pin_index)) | (invert << pin_index)
-            else:
-                p1 = (p1 & ~(1 << (pin_index - 8))) | (invert << (pin_index - 8))
-
-            # Commit the update atomically using block write
-            self.bus.write_i2c_block_data(self.address, REG_INVERSION_PAIR, [p0, p1])
 
     def pin_input_read(self, pin_index):
         """

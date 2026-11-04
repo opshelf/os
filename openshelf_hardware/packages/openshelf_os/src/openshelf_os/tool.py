@@ -6,17 +6,18 @@ import time
 import openshelf_os.common as c
 
 from enum import Enum
-from typing import Optional, Literal, List, Any, Awaitable, Callable
+from typing import Optional, Literal, List, Any, Awaitable, Callable, Sequence
 from openshelf_os.common import Motor as MotorConfig
 from hardware.controller import SharedModbusController as Controller
 from hardware.laser import LaserSensor
-from hardware.motor import Motor, MotorStatus, MOTOR_WAIT_TIMEOUT
+from hardware.motor import Motor, MotorStatus, MOTOR_WAIT_TIMEOUT, SETTLED_ON_TARGET_TOLERANCE_MM
 from hardware.servo import GripState, Servo
 from openshelf_os.common import load_config_file
 from openshelf_os.exceptions import (
     MotorError, ConfigError,
-    GripperError, MovementError,
-    MotorWaitTimeoutError, FridgeSafetyError,
+    GripperError, GripVerificationError, MovementError, MotorWaitTimeoutError, RotationClearanceError,
+    FridgeSafetyError,
+    GRIP_DROPPED_CODE, GRIP_PICK_FAILED_CODE, GRIP_RELEASE_FAILED_CODE
 )
 
 
@@ -24,8 +25,12 @@ GANTRY_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 TOOL_WAIT_TIMEOUT = MOTOR_WAIT_TIMEOUT * 2
 GANTRY_OUTER_TIMEOUT = 120.0
 TOOL_OUTER_TIMEOUT = 60.0
-ROTATION_HOME_SAFE_X_MM = 475.0
 ROTATION_SAFE_X_MARGIN_MM = 200.0
+# The clearance move lands on the window edge; encoder reads settle a few hundredths either side.
+ROTATION_SAFE_X_TOLERANCE_MM = 1.0
+# X may move only while the tool sits this close to its front or back pose. At 10 deg off front
+# X still reached home; at 20 deg it stalled on the gantry ~2 mm short (lb4a-3, 2026-11-02).
+ROTATION_X_MOTION_TOLERANCE_DEG = 5.0
 ROTATION_HOME_ORIENTATION_EPSILON_DEG = 1e-6
 ROTATION_POSITION_EPSILON_DEG = 0.05
 DEFAULT_STAGE_RETRACT_TARGET_MM = 3.0
@@ -33,6 +38,80 @@ DEFAULT_Z_RETRACT_TARGET_MM = 1.0
 DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM = 5.0
 DEFAULT_ROTATION_Z_MAX_EXTENSION_MM = 5.0
 MAX_PICK_LIFT_MM = 30.0
+# The tool's own axes. A gripper feedback fault leaves the gantry position valid, so a reset
+# after one homes these, plus the IO box door when the tray was in the IO box.
+TOOL_MOTION_AXES: tuple[str, ...] = ("z_axis", "stage", "rotate")
+Y_STARTUP_HOME_CLEARANCE_MM = 10.0
+Y_STARTUP_HOME_PEAK_CURRENT = 30
+
+
+async def _finish_despite_cancel(work: Awaitable[Any]) -> tuple[Any, asyncio.CancelledError | None]:
+    """Run cleanup to completion even if this task is cancelled meanwhile.
+
+    Returns the cleanup result and the last cancellation seen, for the caller to re-raise.
+    """
+    task = asyncio.ensure_future(work)
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as cancelled:
+            cancellation = cancelled
+    return task.result(), cancellation
+
+
+async def run_together(*steps: Awaitable[Any]) -> None:
+    """Run independent motions at once; the first failure stops the rest before it propagates."""
+    tasks = [asyncio.ensure_future(step) for step in steps]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException as error:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # A sibling that failed while being stopped (e.g. its stop write) would otherwise
+        # vanish behind the first error.
+        for task in tasks:
+            # gather(return_exceptions=True) swaps a cancelled task's exception for a fresh
+            # CancelledError, dropping what the task attached; result() re-raises the original.
+            try:
+                result = task.exception() if not task.cancelled() else task.result()
+            except asyncio.CancelledError as cancelled:
+                result = cancelled
+            if result is error:
+                continue
+            if isinstance(result, Exception):
+                failure = repr(result)
+            elif isinstance(result, asyncio.CancelledError):
+                # A cancelled gantry move carries its stop failure as fault_context or a cause;
+                # a plain cancellation carries neither.
+                stop_errors = getattr(result, "fault_context", None)
+                cause = result.__cause__
+                if not stop_errors and not isinstance(cause, Exception):
+                    continue
+                failure = f"cancelled with {cause!r}" if isinstance(cause, Exception) else "cancelled"
+                if stop_errors:
+                    failure += f" {stop_errors!r}"
+            else:
+                continue
+            logging.getLogger(__name__).warning(
+                "Concurrent motion also failed while being stopped", exc_info=result
+            )
+            if hasattr(error, "add_note"):
+                error.add_note(f"concurrent motion also failed: {failure}")
+        raise
+
+
+def _is_settled_at(motor: Motor, target_mm: float) -> bool:
+    """A homed axis already within the drive's settle error of its target needs no move.
+
+    The drives stop a few hundredths short of a commanded target, so re-commanding the
+    same coordinate would otherwise run a full move (and, on Y, a brake release and park).
+    """
+    position = getattr(motor, "_cur_pos", None)
+    if getattr(motor, "_is_homed", False) is not True or not isinstance(position, (int, float)):
+        return False
+    return abs(position - target_mm) <= SETTLED_ON_TARGET_TOLERANCE_MM
 
 
 class RotationHomeOrientation(Enum):
@@ -40,10 +119,51 @@ class RotationHomeOrientation(Enum):
     BACK_MODULE = "back_module"
 
 
-def require_grip(state: GripState, phase: str) -> None:
-    """Raise unless the gripper reports object contact with no drop."""
+def require_grip(
+    state: GripState,
+    phase: str,
+    *,
+    is_enabled: bool = True,
+    failure_code: str = GRIP_DROPPED_CODE,
+) -> None:
+    """Raise unless the gripper reports object contact with no drop.
+
+    A machine with gripper.object_detection_enabled false passes is_enabled=False and
+    skips the check. failure_code says where the tray was last held, so a pick that never
+    lifted can be cancelled without changing inventory.
+    """
+    if is_enabled is False:
+        return
+    # Every reading, not only failures: tuning open_position needs the passing margins too.
+    logging.getLogger(__name__).info(
+        "grip_check", extra={"phase": phase, "gripped": state.gripped, "grip_state": str(state)}
+    )
     if not state.gripped:
-        raise GripperError(f"No grip on {phase}: {state}")
+        raise GripVerificationError(f"No grip on {phase}: {state}", failure_code=failure_code)
+
+
+def require_release(state: GripState, phase: str, *, is_enabled: bool = True) -> None:
+    """Raise if the gripper still reports contact after a release.
+
+    Withdrawing then would drag the tray out of its cell or the IO box, so the caller stops with
+    the tool where it is. Any contact counts, not only a full grip.
+    """
+    if is_enabled is False:
+        return
+    logging.getLogger(__name__).info(
+        "release_check", extra={"phase": phase, "holding": state.holding, "grip_state": str(state)}
+    )
+    if state.holding:
+        raise GripVerificationError(
+            f"Still holding after {phase}: {state}", failure_code=GRIP_RELEASE_FAILED_CODE
+        )
+
+
+def rewrap_gripper_fault(error: Exception, message: str) -> Exception:
+    """Re-raise a gripper fault with context, keeping grip feedback apart from servo faults."""
+    if isinstance(error, GripVerificationError):
+        return GripVerificationError(f"{message}: {error}", failure_code=error.failure_code)
+    return GripperError(f"{message}: {error}")
 
 
 def _create_motor_if_enabled(
@@ -78,14 +198,6 @@ def _create_motor_if_enabled(
     return Motor(controller, cfg, safety, home_limit_input=home_limit_input)
 
 
-def _limit_switches_enabled(motors: c.Motors, name: str) -> bool:
-    """Only false when this machine's config says the axis has no limit switches."""
-    try:
-        return motors.by_name(name).limit_switches_enabled is not False
-    except KeyError:
-        return True
-
-
 def derive_rotation_home_orientation(
     rotation_front: float,
     rotation_back: float,
@@ -108,6 +220,9 @@ def derive_rotation_home_orientation(
 
 
 class Tool:
+    # Set from gripper.object_detection_enabled in __init__.
+    is_grip_detection_enabled: bool = True
+
     # ------------------------------------------------------------------ #
     #  Lifecycle
     # ------------------------------------------------------------------ #
@@ -149,25 +264,17 @@ class Tool:
             motorcontroller, motors, "rotate", safety, self._logger, gpio, home_limit_pin="r_lim_min"
         )
 
+        if self._mx is not None and self._mr is not None:
+            self._mx.set_motion_guard(self._assert_rotation_allows_x_motion)
+
         self._gpio = gpio
-        # Unfitted clearance inputs float, so reading them on a machine without
-        # the switches would report every rotation as unsafe.
-        if _limit_switches_enabled(motors, "x_axis") is False:
-            self._x_lim_minunsafe_input = None
-            self._x_lim_maxunsafe_input = None
-            self._logger.info(
-                "Motor 'x_axis' limit switches disabled via config; skipping rotation clearance "
-                "limit switches 'x_lim_minunsafe' and 'x_lim_maxunsafe'"
-            )
-        else:
-            self._x_lim_minunsafe_input = (
-                gpio.input("x_lim_minunsafe") if gpio is not None and gpio.has_pin("x_lim_minunsafe") else None
-            )
-            self._x_lim_maxunsafe_input = (
-                gpio.input("x_lim_maxunsafe") if gpio is not None and gpio.has_pin("x_lim_maxunsafe") else None
-            )
 
         self._gs = Servo(self._motorcontroller, self._params.gripper.model_dump())
+        self.is_grip_detection_enabled = self._params.gripper.object_detection_enabled
+        if self.is_grip_detection_enabled is False:
+            self._logger.info(
+                "Gripper object detection disabled via config; picks and tray returns skip the grip check"
+            )
 
         self._laser_enabled = self._params.laser.enabled
         self._laser_ready = False
@@ -204,7 +311,7 @@ class Tool:
             await motor.configure()
             return True
         except Exception as e:
-            self._logger.warning("init motor configure failed: %s", e)
+            self._logger.warning("init motor configure failed: %s", e, exc_info=e)
             return False
 
     def _mark_configured_motors_ready(self, failed_config_motors: List[Motor]) -> None:
@@ -222,11 +329,15 @@ class Tool:
     async def configure(self, isolate: bool = False, home_on_init: bool = True):
         try:
             if self._params.gripper.enabled is True:
-                if isolate is True:
+                if await self._found_tray_on_tool() is True:
+                    # Activating the gripper again may move its fingers and drop the tray
+                    # somewhere in the machine, so it stays as found until the operator releases it.
+                    home_on_init = False
+                elif isolate is True:
                     try:
                         await self._gs.configure()
                     except Exception as e:
-                        self._logger.warning("init gripper configure failed: %s", e)
+                        self._logger.warning("init gripper configure failed: %s", e, exc_info=e)
                 else:
                     await self._gs.configure()
 
@@ -243,20 +354,56 @@ class Tool:
                     self._laser_ready = True
                     self._emit_init("laser", "ready")
                 except Exception as e:
-                    self._emit_init("laser", "failed", reason=str(e))
+                    self._emit_init("laser", "failed", reason="The laser did not start. Check that it is connected.")
                     if isolate is False:
                         raise
+                    self._logger.warning("init laser failed", exc_info=e)
             else:
                 self._logger.info("Laser disabled via config")
 
             if home_on_init is True:
-                await self.home(isolate=isolate, failed_config_motors=failed_config_motors)
+                await self.home(
+                    isolate=isolate,
+                    failed_config_motors=failed_config_motors,
+                    y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM,
+                )
             else:
                 self._mark_configured_motors_ready(failed_config_motors)
         except Exception as e:
             await self._handle_fault(e)
 
             raise MotorError(f"Tool configuration failed: {str(e)}") from e
+
+    @property
+    def is_tray_held(self) -> bool:
+        """Holding state as last read or commanded, without touching the bus."""
+        return self._gs.holding is True
+
+    async def read_tray_held(self) -> bool:
+        """Refresh the gripper's holding state from gOBJ and return it.
+
+        The gripper is the source of truth. Without a usable reading (object detection
+        disabled, a failed read, or a gripper not activated since it lost power) the last grip
+        command stands, and with none since startup the tool counts as empty: there is no
+        evidence either way, as before tracking existed.
+        """
+        if self._params.gripper.enabled is False:
+            return False
+        if self.is_grip_detection_enabled is True:
+            try:
+                state = await self._gs.read_state()
+            except Exception as e:
+                self._logger.warning("tray_on_tool gripper read failed; using the last grip command: %s", e, exc_info=e)
+            else:
+                if state.activated is True:
+                    self._gs.holding = state.holding
+        return self._gs.holding is True
+
+    async def _found_tray_on_tool(self) -> bool:
+        is_held = await self.read_tray_held()
+        if is_held is True:
+            self._logger.warning("tray_on_tool at startup: gripper left unconfigured and homing skipped")
+        return is_held
 
     async def stop(self) -> None:
         try:
@@ -451,10 +598,12 @@ class Tool:
         self,
         coordinate: c.AxisCoordinate,
         *,
+        loaded: bool = True,
         stage_extension_mm: float | None = None,
         before_approach: Callable[[], Awaitable[None]] | None = None,
         after_retract: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        """Pick the tray at `coordinate`; `loaded=False` only when its cell is known empty."""
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
@@ -466,9 +615,14 @@ class Tool:
                 await before_approach()
             await self.rotate_to_position(target_position)
             await self.extend_empty(coordinate, stage_extension_mm=stage_extension_mm)
-            require_grip(await self._gs.open(), "grip")
-            await self.retract()
-            require_grip(await self._gs.read_state(), "retract")
+            require_grip(
+                await self._gs.open(),
+                "grip",
+                is_enabled=self.is_grip_detection_enabled,
+                failure_code=GRIP_PICK_FAILED_CODE,
+            )
+            await self.retract(loaded=loaded)
+            require_grip(await self._gs.read_state(), "retract", is_enabled=self.is_grip_detection_enabled)
             if after_retract is not None:
                 await after_retract()
 
@@ -478,7 +632,7 @@ class Tool:
             await self._handle_fault(e)
             if isinstance(e, MovementError):
                 raise
-            raise GripperError(f"Pick operation failed: {str(e)}") from e
+            raise rewrap_gripper_fault(e, "Pick operation failed") from e
 
     async def pick_lift_place(
         self,
@@ -499,30 +653,42 @@ class Tool:
             await self.move(coordinate)
             await self.rotate_to_position(target_position)
             await self.extend_empty(coordinate)
-            require_grip(await self._gs.open(), "grip")
+            require_grip(
+                await self._gs.open(),
+                "grip",
+                is_enabled=self.is_grip_detection_enabled,
+                failure_code=GRIP_PICK_FAILED_CODE,
+            )
             original_stage_mm = await self._ms.get_position()
             await self._ms.move_to_position(0.0)
             await self._my.move_to_position(coordinate.y + lift_mm)
             await asyncio.sleep(hold_seconds)
+            require_grip(await self._gs.read_state(), "lift hold", is_enabled=self.is_grip_detection_enabled)
             await self._my.move_to_position(coordinate.y)
             await self._ms.move_to_position(original_stage_mm)
-            await self._gs.close()
+            await self.release("set-down release")
             await self.retract_empty()
 
         except Exception as e:
             await self._handle_fault(e)
             if isinstance(e, MovementError):
                 raise
-            raise GripperError(f"Pick lift/place operation failed: {str(e)}") from e
+            raise rewrap_gripper_fault(e, "Pick lift/place operation failed") from e
+
+    async def release(self, phase: str) -> None:
+        """Open the fingers and confirm they hold nothing before the tool withdraws."""
+        require_release(await self._gs.close(), phase, is_enabled=self.is_grip_detection_enabled)
 
     async def place(
         self,
         coordinate: c.AxisCoordinate,
         *,
+        loaded: bool = True,
         stage_extension_mm: float | None = None,
         before_approach: Callable[[], Awaitable[None]] | None = None,
         after_retract: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        """Set the gripped tray down at `coordinate`; `loaded=False` only for a known-empty tray."""
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
@@ -532,8 +698,8 @@ class Tool:
             if before_approach is not None:
                 await before_approach()
             await self.rotate_to_position(target_position)
-            await self.extend(coordinate, stage_extension_mm=stage_extension_mm)
-            await self._gs.close()
+            await self.extend(coordinate, loaded=loaded, stage_extension_mm=stage_extension_mm)
+            await self.release("place release")
             await self.retract_empty()
             if after_retract is not None:
                 await after_retract()
@@ -546,145 +712,23 @@ class Tool:
             if isinstance(e, MovementError):
                 raise
 
-            raise GripperError(f"Place operation failed: {str(e)}") from e
+            raise rewrap_gripper_fault(e, "Place operation failed") from e
 
     # ------------------------------------------------------------------ #
     #  Laser
     # ------------------------------------------------------------------ #
 
-    async def get_laser_distance(self) -> Optional[float]:
+    async def get_laser_distance(self, *, timeout_s: Optional[float] = None) -> Optional[float]:
         if self._laser_enabled is False or self._laser is None:
             return None
 
         if self._laser_ready is False:
             raise ConfigError("Laser is not initialized")
 
-        return await self._laser.read_distance_mm()
+        if timeout_s is None:
+            return await self._laser.read_distance_mm()
 
-    async def capture_laser_scan(
-        self,
-        *,
-        side: int,
-        x_positions: List[float],
-        y_positions: List[float],
-        settle_ms: int,
-        samples_per_point: int,
-        stage_extension_mm: Optional[float] = None,
-        z_extension_mm: Optional[float] = None,
-        progress_callback: Optional[Any] = None,
-    ) -> List[List[Optional[float]]]:
-        if self._laser_enabled is False or self._laser is None:
-            raise ConfigError("Laser is not enabled")
-
-        if samples_per_point <= 0:
-            raise ConfigError("samples_per_point must be greater than zero")
-
-        if self._mx is None or self._my is None:
-            raise MotorError("Gantry motors (x_axis, y_axis) required for laser scan")
-
-        if stage_extension_mm is not None and stage_extension_mm > 0:
-            if self._ms is None or self._mg is None:
-                raise ConfigError("Tool motors required when stage_extension_mm is configured")
-
-        target_position: Literal["front", "back"] = "front" if side == 0 else "back"
-        total_points = len(x_positions) * len(y_positions)
-        completed_points = 0
-        rows: List[List[Optional[float]]] = []
-
-        try:
-            await self.retract()
-            await self.rotate_to_position(target_position)
-
-            shouldExtendTool = stage_extension_mm is not None and stage_extension_mm > 0
-
-            if shouldExtendTool is True:
-                assert stage_extension_mm is not None
-                stage_motor = self._ms
-                z_motor = self._mg
-                assert stage_motor is not None
-                assert z_motor is not None
-                stage_scan_extension_mm = float(stage_extension_mm)
-                grip_rpm = await self.get_param("Z_MOVE_RPM")
-                grip_accel = await self.get_param("Z_MOVE_ACCEL")
-
-                if z_extension_mm is None:
-                    grip_value = await self.get_param("Z_EXTENSION_PICK")
-                    if grip_value is not None:
-                        z_extension_mm = float(grip_value)
-
-                if z_extension_mm is None or grip_rpm is None or grip_accel is None:
-                    raise ConfigError("Missing scan extension parameters")
-
-                z_scan_extension_mm = float(z_extension_mm)
-                self._warn_stage_target(stage_scan_extension_mm, "LASER_SCAN_STAGE_EXTENSION")
-
-            for row_idx, y_position in enumerate(y_positions):
-                row_values: List[Optional[float]] = [None] * len(x_positions)
-
-                if row_idx % 2 == 0:
-                    column_indices = list(range(len(x_positions)))
-                else:
-                    column_indices = list(range(len(x_positions) - 1, -1, -1))
-
-                row_start_idx = column_indices[0]
-                row_start_x = x_positions[row_start_idx]
-
-                await self.move(c.AxisCoordinate(x=row_start_x, y=y_position, s=side))
-
-                if shouldExtendTool is True:
-                    assert stage_motor is not None
-                    assert z_motor is not None
-                    await stage_motor.ready()
-                    await stage_motor.move_to_position(stage_scan_extension_mm)
-                    await z_motor.move_to_position(z_scan_extension_mm, rpm=grip_rpm, accel=grip_accel)
-
-                for position_idx, column_idx in enumerate(column_indices):
-                    x_position = x_positions[column_idx]
-
-                    if position_idx > 0:
-                        if shouldExtendTool is True:
-                            await self._mx.move_to_position_no_wait(x_position)
-                            await self.gantry_wait()
-                        else:
-                            await self.move(c.AxisCoordinate(x=x_position, y=y_position, s=side))
-
-                    if settle_ms > 0:
-                        await asyncio.sleep(settle_ms / 1000.0)
-
-                    sample_values: List[float] = []
-
-                    for _ in range(samples_per_point):
-                        depth_mm = await self.get_laser_distance()
-                        if depth_mm is not None:
-                            sample_values.append(float(depth_mm))
-
-                    if sample_values:
-                        sample_values.sort()
-                        middle_idx = len(sample_values) // 2
-                        row_values[column_idx] = sample_values[middle_idx]
-
-                    completed_points += 1
-
-                    if progress_callback is not None:
-                        callback_result = progress_callback(
-                            completed_points,
-                            total_points,
-                            x_position,
-                            y_position,
-                            row_values[column_idx],
-                        )
-
-                        if hasattr(callback_result, "__await__"):
-                            await callback_result
-
-                if shouldExtendTool is True:
-                    await self.retract()
-
-                rows.append(row_values)
-        finally:
-            await self.retract()
-
-        return rows
+        return await self._laser.read_distance_mm(timeout_s=timeout_s)
 
     # ------------------------------------------------------------------ #
     #  Gantry movement
@@ -716,18 +760,6 @@ class Tool:
                 if isinstance(result, Exception)
             ]
 
-        async def complete_gantry_cleanup() -> tuple[list[str], asyncio.CancelledError | None]:
-            cleanup_task = asyncio.create_task(stop_gantry_axes())
-            cancellation: asyncio.CancelledError | None = None
-
-            while not cleanup_task.done():
-                try:
-                    await asyncio.shield(cleanup_task)
-                except asyncio.CancelledError as exc:
-                    cancellation = exc
-
-            return cleanup_task.result(), cancellation
-
         def attach_stop_errors(error: BaseException, stop_errors: list[str]) -> None:
             if not stop_errors:
                 return
@@ -740,19 +772,34 @@ class Tool:
 
         try:
             await self._ensure_retracted()
-            await self._my.move_to_position_no_wait(coordinate.y)
-            await self._mx.move_to_position_no_wait(coordinate.x)
-            await self.gantry_wait()
+            moving = [
+                (axis, motor, target)
+                for axis, motor, target in (
+                    ("y_axis", self._my, coordinate.y),
+                    ("x_axis", self._mx, coordinate.x),
+                )
+                if _is_settled_at(motor, target) is False
+            ]
+            # A hold already active is waited out here: the starts below run inside the gantry
+            # deadline, which must not be spent on a hold that was there before the move began.
+            held = {id(s): s for _, m, _ in moving if (s := getattr(m, "_safety", None)) is not None}
+            for safety in held.values():
+                await safety.wait_clear()
+            # Started together, X is already moving while Y waits out its brake release, and
+            # each axis is watched from its own start rather than once both have started.
+            await self.gantry_wait(
+                starts={axis: motor.move_to_position_no_wait(target) for axis, motor, target in moving}
+            )
 
         except asyncio.CancelledError as e:
-            stop_errors, cancellation = await complete_gantry_cleanup()
+            stop_errors, cancellation = await _finish_despite_cancel(stop_gantry_axes())
             attach_stop_errors(e, stop_errors)
             if cancellation is not None:
                 attach_stop_errors(cancellation, stop_errors)
                 raise cancellation
             raise
         except Exception as e:
-            stop_errors, cancellation = await complete_gantry_cleanup()
+            stop_errors, cancellation = await _finish_despite_cancel(stop_gantry_axes())
             attach_stop_errors(e, stop_errors)
             if cancellation is not None:
                 if hasattr(cancellation, "add_note"):
@@ -778,7 +825,13 @@ class Tool:
         self,
         timeout_seconds: float = GANTRY_OUTER_TIMEOUT,
         should_abort: Callable[[], bool] | None = None,
+        starts: dict[str, Awaitable[bool]] | None = None,
     ) -> None:
+        """Wait for the commanded gantry axes, stopping both if either fails.
+
+        `starts` maps an axis to the coroutine that starts its move; each axis is then
+        watched as soon as its own start returns, and a failed start stops the other.
+        """
         if self._mx is None or self._my is None:
             raise MotorError("Gantry motors (x_axis, y_axis) required for gantry wait")
 
@@ -789,11 +842,15 @@ class Tool:
         try:
             remaining_timeout = max(0.1, min(GANTRY_WAIT_TIMEOUT, timeout_seconds))
             missing_pending_marker = object()
-            commanded_motors = {
-                axis: motor
-                for axis, motor in (("x_axis", self._mx), ("y_axis", self._my))
-                if getattr(motor, "_pending_motion", missing_pending_marker) is not None
-            }
+            gantry_motors = {"x_axis": self._mx, "y_axis": self._my}
+            if starts is not None:
+                commanded_motors = {axis: gantry_motors[axis] for axis in starts}
+            else:
+                commanded_motors = {
+                    axis: motor
+                    for axis, motor in gantry_motors.items()
+                    if getattr(motor, "_pending_motion", missing_pending_marker) is not None
+                }
 
             if commanded_motors == {}:
                 self._logger.info(
@@ -802,9 +859,18 @@ class Tool:
                 )
                 return
 
+            wait_timeout = remaining_timeout
+
+            async def start_then_wait(start: Awaitable[bool], motor: Motor) -> MotorStatus:
+                if await start is False:
+                    return MotorStatus.STOPPED
+                return await motor.wait_for_move(timeout=wait_timeout, should_abort=should_abort)
+
             tasks = {
                 asyncio.create_task(
-                    motor.wait_for_move(timeout=remaining_timeout, should_abort=should_abort)
+                    start_then_wait(starts[axis], motor)
+                    if starts is not None
+                    else motor.wait_for_move(timeout=wait_timeout, should_abort=should_abort)
                 ): (axis, motor)
                 for axis, motor in commanded_motors.items()
             }
@@ -894,13 +960,20 @@ class Tool:
                         exc = task.exception()
                         if exc is not None:
                             statuses[axis] = MotorStatus.ERROR
-                            stop_errors = await stop_all_and_drain(pending)
+                            # The other axis may already be moving (a start can fail after
+                            # its sibling triggered), so its stop finishes even if this
+                            # task is cancelled meanwhile.
+                            stop_errors, cancellation = await _finish_despite_cancel(
+                                stop_all_and_drain(pending)
+                            )
                             if stop_errors:
                                 fault_context = getattr(exc, "fault_context", {})
                                 if not isinstance(fault_context, dict):
                                     fault_context = {}
                                 fault_context["gantry_stop_errors"] = stop_errors
                                 setattr(exc, "fault_context", fault_context)
+                            if cancellation is not None:
+                                raise cancellation from exc
                             raise exc
 
                         statuses[axis] = task.result()
@@ -1014,7 +1087,8 @@ class Tool:
         self,
         *,
         should_ensure_safe_stage_extension: bool = True,
-    ) -> None:
+    ) -> bool:
+        """Turn to the home orientation; True when the stage was extended for the turn."""
         if self._mr is None:
             raise MotorError("Rotate motor required for rotation")
 
@@ -1032,18 +1106,20 @@ class Tool:
                 target_angle = float(rotation_back)
 
             if await self.is_rotation_at_position(target_angle):
-                return
-
+                return False
 
             original_x = await self.ensure_safe_rotation_x_position()
+            did_extend_stage = False
 
             try:
                 if should_ensure_safe_stage_extension is True:
-                    await self.ensure_safe_rotation_stage_extension()
+                    did_extend_stage = await self.ensure_safe_rotation_stage_extension()
 
                 await self._mr.move_to_position(target_angle)
             finally:
                 await self.restore_safe_rotation_x_position(original_x)
+
+            return did_extend_stage
 
         except Exception as e:
             await self._handle_fault(e)
@@ -1115,7 +1191,10 @@ class Tool:
         *,
         stage_position: float | None = None,
         stage_extension_enabled: bool | None = None,
+        before_x_motion: bool = False,
     ) -> None:
+        # before_x_motion: only check that Z and the stage are retracted enough for X to move
+        # sideways; the stage may sit anywhere up to its safe extension and X is not checked.
         unsafe: list[str] = []
 
         if self._ms is not None:
@@ -1128,7 +1207,14 @@ class Tool:
                     False,
                 )
 
-            if stage_extension_enabled is True:
+            if stage_extension_enabled is True and before_x_motion:
+                maximum_stage_mm = float(self._ms._params.rotation_safe_stage_extension_mm)
+                if stage_position > maximum_stage_mm:
+                    unsafe.append(
+                        f"stage={stage_position:.3f}mm exceeds maximum "
+                        f"{maximum_stage_mm:.3f}mm"
+                    )
+            elif stage_extension_enabled is True:
                 minimum_stage_mm = float(self._ms._params.rotation_safe_stage_extension_mm)
                 if stage_position < minimum_stage_mm:
                     unsafe.append(
@@ -1158,16 +1244,37 @@ class Tool:
                     f"z_axis={z_position:.3f}mm exceeds maximum {maximum_z_mm:.3f}mm"
                 )
 
-        x_lim_minunsafe_input = getattr(self, "_x_lim_minunsafe_input", None)
-        if x_lim_minunsafe_input is not None and x_lim_minunsafe_input.read() is not True:
-            unsafe.append("x_lim_minunsafe is not engaged")
+        # The tool only clears the gantry uprights while X is ROTATION_SAFE_X_MARGIN_MM from both
+        # ends of its travel; ensure_safe_rotation_x_position moves it there before rotating.
+        x_motor = None if before_x_motion else getattr(self, "_mx", None)
+        if x_motor is not None:
+            if getattr(x_motor, "_is_homed", True) is False:
+                unsafe.append("x_axis is not homed")
+            else:
+                x_position = float(await x_motor.get_position())
+                window_min_mm, window_max_mm = self._rotation_x_window(x_motor)
 
-        x_lim_maxunsafe_input = getattr(self, "_x_lim_maxunsafe_input", None)
-        if x_lim_maxunsafe_input is not None and x_lim_maxunsafe_input.read() is not True:
-            unsafe.append("x_lim_maxunsafe is not engaged")
+                if self._is_in_rotation_x_window(x_motor, x_position) is False:
+                    unsafe.append(
+                        f"x_axis={x_position:.3f}mm is outside the rotation window "
+                        f"{window_min_mm:.1f}-{window_max_mm:.1f}mm"
+                    )
 
         if unsafe:
-            raise MovementError("Unsafe tool clearance for rotation: " + "; ".join(unsafe))
+            raise RotationClearanceError("Unsafe tool clearance for rotation: " + "; ".join(unsafe))
+
+    @staticmethod
+    def _rotation_x_window(x_motor: Motor) -> tuple[float, float]:
+        lower_lim = float(getattr(x_motor._params, "lower_lim", 0.0))
+        return lower_lim + ROTATION_SAFE_X_MARGIN_MM, float(x_motor._params.lim) - ROTATION_SAFE_X_MARGIN_MM
+
+    def _is_in_rotation_x_window(self, x_motor: Motor, x_mm: float) -> bool:
+        window_min_mm, window_max_mm = self._rotation_x_window(x_motor)
+        return (
+            window_min_mm - ROTATION_SAFE_X_TOLERANCE_MM
+            <= x_mm
+            <= window_max_mm + ROTATION_SAFE_X_TOLERANCE_MM
+        )
 
     async def ensure_safe_rotation_x_position(self) -> Optional[float]:
         x_motor = getattr(self, "_mx", None)
@@ -1175,24 +1282,26 @@ class Tool:
         if x_motor is None:
             return None
 
-        margin_mm = ROTATION_SAFE_X_MARGIN_MM
-        lower_lim = float(getattr(x_motor._params, "lower_lim", 0.0))
-        upper_lim = float(x_motor._params.lim)
+        window_min_mm, window_max_mm = self._rotation_x_window(x_motor)
 
-        if upper_lim - lower_lim < margin_mm * 2:
+        if window_max_mm < window_min_mm:
+            margin_mm = ROTATION_SAFE_X_MARGIN_MM
             raise ConfigError(
                 "X axis limit is too small for safe rotation margin "
-                f"({upper_lim - lower_lim} < {margin_mm * 2})"
+                f"({window_max_mm - window_min_mm + margin_mm * 2} < {margin_mm * 2})"
             )
+
+        if getattr(x_motor, "_is_homed", True) is False:
+            raise MotorError("X axis is not homed; home X before rotating")
 
         current_x = await x_motor.get_position()
 
-        if current_x < lower_lim + margin_mm:
-            await x_motor.move_to_position(lower_lim + margin_mm)
+        if current_x < window_min_mm:
+            await x_motor.move_to_position(window_min_mm)
             return current_x
 
-        if current_x > upper_lim - margin_mm:
-            await x_motor.move_to_position(upper_lim - margin_mm)
+        if current_x > window_max_mm:
+            await x_motor.move_to_position(window_max_mm)
             return current_x
 
         return None
@@ -1203,16 +1312,78 @@ class Tool:
         if original_x is None or x_motor is None:
             return
 
+        # A rotate move that faulted or timed out leaves rotate unhomed at an unknown angle.
+        rotate_motor = getattr(self, "_mr", None)
+        is_angle_unknown = rotate_motor is not None and getattr(rotate_motor, "_is_homed", True) is False
+        angle = None if is_angle_unknown else await self._rotation_off_x_pose()
+        if is_angle_unknown or angle is not None:
+            self._logger.warning(
+                "Leaving X in the rotation window; the tool is off its front/back pose",
+                extra={"rotate_deg": angle, "original_x_mm": original_x},
+            )
+            return
+
         await x_motor.move_to_position(original_x)
+
+    async def _rotation_off_x_pose(self) -> Optional[float]:
+        """The rotate angle when it is known and too far from front/back for X to move, else None.
+
+        An unhomed rotate has no trustworthy angle; homing covers that case by homing X
+        provisionally and re-homing it once the tool is straight.
+        """
+        rotate_motor = getattr(self, "_mr", None)
+        if rotate_motor is None or getattr(rotate_motor, "_is_homed", True) is False:
+            return None
+
+        angle = float(await rotate_motor.get_position())
+        for param in ("ROTATION_FRONT", "ROTATION_BACK"):
+            target = await self.get_param(param)
+            if target is not None and abs(angle - float(target)) <= ROTATION_X_MOTION_TOLERANCE_DEG:
+                return None
+
+        return angle
+
+    async def _assert_rotation_allows_x_motion(self, target_mm: Optional[float]) -> None:
+        """X guard: a rotated tool clears the gantry uprights only inside the rotation window, so
+        X may move there at any angle; anywhere else, and a home, needs the front/back pose."""
+        if target_mm is not None and self._is_in_rotation_x_window(self._mx, float(target_mm)):
+            return
+
+        angle = await self._rotation_off_x_pose()
+        if angle is not None:
+            raise RotationClearanceError(
+                f"Tool is rotated to {angle:.2f} deg; rotate it to the front or back position before moving X"
+            )
 
     # ------------------------------------------------------------------ #
     #  Tool extension and retraction
     # ------------------------------------------------------------------ #
 
+    async def _extend_axes(
+        self,
+        slide_ext: float,
+        grip_ext: float,
+        grip_rpm: int,
+        grip_accel: int,
+        *,
+        loaded: bool,
+    ) -> None:
+        """Extend stage and Z. A tray that may carry an item reaches its stage pose before Z
+        pushes it in, so no gap opens under the item; an empty tool or tray moves both at once."""
+        if loaded:
+            await self._ms.move_to_position(slide_ext)
+            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            return
+        await run_together(
+            self._ms.move_to_position(slide_ext),
+            self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel),
+        )
+
     async def extend(
         self,
         coordinate: Optional[c.AxisCoordinate] = None,
         *,
+        loaded: bool = True,
         stage_extension_mm: float | None = None,
     ) -> None:
         if self._mg is None or self._ms is None:
@@ -1235,8 +1406,7 @@ class Tool:
 
 
             await self._ms.ready()
-            await self._ms.move_to_position(slide_ext)
-            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            await self._extend_axes(slide_ext, grip_ext, grip_rpm, grip_accel, loaded=loaded)
 
         except Exception as e:
             await self._handle_fault(e)
@@ -1246,7 +1416,7 @@ class Tool:
 
             raise MovementError(f"Tool extension failed: {str(e)}") from e
 
-    async def extend_IO(self, nudge_override: float | None = None) -> None:
+    async def extend_IO(self, nudge_override: float | None = None, *, loaded: bool = True) -> None:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for IO extension")
 
@@ -1264,8 +1434,7 @@ class Tool:
 
         try:
             await self._ms.ready()
-            await self._ms.move_to_position(slide_ext)
-            await self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel)
+            await self._extend_axes(slide_ext, grip_ext, grip_rpm, grip_accel, loaded=loaded)
             await self._ms.move_to_position(slide_ext + stage_nudge)
         except Exception as e:
             await self._handle_fault(e)
@@ -1274,6 +1443,32 @@ class Tool:
                 raise
 
             raise MovementError(f"Tool IO extension failed: {str(e)}") from e
+
+    async def extend_IO_multi_item(self, *, loaded: bool = True) -> None:
+        """Extend to the multi-item tray pose in the IO box; trays need no stage nudge."""
+        if self._mg is None or self._ms is None:
+            raise MotorError("Tool motors (z_axis, stage) required for IO extension")
+
+        slide_ext = await self.get_param("STAGE_EXTENSION_IO_BOX_MULTI_ITEM")
+        grip_ext = await self.get_param("Z_EXTENSION_IO_MULTI_ITEM")
+        grip_rpm = await self.get_param("Z_MOVE_RPM")
+        grip_accel = await self.get_param("Z_MOVE_ACCEL")
+
+        if slide_ext is None or grip_ext is None or grip_rpm is None or grip_accel is None:
+            raise ConfigError("Missing multi-item IO box extension parameters")
+
+        self._warn_stage_target(slide_ext, "STAGE_EXTENSION_IO_BOX_MULTI_ITEM")
+
+        try:
+            await self._ms.ready()
+            await self._extend_axes(slide_ext, grip_ext, grip_rpm, grip_accel, loaded=loaded)
+        except Exception as e:
+            await self._handle_fault(e)
+
+            if isinstance(e, ConfigError):
+                raise
+
+            raise MovementError(f"Tool multi-item IO extension failed: {str(e)}") from e
 
     async def extend_empty(
         self,
@@ -1302,7 +1497,7 @@ class Tool:
             await self._ms.ready()
             await self._ms.move_to_position_no_wait(slide_ext)
             await self._mg.move_to_position_no_wait(grip_ext, rpm=grip_rpm, accel=grip_accel)
-            await self.tool_wait()
+            await self.tool_wait(homing=False)
         except Exception as e:
             await self._handle_fault(e)
 
@@ -1311,12 +1506,15 @@ class Tool:
 
             raise MovementError(f"Tool empty extension failed: {str(e)}") from e
 
-    async def retract(self) -> None:
+    async def retract(self, *, loaded: bool = True) -> None:
+        """Withdraw the gripped tray. A tray that may carry an item (`loaded`) leaves on Z
+        before the stage moves: retracting both at once opens a gap between the tray and the
+        shelf or IO box floor that the item can wedge into or fall through."""
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for retraction")
 
         try:
-            await self._retract_to_configured_positions()
+            await self._retract_to_configured_positions(together=not loaded)
 
         except Exception as e:
             await self._handle_fault(e)
@@ -1328,13 +1526,13 @@ class Tool:
             raise MotorError("Tool motors (z_axis, stage) required for empty retraction")
 
         try:
-            await self._retract_to_configured_positions()
+            await self._retract_to_configured_positions(together=True)
 
         except Exception as e:
             await self._handle_fault(e)
             raise MovementError(f"Tool empty retraction failed: {str(e)}") from e
 
-    async def _retract_to_configured_positions(self) -> None:
+    async def _retract_to_configured_positions(self, *, together: bool) -> None:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for retraction")
 
@@ -1344,32 +1542,35 @@ class Tool:
         if grip_rpm is None or grip_accel is None:
             raise ConfigError("Missing gripper move speed")
 
-        await self._move_axis_to_retracted_position(
-            self._mg,
-            axis_name="z_axis",
-            target_mm=self._get_float_param(
-                "Z_RETRACT_POSITION_MM",
-                DEFAULT_Z_RETRACT_TARGET_MM,
-            ),
-            maximum_mm=self._get_float_param(
-                "ROTATION_Z_MAX_EXTENSION_MM",
-                DEFAULT_ROTATION_Z_MAX_EXTENSION_MM,
-            ),
-            rpm=grip_rpm,
-            accel=grip_accel,
-        )
-        await self._move_axis_to_retracted_position(
-            self._ms,
-            axis_name="stage",
-            target_mm=self._get_float_param(
-                "STAGE_RETRACT_POSITION_MM",
-                DEFAULT_STAGE_RETRACT_TARGET_MM,
-            ),
-            maximum_mm=self._get_float_param(
-                "ROTATION_STAGE_MAX_EXTENSION_MM",
-                DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM,
-            ),
-        )
+        def z_retract() -> Awaitable[None]:
+            return self._move_axis_to_retracted_position(
+                self._mg,
+                axis_name="z_axis",
+                target_mm=self._get_float_param("Z_RETRACT_POSITION_MM", DEFAULT_Z_RETRACT_TARGET_MM),
+                maximum_mm=self._get_float_param(
+                    "ROTATION_Z_MAX_EXTENSION_MM",
+                    DEFAULT_ROTATION_Z_MAX_EXTENSION_MM,
+                ),
+                rpm=grip_rpm,
+                accel=grip_accel,
+            )
+
+        def stage_retract() -> Awaitable[None]:
+            return self._move_axis_to_retracted_position(
+                self._ms,
+                axis_name="stage",
+                target_mm=self._get_float_param("STAGE_RETRACT_POSITION_MM", DEFAULT_STAGE_RETRACT_TARGET_MM),
+                maximum_mm=self._get_float_param(
+                    "ROTATION_STAGE_MAX_EXTENSION_MM",
+                    DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM,
+                ),
+            )
+
+        if together:
+            await run_together(z_retract(), stage_retract())
+        else:
+            await z_retract()
+            await stage_retract()
         await self._ms.idle()
 
     async def is_fully_retracted(self, *, tolerance_mm: float = 1.0) -> bool:
@@ -1402,6 +1603,7 @@ class Tool:
 
     async def tool_wait(
         self,
+        homing: bool,
         timeout_seconds: float = TOOL_OUTER_TIMEOUT,
         should_abort: Callable[[], bool] | None = None,
     ) -> None:
@@ -1419,11 +1621,13 @@ class Tool:
 
                 mg_f = await self._mg.wait_for_move(
                     timeout=TOOL_WAIT_TIMEOUT,
+                    homing=homing,
                     should_abort=should_abort,
                 )
 
                 ms_f = await self._ms.wait_for_move(
                     timeout=TOOL_WAIT_TIMEOUT,
+                    homing=homing,
                     should_abort=should_abort,
                 )
                 axis_statuses = {"z_axis": mg_f.name, "stage": ms_f.name}
@@ -1530,8 +1734,7 @@ class Tool:
             self._logger.warning(
                 "Failed to clear %s alarm before retract recovery home",
                 axis_name,
-                extra={"error": str(clear_error)},
-            )
+                extra={"error": str(clear_error)}, exc_info=clear_error)
 
         await motor.home()
         position_mm = float(await motor.get_position())
@@ -1554,17 +1757,17 @@ class Tool:
         original_x = None
 
         if self._mx is not None:
-            rotation_front = await self.get_param("ROTATION_FRONT")
+            # Z and the stage must be clear before X moves sideways, homed or not.
+            await self._assert_rotation_clearance(before_x_motion=True)
+            # The clearance move below is in X coordinates; after a power cycle the drive
+            # reads 0 wherever the carriage stands, so X must be homed before it moves. With the
+            # tool at an unknown angle that home can stop on a gantry upright short of the limit
+            # switch, so it is provisional and X homes again, verified, once the tool is straight.
+            # A home that is still provisional from an earlier call is verified the same way.
+            if getattr(self._mx, "_is_homed", True) is False:
+                await self._mx.home(provisional=True)
 
-            if rotation_front is None:
-                raise ConfigError("Missing ROTATION_FRONT parameter")
-
-            current_rotation = await rotate_motor.get_position()
-
-            if current_rotation > float(rotation_front):
-                await self._mx.move_to_position(ROTATION_HOME_SAFE_X_MM)
-            else:
-                original_x = await self.ensure_safe_rotation_x_position()
+            original_x = await self.ensure_safe_rotation_x_position()
 
         try:
             did_extend_stage = await self.ensure_safe_rotation_stage_extension()
@@ -1578,31 +1781,77 @@ class Tool:
         if did_extend_stage is True and self._ms is not None:
             await self._ms.home()
 
+        if self._mx is not None and getattr(self._mx, "_is_home_provisional", False) is True:
+            await self._mx.home()
+
+    async def _straighten_rotate_before_x_home(self) -> None:
+        if await self._rotation_off_x_pose() is None:
+            return
+
+        # The turn may extend the stage; homing it again retracts it.
+        if await self.rotate_to_home_orientation() is True and self._ms is not None:
+            await self._ms.home()
+
     async def _home_sequence(
         self,
         isolate: bool = False,
         failed_config_motors: Optional[List[Motor]] = None,
+        y_pre_home_clearance_mm: Optional[float] = None,
+        axes: Optional[Sequence[str]] = None,
     ) -> None:
         failed_config_motors = failed_config_motors or []
         failed_home_motors: List[Motor] = []
 
-        for motor in (self._mg, self._ms):
+        def should_home(axis: str) -> bool:
+            return axes is None or axis in axes
+
+        # X homes around rotate. A first, provisional home only gives the rotate clearance move
+        # real coordinates (after a power loss the drive reads 0 wherever the carriage stands);
+        # with the tool at an unknown angle it can stop on a gantry upright short of the hard
+        # stop. It runs even when X is homed, since a stale _is_homed (drive power dropped after an
+        # emergency stop) leaves wrong coordinates; the X guard refuses it for a homed X with the
+        # tool rotated, so the tool is straightened first. The rotate sequence then re-homes X
+        # verified with the tool straight, which sets the zero every later move uses.
+        will_home_rotate = should_home("rotate") and self._mr is not None
+        for motor, axis in ((self._mg, "z_axis"), (self._ms, "stage"), (self._mx, "x_axis")):
+            if motor is None or should_home(axis) is False:
+                continue
+            provisional = axis == "x_axis" and will_home_rotate
+            if provisional is True and getattr(motor, "_is_homed", False) is True:
+                # The X guard refuses even a provisional home of a homed X while the tool is off
+                # its front/back pose (e.g. after an abort); straighten the tool first. Isolated
+                # startup homing never gets here: a fresh Robot has X unhomed.
+                await self._straighten_rotate_before_x_home()
             if isolate is True:
-                if await self._home_step_isolated(motor, failed_config_motors) is False and motor is not None:
+                if await self._home_step_isolated(
+                    motor, failed_config_motors, provisional=provisional
+                ) is False:
                     failed_home_motors.append(motor)
-            elif motor is not None:
-                await motor.home()
+            else:
+                await motor.home(provisional=provisional)
 
-        if isolate is True:
-            await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
-        elif self._mr is not None:
-            await self._home_rotate_sequence()
-
-        for motor in (self._mx, self._my):
+        # The rotate sequence re-homes the provisional X itself, verified.
+        if should_home("rotate"):
             if isolate is True:
-                await self._home_step_isolated(motor, failed_config_motors)
-            elif motor is not None:
-                await motor.home()
+                await self._home_rotate_isolated(failed_config_motors, failed_home_motors)
+            elif self._mr is not None:
+                await self._home_rotate_sequence()
+
+        if should_home("y_axis") and self._my is not None:
+            if isolate is True:
+                await self._home_step_isolated(
+                    self._my,
+                    failed_config_motors,
+                    pre_home_clearance_mm=y_pre_home_clearance_mm,
+                )
+            elif y_pre_home_clearance_mm is None:
+                await self._my.home()
+            else:
+                await self._my.home(
+                    pre_home_clearance_mm=y_pre_home_clearance_mm,
+                    skip_pre_home_approach=True,
+                    homing_peak_current=Y_STARTUP_HOME_PEAK_CURRENT,
+                )
 
     def _did_motor_configure_fail(self, motor: Optional[Motor], failed_config_motors: List[Motor]) -> bool:
         if motor is None:
@@ -1613,49 +1862,65 @@ class Tool:
         self,
         motor: Optional[Motor],
         failed_config_motors: List[Motor],
+        pre_home_clearance_mm: Optional[float] = None,
+        provisional: bool = False,
     ) -> bool:
         if motor is None:
             return True
         if self._did_motor_configure_fail(motor, failed_config_motors) is True:
             return True
         try:
-            await motor.home()
+            if pre_home_clearance_mm is None:
+                await motor.home(provisional=provisional)
+            else:
+                await motor.home(
+                    pre_home_clearance_mm=pre_home_clearance_mm,
+                    skip_pre_home_approach=True,
+                    homing_peak_current=Y_STARTUP_HOME_PEAK_CURRENT,
+                )
             return True
         except Exception as e:
-            self._logger.warning("init home step failed: %s", e)
+            self._logger.warning("init home step failed: %s", e, exc_info=e)
             return False
 
     async def _home_rotate_isolated(
         self,
         failed_config_motors: List[Motor],
         failed_home_motors: Optional[List[Motor]] = None,
-    ) -> None:
+    ) -> bool:
         if self._mr is None:
-            return
+            return False
         if self._did_motor_configure_fail(self._mr, failed_config_motors) is True:
-            return
+            return False
         failed_home_motors = failed_home_motors or []
         if any(
             self._did_motor_configure_fail(motor, failed_config_motors) is True
             or any(failed_home_motor is motor for failed_home_motor in failed_home_motors)
             for motor in (self._mx, self._ms)
         ):
-            self._emit_init("rotate", "failed", "home", "dependency failed")
-            return
+            self._emit_init("rotate", "failed", "home", "The x axis and stage have to home first.")
+            return False
         try:
             await self._home_rotate_sequence()
+            return True
         except Exception as e:
-            self._emit_init("rotate", "failed", "home", str(e))
-            self._logger.warning("init rotate home failed: %s", e)
+            self._emit_init("rotate", "failed", "home", "Homing failed. Check for an obstruction, then home it again.")
+            self._logger.warning("init rotate home failed: %s", e, exc_info=e)
+            return False
 
     async def home(
         self,
         isolate: bool = False,
         failed_config_motors: Optional[List[Motor]] = None,
+        y_pre_home_clearance_mm: Optional[float] = None,
+        axes: Optional[Sequence[str]] = None,
     ) -> None:
         if isolate is False:
             try:
-                await self._home_sequence()
+                await self._home_sequence(
+                    y_pre_home_clearance_mm=y_pre_home_clearance_mm,
+                    axes=axes,
+                )
             except Exception as e:
                 await self._handle_fault(e)
 
@@ -1667,4 +1932,5 @@ class Tool:
         await self._home_sequence(
             isolate=True,
             failed_config_motors=failed_config_motors,
+            y_pre_home_clearance_mm=y_pre_home_clearance_mm,
         )

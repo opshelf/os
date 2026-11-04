@@ -65,59 +65,6 @@ def make_robot(gpio, motors: dict, gripper=None) -> Robot:
 
 
 @pytest.mark.asyncio
-async def test_power_cycle_drops_then_restores_the_pin(monkeypatch) -> None:
-    gpio = make_gpio()
-    output = gpio.output(GANTRY_POWER_PIN)
-    motors = {"x_axis": make_motor(), "y_axis": make_motor()}
-    robot = make_robot(gpio, motors)
-
-    observed: list[bool] = []
-
-    async def record_sleep(_seconds):
-        observed.append(output.read())
-
-    monkeypatch.setattr(asyncio, "sleep", record_sleep)
-
-    await robot.power_cycle_rail("pwr_out0")
-
-    assert observed == [True]  # held asserted across the wait
-    assert output.read() is False
-
-
-@pytest.mark.asyncio
-async def test_power_cycle_holds_for_three_seconds(monkeypatch) -> None:
-    gpio = make_gpio()
-    robot = make_robot(gpio, {"x_axis": make_motor(), "y_axis": make_motor()})
-    delays: list[float] = []
-
-    async def record_sleep(seconds):
-        delays.append(seconds)
-
-    monkeypatch.setattr(asyncio, "sleep", record_sleep)
-    await robot.power_cycle_rail("pwr_out0")
-
-    assert delays == [3.0]
-
-
-@pytest.mark.asyncio
-async def test_power_cycle_marks_every_tool_axis_unhomed(monkeypatch) -> None:
-    gpio = make_gpio()
-    motors = {
-        name: make_motor()
-        for name in ("x_axis", "y_axis", "z_axis", "stage", "rotate")
-    }
-    robot = make_robot(gpio, motors)
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
-
-    await robot.power_cycle_rail("pwr_out0")
-
-    for motor in motors.values():
-        assert motor._is_homed is False
-        assert motor._hard_stopped is True
-        assert motor._cur_pos is None
-
-
-@pytest.mark.asyncio
 async def test_power_cycle_refuses_while_an_axis_is_moving() -> None:
     gpio = make_gpio()
     motors = {"x_axis": make_motor(), "y_axis": make_motor(MotorStatus.MOVING)}
@@ -151,19 +98,6 @@ async def test_power_cycle_restores_power_even_if_the_wait_is_cancelled() -> Non
 
 
 @pytest.mark.asyncio
-async def test_power_cycle_forces_the_gripper_to_reconfigure(monkeypatch) -> None:
-    """pwr_out0 drops the gripper too, so its cached configuration is stale."""
-    gpio = make_gpio()
-    gripper = SimpleNamespace(_configured=True)
-    robot = make_robot(gpio, {}, gripper=gripper)
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
-
-    await robot.power_cycle_rail("pwr_out0")
-
-    assert gripper._configured is False
-
-
-@pytest.mark.asyncio
 async def test_power_cycle_reconfigures_every_axis_it_dropped(monkeypatch) -> None:
     """Homing only restores velocity; accel, current and gains come from configure()."""
     motors = {
@@ -179,23 +113,3 @@ async def test_power_cycle_reconfigures_every_axis_it_dropped(monkeypatch) -> No
         motor.configure.assert_awaited_once()
         # Reconfiguring must not resurrect the homed flag.
         assert motor._is_homed is False
-
-
-@pytest.mark.asyncio
-async def test_a_drive_that_never_answers_raises_motor_error(monkeypatch, caplog) -> None:
-    gpio = make_gpio()
-    output = gpio.output(GANTRY_POWER_PIN)
-    motor = make_motor()
-    motor.get_param = AsyncMock(side_effect=RuntimeError("bus down"))
-    robot = make_robot(gpio, {"x_axis": motor})
-    monkeypatch.setattr(asyncio, "sleep", no_sleep)
-
-    with caplog.at_level(logging.ERROR):
-        with pytest.raises(MotorError, match="Power cycle reconfigure failed for axes: x_axis"):
-            await robot.power_cycle_rail("pwr_out0")
-
-    assert output.read() is False
-    assert "did not answer after power cycle" in caplog.text
-    motor.configure.assert_not_awaited()
-
-

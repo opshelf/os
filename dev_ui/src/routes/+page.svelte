@@ -3,7 +3,6 @@
 	import {
 		apiFetch,
 		acknowledgeSafety,
-		ApiError,
 		controlCabinetRelease,
 		setBypassSafetyGuard,
 		setBypassSafetyComponent,
@@ -13,6 +12,8 @@
 	} from '$lib';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import InitProgress from '$lib/components/InitProgress.svelte';
+	import { activeVocabulary, sideIndex, sideInitial, vocabularyOfToken } from '$lib/side';
+	import { postToast } from '$lib/toasts';
 
 	const RESTART_BUTTON_RESET_MS = 15000;
 
@@ -28,10 +29,13 @@
 	let isLoadingHomeOnInit = true;
 	let isUpdatingHomeOnInit = false;
 	let homeOnInitError = '';
+	type SentryReporting = { enabled: boolean; default: boolean; initialized: boolean };
+	let sentryReporting: SentryReporting | null = null;
+	let isUpdatingSentryReporting = false;
+	let sentryReportingError = '';
 	let isRestartingApi = false;
 	let restartApiError = '';
 	let isAcknowledgingSafety = false;
-	let safetyAckError = '';
 	let componentUpdating: Record<SafetyComponent, boolean> = {
 		light_curtain: false,
 		cabinet_doors: false
@@ -139,16 +143,11 @@
 
 	async function didClickAcknowledgeSafety(): Promise<void> {
 		isAcknowledgingSafety = true;
-		safetyAckError = '';
 
 		try {
 			await acknowledgeSafety();
 		} catch (err) {
-			if (err instanceof ApiError && err.status === 409 && err.detail?.active_sources?.length) {
-				safetyAckError = `cannot acknowledge: ${err.detail.active_sources.join(', ')}`;
-			} else {
-				safetyAckError = err instanceof Error ? err.message : 'acknowledge failed';
-			}
+			postToast('error', err instanceof Error ? err.message : 'The acknowledgement failed.');
 		} finally {
 			isAcknowledgingSafety = false;
 		}
@@ -160,7 +159,7 @@
 		try {
 			await controlCabinetRelease('release');
 		} catch (err) {
-			console.error('failed to unlock cabinet:', err);
+			postToast('error', err instanceof Error ? err.message : 'The cabinet did not unlock.');
 		} finally {
 			isUnlockingCabinet = false;
 		}
@@ -174,7 +173,7 @@
 		try {
 			await setBypassSafetyGuard(shouldBypassSafetyGuard);
 		} catch (err) {
-			safetyOverrideError = err instanceof Error ? err.message : 'failed to update safety override';
+			safetyOverrideError = err instanceof Error ? err.message : 'Failed to update safety override.';
 		} finally {
 			isUpdatingSafetyOverride = false;
 		}
@@ -188,7 +187,7 @@
 		try {
 			await setBypassSafetyComponent(component, shouldBypass);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : 'failed to update safety override';
+			const message = err instanceof Error ? err.message : 'Failed to update safety override.';
 			componentErrors = { ...componentErrors, [component]: message };
 		} finally {
 			componentUpdating = { ...componentUpdating, [component]: false };
@@ -205,7 +204,7 @@
 				body: JSON.stringify({ command: 'home' })
 			});
 		} catch (err) {
-			console.error('home command failed:', err);
+			postToast('error', err instanceof Error ? err.message : 'The home command failed.');
 		} finally {
 			isHomingRobot = false;
 		}
@@ -219,7 +218,7 @@
 			const data = await apiFetch<{ home_on_init: boolean }>('/system/home-on-init');
 			homeOnInit = data.home_on_init;
 		} catch (err) {
-			homeOnInitError = err instanceof Error ? err.message : 'failed to load homing setting';
+			homeOnInitError = err instanceof Error ? err.message : 'Failed to load homing setting.';
 		} finally {
 			isLoadingHomeOnInit = false;
 		}
@@ -238,9 +237,37 @@
 			});
 			homeOnInit = data.home_on_init;
 		} catch (err) {
-			homeOnInitError = err instanceof Error ? err.message : 'failed to update homing setting';
+			homeOnInitError = err instanceof Error ? err.message : 'Failed to update homing setting.';
 		} finally {
 			isUpdatingHomeOnInit = false;
+		}
+	}
+
+	async function loadSentryReporting(): Promise<void> {
+		sentryReportingError = '';
+
+		try {
+			sentryReporting = await apiFetch<SentryReporting>('/system/sentry-reporting');
+		} catch (err) {
+			sentryReportingError = err instanceof Error ? err.message : 'Failed to load Sentry setting.';
+		}
+	}
+
+	async function didClickSentryReporting(): Promise<void> {
+		if (sentryReporting === null) return;
+		isUpdatingSentryReporting = true;
+		sentryReportingError = '';
+
+		try {
+			sentryReporting = await apiFetch<SentryReporting>('/system/sentry-reporting', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ enabled: !sentryReporting.enabled })
+			});
+		} catch (err) {
+			sentryReportingError = err instanceof Error ? err.message : 'Failed to update Sentry setting.';
+		} finally {
+			isUpdatingSentryReporting = false;
 		}
 	}
 
@@ -256,10 +283,12 @@
 				isRestartingApi = false;
 			}, RESTART_BUTTON_RESET_MS);
 		} catch (err) {
-			restartApiError = err instanceof Error ? err.message : 'failed to restart api';
+			restartApiError = err instanceof Error ? err.message : 'Failed to restart API.';
 			isRestartingApi = false;
 		}
 	}
+
+	const HIDDEN_COMMAND_FIELDS = new Set(['command_id']);
 
 	function formatCommand(
 		command: Record<string, unknown> | null | undefined
@@ -269,7 +298,11 @@
 		}
 		const entries: Array<{ field: string; value: string }> = [];
 		for (const [key, value] of Object.entries(command)) {
-			if (value === null || value === undefined) {
+			if (value === null || value === undefined || HIDDEN_COMMAND_FIELDS.has(key)) {
+				continue;
+			}
+			if (key === 'location') {
+				entries.push({ field: key, value: formatLocation(value) });
 				continue;
 			}
 			if (typeof value === 'object' && !Array.isArray(value)) {
@@ -281,6 +314,26 @@
 			}
 		}
 		return entries;
+	}
+
+	// Storage coordinates read as a single module:shelf:cell label (F:0:0), with
+	// the module initial taken from the vocabulary the location itself speaks.
+	function formatLocation(location: unknown): string {
+		if (!location || typeof location !== 'object') {
+			return formatValue(location);
+		}
+		const record = location as Record<string, unknown>;
+		const index = sideIndex(record.side);
+		if (index === null) {
+			return formatValue(location);
+		}
+		const vocabulary = vocabularyOfToken(record.side) ?? activeVocabulary();
+		const parts = [sideInitial(index, vocabulary)];
+		for (const key of ['shelf_idx', 'cell_idx']) {
+			const value = record[key];
+			parts.push(typeof value === 'number' ? String(value) : '?');
+		}
+		return parts.join(':');
 	}
 
 	function formatValue(value: unknown): string {
@@ -323,9 +376,14 @@
 	onMount(() => {
 		loadSystemInfo();
 		loadHomeOnInit();
+		loadSentryReporting();
 		loadOperatingMode();
 	});
 </script>
+
+<svelte:head>
+	<title>Status • Openshelf</title>
+</svelte:head>
 
 {#if $robotInit !== null && $robotInit.phase !== 'ready' && $robotInit.phase !== 'disabled'}
 	<InitProgress init={$robotInit} />
@@ -333,219 +391,247 @@
 
 <div class="status-grid">
 	<div class="status-column">
-		<table>
-			<thead>
-				<tr>
-					<th colspan="2">system information</th>
-				</tr>
-			</thead>
-			<tbody>
-				<tr>
-					<td class="label-cell">device id</td>
-					<td class="value-cell">{deviceId || 'loading...'}</td>
-				</tr>
-				<tr>
-					<td class="label-cell">device alias</td>
-					<td class="value-cell">{deviceAlias || '—'}</td>
-				</tr>
-				<tr>
-					<td class="label-cell">operating mode</td>
-					<td class="value-cell">{operatingMode || '—'}</td>
-				</tr>
-				<tr>
-					<td class="label-cell">lan ip</td>
-					<td class="value-cell">{lanIp || 'loading...'}</td>
-				</tr>
-			</tbody>
-		</table>
-
-		<table>
-			<thead>
-				<tr>
-					<th colspan="2">control loop override</th>
-				</tr>
-			</thead>
-			<tbody>
-				<tr>
-					<td class="label-cell">homing on startup</td>
-					<td class="value-cell">
-						<div class="status-action-cell">
-							<span
-								>{isLoadingHomeOnInit === true
-									? 'loading...'
-									: homeOnInit
-										? 'enabled'
-										: 'disabled'}</span
-							>
-							<button
-								disabled={isLoadingHomeOnInit === true || isUpdatingHomeOnInit === true}
-								onclick={didClickHomeOnInit}
-							>
-								{homeOnInit ? 'DISABLE' : 'ENABLE'}
-							</button>
-						</div>
-						{#if homeOnInitError !== ''}
-							<ErrorMessage message={homeOnInitError} />
-						{/if}
-					</td>
-				</tr>
-				{#if $robotStatus}
-					<tr>
-						<td class="label-cell">bypass safety guard</td>
-						<td class="value-cell">
-							<div class="status-action-cell">
-								<span class:enabled-danger={getBypassSafetyGuard() === true}>
-									{getBypassSafetyGuard() ? 'enabled' : 'disabled'}
-								</span>
-								<button
-									disabled={isUpdatingSafetyOverride === true}
-									onclick={didClickBypassSafetyGuard}
-								>
-									{getBypassSafetyGuard() ? 'DISABLE' : 'ENABLE'}
-								</button>
-							</div>
-							{#if safetyOverrideError !== ''}
-								<ErrorMessage message={safetyOverrideError} />
-							{/if}
-						</td>
-					</tr>
-					{#each safetyComponents as component (component.key)}
-						<tr>
-							<td class="label-cell">{component.label}</td>
-							<td class="value-cell">
-								<div class="status-action-cell">
-									<span class:enabled-danger={getComponentBypass(component.key) === true}>
-										{getComponentBypass(component.key) ? 'enabled' : 'disabled'}
-									</span>
-									<button
-										disabled={componentUpdating[component.key] === true}
-										onclick={() => didClickBypassComponent(component.key)}
-									>
-										{getComponentBypass(component.key) ? 'DISABLE' : 'ENABLE'}
-									</button>
-								</div>
-								{#if componentErrors[component.key] !== ''}
-									<ErrorMessage message={componentErrors[component.key]} />
-								{/if}
-							</td>
-						</tr>
-					{/each}
-				{/if}
-			</tbody>
-		</table>
-	</div>
-
-	<div class="status-column">
-		{#if $robotStatus}
+		<div class="scroll-x">
 			<table>
 				<thead>
 					<tr>
-						<th colspan="2">robot state</th>
+						<th colspan="2">system information</th>
 					</tr>
 				</thead>
 				<tbody>
 					<tr>
-						<td class="label-cell">worker running</td>
-						<td class="value-cell">
-							<div class="status-action-cell">
-								<span>{$robotStatus.running ? 'yes' : 'no'}</span>
-								<button
-									disabled={isRestartingApi === true}
-									onclick={didClickRestartApi}>RESTART</button
-								>
-							</div>
-							{#if restartApiError !== ''}
-								<ErrorMessage message={restartApiError} />
-							{/if}
-						</td>
+						<td class="label-cell">device id</td>
+						<td class="value-cell">{deviceId || 'loading...'}</td>
 					</tr>
 					<tr>
-						<td class="label-cell">io box</td>
-						<td class="value-cell">{getIoBoxOccupied() ? 'occupied' : 'empty'}</td>
+						<td class="label-cell">device alias</td>
+						<td class="value-cell">{deviceAlias || '—'}</td>
 					</tr>
 					<tr>
-						<td class="label-cell">light curtain</td>
-						<td class="value-cell">
-							{#if getLightCurtainBlocked() === null}
-								disabled
-							{:else if getLightCurtainBlocked() === true}
-								blocked
-							{:else if getLightCurtainBlocked() === false}
-								clear
-							{:else}
-								unknown
-							{/if}
-						</td>
+						<td class="label-cell">operating mode</td>
+						<td class="value-cell">{operatingMode || '—'}</td>
 					</tr>
 					<tr>
-						<td class="label-cell">cabinet</td>
-						<td class="value-cell">
-							<div class="status-action-cell">
-								<span>{getCabinetStatus()}</span>
-								<button
-									disabled={isUnlockingCabinet === true || getCabinetStatus() !== 'closed'}
-									onclick={didClickCabinetUnlock}>UNLOCK</button
-								>
-							</div>
-						</td>
-					</tr>
-					<tr>
-						<td class="label-cell">home required</td>
-						<td class="value-cell">
-							<div class="status-action-cell">
-								<span>
-									{#if $robotStatus.needs_home}
-										yes
-									{:else}
-										no
-									{/if}
-								</span>
-								<button
-									disabled={$robotStatus.needs_home !== true || isHomingRobot === true}
-									onclick={didClickHome}>HOME</button
-								>
-							</div>
-						</td>
-					</tr>
-					<tr>
-						<td class="label-cell">ack required</td>
-						<td class="value-cell">
-							<div class="status-action-cell">
-								<span>
-									{#if getSafetyAwaitingAck()}
-										yes{getSafetyCanAcknowledge() !== true ? ` (${getSafetyActiveSources().join(', ')})` : ''}
-									{:else}
-										no
-									{/if}
-								</span>
-								<button
-									disabled={getSafetyCanAcknowledge() !== true || isAcknowledgingSafety === true}
-									onclick={didClickAcknowledgeSafety}>ACK</button
-								>
-							</div>
-							{#if safetyAckError !== ''}
-								<ErrorMessage message={safetyAckError} />
-							{/if}
-						</td>
+						<td class="label-cell">lan ip</td>
+						<td class="value-cell">{lanIp || 'loading...'}</td>
 					</tr>
 				</tbody>
+			</table>
+		</div>
 
-				{#if $robotStatus.current_command}
+		<div class="scroll-x">
+			<table>
+				<thead>
+					<tr>
+						<th colspan="2">control loop override</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td class="label-cell">homing on startup</td>
+						<td class="value-cell">
+							<div class="status-action-cell">
+								<span
+									>{isLoadingHomeOnInit === true
+										? 'loading...'
+										: homeOnInit
+											? 'enabled'
+											: 'disabled'}</span
+								>
+								<button
+									disabled={isLoadingHomeOnInit === true || isUpdatingHomeOnInit === true}
+									onclick={didClickHomeOnInit}
+								>
+									{homeOnInit ? 'DISABLE' : 'ENABLE'}
+								</button>
+							</div>
+							{#if homeOnInitError !== ''}
+								<ErrorMessage message={homeOnInitError} />
+							{/if}
+						</td>
+					</tr>
+					<tr>
+						<td class="label-cell">sentry error reporting</td>
+						<td class="value-cell">
+							<div class="status-action-cell">
+								<span
+									>{sentryReporting === null
+										? 'loading...'
+										: `${sentryReporting.enabled ? 'enabled' : 'disabled'}${sentryReporting.initialized ? '' : ' (sdk not initialized)'}`}</span
+								>
+								<button
+									disabled={sentryReporting === null || isUpdatingSentryReporting === true}
+									onclick={didClickSentryReporting}
+								>
+									{sentryReporting?.enabled ? 'DISABLE' : 'ENABLE'}
+								</button>
+							</div>
+							{#if sentryReportingError !== ''}
+								<ErrorMessage message={sentryReportingError} />
+							{/if}
+						</td>
+					</tr>
+					{#if $robotStatus}
+						<tr>
+							<td class="label-cell">bypass safety guard</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span class:enabled-danger={getBypassSafetyGuard() === true}>
+										{getBypassSafetyGuard() ? 'enabled' : 'disabled'}
+									</span>
+									<button
+										disabled={isUpdatingSafetyOverride === true}
+										onclick={didClickBypassSafetyGuard}
+									>
+										{getBypassSafetyGuard() ? 'DISABLE' : 'ENABLE'}
+									</button>
+								</div>
+								{#if safetyOverrideError !== ''}
+									<ErrorMessage message={safetyOverrideError} />
+								{/if}
+							</td>
+						</tr>
+						{#each safetyComponents as component (component.key)}
+							<tr>
+								<td class="label-cell">{component.label}</td>
+								<td class="value-cell">
+									<div class="status-action-cell">
+										<span class:enabled-danger={getComponentBypass(component.key) === true}>
+											{getComponentBypass(component.key) ? 'enabled' : 'disabled'}
+										</span>
+										<button
+											disabled={componentUpdating[component.key] === true}
+											onclick={() => didClickBypassComponent(component.key)}
+										>
+											{getComponentBypass(component.key) ? 'DISABLE' : 'ENABLE'}
+										</button>
+									</div>
+									{#if componentErrors[component.key] !== ''}
+										<ErrorMessage message={componentErrors[component.key]} />
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					{/if}
+				</tbody>
+			</table>
+		</div>
+	</div>
+
+	<div class="status-column">
+		{#if $robotStatus}
+			<div class="scroll-x">
+				<table>
 					<thead>
 						<tr>
-							<th colspan="2">current command</th>
+							<th colspan="2">robot state</th>
 						</tr>
 					</thead>
 					<tbody>
-						{#each formatCommand($robotStatus.current_command) as entry}
-							<tr>
-								<td class="label-cell">{entry.field}</td>
-								<td class="value-cell">{entry.value}</td>
-							</tr>
-						{/each}
+						<tr>
+							<td class="label-cell">worker running</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span>{$robotStatus.running ? 'yes' : 'no'}</span>
+									<button
+										disabled={isRestartingApi === true}
+										onclick={didClickRestartApi}>RESTART</button
+									>
+								</div>
+								{#if restartApiError !== ''}
+									<ErrorMessage message={restartApiError} />
+								{/if}
+							</td>
+						</tr>
+						<tr>
+							<td class="label-cell">io box</td>
+							<td class="value-cell">{getIoBoxOccupied() ? 'occupied' : 'empty'}</td>
+						</tr>
+						<tr>
+							<td class="label-cell">light curtain</td>
+							<td class="value-cell">
+								{#if getLightCurtainBlocked() === null}
+									disabled
+								{:else if getLightCurtainBlocked() === true}
+									blocked
+								{:else if getLightCurtainBlocked() === false}
+									clear
+								{:else}
+									unknown
+								{/if}
+							</td>
+						</tr>
+						<tr>
+							<td class="label-cell">cabinet</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span>{getCabinetStatus()}</span>
+									<button
+										disabled={isUnlockingCabinet === true || getCabinetStatus() !== 'closed'}
+										onclick={didClickCabinetUnlock}>UNLOCK</button
+									>
+								</div>
+							</td>
+						</tr>
+						<tr>
+							<td class="label-cell">home required</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span>
+										{#if $robotStatus.needs_home}
+											yes
+										{:else}
+											no
+										{/if}
+									</span>
+									<button
+										disabled={$robotStatus.needs_home !== true || isHomingRobot === true}
+										onclick={didClickHome}>HOME</button
+									>
+								</div>
+							</td>
+						</tr>
+						<tr>
+							<td class="label-cell">ack required</td>
+							<td class="value-cell">
+								<div class="status-action-cell">
+									<span>
+										{#if getSafetyAwaitingAck()}
+											yes{getSafetyCanAcknowledge() !== true ? ` (${getSafetyActiveSources().map((source) => source.replace(/_/g, ' ')).join(', ')})` : ''}
+										{:else}
+											no
+										{/if}
+									</span>
+									<button
+										disabled={getSafetyCanAcknowledge() !== true || isAcknowledgingSafety === true}
+										onclick={didClickAcknowledgeSafety}>ACK</button
+									>
+								</div>
+							</td>
+						</tr>
 					</tbody>
-				{/if}
-			</table>
+				</table>
+			</div>
+
+			{#if $robotStatus.current_command}
+				<div class="scroll-x">
+					<table>
+						<thead>
+							<tr>
+								<th colspan="2">current command</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each formatCommand($robotStatus.current_command) as entry}
+								<tr>
+									<td class="label-cell">{entry.field}</td>
+									<td class="value-cell">{entry.value}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
 		{/if}
 	</div>
 </div>
@@ -553,7 +639,7 @@
 <style>
 	.status-grid {
 		display: grid;
-		grid-template-columns: 1fr 1fr;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 		gap: 1.5em;
 		align-items: start;
 	}
@@ -578,7 +664,7 @@
 
 	@media (max-width: 900px) {
 		.status-grid {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 

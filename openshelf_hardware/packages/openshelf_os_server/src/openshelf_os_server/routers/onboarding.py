@@ -13,9 +13,10 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -79,6 +80,22 @@ async def _list_regular_users(db: AsyncSession) -> list[User]:
 	return list(result.scalars().all())
 
 
+async def _take_over_admin(
+	db: AsyncSession,
+	existing_user: User,
+	request: AdminUserCreate,
+	auth_service: AuthService
+) -> UserResponse:
+	existing_user.pin_hash = str(auth_service.hash_pin(request.pin))
+	existing_user.first_name = request.first_name
+	existing_user.last_name = request.last_name
+	existing_user.is_active = True
+	await db.commit()
+	await db.refresh(existing_user)
+	logger.info("Onboarding admin PIN reset for %s", existing_user.email)
+	return _build_user_response(existing_user)
+
+
 def _onboarding_state_path() -> Path:
 	override = os.getenv(ONBOARDING_STATE_PATH_ENV)
 	if override:
@@ -131,16 +148,13 @@ async def ensure_onboarding_state(db: AsyncSession) -> str:
 			return state
 	except (RuntimeError, ValueError, OSError) as exc:
 		# A corrupt, unreadable, or unwritable state file is a device fault, not a client error.
-		logger.error(f"Onboarding state unavailable: {exc}")
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "Onboarding state unavailable") from exc
+		logger.error(f"Onboarding state unavailable: {exc}", exc_info=exc)
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "") from exc
 
 
 async def require_first_run(db: AsyncSession = Depends(get_db)) -> None:
 	if await ensure_onboarding_state(db) == ONBOARDING_COMPLETED:
-		raise HTTPException(
-			status_code=status.HTTP_403_FORBIDDEN,
-			detail="Onboarding is already completed"
-		)
+		raise api_error(status.HTTP_403_FORBIDDEN, "onboarding_completed", "")
 
 
 @router.get(
@@ -228,25 +242,16 @@ async def create_admin_user(
 	"""
 	async with _admin_user_lock:
 		if await ensure_onboarding_state(db) == ONBOARDING_COMPLETED:
-			raise HTTPException(
-				status_code=status.HTTP_403_FORBIDDEN,
-				detail="Onboarding is already completed"
-			)
+			raise api_error(status.HTTP_403_FORBIDDEN, "onboarding_completed", "")
 
 		role_result = await db.execute(select(Role).filter(Role.name == "admin"))
 		admin_role = role_result.scalar_one_or_none()
 		if admin_role is None:
-			raise HTTPException(
-				status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-				detail="Admin role is not available yet"
-			)
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "admin_role_unavailable", "")
 
 		regular_users = await _list_regular_users(db)
 		if len(regular_users) > 1:
-			raise HTTPException(
-				status_code=status.HTTP_409_CONFLICT,
-				detail="Administrator account is already created"
-			)
+			raise api_error(status.HTTP_409_CONFLICT, "admin_already_created", "")
 
 		settings = get_settings()
 		auth_service = AuthService(
@@ -257,23 +262,13 @@ async def create_admin_user(
 		if len(regular_users) == 1:
 			existing_user = regular_users[0]
 			if existing_user.email != request.email or existing_user.role_id != admin_role.id:
-				raise HTTPException(
-					status_code=status.HTTP_409_CONFLICT,
-					detail="Administrator account is already created"
-				)
+				raise api_error(status.HTTP_409_CONFLICT, "admin_already_created", "")
 
 			# The wizard created this administrator but onboarding never completed, for
 			# example because the client was reloaded before it posted /complete. Take
 			# over the interrupted setup instead of stranding the device on a 409 the
 			# wizard cannot get past.
-			existing_user.pin_hash = str(auth_service.hash_pin(request.pin))
-			existing_user.first_name = request.first_name
-			existing_user.last_name = request.last_name
-			existing_user.is_active = True
-			await db.commit()
-			await db.refresh(existing_user)
-			logger.info("Onboarding admin PIN reset for %s", existing_user.email)
-			return _build_user_response(existing_user)
+			return await _take_over_admin(db, existing_user, request, auth_service)
 
 		user = User(
 			email=request.email,
@@ -284,8 +279,24 @@ async def create_admin_user(
 			is_active=True
 		)
 
+		admin_role_id = admin_role.id
 		db.add(user)
-		await db.commit()
+		try:
+			await db.commit()
+		except IntegrityError:
+			# The email is already taken despite the check above (another process, or a
+			# system user the regular-user listing skips). Take over only the same
+			# interrupted admin; anything else is the same conflict as above.
+			await db.rollback()
+			conflict_result = await db.execute(
+				select(User)
+				.options(selectinload(User.role), selectinload(User.access_level))
+				.filter(User.email == request.email)
+			)
+			conflicting_user = conflict_result.scalar_one_or_none()
+			if conflicting_user is None or conflicting_user.is_system or conflicting_user.role_id != admin_role_id:
+				raise api_error(status.HTTP_409_CONFLICT, "admin_already_created", "") from None
+			return await _take_over_admin(db, conflicting_user, request, auth_service)
 		await db.refresh(user)
 
 		user_result = await db.execute(
@@ -311,6 +322,6 @@ async def complete_onboarding() -> OnboardingStatus:
 		_write_onboarding_state(ONBOARDING_COMPLETED)
 	except (RuntimeError, ValueError, OSError) as exc:
 		# A corrupt, unreadable, or unwritable state file is a device fault, not a client error.
-		logger.error(f"Onboarding state unavailable: {exc}")
-		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "Onboarding state unavailable") from exc
+		logger.error(f"Onboarding state unavailable: {exc}", exc_info=exc)
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "onboarding_state_unavailable", "") from exc
 	return OnboardingStatus(needs_onboarding=False)

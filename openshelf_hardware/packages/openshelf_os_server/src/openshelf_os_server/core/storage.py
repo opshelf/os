@@ -35,14 +35,6 @@ class StorageService:
         self.session = session
         self._lock = _get_session_lock(session)
 
-    async def detect_migration_needed(self) -> bool:
-        """Legacy JSON migration removed; database is the single source of truth."""
-        return False
-
-    async def migrate_from_json(self) -> bool:
-        """Legacy JSON migration removed; database is the single source of truth."""
-        return True
-
     async def create_item(self, barcode: str, name: str, dimensions: Optional[Dict[str, float]],
                         weight: Optional[float] = None, metadata: Optional[Dict[str, Any]] = None,
                         access_level_id: Optional[int] = None, mass_values: Optional[Dict[str, Any]] = None,
@@ -211,7 +203,7 @@ class StorageService:
 
             if existing_location is not None:
                 raise CellOccupiedError(
-                    f"Cell ({side_enum.value}, shelf={shelf_idx}, cell={cell_idx}) is already occupied by item_id={existing_location.item_id}"
+                    "That cell already holds another item."
                 )
 
             try:
@@ -231,7 +223,7 @@ class StorageService:
             except IntegrityError as exc:
                 await self.session.rollback()
                 raise CellOccupiedError(
-                    f"Cell ({side_enum.value}, shelf={shelf_idx}, cell={cell_idx}) is already occupied"
+                    "That cell already holds another item."
                 ) from exc
             except Exception:
                 await self.session.rollback()

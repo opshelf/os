@@ -8,10 +8,11 @@ import socket
 import struct
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 
 from openshelf_os_server.core.logging_config import get_logger
+from openshelf_os_server.errors import api_error
 from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 
 logger = get_logger(__name__)
@@ -78,9 +79,11 @@ async def _run_nmcli(*args: str) -> _NmcliResult:
 			env=env,
 		)
 	except FileNotFoundError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-			detail="nmcli not available in container",
+		logger.error("wifi_nmcli_missing", error=str(exc), exc_info=exc)
+		raise api_error(
+			status.HTTP_500_INTERNAL_SERVER_ERROR,
+			"wifi_unavailable",
+			"",
 		) from exc
 
 	try:
@@ -169,7 +172,7 @@ def _write_config(ssid: str, password: str) -> None:
 		CONFIG_FILE.write_text(f"ssid={ssid}\npassword={password}\n", encoding="utf-8")
 		os.chmod(CONFIG_FILE, 0o600)
 	except OSError as exc:
-		logger.warning("wifi_config_write_failed", error=str(exc))
+		logger.warning("wifi_config_write_failed", error=str(exc), exc_info=exc)
 
 
 async def _bring_up_pending(ssid: str, password: str) -> _NmcliResult:
@@ -201,7 +204,12 @@ async def _bring_up_pending(ssid: str, password: str) -> _NmcliResult:
 	return await _run_nmcli("-w", NMCLI_WAIT_SECONDS, "connection", "up", PENDING_NAME)
 
 
-async def _rollback(previous_connection: str | None) -> None:
+async def _rollback(previous_connection: str | None) -> bool:
+	"""Delete the pending connection and restore the previous one.
+
+	Returns True only when the previous connection was restored, i.e. the
+	cabinet is back on its previous network.
+	"""
 	await _run_nmcli("connection", "delete", PENDING_NAME)
 	if previous_connection is not None and previous_connection != PENDING_NAME:
 		restore = await _run_nmcli("-w", NMCLI_WAIT_SECONDS, "connection", "up", previous_connection)
@@ -211,6 +219,8 @@ async def _rollback(previous_connection: str | None) -> None:
 			restored=restore.ok,
 			error=restore.stderr.strip(),
 		)
+		return restore.ok
+	return False
 
 
 @router.get(
@@ -233,9 +243,11 @@ async def scan_networks() -> WifiNetworkList:
 	await _run_nmcli("dev", "wifi", "rescan")
 	result = await _run_nmcli("-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list")
 	if not result.ok:
-		raise HTTPException(
-			status_code=status.HTTP_502_BAD_GATEWAY,
-			detail=f"failed to list networks: {result.stderr.strip()}",
+		logger.warning("wifi_list_failed", error=result.stderr.strip())
+		raise api_error(
+			status.HTTP_502_BAD_GATEWAY,
+			"wifi_list_failed",
+			"",
 		)
 
 	strongest: dict[str, WifiNetwork] = {}
@@ -265,7 +277,7 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 	ssid = requested_ssid.strip()
 
 	if ssid == "":
-		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ssid is required")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "wifi_network_required", "")
 	previous_connection = await _active_connection_name()
 	logger.info("wifi_connect_requested", ssid=ssid, previous=previous_connection)
 
@@ -277,20 +289,30 @@ async def perform_connect(requested_ssid: str, password: str) -> WifiConnectResp
 		await _run_nmcli("connection", "modify", PENDING_NAME, "connection.id", CONNECTION_NAME)
 		_write_config(ssid, password)
 		logger.info("wifi_connect_succeeded", ssid=ssid)
-		return WifiConnectResponse(success=True, ssid=ssid, message=f"connected to {ssid}")
+		return WifiConnectResponse(success=True, ssid=ssid, message=f"Connected to {ssid}.")
 
-	await _rollback(previous_connection)
+	restored = await _rollback(previous_connection)
 	detail = result.stderr.strip() or "connection did not activate"
 	logger.warning(
 		"wifi_connect_failed",
 		ssid=ssid,
 		error=detail,
 		rolled_back_to=previous_connection,
+		restored=restored,
 	)
-	restored = f"; restored {previous_connection}" if previous_connection else ""
-	raise HTTPException(
-		status_code=status.HTTP_502_BAD_GATEWAY,
-		detail=f"failed to connect to {ssid}: {detail}{restored}",
+	if restored:
+		raise api_error(
+			status.HTTP_502_BAD_GATEWAY,
+			"wifi_connect_failed",
+			"",
+		)
+	# Nothing to fall back on: the cabinet is unreachable and the body must
+	# say so. The message stays empty so the code's own sentence is what the
+	# operator sees.
+	raise api_error(
+		status.HTTP_502_BAD_GATEWAY,
+		"wifi_connect_failed_offline",
+		"",
 	)
 
 

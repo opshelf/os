@@ -35,10 +35,40 @@ def get_operating_mode(mode_file: Path | None = None) -> OperatingMode:
     return mode_map.get(raw, OperatingMode.development)
 
 
+# Set by the api image entrypoint for the service it starts, and nowhere else.
+SERVICE_PROCESS_ENV = "OPSHELF_SERVICE_PROCESS"
+
+
+def is_service_process() -> bool:
+    """Whether this process is the device's long-running service.
+
+    `docker exec`, `docker compose run --entrypoint ...` and ad-hoc `python -c` share the
+    service's environment, DSNs included, but not its entrypoint, so only the entrypoint
+    marks the process. Their errors are the operator's to read, not device faults.
+    """
+    return os.getenv(SERVICE_PROCESS_ENV, "") == "1"
+
+
 def should_enable_sentry(mode: OperatingMode | None = None) -> bool:
+    """Default for Sentry reporting before anyone toggles it at runtime."""
     current_mode = mode if mode is not None else get_operating_mode()
 
-    return has_production_traits(current_mode) and current_mode != OperatingMode.mock
+    return current_mode in {OperatingMode.demo, OperatingMode.production}
+
+
+# Process-local on purpose: a runtime toggle that resets to the mode default on restart.
+_sentry_reporting_override: bool | None = None
+
+
+def is_sentry_reporting_enabled() -> bool:
+    if _sentry_reporting_override is not None:
+        return _sentry_reporting_override
+    return should_enable_sentry()
+
+
+def set_sentry_reporting_enabled(enabled: bool) -> None:
+    global _sentry_reporting_override
+    _sentry_reporting_override = enabled
 
 
 def has_production_traits(mode: OperatingMode | None = None) -> bool:

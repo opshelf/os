@@ -15,6 +15,7 @@ from ..database.session import AsyncSessionLocal, get_db
 from ..database.models import User, Item, Role
 from ..core.auth import AuthService
 from ..core.permissions import has_permission
+from openshelf_os_server.errors import api_error, error_detail
 
 # Retain the existing header extraction behavior while documenting JSON login
 # accurately: this API does not implement an OAuth password grant.
@@ -103,15 +104,12 @@ async def get_current_user(
 					email=settings.auth.dev_auto_user,
 					action="answering 503 for unauthenticated requests",
 				)
-			raise HTTPException(
-				status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-				detail=f"Dev auto-user {settings.auth.dev_auto_user} not found in database"
-			)
+			raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "dev_user_missing", "")
 	
 	if not token:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Not authenticated",
+			detail=error_detail("", "unauthorized"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 	
@@ -124,7 +122,7 @@ async def get_current_user(
 	if payload is None or payload.get("type") != "access":
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Invalid token",
+			detail=error_detail("", "token_invalid"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 	
@@ -141,7 +139,7 @@ async def get_current_user(
 	if user is None:
 		raise HTTPException(
 			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="User not found or inactive",
+			detail=error_detail("That operator account is not active.", "unauthorized"),
 			headers={"WWW-Authenticate": "Bearer"},
 		)
 
@@ -204,10 +202,7 @@ async def _get_relay_system_user(db: AsyncSession) -> User:
 	)
 	user = result.scalars().first()
 	if user is None:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Relay service identity is unavailable",
-		)
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "relay_identity_unavailable", "")
 	return user
 
 
@@ -238,24 +233,36 @@ async def get_relay_or_current_user_for_stream(
 		return await get_relay_or_current_user(request=request, token=token, db=db)
 
 
-def require_permissions(permissions: str | List[str]) -> Callable:
-	"""Dependency to require specific permissions."""
+def ensure_permissions(user: User, permissions: str | List[str]) -> None:
+	"""Raise 403 unless the user's role grants every permission."""
 	if isinstance(permissions, str):
 		permissions = [permissions]
 
+	user_permissions = user.role.permissions or []
+	for permission in permissions:
+		if not has_permission(user_permissions, permission):
+			raise api_error(status.HTTP_403_FORBIDDEN, "forbidden", "", permission=permission)
+
+
+def require_permissions(permissions: str | List[str]) -> Callable:
+	"""Dependency to require specific permissions."""
 	async def permission_checker(
 		current_user: User = Depends(get_current_user)
 	) -> User:
 		"""Check if user has required permissions."""
-		user_permissions = current_user.role.permissions or []
+		ensure_permissions(current_user, permissions)
+		return current_user
 
-		for permission in permissions:
-			if not has_permission(user_permissions, permission):
-				raise HTTPException(
-					status_code=status.HTTP_403_FORBIDDEN,
-					detail=f"Missing required permission: {permission}"
-				)
+	return permission_checker
 
+
+def require_permissions_for_stream(permissions: str | List[str]) -> Callable:
+	"""`require_permissions` for routes that may answer with a long-lived stream, so
+	the check holds no pooled connection (see `get_current_user_for_stream`)."""
+	async def permission_checker(
+		current_user: User = Depends(get_current_user_for_stream)
+	) -> User:
+		ensure_permissions(current_user, permissions)
 		return current_user
 
 	return permission_checker
@@ -263,9 +270,6 @@ def require_permissions(permissions: str | List[str]) -> Callable:
 
 def require_relay_or_permissions(permissions: str | List[str]) -> Callable:
 	"""Allow the relay service on explicitly opted-in routes, otherwise enforce user permissions."""
-	if isinstance(permissions, str):
-		permissions = [permissions]
-
 	async def permission_checker(
 		request: Request,
 		current_user: User = Depends(get_relay_or_current_user),
@@ -273,16 +277,22 @@ def require_relay_or_permissions(permissions: str | List[str]) -> Callable:
 		if getattr(request.state, "relay_service_authenticated", False):
 			return current_user
 
-		user_permissions = current_user.role.permissions or []
-		for permission in permissions:
-			if not has_permission(user_permissions, permission):
-				raise HTTPException(
-					status_code=status.HTTP_403_FORBIDDEN,
-					detail=f"Missing required permission: {permission}",
-				)
+		ensure_permissions(current_user, permissions)
 		return current_user
 
 	return permission_checker
+
+
+async def require_relay_or_admin(
+	request: Request,
+	current_user: User = Depends(get_relay_or_current_user),
+) -> User:
+	"""Allow the relay service credential or an administrator."""
+	if getattr(request.state, "relay_service_authenticated", False):
+		return current_user
+	if current_user.role.name != "admin":
+		raise api_error(status.HTTP_403_FORBIDDEN, "forbidden", "Only an administrator can do that.")
+	return current_user
 
 
 def can_user_retrieve_item(user: User, item: Item) -> bool:

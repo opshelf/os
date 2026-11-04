@@ -18,6 +18,7 @@ import av
 import cv2
 import numpy as np
 
+from openshelf_os.operating_mode import is_sentry_reporting_enabled
 from openshelf_os.robot.models import (
     CrashReportArtifacts,
     CrashReportAttachment,
@@ -225,8 +226,7 @@ class PreparedCrashCapture(Awaitable[CrashReportArtifacts]):
             logger.warning(
                 "crash_video_encoding_failed_after_consumer_cancelled",
                 error=str(exc),
-                error_type=type(exc).__name__,
-            )
+                error_type=type(exc).__name__, exc_info=exc)
 
     def _release_pending(self) -> None:
         if self._released is False:
@@ -312,8 +312,7 @@ class CrashVideoRecorder:
                     "crash_recorder_camera_start_failed",
                     camera_id=camera_id,
                     error=str(exc),
-                    error_type=type(exc).__name__,
-                )
+                    error_type=type(exc).__name__, exc_info=exc)
                 continue
             self._owned_managers[camera_id] = manager
             self._buffers.setdefault(camera_id, deque())
@@ -336,8 +335,7 @@ class CrashVideoRecorder:
                 logger.warning(
                     "crash_recorder_camera_stop_failed",
                     error=str(exc),
-                    error_type=type(exc).__name__,
-                )
+                    error_type=type(exc).__name__, exc_info=exc)
 
     async def _sample_loop(self) -> None:
         sample_interval = 1.0 / self.config.sample_fps
@@ -523,8 +521,7 @@ class CrashVideoRecorder:
                             "crash_video_encoding_failed",
                             camera_id=camera_id,
                             error=str(exc),
-                            error_type=type(exc).__name__,
-                        )
+                            error_type=type(exc).__name__, exc_info=exc)
                         continue
 
                     if len(video_bytes) > self.config.max_attachment_bytes:
@@ -812,6 +809,8 @@ async def stop_crash_video_recorder() -> None:
 
 
 async def capture_motion_crash_artifacts(reason: str) -> CrashReportArtifacts:
+    if is_sentry_reporting_enabled() is False:
+        return CrashReportArtifacts(context={"status": "sentry_disabled"})
     recorder = _recorder
     if recorder is None:
         return CrashReportArtifacts(context={"status": "not_running"})
@@ -821,6 +820,12 @@ async def capture_motion_crash_artifacts(reason: str) -> CrashReportArtifacts:
 def begin_motion_crash_artifacts(
     reason: str,
 ) -> PreparedCrashCapture | asyncio.Future[CrashReportArtifacts]:
+    # The video only exists to ride along with the Sentry event; skip the encode.
+    if is_sentry_reporting_enabled() is False:
+        completed = asyncio.get_running_loop().create_future()
+        completed.set_result(CrashReportArtifacts(context={"status": "sentry_disabled"}))
+        return completed
+
     recorder = _recorder
     if recorder is not None:
         prepared = recorder.begin_capture(reason)

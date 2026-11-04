@@ -22,7 +22,6 @@ the backend persists runtime data in `openshelf_hardware/data` (including local 
 - `docker-compose.dev.yml`: development overrides (hot reload for api/ui source)
 - `docker-compose.hardware.yml`: usb/device passthrough for hardware-connected machines
 - `scripts/start`, `scripts/stop`: preferred lifecycle commands
-- `scripts/laser.py`, `scripts/z_stall_probe.py`, `scripts/y_*_diagnostic.py` (+ `scripts/run_y_*.sh` wrappers): hardware debugging helpers
 
 ## development setup
 
@@ -72,7 +71,7 @@ use `--hardware` on machines with connected robot, camera, scanner, or printer d
 
 mock mode runs the real authenticated fastapi service and sqlite persistence without initializing robot, camera, scanner, sizer, printer, cups, or sentry integrations. it does not automatically add the hardware compose overlay, even when `config.mock.json` was copied from a hardware-enabled production config.
 
-mock is production-like for authentication and audit integrity. on provisioned devices `../provision` delivers `JWT_SECRET`, `AUDIT_HMAC_KEY`, and `AUDIT_HMAC_KEY_ID` in the checkout `.env`, and where provisioning has not reached, the api generates and keeps its own audit key per mode in the data directory. to pin your own secrets in a workspace that is not disposable, set them in that `.env` (or export them) and give the audit key an id of its own: every audit hmac key needs one, an id must never be reused with a different key, `v2` is what provisioning delivers and `v2-<mode>` is what the api generates for itself, so a locally pinned key must use some other id. the file is shared with other Compose values, so append rather than overwrite it; a repeated run leaves duplicate assignments where the last one wins, which discards the key that signed earlier rows, so those rows will report that no key is available for their id:
+mock is production-like for authentication and audit integrity. on provisioned devices the provisioning tooling delivers `JWT_SECRET`, `AUDIT_HMAC_KEY`, and `AUDIT_HMAC_KEY_ID` in the checkout `.env`, and where provisioning has not reached, the api generates and keeps its own audit key per mode in the data directory. to pin your own secrets in a workspace that is not disposable, set them in that `.env` (or export them) and give the audit key an id of its own: every audit hmac key needs one, an id must never be reused with a different key, `v2` is what provisioning delivers and `v2-<mode>` is what the api generates for itself, so a locally pinned key must use some other id. the file is shared with other Compose values, so append rather than overwrite it; a repeated run leaves duplicate assignments where the last one wins, which discards the key that signed earlier rows, so those rows will report that no key is available for their id:
 
 ```bash
 umask 077
@@ -84,7 +83,7 @@ chmod 600 .env
 ./scripts/start --mode mock --detached
 ```
 
-the normal developer account (`developer@opshelf.com`, pin `1111`) is seeded, but authentication remains required. existing item CRUD, users, roles, access levels, permissions, audit logging, correlation-id propagation, and response schemas continue to use sqlite.
+the developer account (`developer@opshelf.com`, pin `1111` unless `DEVELOPER_PIN` is set; see [developer account](#developer-account)) is seeded, but authentication remains required. existing item CRUD, users, roles, access levels, permissions, audit logging, correlation-id propagation, and response schemas continue to use sqlite.
 
 the virtual cabinet has 80 deterministic cells: front module then back module, four shelves per side, and ten cells per shelf. `items` and `item_locations` in `base.mock.db` are the occupancy source of truth. the runtime exposes:
 
@@ -115,7 +114,16 @@ the default modbus bus config prefers stable symlinks for the waveshare ch344l h
 /dev/openshelf-rs485-ch4  spare rs485 channel
 ```
 
-the required device naming rule is installed by the provisioning toolkit from `../provision/init/assets/etc/udev/rules.d/99-openshelf-waveshare-rs485.rules`.
+the symlinks come from a udev rule, for example `/etc/udev/rules.d/99-openshelf-waveshare-rs485.rules`:
+
+```text
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1a86", ENV{ID_MODEL_ID}=="55d5", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="openshelf-rs485-ch1", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1a86", ENV{ID_MODEL_ID}=="55d5", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="openshelf-rs485-ch2", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1a86", ENV{ID_MODEL_ID}=="55d5", ENV{ID_USB_INTERFACE_NUM}=="04", SYMLINK+="openshelf-rs485-ch3", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1a86", ENV{ID_MODEL_ID}=="55d5", ENV{ID_USB_INTERFACE_NUM}=="06", SYMLINK+="openshelf-rs485-ch4", ENV{ID_MM_DEVICE_IGNORE}="1"
+```
+
+reload with `sudo udevadm control --reload-rules && sudo udevadm trigger`.
 
 without the rule, waveshare devices are not selected by generic `/dev/ttyACM*` names because those can belong to scanners or other cdc-acm devices; the app only falls back to the legacy usb adapter paths.
 
@@ -139,7 +147,21 @@ prefer a scanner by-id path or a scanner-specific udev symlink. do not use `/dev
 
 - ui: `http://localhost:8080`
 - api health: `http://localhost:8000/api/health`
-- developer login: `developer@opshelf.com` with pin `1111`
+- developer login: `developer@opshelf.com` with pin `1111` in development and mock mode
+
+### roles
+
+routes that move hardware, start or abort calibration, save calibration, run the demo cycle, or restart the api need `robot:control` (the default `admin` and `operator` roles; `viewer` has only `storage:read`). reading state needs only a login. `store_item` and `retrieve_item` commands stay open to every signed-in user, with retrieve still checking the item's access level, but a store that creates a new item needs `storage:write`. the relay keeps its scoped access.
+
+### developer account
+
+every database gets the system user `developer@opshelf.com` (admin role, hidden from user lists). its pin follows the mode on every start:
+
+- development and mock: `1111`
+- production and demo: the value of `DEVELOPER_PIN` in the api environment (the checkout `.env`, next to `JWT_SECRET`); without one the user is locked with a random pin, and a device still carrying `1111` from an older release is moved off it at startup
+- `DEVELOPER_PIN` overrides the pin in every mode
+
+the dev ui never asks for the pin: behind the relay it signs in with the pin from the `opshelf_developer_pin` cookie the relay sets, and on a development or mock device reached directly it needs no sign-in.
 
 ### relay service authentication
 
@@ -160,7 +182,7 @@ docker compose -f docker-compose.yml logs -f api
 docker compose -f docker-compose.yml logs -f dev_ui
 ```
 
-in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers. the overlay does not mount `scripts/` or the test directories, so a one-off hardware container needs its own `-v` for the scripts (see [hardware scripts](#hardware-scripts)).
+in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers. the overlay does not mount `scripts/` or the test directories, so a one-off container that needs a script needs its own `-v` for the scripts (see the `migrate_config.py` docker example above).
 
 dependency changes, dockerfile changes, or mode switches across the development/non-development boundary need a rebuild on laptops:
 
@@ -168,7 +190,7 @@ dependency changes, dockerfile changes, or mode switches across the development/
 ./scripts/start --mode development --build
 ```
 
-on deployed devices the stack runs prebuilt images pulled from the team registry (`registry.opshelf.com/opshelf/*`) and never builds on device. production runs slim multi-stage images without dev tooling; development runs the dev variants (`openshelf_os_api_dev`, `openshelf_os_dev_ui_dev`) which carry debugpy, pytest/mypy/ruff, and node_modules for the bind-mounted sources. plain starts never build implicitly (`--no-build` is always passed); `./scripts/start --pull` pulls prebuilt images instead of building on a boundary-crossing mode switch, and `../provision/remote <device> -c sync:dev` pulls the images matching the checkout sha before starting. the `--build` flag remains the escape hatch for on-device source builds when dependencies change before a release exists.
+on deployed devices the stack runs prebuilt images pulled from the team registry (`registry.opshelf.com/opshelf/*`) and never builds on device. production runs slim multi-stage images without dev tooling; development runs the dev variants (`openshelf_os_api_dev`, `openshelf_os_dev_ui_dev`) which carry pytest/mypy/ruff, and node_modules for the bind-mounted sources. plain starts never build implicitly (`--no-build` is always passed); `./scripts/start --pull` pulls prebuilt images instead of building on a boundary-crossing mode switch. the `--build` flag remains the escape hatch for on-device source builds when dependencies change before a release exists.
 
 runtime state lives in `openshelf_hardware/data`. delete or edit this directory carefully because it contains the local sqlite database and mode files.
 
@@ -199,7 +221,7 @@ npm run build
 
 ## config schema migrations
 
-`schema_version` is a top-level positive integer in the config files, independent of the application's `version` string. a missing `schema_version` means **1** (the pre-versioning provisioning schema); the current schema is **5** (`config.schema.CURRENT_SCHEMA_VERSION`). the server auto-migrates the active config file on startup (with an exclusive `.schema-v<N>.bak` rollback backup) and refuses a newer schema before parsing nested config models; device scripts and other offline entry points require the manual command instead. do not fix a startup error by changing only `schema_version`: the old field names would then lose their meaning.
+`schema_version` is a top-level positive integer in the config files, independent of the application's `version` string. a missing `schema_version` means **1** (the pre-versioning provisioning schema); the current schema is **8** (`config.schema.CURRENT_SCHEMA_VERSION`). the server auto-migrates the active config file on startup (with an exclusive `.schema-v<N>.bak` rollback backup) and refuses a newer schema before parsing nested config models; device scripts and other offline entry points require the manual command instead. do not fix a startup error by changing only `schema_version`: the old field names would then lose their meaning.
 
 ### applying a migration
 
@@ -233,32 +255,20 @@ repeat with `--write` added after `data` once the preview is correct. hardware p
 
 every selected file is migrated in memory and validated against the current config model before anything is written; unknown fields and numeric calibration values are retained, and the output lists changed key names, not config values. each changed file gets an exclusive byte-for-byte `<filename>.schema-v<N>.bak` backup (the number is its source schema) and is replaced atomically, preserving owner and permissions. replacement is atomic per file, not across the directory: if a batch is interrupted, inspect the reported files and backups before retrying. for rollback, restore the affected config files from their backups together with the prior firmware; do not lower only the version number. backups contain credentials — keep them private.
 
-at release time, migrate `../provision/config/config.json` with the same runner and coordinate its template schema with the firmware schema; do not ship a new template to firmware predating the release.
+at release time, migrate any config template you ship to devices with the same runner and coordinate its schema with the firmware schema; do not ship a new template to firmware predating the release.
 
 ### adding a migration
 
-add `v006_<description>.py` under `openshelf_hardware/packages/openshelf_os/src/openshelf_os/config_migrations/`. its `migrate(config)` function accepts the raw previous-schema dictionary and returns the transformed dictionary plus a list of changed field paths. register it under the destination version in `runner.MIGRATIONS` and increment `config.schema.CURRENT_SCHEMA_VERSION`. the runner advances the version only after each step succeeds and validates the complete result before persistence.
+add `v007_<description>.py` under `openshelf_hardware/packages/openshelf_os/src/openshelf_os/config_migrations/`. its `migrate(config)` function accepts the raw previous-schema dictionary and returns the transformed dictionary plus a list of changed field paths. register it under the destination version in `runner.MIGRATIONS` and increment `config.schema.CURRENT_SCHEMA_VERSION`. the runner advances the version only after each step succeeds and validates the complete result before persistence.
 
 never modify a released migration; append a new step. test value preservation, conflicting keys, optional fields, the whole migration chain, and startup rejection. update generated config defaults, fixtures, release notes, and the provisioning template for each new schema; do not include secrets in migration diagnostics.
 
 ## development pi workflow
 
-list known devices from the sibling provision repo:
+open a shell on the device over ssh, forwarding the ui/api ports when you want them locally:
 
 ```bash
-../provision/remote list
-```
-
-open a shell on a device:
-
-```bash
-../provision/remote <device-id-or-alias>
-```
-
-forward local ports for ui/api access:
-
-```bash
-../provision/remote <device-id-or-alias> -f 8000 -f 8080
+ssh -L 8000:localhost:8000 -L 8080:localhost:8080 <user>@<device-host>
 ```
 
 on current lab devices, the checkout is usually:
@@ -276,20 +286,9 @@ git pull
 ./scripts/start --mode development --hardware --pull
 ```
 
-source-only changes are picked up by the bind mounts immediately; `--pull` fetches the prebuilt images matching the checkout (see `../provision/remote <device> -c sync:dev` for the one-command variant). when the change touches dependencies, publish a release from the provision repo (`../provision/release`) and sync the device, or rebuild on the device with `./scripts/start --mode development --hardware --build`.
+source-only changes are picked up by the bind mounts immediately; `--pull` fetches the prebuilt images matching the checkout. when the change touches dependencies, publish a release and pull it on the device, or rebuild on the device with `./scripts/start --mode development --hardware --build`.
 
 if the worktree is dirty, stop and reconcile it before pulling.
-
-## hardware scripts
-
-run hardware scripts from a hardware-enabled development environment. for device-side laser work, stop the long-running api first so serial ports are not locked, then restart it afterward.
-
-example one-off laser command on a development pi:
-
-```bash
-cd /opt/opshelf/repos/openshelf_os
-docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.hardware.yml run --rm --entrypoint sh -v /opt/opshelf/repos/openshelf_os/scripts:/app/scripts:ro api -lc 'cd /app/openshelf_hardware && uv run python /app/scripts/laser.py --config /app/openshelf_hardware/data/config.development.json'
-```
 
 ### Chemical name lookup
 
@@ -330,7 +329,6 @@ From `openshelf_hardware/`:
 uv sync --all-packages
 uv run openapi
 uv run openapi --check
-uv run pytest packages/openshelf_os_server/tests/test_openapi.py
 ```
 
 OpenAPI is generated from the application without running its lifespan. Update
@@ -341,10 +339,5 @@ they are not apparent from the schema. Use `response_docs` for documentation-onl
 response models so adding documentation does not change runtime serialization.
 `uv run openapi` writes the JSON on demand; it is a generated artifact and is not
 committed. `uv run openapi --check` validates the generated contract without
-writing. The contract tests check coverage, examples, references, and media types.
-
-Publishing both references and this manual is owned by the sibling relay's
-`scripts/deploy-docs.py`, which regenerates each document at build time. the developer
-manual lives in `../relay/docs/developer-manual.md` and is rendered into
-`https://api.opshelf.com/docs/manual/` by `../relay/scripts/build-manual.py`.
+writing.
 

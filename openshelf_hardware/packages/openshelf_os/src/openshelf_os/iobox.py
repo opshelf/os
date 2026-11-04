@@ -70,7 +70,6 @@ class IOBox:
                  gpio=None,
                  ):
 
-        self._scalecontroller = scalecontroller
         self._motorcontroller = motorcontroller
         self._status = IOBoxStatus.IDLE
         self._params = params
@@ -87,10 +86,7 @@ class IOBox:
         self._scale = Scale(scalecontroller) if self._scale_enabled is True else None
         self._scale_bus_ready = True
         self._scale_ready = False
-        self._printer = None
-        self._curtain_sensors: list[CurtainSensor] = []
         self._curtain_monitors: list[CurtainMonitor] = []
-        self._curtain_input_states: dict[str, bool] = {}
         self._curtain_state: Optional[bool] = None
         self._curtain_listener = None
         self._door_open: Optional[bool] = None
@@ -155,7 +151,7 @@ class IOBox:
             try:
                 await step()
             except Exception as e:
-                self._logger.warning("init iobox %s failed: %s", label, e)
+                self._logger.warning("init iobox %s failed: %s", label, e, exc_info=e)
 
     async def configure(self, isolate: bool = False, scale_bus_ready: bool = True, home_on_init: bool = True):
         self._scale_bus_ready = scale_bus_ready
@@ -169,7 +165,7 @@ class IOBox:
                 self._status = IOBoxStatus.ERROR
                 if isolate is False:
                     raise IOBoxError(f"IOBox configuration failed: {str(e)}") from e
-                self._logger.warning("init door config failed: %s", e)
+                self._logger.warning("init door config failed: %s", e, exc_info=e)
         else:
             self._logger.info("Door motor disabled via config")
 
@@ -179,7 +175,7 @@ class IOBox:
                 self._emit_init("scale", "ready")
             else:
                 self._scale_ready = False
-                self._emit_init("scale", "failed", reason="scale bus unavailable")
+                self._emit_init("scale", "failed", reason="The scale bus is not connected.")
         else:
             self._logger.info("Scale disabled via config")
 
@@ -219,7 +215,6 @@ class IOBox:
                 poll_interval=poll_interval,
                 on_change=self._handle_curtain_change,
             )
-            self._curtain_sensors = [curtain_sensor]
             self._curtain_monitors = [curtain_monitor]
             await curtain_monitor.start()
 
@@ -234,8 +229,8 @@ class IOBox:
                 },
             )
             self._emit_init("light_curtain", "ready")
-        except Exception as exc:
-            self._emit_init("light_curtain", "failed", reason=str(exc))
+        except Exception:
+            self._emit_init("light_curtain", "failed", reason="The light curtain did not start. Check its connection.")
             raise
 
     async def _ensure_scale_ready(self) -> None:
@@ -262,8 +257,8 @@ class IOBox:
             elapsed = time.monotonic() - start_time
 
             if weight is None:
-                self._logger.warning(
-                    "Scale did not stabilize within timeout",
+                self._logger.info(
+                    "Scale returned no measurement",
                     extra={"elapsed_s": round(elapsed, 3), "timeout_s": 15.0},
                 )
             else:
@@ -276,8 +271,7 @@ class IOBox:
         except Exception as e:
             elapsed = time.monotonic() - start_time
             self._logger.error(
-                "Scale read failed after %.3fs: %s", elapsed, e, extra={"elapsed_s": round(elapsed, 3)}
-            )
+                "Scale read failed after %.3fs: %s", elapsed, e, extra={"elapsed_s": round(elapsed, 3)}, exc_info=e)
             sentry_sdk.capture_exception(e)
             return None
 
@@ -330,8 +324,7 @@ class IOBox:
         except Exception as alarm_exc:
             self._logger.warning(
                 "Could not classify door movement fault for retry: %s",
-                alarm_exc,
-            )
+                alarm_exc, exc_info=alarm_exc)
             return False
 
         return (
@@ -442,6 +435,8 @@ class IOBox:
             self._logger.info("Door motor not configured; skipping home")
             return
 
+        # Pending until the home completes, so a home cancelled mid-way is redone next cycle.
+        self._door_home_pending = True
         try:
             async with self._door_motion_lock:
                 if not self._curtain_state:
@@ -460,7 +455,6 @@ class IOBox:
 
         except Exception as e:
             self._status = IOBoxStatus.ERROR
-            self._door_home_pending = True
 
             if isinstance(e, IOBoxError):
                 raise
@@ -479,8 +473,7 @@ class IOBox:
         except Exception as exc:
             self._logger.warning(
                 "Door home after IO cycle failed; homing before the next cycle",
-                extra={"error": str(exc)},
-            )
+                extra={"error": str(exc)}, exc_info=exc)
             return False
 
     async def ensure_door_homed(self) -> None:
@@ -524,7 +517,7 @@ class IOBox:
             try:
                 self._curtain_listener(state)
             except Exception as exc:
-                self._logger.warning("Curtain listener failed: %s", exc)
+                self._logger.warning("Curtain listener failed: %s", exc, exc_info=exc)
 
     def get_curtain_state(self) -> Optional[bool]:
         return self._curtain_state
@@ -570,6 +563,13 @@ class IOBox:
 
     async def refresh_door_state(self, *, force: bool = False) -> Optional[bool]:
         if self._md is None:
+            return self._door_open
+
+        # The door only sits in a busy window while stationary (0x1122 is written before the
+        # home trigger and after the zero), so the cache is current. Reading would sleep out
+        # the window under the worker's safety-guard lock, forced or not; a pending forced
+        # refresh stays pending.
+        if self._md.is_bus_busy():
             return self._door_open
 
         if self._door_force_refresh_on_block:
@@ -657,7 +657,7 @@ class IOBox:
                             await self._home_door_and_cache_closed()
                             self._logger.info("Door motor homed successfully after bad readings")
                     except Exception as home_exc:
-                        self._logger.error("Door motor recovery failed: %s", home_exc)
+                        self._logger.error("Door motor recovery failed: %s", home_exc, exc_info=home_exc)
                     finally:
                         self._door_motion_lock.release()
 
@@ -715,7 +715,7 @@ class IOBox:
             try:
                 self._curtain_listener(self._curtain_state)
             except Exception as exc:
-                self._logger.warning("Curtain listener failed: %s", exc)
+                self._logger.warning("Curtain listener failed: %s", exc, exc_info=exc)
 
 
     async def stop(self) -> None:
@@ -734,7 +734,6 @@ class IOBox:
                 errors.append(f"Curtain monitor stop failed: {str(e)}")
 
         self._curtain_monitors = []
-        self._curtain_sensors = []
 
         if errors:
             self._status = IOBoxStatus.ERROR

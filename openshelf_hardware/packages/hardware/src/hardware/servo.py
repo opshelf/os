@@ -15,6 +15,16 @@ logger = logging.getLogger(__name__)
 FAULT_COMM_LOSS = 1 << 2
 # A new command can report the previous move's gOBJ until the drive picks it up.
 STALE_OBJ_WINDOW_S = 0.15
+# Splayed against a tray or container wall the fingers stop 8-13 counts short of the open target
+# (lb4a-3, 2026-10-19). The drive also reports INNER with the fingers 80+ counts short, caught on a
+# lip or the floor of the opening with nothing held, so a contact further out than this is no grip.
+GRIP_POSITION_MARGIN = 0x30
+# Preset 2 (release) target. Fingers that bottom out on their own end stop a few counts short of it
+# stall at the force limit and the drive reports a closing contact (lb4a-5, 2026-11-03: OUTER at
+# 0xFA-0xFC, current 0x7F-0x83, against a clean 0xFD/NONE release), so a contact that close to the
+# retracted end holds nothing.
+RELEASE_POSITION = 0xFE
+RETRACTED_MARGIN = 0x10
 
 
 class GripObject(IntEnum):
@@ -32,6 +42,7 @@ class GripState:
     fault: int
     position: int
     current: int
+    open_position: Optional[int] = None
 
     @property
     def obj(self) -> GripObject:
@@ -42,8 +53,24 @@ class GripState:
         return bool(self.status & 0x2)
 
     @property
+    def activated(self) -> bool:
+        """gSTA activation bit; until set (e.g. after a power loss) gOBJ means nothing."""
+        return bool(self.status & (1 << 5))
+
+    @property
+    def holding(self) -> bool:
+        """Any finger contact. Unlike gripped, a contact past the grip margin still ties the tool
+        to whatever the fingers touch, so motion would drag it. A stall at the retracted end of travel
+        is not contact with anything."""
+        if self.obj not in (GripObject.INNER, GripObject.OUTER):
+            return False
+        return self.position < RELEASE_POSITION - RETRACTED_MARGIN
+
+    @property
     def gripped(self) -> bool:
-        return self.obj in (GripObject.INNER, GripObject.OUTER) and not self.dropped
+        if self.obj not in (GripObject.INNER, GripObject.OUTER) or self.dropped:
+            return False
+        return self.open_position is None or self.position <= self.open_position + GRIP_POSITION_MARGIN
 
     def __str__(self) -> str:
         return (f"obj={self.obj.name} drop={int(self.dropped)} pos=0x{self.position:02X} "
@@ -59,7 +86,11 @@ class Servo:
         self._controller = controller
         self._control_reg = int(params.get("control_reg", 0x3E8))
         self._status_reg = int(params.get("status_reg", 0x07D0))
+        self._open_position = int(params.get("open_position", 0x20)) & 0xFF
         self._configured = False
+        # Last grip command: True from an open() (fingers may hold a tray) until a completed
+        # close(); None until either runs. Stands in for gOBJ when that cannot be read.
+        self.holding: Optional[bool] = None
         self._on_init_progress: Optional[Callable[[str, str, Optional[str]], None]] = None
 
     def _emit_init(self, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
@@ -91,13 +122,13 @@ class Servo:
             await self._controller.write_single_register(
                 self._motor_id, 
                 0x03EB, 
-                0x8020
+                0x8000 | self._open_position
             )
 
             await self._controller.write_single_register(
                 self._motor_id, 
                 0x03ED, 
-                0x80FE
+                0x8000 | RELEASE_POSITION
             )
 
             await self._controller.write_single_register(
@@ -112,8 +143,20 @@ class Servo:
             self._configured = True
             self._emit_init("ready")
         except Exception as e:
-            self._emit_init("failed", detail="configure", reason=str(e))
+            self._emit_init("failed", detail="configure", reason="The servo could not be configured. Check its cable.")
             raise MotorError(f"Failed to configure servo: {str(e)}") from e
+
+    @property
+    def open_position(self) -> int:
+        return self._open_position
+
+    async def set_open_position(self, value: int) -> None:
+        """Change the preset 1 target on the running drive; configure() wrote it the same way."""
+        if not 0x00 <= value < 0xC0:
+            raise ValueError(f"open_position 0x{value:02X} outside 0x00..0xBF")
+        await self._ensure_configured()
+        await self._controller.write_single_register(self._motor_id, 0x03EB, 0x8000 | value)
+        self._open_position = value
 
     async def wait_for_activate(self):
         start_time = time.monotonic()
@@ -137,7 +180,9 @@ class Servo:
     async def read_state(self) -> GripState:
         """Read status, fault, position and current in one transaction."""
         r = await self._controller.read_holding_register_block(self._motor_id, self._status_reg, 3)
-        return GripState(r[0] & 0xFF, r[1] & 0xFF, (r[1] >> 8) & 0xFF, (r[2] >> 8) & 0xFF)
+        return GripState(
+            r[0] & 0xFF, r[1] & 0xFF, (r[1] >> 8) & 0xFF, (r[2] >> 8) & 0xFF, self._open_position
+        )
 
     async def wait_for_servo(self, timeout: float = 5.0) -> GripState:
         """Poll until gOBJ reports a result; raise on drive faults."""
@@ -167,6 +212,7 @@ class Servo:
     async def open(self) -> GripState:
         """Preset 1: splay fingers (inner-support grip)."""
         await self._ensure_configured()
+        self.holding = True
         try:
             await self._controller.write_single_register(self._motor_id, self._control_reg, 0x080B)
             return await self.wait_for_servo()
@@ -185,4 +231,6 @@ class Servo:
         """Preset 2: retract fingers (release)."""
         await self._ensure_configured()
         await self._controller.write_single_register(self._motor_id, self._control_reg, 0x090B)
-        return await self.wait_for_servo()
+        state = await self.wait_for_servo()
+        self.holding = False
+        return state

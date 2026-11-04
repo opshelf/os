@@ -1,5 +1,7 @@
 """Audit logging middleware."""
+import asyncio
 import json
+import logging
 import time
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -24,7 +26,9 @@ from ..utils.audit_integrity import (
 from ..utils.audit_constants import AUDIT_RETENTION_DAYS, LEGACY_COMMAND_RECORDS_FIELD
 from ..utils.cors_policy import response_allow_origin, resolve_allowed_origins
 from ..routers.auth_deps import get_current_user_optional
-from ..errors import capture_unhandled_exception, error_detail, internal_error_detail, request_correlation_id
+from ..errors import capture_unhandled_exception, client_detail, error_detail, internal_error_detail, request_correlation_id
+
+logger = logging.getLogger(__name__)
 
 command_records_context: ContextVar[List[Dict[str, Any]]] = ContextVar("command_records", default=[])
 
@@ -39,10 +43,13 @@ SUCCESSFUL_READ_METHODS = frozenset(["GET", "HEAD"])
 # like their GET counterparts, and only failures are recorded.
 SUCCESSFUL_READ_POST_ENDPOINTS = frozenset([
     "/api/storage/items/lookup",
+	"/api/users/login-barcode/resolve",
 ])
 SUCCESSFUL_READ_EXCLUDED_ENDPOINTS = frozenset([
     "/api/auth/me",
+	"/api/auth/experience",
     "/api/auth/users",
+	"/api/auth/scans",
     "/api/access_levels",
     "/api/access-levels",
     "/api/storage/items",
@@ -66,6 +73,9 @@ SUCCESSFUL_READ_EXCLUDED_PREFIXES = (
 )
 SENSITIVE_FIELD_NAMES = frozenset([
     "pin",
+	"identifier",
+	"scan_token",
+	"login_barcode",
     "password",
     "token",
     "access_token",
@@ -110,6 +120,25 @@ def redact_sensitive_values(value: Any) -> Any:
         return [redact_sensitive_values(item) for item in value]
     return value
 
+
+# Each entry links to the one before it, so reading the chain head and committing the new
+# entry must not interleave with another request's append, or both take the same seq_no
+# and prev_hash and verify reports a chain break. The api is one process on one loop; the
+# lock is rebuilt per loop because an asyncio.Lock binds to the loop that first waits on it.
+_chain_lock: Optional[asyncio.Lock] = None
+_chain_lock_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _audit_chain_lock() -> asyncio.Lock:
+    global _chain_lock, _chain_lock_loop
+
+    loop = asyncio.get_running_loop()
+    if _chain_lock is None or _chain_lock_loop is not loop:
+        _chain_lock = asyncio.Lock()
+        _chain_lock_loop = loop
+    return _chain_lock
+
+
 class AuditMiddleware(BaseHTTPMiddleware):
 	"""Middleware to log all API requests and responses."""
 
@@ -150,13 +179,14 @@ class AuditMiddleware(BaseHTTPMiddleware):
 
 		except Exception as e:
 			error_message = str(e)
-			traceback.print_exc()
 			correlation_id = request_correlation_id(request)
+			logger.warning(
+				f"500 unhandled {request.method} {request.url.path} (correlation_id={correlation_id})",
+				exc_info=e,
+			)
 			capture_unhandled_exception(e, request.url.path, request.method, correlation_id, enabled=self.sentry_enabled)
 			code, message = internal_error_detail(e)
-			detail = error_detail(message, code)
-			if correlation_id:
-				detail["correlation_id"] = correlation_id
+			detail = client_detail(request, error_detail(message, code))
 			response = JSONResponse(status_code=500, content={"detail": detail})
 			# This response never travels back through the CORS middleware, so it carries
 			# the origin header itself, under the same policy as every other response.
@@ -195,7 +225,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 		duration_ms: int
 	) -> None:
 		"""Log request to database."""
-		async with AsyncSessionLocal() as db:
+		async with _audit_chain_lock(), AsyncSessionLocal() as db:
 			try:
 				token = None
 				auth_header = request.headers.get("Authorization")
@@ -205,7 +235,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				user = await get_current_user_optional(token=token, db=db)
 
 				now = datetime.now(timezone.utc)
-				user_id = user.id if user else None
+				authenticated_user_id = getattr(
+					request.state, "authenticated_user_id", None
+				)
+				user_id = authenticated_user_id if authenticated_user_id is not None else (user.id if user else None)
 				method = request.method
 				endpoint = str(request.url.path)
 				command_records = command_records_context.get()

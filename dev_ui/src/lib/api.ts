@@ -63,6 +63,7 @@ export type ApiErrorDetail = {
 	reason?: string;
 	warnings?: string[];
 	correlation_id?: string;
+	permission?: string;
 };
 
 export class ApiError extends Error {
@@ -92,7 +93,7 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 			headers
 		});
 	} catch {
-		throw new ApiError('device or API is unreachable', 0);
+		throw new ApiError(API_UNREACHABLE_MESSAGE, 0);
 	}
 
 	if (response.status === 401) {
@@ -106,8 +107,7 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 
 	if (response.ok === false) {
 		const { message, detail } = await readErrorDetail(response);
-		const finalMessage = formatErrorMessage(message, detail);
-		throw new ApiError(finalMessage, response.status, detail);
+		throw new ApiError(message, response.status, detail);
 	}
 
 	if (response.status === 204) {
@@ -121,41 +121,45 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 
 	try {
 		return JSON.parse(text) as T;
-	} catch (error) {
-		throw new Error('failed to parse response body as json');
+	} catch {
+		throw new Error(API_NOT_JSON_MESSAGE);
 	}
 }
 
-function formatErrorMessage(message: string, detail?: ApiErrorDetail): string {
-	let output = message;
-	if (detail?.reason && detail.reason !== message) {
-		output = `${output} (${detail.reason})`;
-	}
-	if (detail?.needs_home && detail.reason === undefined) {
-		output = `${output} (home required)`;
-	}
-	return output;
+export const API_UNREACHABLE_MESSAGE = 'The device API did not answer. Check that the device is online.';
+export const API_NOT_JSON_MESSAGE = 'The device API sent a response that is not JSON.';
+
+// The needs-home reason stays raw in server state (recovery reads motor ids out of it), so the
+// banner is fixed copy.
+export const HOME_REQUIRED_MESSAGE = 'Home the robot before calibration movement.';
+
+/** The sentence of a failed robot event or command result. */
+export function formatFailure(data: Record<string, unknown>): string {
+	return typeof data.error === 'string' ? data.error : 'The robot command failed.';
+}
+
+/** The sentence of a failed laser auto calibration. */
+export function formatLaserFailure(snapshot: LaserAutoCalibrationSnapshot): string {
+	return snapshot.error ?? 'The laser auto calibration failed.';
 }
 
 function unreachableMessage(status: number): string {
 	if (status === 502) {
-		return 'device or API is unreachable';
+		return 'The device or its API is unreachable.';
 	}
 	if (status === 503) {
-		return 'device API is unavailable';
+		return 'The device API is not available.';
 	}
 	if (status === 504) {
-		return 'device connection dropped';
+		return 'The connection to the device dropped.';
 	}
-	return `request failed with status ${status}`;
+	return `The request failed with status ${status}.`;
 }
-
-const MAX_ERROR_BODY_LENGTH = 200;
 
 async function readErrorDetail(
 	response: Response
 ): Promise<{ message: string; detail?: ApiErrorDetail }> {
-	const fallback = `${response.status} ${response.statusText}`;
+	const fallback = unreachableMessage(response.status);
 	const contentType = response.headers.get('content-type') ?? '';
 	let text = '';
 
@@ -170,7 +174,7 @@ async function readErrorDetail(
 	}
 
 	if (contentType.includes('text/html') === true) {
-		return { message: unreachableMessage(response.status) };
+		return { message: fallback };
 	}
 
 	try {
@@ -183,21 +187,16 @@ async function readErrorDetail(
 				}
 				if (detail && typeof detail === 'object') {
 					const detailObject = detail as ApiErrorDetail;
-					const message =
-						typeof detailObject.message === 'string'
-							? detailObject.message
-							: JSON.stringify(detailObject);
+					const message = typeof detailObject.message === 'string' ? detailObject.message : fallback;
 					return { message, detail: detailObject };
 				}
 			}
-
-			return { message: JSON.stringify(payload) };
 		}
 	} catch {
-		return { message: text.length <= MAX_ERROR_BODY_LENGTH ? text : fallback };
+		// A relay or proxy answered with its own text, not the device API.
 	}
 
-	return { message: text.length <= MAX_ERROR_BODY_LENGTH ? text : fallback };
+	return { message: fallback };
 }
 
 import { inferVocabularyFromGrid, setActiveVocabulary, toDeviceSide } from './side';
@@ -486,6 +485,115 @@ export async function runCalibrationCycleTest(
 	});
 }
 
+export type CalibrationTestQueueCell = { shelf_idx: number; cell_idx: number };
+
+export type CalibrationTestQueueSnapshot = {
+	state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
+	job_id: string | null;
+	side: string | null;
+	mode: 'quick' | 'cycle' | null;
+	total: number;
+	completed: number;
+	current: CalibrationTestQueueCell | null;
+	failed: CalibrationTestQueueCell | null;
+	error: string | null;
+	code: string | null;
+	correlation_id: string | null;
+	started_at: string | null;
+	updated_at: string | null;
+};
+
+export async function startCalibrationTestQueue(
+	side: StorageModuleSide,
+	mode: 'quick' | 'cycle',
+	cells: CalibrationTestQueueCell[]
+): Promise<CalibrationTestQueueSnapshot> {
+	return apiFetch<CalibrationTestQueueSnapshot>('/calibration/test/queue', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ side: toDeviceSide(side), mode, cells })
+	});
+}
+
+export async function getCalibrationTestQueue(): Promise<CalibrationTestQueueSnapshot> {
+	return apiFetch<CalibrationTestQueueSnapshot>('/calibration/test/queue');
+}
+
+export async function abortCalibrationTestQueue(): Promise<CalibrationTestQueueSnapshot> {
+	return apiFetch<CalibrationTestQueueSnapshot>('/calibration/test/queue/abort', { method: 'POST' });
+}
+
+export type CycleTestMode =
+	| 'retrieve_store'
+	| 'store_retrieve'
+	| 'store_only'
+	| 'retrieve_only'
+	| 'quick'
+	| 'quick_lift';
+
+export type CycleTestConfig = {
+	mode: CycleTestMode;
+	lift_mm: number | null;
+	target: string | null;
+	start: string | null;
+	skip: string | null;
+	shuffle: boolean;
+	clear: boolean;
+	loop: number | null;
+	step: boolean;
+};
+
+export type CycleTestCellResult = {
+	cell: string;
+	barcode: string | null;
+	steps: Record<string, boolean>;
+	passed: boolean;
+	error: string | null;
+	code: string | null;
+	correlation_id: string | null;
+	duration_s: number;
+};
+
+export type CycleTestSnapshot = {
+	state: 'idle' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+	run_id: string | null;
+	config: CycleTestConfig | null;
+	loop: number;
+	loops_passed: number;
+	total: number;
+	current: string | null;
+	results: CycleTestCellResult[];
+	unsized_cells: string[];
+	hardware_fault: string | null;
+	error: string | null;
+	code: string | null;
+	correlation_id: string | null;
+	log: string[];
+	started_by: string | null;
+	started_at: string | null;
+	updated_at: string | null;
+};
+
+export async function startCycleTest(config: CycleTestConfig): Promise<CycleTestSnapshot> {
+	return apiFetch<CycleTestSnapshot>('/calibration/cycle-test', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(config)
+	});
+}
+
+export async function getCycleTest(): Promise<CycleTestSnapshot> {
+	return apiFetch<CycleTestSnapshot>('/calibration/cycle-test');
+}
+
+export async function continueCycleTest(): Promise<CycleTestSnapshot> {
+	return apiFetch<CycleTestSnapshot>('/calibration/cycle-test/continue', { method: 'POST' });
+}
+
+export async function abortCycleTest(): Promise<CycleTestSnapshot> {
+	return apiFetch<CycleTestSnapshot>('/calibration/cycle-test/abort', { method: 'POST' });
+}
+
 export type RobotCommandReceipt = {
 	message: string;
 	command_id: string;
@@ -645,38 +753,33 @@ export interface LaserAutoCalibrationReferenceOffset {
 	skipped: string[];
 }
 
-export interface LaserAutoCalibrationZStallSample {
+export interface GripperOpenPositionSample {
+	// The side arrives in the device vocabulary; compare via sideIndex().
+	side: string;
 	shelf_idx: number;
 	cell_idx: number;
-	probe_x_mm: number;
-	probe_y_mm: number;
-	wall_depth_mm: number;
-	z_contact_mm: number;
-	z_contact_repeat_mm: number | null;
-	delta_mm: number;
+	z_offset_mm: number;
+	positions: number[];
+	states: string[];
+	stop_position: number | null;
+	verify_state: string | null;
+	verified: boolean;
 }
 
-export interface LaserAutoCalibrationZStallResult {
-		// The side arrives in the device vocabulary; compare via sideIndex().
-		side: string;
-	intercept_mm: number;
-	slope_per_mm: number;
-	slope_source: string;
-	fit_source: string;
-	sample_count: number;
-	x_span_mm: number;
-	stage_extension_mm: number;
-	z_place_mm: number;
-	manual_intercept_mm: number | null;
-	manual_agreement_mm: number | null;
-	manual_agreement_tolerance_mm: number;
-	manual_captured_stage_mm: number | null;
-	manual_capture_unstamped: number;
+export interface GripperOpenPositionResult {
+	previous_open_position: number;
+	open_position: number | null;
 	applied: boolean;
-	persisted: boolean;
-	samples: LaserAutoCalibrationZStallSample[];
+	samples: GripperOpenPositionSample[];
 	skipped: string[];
-	dropped_repeats: string[];
+}
+
+export async function calibrateGripperOpenPosition(side?: StorageModuleSide): Promise<GripperOpenPositionResult> {
+	return apiFetch<GripperOpenPositionResult>('/calibration/gripper/open-position', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(side === undefined ? {} : { side: toDeviceSide(side) })
+	});
 }
 
 export interface LaserAutoCalibrationRequest {
@@ -686,6 +789,7 @@ export interface LaserAutoCalibrationRequest {
 	cell_idx?: number;
 	include_angle_calibration?: boolean;
 	include_extension_calibration?: boolean;
+	include_gripper_calibration?: boolean;
 }
 
 // The per-side snapshot fields followed the device vocabulary until the
@@ -739,9 +843,12 @@ export interface LaserAutoCalibrationSnapshot {
 	detected_cells: LaserAutoCalibrationCell[];
 	angle_results: LaserAutoCalibrationAngleResult[];
 	reference_offset_results: LaserAutoCalibrationReferenceOffset[];
-	z_stall_results: LaserAutoCalibrationZStallResult[];
-	stage_detail: Record<string, unknown>;
+	gripper_open_position?: GripperOpenPositionResult | null;
 	error: string | null;
+	error_detail?: {
+		phase: string | null;
+		correlation_id: string | null;
+	} | null;
 }
 
 export function buildLaserAutoCalibrationStreamUrl(
@@ -765,6 +872,10 @@ export function buildLaserAutoCalibrationStreamUrl(
 		url.searchParams.set('include_extension_calibration', String(request.include_extension_calibration));
 	}
 
+	if (request.include_gripper_calibration === true) {
+		url.searchParams.set('include_gripper_calibration', 'true');
+	}
+
 	if (request.mode === 'both') {
 		url.searchParams.set('mode', 'both');
 		return url.toString();
@@ -774,15 +885,18 @@ export function buildLaserAutoCalibrationStreamUrl(
 		return url.toString();
 	}
 
-	if (request.side !== undefined) {
+	// The echoed scope in a snapshot spells absent selectors as null, so guard
+	// against null as well as undefined or they would reach the api as the
+	// literal string "null" and be rejected with 422.
+	if (request.side != null) {
 		url.searchParams.set('side', toDeviceSide(request.side));
 	}
 
-	if (request.shelf_idx !== undefined) {
+	if (request.shelf_idx != null) {
 		url.searchParams.set('shelf_idx', String(request.shelf_idx));
 	}
 
-	if (request.cell_idx !== undefined) {
+	if (request.cell_idx != null) {
 		url.searchParams.set('cell_idx', String(request.cell_idx));
 	}
 
@@ -810,11 +924,25 @@ export async function getLaserAutoCalibrationStreamError(
 	}
 
 	const { message, detail } = await readErrorDetail(response);
-	return new ApiError(formatErrorMessage(message, detail), response.status, detail);
+	return new ApiError(message, response.status, detail);
 }
 
 export async function getLaserAutoCalibrationStatus(): Promise<LaserAutoCalibrationSnapshot> {
 	return normalizeLaserAutoCalibrationSnapshot(await apiFetch<Record<string, unknown>>('/calibration/laser/status'));
+}
+
+export async function getLaserZStallEnabled(): Promise<boolean> {
+	return (await apiFetch<{ enabled: boolean }>('/calibration/laser/z-stall')).enabled;
+}
+
+export async function saveLaserZStallEnabled(enabled: boolean): Promise<boolean> {
+	const response = await apiFetch<{ enabled: boolean }>('/calibration/laser/z-stall', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ enabled })
+	});
+
+	return response.enabled;
 }
 
 export async function abortLaserAutoCalibration(): Promise<LaserAutoCalibrationSnapshot> {
@@ -1179,6 +1307,21 @@ export async function probeMotors(): Promise<MotorProbeResponse> {
 	});
 }
 
+export interface MotorLimitSwitchState {
+	motor_name: string;
+	enabled: boolean;
+	min_engaged: boolean | null;
+	error: string | null;
+}
+
+export async function getMotorLimitSwitches(): Promise<{ results: MotorLimitSwitchState[] }> {
+	return apiFetch<{ results: MotorLimitSwitchState[] }>('/robot/debug/motors/limit_switches');
+}
+
+export async function getMotorLimitSwitch(motorName: string): Promise<MotorLimitSwitchState> {
+	return apiFetch<MotorLimitSwitchState>(`/robot/debug/motors/${motorName}/limit_switches`);
+}
+
 export async function moveMotor(
 	motorName: string,
 	positionMm: number
@@ -1338,21 +1481,27 @@ export interface IOBoxPosition {
 	pickup_high_y: number;
 	z_extension: number;
 	stage_extension: number;
+	multi_item_x: number;
+	multi_item_y: number;
+	multi_item_z_extension: number;
+	multi_item_stage_extension: number;
 	warnings?: string[];
 }
+
+export type IOBoxPositionName = 'low' | 'high' | 'multi_item';
 
 export async function getIOBoxCalibration(): Promise<IOBoxPosition> {
 	return apiFetch<IOBoxPosition>('/calibration/iobox');
 }
 
-export async function moveToIOBoxPosition(position: 'low' | 'high'): Promise<IOBoxPosition> {
+export async function moveToIOBoxPosition(position: IOBoxPositionName): Promise<IOBoxPosition> {
 	return apiFetch<IOBoxPosition>(`/calibration/iobox/move?position=${position}`, {
 		method: 'POST'
 	});
 }
 
 export async function jogIOBoxAxis(
-	position: 'low' | 'high',
+	position: IOBoxPositionName,
 	axis: 'x' | 'y' | 'z' | 'stage',
 	delta: number
 ): Promise<IOBoxPosition> {
@@ -1376,6 +1525,12 @@ export async function testIOBoxSequence(
 	const url = `/calibration/iobox/test${query !== '' ? `?${query}` : ''}`;
 
 	return apiFetch<{ success: boolean }>(url, {
+		method: 'POST'
+	});
+}
+
+export async function testIOBoxMultiItemCycle(): Promise<{ success: boolean }> {
+	return apiFetch<{ success: boolean }>('/calibration/iobox/test/multi-item', {
 		method: 'POST'
 	});
 }

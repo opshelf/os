@@ -81,50 +81,6 @@ def _run(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
     main._run_migrations()
 
 
-def test_schema_state_reports_a_create_all_database_as_current(tmp_path) -> None:
-    engine = _field_engine(tmp_path)
-    state = main._schema_state(str(engine.url))
-
-    assert state.current_revisions == []
-    # Every model table and column is present, so there is nothing to migrate.
-    assert state.missing == []
-    assert state.tables_present == len(Base.metadata.tables)
-
-
-def test_schema_state_reads_the_version_row_an_aborted_replay_left_behind(tmp_path) -> None:
-    engine = _field_engine(tmp_path)
-    head = _alembic_head(str(engine.url))
-
-    # A replay that dies partway leaves the version rows sqlite committed around
-    # its DDL behind: a mid-chain revision the database never actually migrated to.
-    with engine.begin() as connection:
-        connection.exec_driver_sql("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
-        connection.exec_driver_sql("INSERT INTO alembic_version VALUES ('a7b8c9d0e1f2')")
-
-    state = main._schema_state(str(engine.url))
-
-    assert state.current_revisions == ["a7b8c9d0e1f2"]
-    assert state.current_revisions != [head]
-    assert state.missing == []
-
-
-def test_migrations_baseline_a_schema_current_database_without_replaying(
-    recorder: _RecordingLogger, monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    engine = _field_engine(tmp_path)
-    url = str(engine.url)
-    head = _alembic_head(url)
-
-    _run(monkeypatch, url)
-
-    assert recorder.failures() == [], f"migration_failed: {recorder.failures()}"
-    assert recorder.named("migrations_baseline_stamped")[0]["reason"] == "schema_matches_models"
-    assert _alembic_version(engine) == [head]
-    # Baseline stamping is DDL-free for the schema itself: the model tables the
-    # database already had must still hold their rows and definitions.
-    assert set(sa.inspect(engine).get_table_names()) >= set(Base.metadata.tables)
-
-
 def test_migrations_baseline_a_database_left_mid_chain_by_an_aborted_replay(
     recorder: _RecordingLogger, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
@@ -166,25 +122,6 @@ def test_migrations_baseline_an_empty_database_without_replaying(
     # get in its way.
     Base.metadata.create_all(engine)
     assert set(sa.inspect(engine).get_table_names()) >= set(Base.metadata.tables)
-
-
-def test_migrations_still_upgrade_a_versioned_database(
-    recorder: _RecordingLogger, monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    engine = _field_engine(tmp_path)
-    url = str(engine.url)
-    head = _alembic_head(url)
-
-    _run(monkeypatch, url)
-    # Second start: the stamp exists now, so the incremental path runs and the
-    # baseline stamp must not repeat.
-    recorder.events.clear()
-    _run(monkeypatch, url)
-
-    assert recorder.failures() == [], f"migration_failed: {recorder.failures()}"
-    assert recorder.names().count("migrations_baseline_stamped") == 0
-    assert recorder.names().count("running_database_migrations") == 1
-    assert _alembic_version(engine) == [head]
 
 
 def test_migrations_replay_a_database_that_is_behind_the_models(

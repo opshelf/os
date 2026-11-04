@@ -36,7 +36,7 @@
 			frontAngle = angles.front;
 			backAngle = angles.back;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to load rotation angles';
+			error = err instanceof Error ? err.message : 'Failed to load rotation angles.';
 		} finally {
 			loading = false;
 		}
@@ -49,9 +49,9 @@
 
 		try {
 			await rotateToAngle(frontAngle);
-			message = `rotated to front angle ${frontAngle} deg`;
+			message = `Rotated to front angle ${frontAngle} deg.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to rotate';
+			error = err instanceof Error ? err.message : 'Failed to rotate.';
 		} finally {
 			isRotating = false;
 		}
@@ -64,9 +64,9 @@
 
 		try {
 			await rotateToAngle(backAngle);
-			message = `rotated to back angle ${backAngle} deg`;
+			message = `Rotated to back angle ${backAngle} deg.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to rotate';
+			error = err instanceof Error ? err.message : 'Failed to rotate.';
 		} finally {
 			isRotating = false;
 		}
@@ -79,9 +79,9 @@
 
 		try {
 			await saveRotationAngles(frontAngle, backAngle);
-			message = 'rotation angles saved';
+			message = 'Rotation angles saved.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to save rotation angles';
+			error = err instanceof Error ? err.message : 'Failed to save rotation angles.';
 		} finally {
 			isSaving = false;
 		}
@@ -95,9 +95,9 @@
 			angles = await getRotationAngles();
 			frontAngle = angles.front;
 			backAngle = angles.back;
-			message = 'angles reset from config';
+			message = 'Angles reset from config.';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'failed to reset angles';
+			error = err instanceof Error ? err.message : 'Failed to reset angles.';
 		}
 	}
 
@@ -114,59 +114,61 @@
 	}
 </script>
 
-<table>
-	<thead>
-		<tr>
-			<th colspan="2">rotation calibration</th>
-		</tr>
-	</thead>
-	<tbody>
-		{#if loading === true}
+<div class="scroll-x">
+	<table>
+		<thead>
 			<tr>
-				<td colspan="2">loading rotation angles...</td>
+				<th colspan="2">rotation calibration</th>
 			</tr>
-		{:else if angles !== null}
-			<tr>
-				<td class="label-cell">rotation angle a (front)</td>
-				<td>
-					<input
-						type="number"
-						step="0.1"
-						value={frontAngle}
-						on:change={didChangeFrontAngle}
-						disabled={isRotating === true || isSaving === true}
-					/>
-					<button
-						type="button"
-						on:click={didClickRotateFront}
-						disabled={isRotating === true || isSaving === true}
-					>
-						rotate
-					</button>
-				</td>
-			</tr>
-			<tr>
-				<td class="label-cell">rotation angle b (back)</td>
-				<td>
-					<input
-						type="number"
-						step="0.1"
-						value={backAngle}
-						on:change={didChangeBackAngle}
-						disabled={isRotating === true || isSaving === true}
-					/>
-					<button
-						type="button"
-						on:click={didClickRotateBack}
-						disabled={isRotating === true || isSaving === true}
-					>
-						rotate
-					</button>
-				</td>
-			</tr>
-		{/if}
-	</tbody>
-</table>
+		</thead>
+		<tbody>
+			{#if loading === true}
+				<tr>
+					<td colspan="2">loading rotation angles...</td>
+				</tr>
+			{:else if angles !== null}
+				<tr>
+					<td class="label-cell">rotation angle a (front)</td>
+					<td>
+						<input
+							type="number"
+							step="0.1"
+							value={frontAngle}
+							on:change={didChangeFrontAngle}
+							disabled={isRotating === true || isSaving === true}
+						/>
+						<button
+							type="button"
+							on:click={didClickRotateFront}
+							disabled={isRotating === true || isSaving === true}
+						>
+							rotate
+						</button>
+					</td>
+				</tr>
+				<tr>
+					<td class="label-cell">rotation angle b (back)</td>
+					<td>
+						<input
+							type="number"
+							step="0.1"
+							value={backAngle}
+							on:change={didChangeBackAngle}
+							disabled={isRotating === true || isSaving === true}
+						/>
+						<button
+							type="button"
+							on:click={didClickRotateBack}
+							disabled={isRotating === true || isSaving === true}
+						>
+							rotate
+						</button>
+					</td>
+				</tr>
+			{/if}
+		</tbody>
+	</table>
+</div>
 
 {#if angles !== null}
 	<div class="action-buttons">

@@ -4,6 +4,7 @@
 	import CellCalibration from '$lib/components/calibration/CellCalibration.svelte';
 	import CellAutoCalibration from '$lib/components/calibration/CellAutoCalibration.svelte';
 	import CellCalibrationTest from '$lib/components/calibration/CellCalibrationTest.svelte';
+	import CycleTestRunner from '$lib/components/calibration/CycleTestRunner.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
 	import FridgeCalibration from '$lib/components/calibration/FridgeCalibration.svelte';
@@ -43,7 +44,7 @@
 	}
 </script>
 
-<div class="toggle-group">
+<div class="toggle-group scroll-x">
 	<a class:selected={selectedView === 'layout'} href={tabHref('/storage/layout')}>layout</a>
 	<a class:selected={selectedView === 'cell_auto'} href={tabHref('/storage/auto')}>auto</a>
 	<a class:selected={selectedView === 'cell_manual'} href={tabHref('/storage/cells')}>manual</a>
@@ -66,6 +67,7 @@
 	<CellAutoCalibration />
 {:else if selectedView === 'test'}
 	<CellCalibrationTest {initialSide} {initialShelf} {initialCell} />
+	<CycleTestRunner />
 {:else if selectedView === 'io'}
 	<IOBoxCalibration />
 {:else if selectedView === 'rotation'}
@@ -76,13 +78,15 @@
 
 <style>
 	.toggle-group {
-		display: inline-flex;
+		display: flex;
 		margin-bottom: 1.5em;
 		gap: 1em;
 		align-items: center;
 	}
 
 	.toggle-group a {
+		flex-shrink: 0;
+		white-space: nowrap;
 		border: 2px solid black;
 		background: #fff;
 		cursor: pointer;

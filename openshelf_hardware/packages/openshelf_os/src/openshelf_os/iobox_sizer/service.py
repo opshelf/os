@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import statistics
 import time
 from pathlib import Path
@@ -15,6 +16,8 @@ from openshelf_os.iobox_sizer.models import (
     IOBoxSizerToFReading,
 )
 from openshelf_os.iobox_sizer.vision import detect_object
+
+logger = logging.getLogger(__name__)
 
 
 class IOBoxSizerService:
@@ -116,15 +119,16 @@ class IOBoxSizerService:
     def _read_tof(self) -> list[IOBoxSizerToFReading]:
         sample_count = self.config.tof.samples
         accumulators: list[list[float]] = [[] for _ in self.config.tof.channels]
-        errors: list[str | None] = [None for _ in self.config.tof.channels]
+        failed: list[bool] = [False for _ in self.config.tof.channels]
 
         for sample_index in range(sample_count):
             for index in range(len(self.config.tof.channels)):
                 try:
                     raw = self.tof_bus.read_distance_mm(index)
                 except Exception as exc:
-                    if errors[index] is None:
-                        errors[index] = str(exc)
+                    if failed[index] is False:
+                        failed[index] = True
+                        logger.warning("ToF sensor %s read failed", index, exc_info=exc)
                     continue
 
                 accumulators[index].append(raw.distance_mm)
@@ -148,7 +152,7 @@ class IOBoxSizerService:
                 IOBoxSizerToFReading(
                     sensor_index=index,
                     sensor_channel=channel,
-                    error=errors[index] or "sensor returned no samples",
+                    error="The distance sensor did not answer." if failed[index] else "The distance sensor returned no reading.",
                 )
             )
 

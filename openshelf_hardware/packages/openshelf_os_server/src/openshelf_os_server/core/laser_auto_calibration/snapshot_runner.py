@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import *
-from .models import LaserAutoCalibrationError
+from .models import LaserAutoCalibrationErrorRef
 
 
 class SnapshotRunnerMixin:
@@ -43,21 +43,10 @@ class SnapshotRunnerMixin:
             side_state.live_candidate_count = max(side_state.live_candidate_count, len(side_state.candidates))
             side_state.live_detected_cell_count = max(side_state.live_detected_cell_count, len(side_state.cells))
 
-        progress_payload: dict[str, Any] = {}
-
-        if recorder.progress_path.exists() is True:
-            progress_payload = self._read_json(recorder.progress_path)
-
         await self._sync_snapshot(
             run_id=side_state.run_id,
             current_side=side_name,
             bounds=bounds,
-            stage_detail={
-                **self._snapshot.stage_detail,
-                "side": side_name,
-                "scan_progress": progress_payload.get("progress", {}),
-                "scan_phase": progress_payload.get("phase"),
-            },
         )
 
     def _read_json(self, path: Path) -> dict[str, Any]:
@@ -82,14 +71,10 @@ class SnapshotRunnerMixin:
                 return
 
             current_stage = self._snapshot.current_stage
-            stage_detail = dict(self._snapshot.stage_detail)
-            stage_detail["side"] = side_name
-            stage_detail["log"] = message
             side_state = self._side_states.setdefault(side_name, _SideState())
 
             shelf_match = SCAN_SHELF_SCOUT_RE.search(message)
             shelf_hole_match = SCAN_SHELF_HOLE_RE.search(message)
-            progress_sample_match = SCAN_PROGRESS_SAMPLE_RE.search(message)
             shelf_edges_match = SHELF_EDGES_RE.search(message)
             coarse_candidates_match = COARSE_CANDIDATES_RE.search(message)
             fine_match = SCAN_FINE_RE.search(message)
@@ -99,33 +84,6 @@ class SnapshotRunnerMixin:
             if message.startswith("phase=coarse-scan") is True or shelf_match is not None:
                 current_stage = "shelf-scout"
 
-            if shelf_match is not None:
-                stage_detail.update(
-                    {
-                        "phase": "shelf-scout",
-                        "scout_idx": int(shelf_match.group("idx")),
-                        "scout_count": int(shelf_match.group("count")),
-                        "x_position": float(shelf_match.group("x")),
-                    }
-                )
-
-            if progress_sample_match is not None:
-                laser_distance_mm: float | None = None
-
-                if progress_sample_match.group("depth") != "none":
-                    laser_distance_mm = float(progress_sample_match.group("depth"))
-
-                stage_detail.update(
-                    {
-                        "laser_sample_label": progress_sample_match.group("label"),
-                        "laser_sample_idx": int(progress_sample_match.group("sample_idx")),
-                        "laser_sample_count": int(progress_sample_match.group("sample_count")),
-                        "laser_sample_x_mm": float(progress_sample_match.group("x")),
-                        "laser_sample_y_mm": float(progress_sample_match.group("y")),
-                        "laser_distance_mm": laser_distance_mm,
-                    }
-                )
-
             if message.startswith("phase=coarse-detect") is True or shelf_hole_match is not None:
                 current_stage = "coarse-detect"
 
@@ -133,16 +91,6 @@ class SnapshotRunnerMixin:
                 side_state.live_shelf_count = max(
                     side_state.live_shelf_count,
                     int(shelf_hole_match.group("shelf_count")),
-                )
-                stage_detail.update(
-                    {
-                        "phase": "coarse-detect",
-                        "shelf_idx": int(shelf_hole_match.group("shelf_idx")),
-                        "shelf_count": int(shelf_hole_match.group("shelf_count")),
-                        "offset_idx": int(shelf_hole_match.group("offset_idx")),
-                        "offset_count": int(shelf_hole_match.group("offset_count")),
-                        "y_position": float(shelf_hole_match.group("y")),
-                    }
                 )
 
             if shelf_edges_match is not None:
@@ -172,20 +120,9 @@ class SnapshotRunnerMixin:
                         side_state.live_candidate_count,
                         int(active_match.group("count")),
                     )
-                    stage_detail.update(
-                        {
-                            "phase": "fine-scan",
-                            "candidate_idx": int(active_match.group("idx")),
-                            "candidate_count": int(active_match.group("count")),
-                            "is_retry": fine_retry_match is not None,
-                        }
-                    )
 
             if fine_detected_cells_match is not None:
                 current_stage = "fine-scan"
-
-            if message.startswith("run_dir=") is True:
-                stage_detail["run_dir"] = message.split("=", 1)[1]
 
             await self._refresh_scan_side_state(side_name, recorder, bounds)
             await self._update_snapshot(
@@ -193,7 +130,6 @@ class SnapshotRunnerMixin:
                 current_stage=current_stage,
                 state="running",
                 bounds=bounds,
-                stage_detail=stage_detail,
             )
 
         return did_receive_status
@@ -203,116 +139,10 @@ class SnapshotRunnerMixin:
             if self._should_preserve_cancelling_snapshot() is True or self._should_ignore_status_update() is True:
                 return
 
-            stage_detail = dict(self._snapshot.stage_detail)
-            stage_detail["side"] = side_name
-            stage_detail["log"] = message
-            stage_detail["phase"] = "angle-calibration"
-
-            capture_match = ANGLE_CAPTURE_RE.search(message)
-            sample_match = ANGLE_SAMPLE_RE.search(message)
-            scout_sample_match = ANGLE_SCOUT_SAMPLE_RE.search(message)
-            alpha_match = ANGLE_RESULT_RE.search(message)
-            stage_stall_capture_match = STAGE_STALL_CAPTURE_RE.search(message)
-            stage_stall_probe_match = STAGE_STALL_PROBE_RE.search(message)
-
-            if message.startswith("phase=shelf-scout") is True:
-                stage_detail["subphase"] = "shelf-scout"
-
-            if message.startswith("shelf_edges=") is True:
-                stage_detail["subphase"] = "shelf-scout"
-
-            if message.startswith("angle_capture_y_mm=") is True:
-                stage_detail["capture_y_mm"] = float(message.split("=", 1)[1])
-
-            if scout_sample_match is not None:
-                laser_distance_mm: float | None = None
-
-                if scout_sample_match.group("depth") != "none":
-                    laser_distance_mm = float(scout_sample_match.group("depth"))
-
-                stage_detail.update(
-                    {
-                        "subphase": "shelf-scout",
-                        "laser_sample_label": scout_sample_match.group("label"),
-                        "laser_sample_idx": int(scout_sample_match.group("sample_idx")),
-                        "laser_sample_count": int(scout_sample_match.group("sample_count")),
-                        "laser_sample_x_mm": float(scout_sample_match.group("x")),
-                        "laser_sample_y_mm": float(scout_sample_match.group("y")),
-                        "laser_distance_mm": laser_distance_mm,
-                    }
-                )
-
-            if capture_match is not None:
-                stage_detail.update(
-                    {
-                        "subphase": "capture",
-                        "x_idx": int(capture_match.group("x_idx")),
-                        "x_count": int(capture_match.group("x_count")),
-                        "z_offset_mm": float(capture_match.group("z_offset")),
-                        "rotation_idx": int(capture_match.group("rotation_idx")),
-                        "rotation_count": int(capture_match.group("rotation_count")),
-                    }
-                )
-
-            if sample_match is not None:
-                stage_detail.update(
-                    {
-                        "subphase": "capture",
-                        "sample_status": sample_match.group("status"),
-                        "sample_x_mm": float(sample_match.group("x")),
-                        "sample_z_mm": float(sample_match.group("z")),
-                        "sample_rotation_deg": float(sample_match.group("rotation")),
-                        "laser_distance_mm": (
-                            None
-                            if sample_match.group("distance") is None
-                            else float(sample_match.group("distance"))
-                        ),
-                    }
-                )
-
-            if stage_stall_capture_match is not None:
-                stage_detail.update(
-                    {
-                        "subphase": "stage-stall",
-                        "rotation_idx": int(stage_stall_capture_match.group("rotation_idx")),
-                        "rotation_count": int(stage_stall_capture_match.group("rotation_count")),
-                        "absolute_rotation_deg": float(stage_stall_capture_match.group("absolute")),
-                        "stage_stall_pass": stage_stall_capture_match.group("pass_name"),
-                    }
-                )
-
-            if stage_stall_probe_match is not None:
-                stage_detail.update(
-                    {
-                        "subphase": "stage-stall",
-                        "sample_status": stage_stall_probe_match.group("status"),
-                        "sample_rotation_deg": float(stage_stall_probe_match.group("rotation")),
-                        "absolute_rotation_deg": float(stage_stall_probe_match.group("absolute")),
-                        "stage_position_mm": float(stage_stall_probe_match.group("stage")),
-                        "stage_stall_pass": stage_stall_probe_match.group("pass_name"),
-                        "stage_probe_status": stage_stall_probe_match.group("probe_status"),
-                        "stage_alarm_code": (
-                            None
-                            if stage_stall_probe_match.group("alarm_code") in (None, "none")
-                            else int(stage_stall_probe_match.group("alarm_code"))
-                        ),
-                    }
-                )
-
-
-            if alpha_match is not None:
-                stage_detail.update(
-                    {
-                        "subphase": "fit",
-                        "alpha_deg": float(alpha_match.group("alpha")),
-                    }
-                )
-
             await self._update_snapshot(
                 current_side=side_name,
                 current_stage="angle-calibration",
                 state="running",
-                stage_detail=stage_detail,
             )
 
         return did_receive_status
@@ -373,14 +203,13 @@ class SnapshotRunnerMixin:
         state: Literal["completed", "failed", "cancelled"],
         error: str | None,
         *,
-        error_detail: LaserAutoCalibrationError | None = None,
+        error_detail: LaserAutoCalibrationErrorRef | None = None,
     ) -> None:
         await self._update_snapshot(
             state=state,
             current_stage=state,
             error=error,
             error_detail=error_detail,
-            stage_detail={**self._snapshot.stage_detail, "phase": state},
         )
 
     async def _update_snapshot(self, **updates: Any) -> None:

@@ -15,6 +15,9 @@ class PrinterStatusProbeError(RuntimeError):
     """Raised when the printer cannot provide a complete ESC/POS status."""
 
 
+PRINTER_UNREADABLE_MESSAGE = "The printer status could not be read. Check that the printer is connected and on."
+
+
 @dataclass(frozen=True)
 class PrinterStatus:
     raw: tuple[int, int, int, int]
@@ -30,26 +33,19 @@ class PrinterStatus:
     auto_recoverable_error: bool
 
     def failure_reason(self) -> str | None:
-        reasons: list[str] = []
-        if self.paper_out is True:
-            reasons.append("paper out")
-        if self.cover_open is True:
-            reasons.append("cover open")
-        if self.cutter_error is True:
-            reasons.append("cutter error")
-        if self.unrecoverable_error is True:
-            reasons.append("unrecoverable printer error")
-        if self.recoverable_error is True:
-            reasons.append("recoverable printer error")
-        if self.auto_recoverable_error is True:
-            reasons.append("auto-recoverable printer error")
-        if self.feed_button_active is True:
-            reasons.append("paper feed button active")
-        if self.waiting_for_online_recovery is True:
-            reasons.append("waiting for online recovery")
-        if self.offline is True and not reasons:
-            reasons.append("printer offline")
-        return "; ".join(reasons) if reasons else None
+        """The most pressing condition as one sentence; the flags carry the rest."""
+        reasons = (
+            (self.paper_out, "The printer is out of paper."),
+            (self.cover_open, "The printer cover is open."),
+            (self.cutter_error, "The printer cutter is stuck. Clear it, then print again."),
+            (self.unrecoverable_error, "The printer has an error it cannot recover from. Restart the printer."),
+            (self.recoverable_error, "The printer has an error. Restart the printer."),
+            (self.auto_recoverable_error, "The printer is recovering from an error. Wait a moment."),
+            (self.feed_button_active, "The printer feed button is held."),
+            (self.waiting_for_online_recovery, "The printer is waiting to come back online."),
+            (self.offline, "The printer is offline."),
+        )
+        return next((reason for active, reason in reasons if active is True), None)
 
 
 def decode_printer_status(response: bytes) -> PrinterStatus:

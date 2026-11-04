@@ -1,7 +1,16 @@
+<script lang="ts" module>
+	// Module scope so a remounted editor never re-toasts a queue outcome already reported.
+	let finalizedTestQueueJobId: string | null = null;
+	// A followed queue whose outcome is not yet reported (cleared on report), so a remounted
+	// editor can report the outcome or interruption of a queue it followed before unmounting.
+	let lastFollowedTestQueueJobId: string | null = null;
+</script>
+
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/state';
+	import { generateRandomBarcode } from '$lib/barcode';
 	import {
 		getStorageGrid,
 		addShelf,
@@ -14,11 +23,16 @@
 		updateTrayLayout,
 		assignTray,
 		unassignTray,
-		runCalibrationQuickTest,
-		runCalibrationCycleTest,
+		printPrinterLabel,
+		startCalibrationTestQueue,
+		formatFailure,
+		getCalibrationTestQueue,
+		abortCalibrationTestQueue,
 		storeItem,
 		retrieveItem,
 		moveMotor,
+		getRotationAngles,
+		rotateToAngle,
 		type StorageBin,
 		type StorageModuleSide,
 		type StorageGrid,
@@ -28,6 +42,7 @@
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideInitial, sideLabel } from '$lib/side';
 	import type { SideIndex, SideVocabulary } from '$lib/side';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
+	import { postToast } from '$lib/toasts';
 	import {
 		createReconnectingEventSource,
 		type ReconnectingEventSource
@@ -51,15 +66,22 @@
 	let overlayOpen = $state<boolean>(false);
 	let scanStream: ReconnectingEventSource | null = null;
 
-	// Multi-cell test walk (client-side equivalent of provision/scripts/cycle_test.py):
-	// walks the testable cells on the current side from the selected cell, one
-	// operation per cell, tracking the current cell and running pass count.
-	let testRunning = $state<boolean>(false);
-	let testAborting = $state<boolean>(false);
-	let testCurrent = $state<string>('');
-	let testPassed = $state<number>(0);
-	let testNote = $state<string>('');
-	let testNoteIsError = $state<boolean>(false);
+	// The quick/cycle multi-cell walk runs as a server-side queue (POST
+	// /calibration/test/queue) so a frozen or throttled background tab cannot stall it;
+	// this component only observes progress events and toasts the outcome. store/retrieve
+	// still walk the selection client-side, one durable command per cell.
+	// Each fact has one kind of writer; busy/abort state is derived, never assigned, so a
+	// followed queue and a local store/retrieve walk cannot clobber each other.
+	let followedQueueJobId = $state<string | null>(null);
+	let isStartingTestQueue = $state<boolean>(false);
+	let clientWalkRunning = $state<boolean>(false);
+	let queueAborting = $state<boolean>(false);
+	let walkAborting = $state<boolean>(false);
+	const testRunning = $derived(followedQueueJobId !== null || isStartingTestQueue || clientWalkRunning);
+	const testAborting = $derived(
+		((followedQueueJobId !== null || isStartingTestQueue) && queueAborting) ||
+			(clientWalkRunning && walkAborting)
+	);
 	let isMovingToCell = $state<boolean>(false);
 
 	const selectedSide = $derived.by(
@@ -351,62 +373,51 @@
 
 	function closeOverlay(): void {
 		overlayOpen = false;
-		testNote = '';
-		testNoteIsError = false;
 	}
 
-	// A scrim click only counts when the press both started and ended in the dimmed area.
+	// An outside click only counts when the press both started and ended outside the grid.
 	// The backdrop is pointer-events:none, so a drag that starts on the panel and ends in the
 	// dimmed area (or vice versa) still dispatches one click whose target is a shared
 	// ancestor; the mousedown and mouseup flags are what tell the two apart.
-	let scrimPressInBounds = false;
-	let scrimReleaseInBounds = false;
+	let outsideGridPress = false;
+	let outsideGridRelease = false;
 
-	function pressStartsInScrim(event: MouseEvent): boolean {
-		if (overlayOpen === false) {
-			return false;
-		}
+	function pressStartsOutsideGrid(event: MouseEvent): boolean {
 		const target = event.target instanceof Element ? event.target : null;
 		if (target === null) {
 			return false;
 		}
-		return target.closest('.selection-overlay') === null;
+		return target.closest('.shelf-list, .selection-overlay') === null;
 	}
 
-	function didScrimMouseDown(event: MouseEvent): void {
-		scrimPressInBounds = pressStartsInScrim(event);
+	function didOutsideMouseDown(event: MouseEvent): void {
+		outsideGridPress = pressStartsOutsideGrid(event);
 	}
 
-	function didScrimMouseUp(event: MouseEvent): void {
-		scrimReleaseInBounds = pressStartsInScrim(event);
+	function didOutsideMouseUp(event: MouseEvent): void {
+		outsideGridRelease = pressStartsOutsideGrid(event);
 	}
 
 	function didClickOutside(event: MouseEvent): void {
-		const pressedInScrim = scrimPressInBounds;
-		const releasedInScrim = scrimReleaseInBounds;
-		scrimPressInBounds = false;
-		scrimReleaseInBounds = false;
-		if (overlayOpen === false) {
-			return;
-		}
-		if (pressedInScrim === false || releasedInScrim === false) {
+		const pressedOutsideGrid = outsideGridPress;
+		const releasedOutsideGrid = outsideGridRelease;
+		outsideGridPress = false;
+		outsideGridRelease = false;
+		if (pressedOutsideGrid === false || releasedOutsideGrid === false) {
 			return;
 		}
 		const target = event.target instanceof Element ? event.target : null;
 		if (target === null) {
 			return;
 		}
-		if (target.closest('.storage-cell') !== null) {
-			return;
-		}
-		if (target.closest('.selection-overlay') !== null) {
+		if (target.closest('.shelf-list, .selection-overlay') !== null) {
 			return;
 		}
 		if (target.closest('button, a') !== null) {
 			return;
 		}
 
-		closeOverlay();
+		didDeselect();
 	}
 
 	function didPressEscape(event: KeyboardEvent): void {
@@ -418,10 +429,11 @@
 
 	type EditorField = 'status' | 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
 	type NumericEditorField = 'x' | 'y' | 'z' | 'width' | 'height' | 'length';
+	type DimensionField = 'width' | 'height' | 'length';
 
 	const EDITOR_FIELDS: EditorField[] = ['status', 'x', 'y', 'z', 'width', 'height', 'length'];
 	const XYZ_COLUMNS: NumericEditorField[] = ['x', 'y', 'z'];
-	const DIMENSION_COLUMNS: Array<{ field: NumericEditorField; label: string }> = [
+	const DIMENSION_COLUMNS: Array<{ field: DimensionField; label: string }> = [
 		{ field: 'width', label: 'width' },
 		{ field: 'height', label: 'height' },
 		{ field: 'length', label: 'length' }
@@ -524,6 +536,7 @@
 	let trayBarcode = $state<string>('');
 	let trayRows = $state<string>('');
 	let trayCols = $state<string>('');
+	let isPrintingTrayLabel = $state<boolean>(false);
 
 	function trayDirty(): boolean {
 		const current = currentTray;
@@ -558,6 +571,26 @@
 			return false;
 		}
 		return true;
+	}
+
+	async function didPrintTrayLabel(): Promise<void> {
+		// Belt and braces: POST /print has no idempotency key.
+		if (isPrintingTrayLabel === true) {
+			return;
+		}
+		isPrintingTrayLabel = true;
+		try {
+			const result = await printPrinterLabel(trayBarcode.trim());
+			if (result.printed === false) {
+				postToast('error', 'The printer is turned off, so the label was not printed.');
+			} else {
+				postToast('status', `Printed ${result.barcode}.`);
+			}
+		} catch (err) {
+			postToast('error', err instanceof Error ? err.message : 'Failed to print label.');
+		} finally {
+			isPrintingTrayLabel = false;
+		}
 	}
 
 	function blankEditorValues(): Record<EditorField, string> {
@@ -644,6 +677,14 @@
 		}
 		if (editorValues[field].trim() === '' && selectionValues[field] === 'mixed') {
 			editorValues[field] = 'Mixed';
+		}
+		// An out-of-range dimension is reported once the technician leaves the field, so
+		// typing a value like ".5" does not fire a toast halfway through.
+		if (isDimensionField(field) === true) {
+			const issue = dimensionFieldIssue(field);
+			if (issue !== '') {
+				postToast('error', issue);
+			}
 		}
 	}
 
@@ -732,7 +773,11 @@
 		return formatFieldValue(parsed) !== formatFieldValue(value);
 	}
 
-	function dimensionFieldIssue(field: NumericEditorField): string {
+	function isDimensionField(field: NumericEditorField): field is DimensionField {
+		return field === 'width' || field === 'height' || field === 'length';
+	}
+
+	function dimensionFieldIssue(field: DimensionField): string {
 		const raw = editorValues[field].trim();
 		if (raw === '' || raw.toLowerCase() === 'mixed') {
 			return '';
@@ -746,16 +791,6 @@
 		}
 		return '';
 	}
-
-	const dimensionIssue = $derived.by((): string => {
-		for (const column of DIMENSION_COLUMNS) {
-			const issue = dimensionFieldIssue(column.field);
-			if (issue !== '') {
-				return issue;
-			}
-		}
-		return '';
-	});
 
 	function isFieldValid(field: EditorField): boolean {
 		const raw = editorValues[field].trim();
@@ -811,7 +846,7 @@
 			const coordinatesDirty = xDirty || yDirty || zDirty;
 			const hasUncalibratedCell = selectedCells.some((entry) => entry.cell.calibration_point === null);
 			if (coordinatesDirty === true && hasUncalibratedCell && (xDirty && yDirty && zDirty) === false) {
-				error = 'x, y, and z are all required to set a calibration point on a cell without one';
+				error = 'Enter X, Y and Z to give this cell a calibration point.';
 				return;
 			}
 			const statusDirty = isFieldDirty('status') === true;
@@ -887,7 +922,7 @@
 			bins = (await getBins()).bins;
 			storageGrid = await getStorageGrid();
 		} catch (err) {
-			fail(err, 'failed to save cells');
+			fail(err, 'Failed to save cells.');
 			// The save partially mutated server state (e.g. a barcode swap whose
 			// unassign succeeded but assign was rejected); refresh so the overlay
 			// reflects reality instead of the stale bins.
@@ -905,7 +940,7 @@
 	async function didDeleteSelectedCells(): Promise<void> {
 		const label = selectionCount === 1 ? 'cell' : 'cells';
 		const confirmed = confirm(
-			`are you sure you want to delete the ${selectionCount} selected ${label}?`
+			`Are you sure you want to delete the ${selectionCount} selected ${label}?`
 		);
 		if (confirmed !== true) {
 			return;
@@ -924,7 +959,7 @@
 			clearCurrentSideSelection();
 			closeOverlay();
 		} catch (err) {
-			fail(err, 'failed to delete cells');
+			fail(err, 'Failed to delete cells.');
 			// A partial failure deleted some cells already; reload + prune so the
 			// deleted ones don't linger as ghosts and a retry isn't blocked by them.
 			try {
@@ -967,19 +1002,22 @@
 			return;
 		}
 
-		const parts: string[] = [];
-		if (shelfTargets.length > 0) {
-			const labels = [...shelfTargets].sort((a, b) => a - b).map((idx) => `${sideInitial}:${idx}`);
-			parts.push(`${shelfTargets.length} ${shelfTargets.length === 1 ? 'shelf' : 'shelves'} ${labels.join(', ')}`);
-		}
-		if (cellTargets.length > 0) {
-			const labels = cellTargets
-				.map((target) => `${sideInitial}:${target.shelf}:${target.cellIdx}`)
-				.sort();
-			parts.push(`${cellTargets.length} ${cellTargets.length === 1 ? 'cell' : 'cells'} ${labels.join(', ')}`);
+		// Deleting a shelf deletes every cell on it, so the cell count is the cells that
+		// go with the shelves plus the ones selected on a shelf of their own.
+		let cellCount = cellTargets.length;
+		for (const shelfIdx of shelfTargets) {
+			cellCount += getShelfCells(shelfIdx)?.length ?? 0;
 		}
 
-		const confirmed = confirm(`are you sure you want to delete ${parts.join(' and ')}?`);
+		const parts: string[] = [];
+		if (shelfTargets.length > 0) {
+			parts.push(`${shelfTargets.length} ${shelfTargets.length === 1 ? 'shelf' : 'shelves'}`);
+		}
+		if (cellCount > 0) {
+			parts.push(`${cellCount} ${cellCount === 1 ? 'cell' : 'cells'}`);
+		}
+
+		const confirmed = confirm(`Are you sure you want to delete ${parts.join(' and ')}?`);
 		if (confirmed !== true) {
 			return;
 		}
@@ -1000,13 +1038,13 @@
 				deletedShelves.push(shelfIdx);
 			}
 		} catch (err) {
-			fail(err, 'failed to delete');
+			fail(err, 'Failed to delete.');
 		}
 
 		try {
 			storageGrid = await getStorageGrid();
 		} catch (err) {
-			fail(err, 'failed to load storage grid');
+			fail(err, 'Failed to load storage grid.');
 		}
 		for (const shelfIdx of deletedShelves) {
 			remapSelectionAfterShelfDelete(shelfIdx);
@@ -1099,9 +1137,18 @@
 		}
 		const stream = createReconnectingEventSource({
 			path: '/robot/events',
+			// A reconnect resumes at the live tip, so re-read the snapshot to catch a
+			// terminal state published during the gap.
+			onOpen: () => {
+				void syncTestQueue();
+			},
 			onMessage: (event) => {
 				try {
 					const data = JSON.parse(event.data);
+					if (data.kind === 'calibration_test_queue') {
+						didReceiveTestQueueEvent(data.payload);
+						return;
+					}
 					if (data.kind === 'label_scanned' && typeof data.payload === 'string') {
 						didReceiveScannedLabel(data.payload);
 						return;
@@ -1122,8 +1169,11 @@
 	}
 
 	function didReceiveScannedLabel(barcode: string): void {
-		if (overlayOpen && selectedSingle !== null && trayEnabled) {
+		if (busy === false && overlayOpen && selectedSingle !== null) {
+			trayEnabled = true;
 			trayBarcode = barcode;
+			trayRows = '2';
+			trayCols = '2';
 		}
 	}
 
@@ -1147,9 +1197,7 @@
 		const wait = pendingTestCommand;
 		pendingTestCommand = null;
 		const ok = data.message === 'success';
-		const error = ok
-			? undefined
-			: typeof data.error === 'string' ? data.error : String(data.message ?? 'command failed');
+		const error = ok ? undefined : formatFailure(data);
 		wait.resolve({ ok, error });
 	}
 
@@ -1159,7 +1207,7 @@
 			setTimeout(() => {
 				if (pendingTestCommand !== null && pendingTestCommand.commandId === commandId) {
 					pendingTestCommand = null;
-					resolve({ ok: false, error: 'timed out waiting for the command result' });
+					resolve({ ok: false, error: 'Timed out waiting for the command result.' });
 			}
 			}, TEST_COMMAND_TIMEOUT_MS);
 		});
@@ -1173,6 +1221,11 @@
 	function isCellTestable(cell: Cell): boolean {
 		return UNTESTABLE_CELL_STATUSES.has(cell.status.toLowerCase()) === false;
 	}
+
+	// The backend rejects every testing action on disabled and maintenance cells, so the
+	// testing buttons go inert when none of the selected cells can be tested. A mixed
+	// selection stays enabled: the queue skips its untestable cells.
+	const hasTestableSelection = $derived(selectedCells.some((entry) => isCellTestable(entry.cell)));
 
 	// The selected testable cells, one test each, in shelf/cell-ascending order
 	// (cycle_test.py walks cells one at a time).
@@ -1202,17 +1255,9 @@
 		};
 	}
 
-	async function runCellTest(mode: TestMode, target: { shelf: number; cell: Cell }): Promise<TestCommandResult> {
+	async function runCellTest(mode: 'store' | 'retrieve', target: { shelf: number; cell: Cell }): Promise<TestCommandResult> {
 		const { shelf, cell } = target;
 		try {
-			if (mode === 'quick') {
-				await runCalibrationQuickTest(selectedSide, shelf, cell.cell_idx);
-				return { ok: true };
-			}
-			if (mode === 'cycle') {
-				await runCalibrationCycleTest(selectedSide, shelf, cell.cell_idx);
-				return { ok: true };
-		}
 			if (mode === 'store') {
 				const receipt = await storeItem(selectedSide, shelf, cell.cell_idx, buildMockStoreItem(cell));
 				return await waitForTestCommand(receipt.command_id);
@@ -1224,53 +1269,215 @@
 		}
 	}
 
+	// quick/cycle walks run as a server-side queue so backgrounding this tab (camera
+	// view) cannot stall the walk; progress arrives as calibration_test_queue events.
+	async function didStartServerTestQueue(
+		mode: 'quick' | 'cycle',
+		queue: Array<{ shelf: number; cell: Cell }>
+	): Promise<void> {
+		// Busy before the POST so a second click cannot issue a second start.
+		isStartingTestQueue = true;
+		queueAborting = false;
+		try {
+			const snapshot = await startCalibrationTestQueue(
+				selectedSide,
+				mode,
+				queue.map((target) => ({ shelf_idx: target.shelf, cell_idx: target.cell.cell_idx }))
+			);
+			// The terminal event can land before the POST resolves (first cell fails fast).
+			if (snapshot.job_id !== null && snapshot.job_id === finalizedTestQueueJobId) {
+				isStartingTestQueue = false;
+				queueAborting = false;
+				return;
+			}
+			followedQueueJobId = snapshot.job_id;
+			lastFollowedTestQueueJobId = snapshot.job_id;
+			isStartingTestQueue = false;
+			if (snapshot.state !== 'running') {
+				didReceiveTestQueueEvent(snapshot);
+			} else if (queueAborting) {
+				// Abort was clicked while the start POST was in flight.
+				requestTestQueueAbort();
+			}
+		} catch (err) {
+			isStartingTestQueue = false;
+			queueAborting = false;
+			postToast('error', err instanceof Error ? err.message : 'Failed to start test queue.');
+			void syncTestQueue();
+		}
+	}
+
+	// Adopt a queue started from another tab, before a reload, or while unmounted; an
+	// in-flight start keeps its remembered abort and adopts its own job from the POST.
+	function adoptRunningTestQueue(jobId: string | null): void {
+		if (jobId === null || jobId === followedQueueJobId || isStartingTestQueue) {
+			return;
+		}
+		if (
+			followedQueueJobId !== null ||
+			(lastFollowedTestQueueJobId !== null && lastFollowedTestQueueJobId !== jobId)
+		) {
+			// The server runs one queue at a time: the followed one (possibly before a remount)
+			// ended unseen; its outcome is unknown.
+			followedQueueJobId = null;
+			queueAborting = false;
+			postToast('error', 'The test queue stopped because the API restarted.');
+		}
+		followedQueueJobId = jobId;
+		lastFollowedTestQueueJobId = jobId;
+		queueAborting = false;
+	}
+
+	function didReceiveTestQueueEvent(payload: unknown): void {
+		if (typeof payload !== 'object' || payload === null) {
+			return;
+		}
+		const event = payload as Record<string, unknown>;
+		const state = event.state;
+		const jobId = typeof event.job_id === 'string' ? event.job_id : null;
+		if (jobId !== null && jobId === finalizedTestQueueJobId) {
+			// Finalized (and toasted) by another instance, e.g. an unmounted one's in-flight sync.
+			if (jobId === followedQueueJobId) {
+				followedQueueJobId = null;
+				queueAborting = false;
+			}
+			if (jobId === lastFollowedTestQueueJobId) {
+				lastFollowedTestQueueJobId = null;
+			}
+			return;
+		}
+		if (state === 'running') {
+			adoptRunningTestQueue(jobId);
+			return;
+		}
+		if (state !== 'completed' && state !== 'failed' && state !== 'cancelled') {
+			return;
+		}
+		if (followedQueueJobId !== null && jobId !== null && jobId !== followedQueueJobId) {
+			return;
+		}
+		if (state === 'failed') {
+			const failed = event.failed as Record<string, unknown> | undefined;
+			const side =
+				event.side === 'front_module' || event.side === 'back_module'
+					? sideInitialFor(event.side, vocabulary)
+					: sideInitialLetter;
+			const label = failed ? `${side}:${failed.shelf_idx}:${failed.cell_idx}` : 'test';
+			const reason = typeof event.error === 'string' ? `: ${event.error.replace(/\.+$/, '')}` : '';
+			postToast('error', `Failed at ${label}${reason}.`);
+		} else {
+			postToast('status', state === 'cancelled' ? 'Test aborted.' : 'All tests passed.');
+		}
+		finalizedTestQueueJobId = jobId;
+		if (jobId === lastFollowedTestQueueJobId) {
+			lastFollowedTestQueueJobId = null;
+		}
+		followedQueueJobId = null;
+		queueAborting = false;
+	}
+
+	async function syncTestQueue(): Promise<void> {
+		try {
+			const snapshot = await getCalibrationTestQueue();
+			if (
+				followedQueueJobId === null &&
+				lastFollowedTestQueueJobId !== null &&
+				snapshot.job_id !== lastFollowedTestQueueJobId
+			) {
+				// A queue followed before unmounting is gone unreported (server restart or superseded).
+				lastFollowedTestQueueJobId = null;
+				postToast('error', 'The test queue stopped because the API restarted.');
+			}
+			if (snapshot.state === 'running') {
+				if (snapshot.job_id !== finalizedTestQueueJobId) {
+					adoptRunningTestQueue(snapshot.job_id);
+				}
+				return;
+			}
+			if (followedQueueJobId === null) {
+				// A queue followed before unmounting ended while no editor was listening.
+				if (
+					snapshot.job_id !== null &&
+					snapshot.job_id === lastFollowedTestQueueJobId &&
+					snapshot.job_id !== finalizedTestQueueJobId
+				) {
+					didReceiveTestQueueEvent(snapshot);
+				}
+				return;
+			}
+			if (snapshot.job_id === followedQueueJobId) {
+				// The followed queue ended while the stream was down.
+				didReceiveTestQueueEvent(snapshot);
+				return;
+			}
+			// The followed queue is gone (server restart or superseded); its outcome is unknown.
+			if (followedQueueJobId === lastFollowedTestQueueJobId) {
+				lastFollowedTestQueueJobId = null;
+			}
+			followedQueueJobId = null;
+			queueAborting = false;
+			postToast('error', 'The test queue stopped because the API restarted.');
+		} catch {
+			// A failed read only delays catching up until the next reconnect or reopen.
+		}
+	}
+
 	async function didStartTest(mode: TestMode): Promise<void> {
 		if (testRunning || hasSelection === false) {
 			return;
 		}
 		const queue = buildTestQueue();
-		if (queue.length === 0) {
-			testNote = 'no testable cells selected';
-			testNoteIsError = true;
+		if (mode === 'quick' || mode === 'cycle') {
+			await didStartServerTestQueue(mode, queue);
 			return;
 		}
-		testRunning = true;
-		testAborting = false;
-		testCurrent = '';
-		testPassed = 0;
-		testNote = '';
-		testNoteIsError = false;
+		walkAborting = false;
+		clientWalkRunning = true;
 		try {
 			for (const target of queue) {
-				if (testAborting) {
+				if (walkAborting) {
 					break;
 				}
-				testCurrent = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
+				const cellLabel = `${sideInitialLetter}:${target.shelf}:${target.cell.cell_idx}`;
 				const result = await runCellTest(mode, target);
-				if (result.ok) {
-				testPassed += 1;
-				} else {
-					testNote = `failed at ${testCurrent}${result.error ? `: ${result.error}` : ''}`;
-				testNoteIsError = true;
-					break;
+				if (result.ok === false) {
+					const reason = result.error ? `: ${result.error.replace(/\.+$/, '')}` : '';
+					postToast('error', `Failed at ${cellLabel}${reason}.`);
+					return;
 				}
 			}
-			if (testNote === '') {
-				testNote = testAborting ? `aborted — ${testPassed} passed` : `done — ${testPassed} passed`;
-			}
+			// One summary toast per walk: a failure returned above with its own toast.
+			postToast('status', walkAborting ? 'Test aborted.' : 'All tests passed.');
 		} finally {
-			testRunning = false;
+			clientWalkRunning = false;
+			walkAborting = false;
 		}
 	}
 
 	function didAbortTest(): void {
-		if (testRunning) {
-			testAborting = true;
+		if (followedQueueJobId !== null) {
+			queueAborting = true;
+			requestTestQueueAbort();
+		} else if (isStartingTestQueue) {
+			// didStartServerTestQueue issues the abort once the POST resolves.
+			queueAborting = true;
+		} else if (clientWalkRunning) {
+			walkAborting = true;
 		}
 	}
 
-	// Gantry jog to the selected cell's calibrated x/y (z untouched). Hardware only:
-	// 503 in mock mode, like the quick/cycle tests.
+	function requestTestQueueAbort(): void {
+		abortCalibrationTestQueue().catch((err) => {
+			postToast('error', err instanceof Error ? err.message : 'Failed to abort test queue.');
+			// A 409 usually means the queue already ended; reconcile with the server.
+			queueAborting = false;
+			void syncTestQueue();
+		});
+	}
+
+	// Gantry jog to the selected cell's calibrated x/y plus the tool rotation for the
+	// selected side, the same front/back orientation the cell calibration panel applies (z
+	// untouched). Hardware only: 503 in mock mode, like the quick/cycle tests.
 	async function didMoveToCell(): Promise<void> {
 		if (isMovingToCell) {
 			return;
@@ -1283,6 +1490,8 @@
 		try {
 			await moveMotor('x_axis', point.x);
 			await moveMotor('y_axis', point.y);
+			const angles = await getRotationAngles();
+			await rotateToAngle(selectedSide === 'back_module' ? angles.back : angles.front);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -1314,14 +1523,15 @@
 		}
 		void load();
 		connectScanStream();
-		document.addEventListener('mousedown', didScrimMouseDown);
-		document.addEventListener('mouseup', didScrimMouseUp);
+		void syncTestQueue();
+		document.addEventListener('mousedown', didOutsideMouseDown);
+		document.addEventListener('mouseup', didOutsideMouseUp);
 		document.addEventListener('click', didClickOutside);
 		document.addEventListener('keydown', didPressEscape);
 		return () => {
 			disconnectScanStream();
-			document.removeEventListener('mousedown', didScrimMouseDown);
-			document.removeEventListener('mouseup', didScrimMouseUp);
+			document.removeEventListener('mousedown', didOutsideMouseDown);
+			document.removeEventListener('mouseup', didOutsideMouseUp);
 			document.removeEventListener('click', didClickOutside);
 			document.removeEventListener('keydown', didPressEscape);
 		};
@@ -1335,7 +1545,7 @@
 			storageGrid = grid;
 			bins = binList.bins;
 		} catch (err) {
-			loadError = err instanceof Error ? err.message : 'failed to load storage grid';
+			loadError = err instanceof Error ? err.message : 'Failed to load storage grid.';
 		} finally {
 			loading = false;
 		}
@@ -1353,7 +1563,7 @@
 			storageGrid = await getStorageGrid();
 			pruneSelection();
 		} catch (err) {
-			fail(err, 'failed to add shelf');
+			fail(err, 'Failed to add shelf.');
 		} finally {
 			busy = false;
 		}
@@ -1440,7 +1650,7 @@
 			}
 			pruneSelection();
 		} catch (err) {
-			fail(err, 'failed to add cell');
+			fail(err, 'Failed to add cell.');
 		} finally {
 			busy = false;
 		}
@@ -1448,7 +1658,7 @@
 
 	async function didDeleteShelf(shelfIdx: number): Promise<void> {
 		const confirmed = confirm(
-			`are you sure you want to delete shelf ${sideInitialLetter}:${shelfIdx}?`
+			`Are you sure you want to delete shelf ${sideInitialLetter}:${shelfIdx}?`
 		);
 		if (confirmed !== true) {
 			return;
@@ -1461,14 +1671,14 @@
 			storageGrid = await getStorageGrid();
 			remapSelectionAfterShelfDelete(shelfIdx);
 		} catch (err) {
-			fail(err, 'failed to delete shelf');
+			fail(err, 'Failed to delete shelf.');
 		} finally {
 			busy = false;
 		}
 	}
 </script>
 
-<div class="layout-toolbar">
+<div class="layout-toolbar scroll-x">
 	<div class="toggle-group">
 		<a class:selected={selectedSide === 'front_module'} href={sideHref('front_module')}>
 			{sideLabel(0, vocabulary).toLowerCase()}
@@ -1522,6 +1732,7 @@
 								class="storage-cell"
 								class:selected={isSelected(selectedSide, shelf.shelf_idx, cell.cell_idx)}
 								class:occupied={cell.status.toLowerCase() === 'occupied'}
+								class:manual={cell.is_manual === true}
 								class:unsized={isCellUnsized(cell)}
 								class:dimmed={
 									cell.status.toLowerCase() === 'maintenance' ||
@@ -1623,17 +1834,45 @@
 			<section class="editor-tests">
 				<p class="editor-section-label">testing</p>
 				<div class="editor-group editor-group-tests">
-					<button type="button" onclick={() => void didStartTest('quick')} disabled={testRunning}>quick</button>
-					<button type="button" onclick={() => void didStartTest('cycle')} disabled={testRunning}>cycle</button>
-					<button type="button" onclick={() => void didStartTest('store')} disabled={testRunning}>store</button>
-					<button type="button" onclick={() => void didStartTest('retrieve')} disabled={testRunning}>retrieve</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('quick')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						quick
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('cycle')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						cycle
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('store')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						store
+					</button>
+					<button
+						type="button"
+						onclick={() => void didStartTest('retrieve')}
+						disabled={testRunning || hasTestableSelection === false}
+					>
+						retrieve
+					</button>
+					{#if testRunning}
+						<button
+							type="button"
+							class="editor-abort-button"
+							onclick={() => didAbortTest()}
+							disabled={testAborting}
+						>
+							abort test
+						</button>
+					{/if}
 				</div>
-				{#if testRunning}
-					<p class="editor-test-progress">{testCurrent} • PASS: {testPassed}</p>
-					<button type="button" onclick={() => didAbortTest()} disabled={testAborting}>abort</button>
-				{:else if testNote !== ''}
-					<p class="editor-test-note" class:is-error={testNoteIsError}>{testNote}</p>
-				{/if}
 			</section>
 			<label class="editor-row editor-row-lock">
 				<input
@@ -1663,9 +1902,6 @@
 					</label>
 				{/each}
 			</div>
-			{#if dimensionIssue !== ''}
-				<p class="editor-shelf-note is-error">{dimensionIssue}</p>
-			{/if}
 			{#if selectedSingle !== null}
 				<hr class="editor-hr" />
 				<label class="editor-row editor-row-tray">
@@ -1674,19 +1910,35 @@
 						bind:checked={trayEnabled}
 						disabled={busy === true}
 				/>
-					<span>multi-item tray</span>
+					<span>multi-item bin</span>
 				</label>
 				{#if trayEnabled}
 					<div class="editor-group editor-group-1">
 						<label class="editor-col">
-							<span>tray barcode</span>
+							<span>bin barcode</span>
 							<input
 								type="text"
 								maxlength="255"
 								bind:value={trayBarcode}
 								disabled={busy === true}
-						/>
+							/>
 						</label>
+						<button
+							type="button"
+							class="tray-barcode-button"
+							onclick={() => (trayBarcode = generateRandomBarcode())}
+							disabled={busy === true}
+						>
+							random
+						</button>
+						<button
+							type="button"
+							class="tray-barcode-button"
+							onclick={() => void didPrintTrayLabel()}
+							disabled={trayBarcode.trim() === '' || busy === true || isPrintingTrayLabel === true}
+						>
+							print label
+						</button>
 					</div>
 					<div class="editor-group editor-group-2">
 						<label class="editor-col">
@@ -1747,6 +1999,11 @@
 		gap: 1em;
 		align-items: center;
 		margin-bottom: 1.5em;
+	}
+
+	.layout-toolbar > * {
+		flex-shrink: 0;
+		white-space: nowrap;
 	}
 
 	.toggle-group {
@@ -1811,6 +2068,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		flex-shrink: 0;
 		width: 40px;
 		height: 40px;
 		border: 2px solid black;
@@ -1826,6 +2084,10 @@
 		background: #fdd;
 		border-color: #d00;
 		color: #d00;
+	}
+
+	.storage-cell.manual {
+		border-width: 4px;
 	}
 
 	.storage-cell.dimmed {
@@ -1847,6 +2109,37 @@
 	.shelf-actions button {
 		margin-top: 0;
 		min-width: 36px;
+	}
+
+	/* phones: each shelf scrolls sideways next to its label, actions go below */
+	@media (max-width: 640px) {
+		.shelf-cells {
+			flex: 1 1 0;
+			min-width: 0;
+			/* same as the global .scroll-x, which would overlap the actions on wider screens */
+			overflow-x: auto;
+			margin-right: calc(-1 * var(--page-margin));
+			padding-right: var(--page-margin);
+			scrollbar-width: none;
+		}
+
+		.shelf-cells::-webkit-scrollbar {
+			display: none;
+		}
+
+		.shelf-actions {
+			flex-basis: 100%;
+			justify-content: flex-end;
+		}
+
+		/* actions wrap under their shelf, so keep them close to it and away from the next one */
+		.shelf-list {
+			gap: 2.5em;
+		}
+
+		.shelf-row {
+			row-gap: 0.5em;
+		}
 	}
 
 	.selection-backdrop {
@@ -1871,6 +2164,18 @@
 		z-index: 41;
 		display: flex;
 		flex-direction: column;
+	}
+
+	/* phones: half the screen is too narrow for the editor, so it becomes a bottom sheet */
+	@media (max-width: 640px) {
+		.selection-overlay {
+			top: auto;
+			left: 0;
+			width: auto;
+			max-height: 70vh;
+			margin: 1em;
+			padding: 1em;
+		}
 	}
 
 	.selection-count {
@@ -1932,7 +2237,11 @@
 	}
 
 	.editor-group-1 {
-		grid-template-columns: 1fr;
+		grid-template-columns: 1fr auto auto;
+	}
+
+	.tray-barcode-button {
+		align-self: end;
 	}
 
 	.editor-col {
@@ -2008,33 +2317,21 @@
 
 	.editor-group-tests button {
 		width: 100%;
+		margin-top: 0;
+	}
+
+	.editor-group-tests button,
+	.tray-barcode-button {
 		height: 2.5em;
-		margin-top: 0;
 	}
 
-	.editor-test-progress {
-		margin: 0 0 1em 0;
-		font-variant-numeric: tabular-nums;
+	.editor-group-tests button:disabled,
+	.tray-barcode-button:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 
-	.editor-tests > button {
-		align-self: flex-start;
-		margin-top: 0;
-	}
-
-	.editor-test-note {
-		margin: 0 0 1.5em 0;
-	}
-
-	.editor-test-note.is-error {
-		color: #b00020;
-	}
-
-	.editor-shelf-note {
-		margin: 0 0 1.5em 0;
-	}
-
-	.editor-shelf-note.is-error {
-		color: #b00020;
+	.editor-abort-button {
+		grid-column: 1 / -1;
 	}
 </style>

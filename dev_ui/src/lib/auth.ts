@@ -1,4 +1,4 @@
-import { getApiBase } from './api';
+import { API_NOT_JSON_MESSAGE, API_UNREACHABLE_MESSAGE, getApiBase } from './api';
 
 interface TokenResponse {
 	access_token: string;
@@ -19,21 +19,42 @@ export function isAuthenticated(): boolean {
 	return accessToken !== null;
 }
 
+export class LoginRejectedError extends Error {}
+
+// Sign-in runs outside apiFetch (which would retry it on 401), so it guards the same
+// failures: a dropped network and a body that is not the API's JSON.
+async function postAuth(path: string, body: unknown): Promise<Response> {
+	try {
+		return await fetch(`${getApiBase()}${path}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+	} catch {
+		throw new Error(API_UNREACHABLE_MESSAGE);
+	}
+}
+
+async function readTokens(response: Response, path: string): Promise<TokenResponse> {
+	try {
+		return (await response.json()) as TokenResponse;
+	} catch {
+		throw new Error(API_NOT_JSON_MESSAGE);
+	}
+}
+
 export async function login(email: string, pin: string): Promise<void> {
-	const apiBase = getApiBase();
-	const url = `${apiBase}/auth/login/json`;
+	const response = await postAuth('/auth/login/json', { email, pin });
 
-	const response = await fetch(url, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ email, pin })
-	});
-
-	if (response.ok === false) {
-		throw new Error('login failed');
+	if (response.status === 401) {
+		throw new LoginRejectedError('The developer sign-in was rejected.');
 	}
 
-	const data = (await response.json()) as TokenResponse;
+	if (response.ok === false) {
+		throw new Error('Developer sign-in failed.');
+	}
+
+	const data = await readTokens(response, '/auth/login/json');
 
 	accessToken = data.access_token;
 	refreshToken = data.refresh_token;
@@ -42,26 +63,19 @@ export async function login(email: string, pin: string): Promise<void> {
 
 export async function refreshAccessToken(): Promise<void> {
 	if (refreshToken === null) {
-		throw new Error('no refresh token available');
+		throw new Error('No session to refresh. Sign in again.');
 	}
 
-	const apiBase = getApiBase();
-	const url = `${apiBase}/auth/refresh`;
-
-	const response = await fetch(url, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ refresh_token: refreshToken })
-	});
+	const response = await postAuth('/auth/refresh', { refresh_token: refreshToken });
 
 	if (response.ok === false) {
 		accessToken = null;
 		refreshToken = null;
 		tokenExpiresAt = null;
-		throw new Error('token refresh failed');
+		throw new Error('The session could not be refreshed.');
 	}
 
-	const data = (await response.json()) as TokenResponse;
+	const data = await readTokens(response, '/auth/refresh');
 
 	accessToken = data.access_token;
 	tokenExpiresAt = Date.now() + data.expires_in * 1000;
@@ -69,7 +83,7 @@ export async function refreshAccessToken(): Promise<void> {
 
 export async function ensureValidToken(): Promise<string> {
 	if (accessToken === null) {
-		throw new Error('not authenticated');
+		throw new Error('Not signed in.');
 	}
 
 	if (tokenExpiresAt !== null && Date.now() > tokenExpiresAt - 60000) {
@@ -85,6 +99,41 @@ export function logout(): void {
 	tokenExpiresAt = null;
 }
 
-export async function loginAsDeveloper(): Promise<void> {
-	await login('developer@opshelf.com', '1111');
+const DEVELOPER_EMAIL = 'developer@opshelf.com';
+const DEVELOPER_PIN_COOKIE = 'opshelf_developer_pin';
+
+// The relay serving dev.opshelf.com sets the developer PIN as a cookie, so the PIN
+// never lives in this public repository and the UI never asks for it. Without the
+// cookie (a development or mock device reached directly) the API serves the
+// developer user without a token, so there is nothing to sign in to.
+export function developerPin(): string | null {
+	for (const part of document.cookie.split(';')) {
+		const [name, ...value] = part.trim().split('=');
+		if (name === DEVELOPER_PIN_COOKIE) {
+			const pin = decodeURIComponent(value.join('='));
+			return pin === '' ? null : pin;
+		}
+	}
+	return null;
+}
+
+let developerSignIn: Promise<void> | null = null;
+
+async function signInAsDeveloper(): Promise<void> {
+	const pin = developerPin();
+	if (pin === null) {
+		throw new Error('The developer PIN cookie is missing. Open the dev UI through the relay.');
+	}
+	await login(DEVELOPER_EMAIL, pin);
+}
+
+// The api client, the status stream, and the layout all sign in on demand, so
+// concurrent callers share one attempt.
+export function loginAsDeveloper(): Promise<void> {
+	if (developerSignIn === null) {
+		developerSignIn = signInAsDeveloper().finally(() => {
+			developerSignIn = null;
+		});
+	}
+	return developerSignIn;
 }

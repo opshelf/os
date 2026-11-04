@@ -73,32 +73,35 @@
 			return 'pending';
 		}
 
-		if (state === 'failed') {
-			return component.reason ? `failed — ${component.reason}` : 'failed';
-		}
-
 		return component.phase;
 	}
 </script>
 
 {#if init !== null}
-	<table class="init-progress">
-		<thead>
-			<tr>
-				<th colspan="3"> robot initialization </th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each visibleComponents as component (component.component)}
-				{@const state = stepState(component.phase)}
-				<tr class="step step-{state}">
-					<td class="step-marker">●</td>
-					<td class="step-name">{label(component.component)}</td>
-					<td class="step-status">{statusText(component)}</td>
+	<div class="scroll-x">
+		<table class="init-progress">
+			<thead>
+				<tr>
+					<th colspan="3"> robot initialization </th>
 				</tr>
-			{/each}
-		</tbody>
-	</table>
+			</thead>
+			<tbody>
+				{#each visibleComponents as component (component.component)}
+					{@const state = stepState(component.phase)}
+					<tr class="step step-{state}">
+						<td class="step-marker">●</td>
+						<td class="step-name">{label(component.component)}</td>
+						<td class="step-status">
+							{statusText(component)}
+							{#if state === 'failed' && component.reason}
+								<span class="step-reason">{component.reason}</span>
+							{/if}
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 {/if}
 
 <style>
@@ -113,6 +116,11 @@
 
 	.step-status {
 		text-transform: uppercase;
+	}
+
+	.step-reason {
+		display: block;
+		text-transform: none;
 	}
 
 	.step-done {

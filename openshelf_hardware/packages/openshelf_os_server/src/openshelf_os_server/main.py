@@ -5,6 +5,7 @@ import asyncio
 import fcntl
 import json
 import os
+import secrets
 import subprocess
 import sys
 from contextlib import asynccontextmanager
@@ -21,6 +22,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from fastapi import FastAPI, Request
 from openshelf_os_server.documentation import DESCRIPTION, TAGS, configure_security_documentation
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,13 +42,14 @@ from openshelf_os import (
     _sentry_event_has_door_motor_recovery_failure,
     _sentry_event_has_message,
     _sentry_event_has_suppressed_pymodbus_message,
+    _sentry_event_is_simulated_motor_fault,
     _sentry_log_has_door_motor_recovery_failure,
     _sentry_log_has_message,
     _sentry_log_is_suppressed_pymodbus_message,
     _strip_pymodbus_frame_dump,
 )
 from openshelf_os.common import CONFIG_PATH, OperatingMode
-from openshelf_os.operating_mode import should_enable_sentry
+from openshelf_os.operating_mode import is_sentry_reporting_enabled, is_service_process
 from openshelf_os.runtime_state import RuntimeStatePaths
 from openshelf_os_server.core.logging_config import configure_logging, get_logger, get_correlation_id
 from openshelf_os_server.core.migrations import rename_module_side_values
@@ -73,7 +76,9 @@ from openshelf_os_server.core.mock_robot import (
 )
 from openshelf_os_server.core.command_lifecycle import recover_interrupted_commands
 from openshelf_os_server.errors import (
+	CODE_MESSAGES,
 	capture_unhandled_exception,
+	client_detail,
 	error_detail,
 	internal_error_detail,
 	register_mapped_handlers,
@@ -86,8 +91,15 @@ from openshelf_os_server.database.models import AccessLevel, Role, User
 from openshelf_os_server.launcher import bootstrap_runtime_state
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
-from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, chemicals, demo, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
-from openshelf_os_server.settings import DEVELOPER_SYSTEM_USER_EMAIL, get_settings, get_operating_mode
+from openshelf_os_server.middleware.inventory_events import InventoryEventsMiddleware
+from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, cycle_test, chemicals, demo, import_jobs, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
+from openshelf_os_server.settings import (
+	DEFAULT_DEVELOPER_PIN,
+	DEVELOPER_SYSTEM_USER_EMAIL,
+	configured_developer_pin,
+	get_operating_mode,
+	get_settings,
+)
 from openshelf_os_server.utils.cors_policy import allows_credentials, resolve_allowed_origins
 
 configure_logging()
@@ -417,6 +429,9 @@ def _sentry_event_is_shutdown_cancelled_request(event: dict[str, Any]) -> bool:
 
 
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if is_sentry_reporting_enabled() is False:
+		return None
+
 	if _sentry_event_is_http_exception(event, _hint) is True:
 		return None
 
@@ -447,6 +462,12 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 	if _sentry_event_is_shutdown_cancelled_request(event) is True:
 		return None
 
+	# The debug fault-injection endpoint (POST /api/robot/debug/motors/{motor}/crash) drives
+	# the real crash pipeline on purpose - crash state, needs-home, artifacts - but the fault
+	# it raises is synthetic: it is not an incident and has no meaningful stack.
+	if _sentry_event_is_simulated_motor_fault(event) is True:
+		return None
+
 	request_value = event.get("request")
 	if isinstance(request_value, dict) is True:
 		request = cast(dict[str, Any], request_value)
@@ -458,6 +479,9 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if is_sentry_reporting_enabled() is False:
+		return None
+
 	if _sentry_log_is_suppressed_pymodbus_message(log) is True:
 		return None
 
@@ -498,8 +522,10 @@ def _configure_sentry() -> bool:
 	sentry_dsn = os.getenv("SENTRY_DSN_API", "")
 	mode = get_operating_mode()
 
-	if should_enable_sentry(mode) is False:
-		logger.info("sentry_disabled_for_mode", mode=mode.value)
+	# Initialized in every mode so the runtime toggle can turn reporting on; the
+	# before_send hooks drop everything while it is off.
+	if is_service_process() is False:
+		logger.info("sentry_disabled_outside_service", mode=mode.value)
 		return False
 
 	if sentry_dsn == "":
@@ -729,7 +755,7 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 				logger.info("tool_camera_url_from_config", config_path=str(config_path), url=url)
 				return str(url)
 		except Exception as e:
-			logger.warning("failed_to_read_config", config_path=str(config_path), error=str(e))
+			logger.warning("failed_to_read_config", config_path=str(config_path), error=str(e), exc_info=e)
 
 	return None
 
@@ -785,9 +811,37 @@ DEFAULT_ROLES: dict[str, list[str]] = {
 }
 
 
+def _pin_matches(ph: PasswordHasher, pin_hash: str, pin: str) -> bool:
+	try:
+		return ph.verify(pin_hash, pin)
+	except (VerifyMismatchError, InvalidHashError):
+		return False
+
+
+def _developer_pin_hash(ph: PasswordHasher, pin: Optional[str]) -> str:
+	# Without a known PIN the user is locked with a random one; the relay identity
+	# and the system-user filters still rely on the row existing.
+	return ph.hash(pin if pin is not None else secrets.token_urlsafe(32))
+
+
+def _developer_pin_source(pin: Optional[str]) -> str:
+	if pin is None:
+		return "random"
+	return "default" if pin == DEFAULT_DEVELOPER_PIN else "configured"
+
+
 async def _ensure_developer_user() -> None:
 	"""Recreate the developer system user on every startup, including after a
-	database wipe, so the device can never end up fully locked out."""
+	database wipe, so the device can never end up fully locked out, and keep its
+	PIN on the one the mode calls for (see `configured_developer_pin`).
+
+	A production or demo device without a configured PIN must not keep the published
+	default, so a hash that still verifies against it is replaced with a random one;
+	the released migration that seeded it stays untouched.
+	"""
+	desired_pin = configured_developer_pin(get_operating_mode())
+	ph = PasswordHasher()
+
 	async with AsyncSessionLocal() as db:
 		result = await db.execute(
 			select(User).filter(User.email == DEVELOPER_SYSTEM_USER_EMAIL)
@@ -795,10 +849,25 @@ async def _ensure_developer_user() -> None:
 		existing_user = result.scalar_one_or_none()
 
 		if existing_user is not None:
+			changed = False
 			if existing_user.is_system is False:
 				existing_user.is_system = True
-				await db.commit()
+				changed = True
 				logger.info("developer_user_marked_system", email=DEVELOPER_SYSTEM_USER_EMAIL)
+			if desired_pin is not None:
+				needs_pin = _pin_matches(ph, existing_user.pin_hash, desired_pin) is False
+			else:
+				needs_pin = _pin_matches(ph, existing_user.pin_hash, DEFAULT_DEVELOPER_PIN) is True
+			if needs_pin is True:
+				existing_user.pin_hash = _developer_pin_hash(ph, desired_pin)
+				changed = True
+				logger.info(
+					"developer_user_pin_reset",
+					email=DEVELOPER_SYSTEM_USER_EMAIL,
+					pin_source=_developer_pin_source(desired_pin),
+				)
+			if changed is True:
+				await db.commit()
 			logger.info("developer_user_exists", email=DEVELOPER_SYSTEM_USER_EMAIL)
 			return
 
@@ -809,8 +878,7 @@ async def _ensure_developer_user() -> None:
 			logger.warning("admin_role_not_found", action="skipping_developer_user_creation")
 			return
 
-		ph = PasswordHasher()
-		pin_hash = ph.hash("1111")
+		pin_hash = _developer_pin_hash(ph, desired_pin)
 
 		developer_user = User(
 			email=DEVELOPER_SYSTEM_USER_EMAIL,
@@ -843,7 +911,7 @@ async def _dev_auto_user_is_resolvable(email: str) -> bool:
 async def _ensure_dev_auto_user(email: str) -> None:
 	"""Create the configured dev auto user so the unauthenticated fallback
 	resolves on any database (e.g. a fresh one created on first start in this
-	mode). Mirrors _ensure_developer_user: admin role, PIN 1111, is_system.
+	mode). Mirrors _ensure_developer_user in development: admin role, PIN 1111, is_system.
 	An existing inactive user is activated instead of duplicated."""
 	if await _dev_auto_user_is_resolvable(email) is True:
 		return
@@ -867,7 +935,7 @@ async def _ensure_dev_auto_user(email: str) -> None:
 			return
 
 		ph = PasswordHasher()
-		pin_hash = ph.hash("1111")
+		pin_hash = ph.hash(DEFAULT_DEVELOPER_PIN)
 		local_part = email.partition("@")[0]
 
 		db.add(
@@ -1156,6 +1224,7 @@ app.add_middleware(
 	allow_methods=["*"],
 	allow_headers=["*"],
 )
+app.add_middleware(InventoryEventsMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(AuditMiddleware, sentry_enabled=sentry_enabled)
 register_mapped_handlers(app)
@@ -1177,10 +1246,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 		exc_info=True,
 	)
 	code, message = internal_error_detail(exc)
-	detail: dict[str, str] = error_detail(message, code)
-	if correlation_id:
-		detail["correlation_id"] = correlation_id
-	return JSONResponse(status_code=500, content={"detail": detail})
+	return JSONResponse(status_code=500, content={"detail": client_detail(request, error_detail(message, code))})
 
 
 @app.get(
@@ -1222,7 +1288,8 @@ async def health() -> JSONResponse:
 	if robot_health["status"] == "error":
 		body["status"] = "degraded"
 		body["robot_status"] = "error"
-		body["robot_error"] = str(robot_health.get("error", ""))
+		# Public and unauthenticated: the exception was logged with its traceback when startup failed.
+		body["robot_error"] = CODE_MESSAGES["robot_not_initialized"]
 		body["robot_error_type"] = str(robot_health.get("error_type", "Error"))
 		return JSONResponse(status_code=503, content=body)
 
@@ -1276,8 +1343,10 @@ app.include_router(iobox_sizer.router, prefix="/api/iobox/sizer")
 app.include_router(cabinet.router, prefix="/api/cabinet")
 app.include_router(robot.router, prefix="/api/robot")
 app.include_router(storage.router, prefix="/api/storage")
+app.include_router(import_jobs.router, prefix="/api/import-jobs")
 app.include_router(chemicals.router, prefix="/api/chemicals")
 app.include_router(printer.router, prefix="/api/print")
+app.include_router(cycle_test.router)
 app.include_router(calibration.router)
 app.include_router(demo.router)
 app.include_router(system.router, prefix="/api/system")

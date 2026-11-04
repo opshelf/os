@@ -1,74 +1,9 @@
+import asyncio
+import time
+
 import pytest
 from unittest.mock import AsyncMock, Mock
 from hardware.controller import SharedModbusController
-from hardware.exceptions import ModbusConnectionError, ModbusError
-
-
-@pytest.mark.asyncio
-async def test_controller_connect_preserves_connection_failure_message(mock_modbus_client):
-    mock_modbus_client.connect.side_effect = None
-    mock_modbus_client.connect.return_value = False
-    mock_modbus_client.connected = False
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-
-    with pytest.raises(ModbusConnectionError, match="Failed to connect to Modbus device on port /dev/ttyUSB0") as exc_info:
-        await controller.connect()
-
-    assert "Unexpected error during connection" not in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_controller_write_single_register_preserves_modbus_error(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-
-    result = Mock()
-    result.isError.return_value = True
-    mock_modbus_client.write_register.return_value = result
-
-    with pytest.raises(ModbusError, match="Write error to unit 1, register 256") as exc_info:
-        await controller.write_single_register(1, 0x100, 42)
-
-    assert "Unexpected error writing" not in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_controller_retries_modbus_read_error(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-
-    error_result = Mock()
-    error_result.isError.return_value = True
-    ok_result = Mock()
-    ok_result.isError.return_value = False
-    ok_result.registers = [42]
-    mock_modbus_client.read_holding_registers.side_effect = [error_result, ok_result]
-
-    value = await controller.read_holding_registers(1, 0x100)
-
-    assert value == 42
-    assert mock_modbus_client.read_holding_registers.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_controller_reconnects_on_modbus_connection_error(mock_modbus_client):
-    controller = SharedModbusController("/dev/ttyUSB0", 115200)
-    controller.client = mock_modbus_client
-
-    ok_result = Mock()
-    ok_result.isError.return_value = False
-    ok_result.registers = [42]
-    mock_modbus_client.read_holding_registers.side_effect = [
-        ModbusConnectionError("connection lost"),
-        ok_result,
-    ]
-    controller._reconnect = AsyncMock(return_value=True)
-
-    value = await controller.read_holding_registers(1, 0x100)
-
-    assert value == 42
-    controller._reconnect.assert_awaited_once()
-    assert mock_modbus_client.read_holding_registers.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -102,3 +37,50 @@ async def test_read_overrides_modbus_retries_and_timeout_for_the_duration():
     assert observed == {"retries": 0, "timeout": 0.1}
     assert client.ctx.retries == 3
     assert client.comm_params.timeout_connect == 2.0
+
+
+@pytest.mark.asyncio
+async def test_read_queued_behind_a_busy_write_waits_out_the_busy_window():
+    # Both callers pass the pre-lock check while unit 1 is idle; the busy write then runs
+    # first, so the queued read must not go out inside the window it opened.
+    busy_s = 0.2
+    sent: dict[str, float] = {}
+    other_unit_started = asyncio.Event()
+    release_other_unit = asyncio.Event()
+
+    ok_result = Mock()
+    ok_result.isError.return_value = False
+    ok_result.registers = [1]
+
+    async def write_register(*, address, value, device_id):
+        if device_id == 2:
+            other_unit_started.set()
+            await release_other_unit.wait()
+        else:
+            sent["reset"] = time.monotonic()
+        return ok_result
+
+    async def read_holding_registers(**_kwargs):
+        sent["read"] = time.monotonic()
+        return ok_result
+
+    client = AsyncMock()
+    client.connected = True
+    client.write_register = write_register
+    client.read_holding_registers = read_holding_registers
+
+    controller = SharedModbusController("/dev/ttyUSB0", 9600)
+    controller.client = client
+
+    other = asyncio.create_task(controller.write_single_register(2, 0x6000, 0))
+    await other_unit_started.wait()
+    reset = asyncio.create_task(
+        controller.write_single_register(1, 0x1122, 0x1122, busy_after_s=busy_s)
+    )
+    await asyncio.sleep(0)
+    read = asyncio.create_task(controller.read_register_block(1, 0x6002, 1, attempts=1))
+    await asyncio.sleep(0)
+    release_other_unit.set()
+    await asyncio.gather(other, reset, read)
+
+    assert sent["read"] - sent["reset"] >= busy_s

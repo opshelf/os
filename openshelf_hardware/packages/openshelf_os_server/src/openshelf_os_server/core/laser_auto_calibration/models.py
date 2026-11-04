@@ -47,40 +47,15 @@ AUTO_SCAN_X_MIN_MM = 5.0
 BACK_AUTO_SCAN_X_MAX_MM = 945.0
 ANGLE_DEBUG_DIR_NAME = "laser_auto_calibration_debug"
 
-ANGLE_CAPTURE_RE = re.compile(
-    r"phase=capture x=(?P<x_idx>\d+)/(?P<x_count>\d+) z=(?P<z_offset>-?\d+(?:\.\d+)?) rotation=(?P<rotation_idx>\d+)/(?P<rotation_count>\d+)"
-)
-ANGLE_SAMPLE_RE = re.compile(
-    r"sample=(?P<status>ok|invalid) x=(?P<x>-?\d+(?:\.\d+)?) z=(?P<z>-?\d+(?:\.\d+)?) rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?)(?: distance_mm=(?P<distance>-?\d+(?:\.\d+)?))?"
-)
-STAGE_STALL_CAPTURE_RE = re.compile(
-    r"phase=stage-stall (?:pass=(?P<pass_name>[a-z_]+) )?"
-    r"rotation=(?P<rotation_idx>\d+)/(?P<rotation_count>\d+) "
-    r"absolute_rotation_deg=(?P<absolute>-?\d+(?:\.\d+)?)"
-)
-STAGE_STALL_PROBE_RE = re.compile(
-    r"stage_probe=(?P<status>stall|skip) (?:pass=(?P<pass_name>[a-z_]+) )?"
-    r"rotation_deg=(?P<rotation>-?\d+(?:\.\d+)?) "
-    r"absolute_rotation_deg=(?P<absolute>-?\d+(?:\.\d+)?) "
-    r"(?:status=(?P<probe_status>[a-z_]+) )?stage_position_mm=(?P<stage>-?\d+(?:\.\d+)?)"
-    r"(?: alarm_code=(?P<alarm_code>none|-?\d+))?"
-)
-ANGLE_SCOUT_SAMPLE_RE = re.compile(
-    r"(?P<label>shelf_scout_\d+)=(?P<sample_idx>\d+)/(?P<sample_count>\d+) x=(?P<x>-?\d+(?:\.\d+)?) y=(?P<y>-?\d+(?:\.\d+)?) depth=(?P<depth>none|-?\d+(?:\.\d+)?)"
-)
 SCAN_SHELF_SCOUT_RE = re.compile(r"phase=shelf-scout scout=(?P<idx>\d+)/(?P<count>\d+) x=(?P<x>-?\d+(?:\.\d+)?)")
 SCAN_SHELF_HOLE_RE = re.compile(
     r"phase=shelf-hole-scan shelf=(?P<shelf_idx>\d+)/(?P<shelf_count>\d+) offset=(?P<offset_idx>\d+)/(?P<offset_count>\d+) y=(?P<y>-?\d+(?:\.\d+)?)"
-)
-SCAN_PROGRESS_SAMPLE_RE = re.compile(
-    r"(?P<label>[a-zA-Z0-9_]+)=(?P<sample_idx>\d+)/(?P<sample_count>\d+) x=(?P<x>-?\d+(?:\.\d+)?) y=(?P<y>-?\d+(?:\.\d+)?) depth=(?P<depth>none|-?\d+(?:\.\d+)?)"
 )
 SHELF_EDGES_RE = re.compile(r"shelf_edges=(?P<count>\d+)")
 COARSE_CANDIDATES_RE = re.compile(r"coarse_candidates=(?P<count>\d+)")
 SCAN_FINE_RE = re.compile(r"phase=fine-scan candidate=(?P<idx>\d+)/(?P<count>\d+)")
 SCAN_FINE_RETRY_RE = re.compile(r"phase=fine-scan-retry candidate=(?P<idx>\d+)/(?P<count>\d+)")
 FINE_DETECTED_CELLS_RE = re.compile(r"fine_detected_cells=(?P<count>\d+)")
-ANGLE_RESULT_RE = re.compile(r"alpha_deg=(?P<alpha>-?\d+(?:\.\d+)?)")
 STAGE_EXTENSION_PROBE_START_MM = 0.0
 STAGE_EXTENSION_PROBE_Y_OFFSET_MM = 25.0
 STAGE_EXTENSION_PROBE_STEP_MM = 0.5
@@ -180,39 +155,26 @@ class LaserAutoCalibrationReferenceOffset(BaseModel):
     skipped: list[str] = Field(default_factory=list)
 
 
-class LaserAutoCalibrationZStallSample(BaseModel):
+class LaserAutoCalibrationGripperSample(BaseModel):
+    side: StorageModuleSide
     shelf_idx: int
     cell_idx: int
-    probe_x_mm: float
-    probe_y_mm: float
-    wall_depth_mm: float
-    z_contact_mm: float
-    z_contact_repeat_mm: float | None
-    delta_mm: float
+    z_offset_mm: float
+    positions: list[int] = Field(default_factory=list)
+    states: list[str] = Field(default_factory=list)
+    stop_position: int | None = None
+    verify_state: str | None = None
+    verified: bool = False
 
 
-class LaserAutoCalibrationZStallResult(BaseModel):
-    """A probed z model, and how it stood up to the hand-calibrated datum."""
+class LaserAutoCalibrationGripperResult(BaseModel):
+    """The gripper open position measured at each side's hand-calibrated reference cell."""
 
-    side: StorageModuleSide
-    intercept_mm: float
-    slope_per_mm: float
-    slope_source: str = "probe"
-    fit_source: str
-    sample_count: int
-    x_span_mm: float
-    stage_extension_mm: float
-    z_place_mm: float
-    manual_intercept_mm: float | None = None
-    manual_agreement_mm: float | None = None
-    manual_agreement_tolerance_mm: float
-    manual_captured_stage_mm: float | None = None
-    manual_capture_unstamped: int = 0
+    previous_open_position: int
+    open_position: int | None = None
     applied: bool = False
-    persisted: bool = False
-    samples: list[LaserAutoCalibrationZStallSample] = Field(default_factory=list)
+    samples: list[LaserAutoCalibrationGripperSample] = Field(default_factory=list)
     skipped: list[str] = Field(default_factory=list)
-    dropped_repeats: list[str] = Field(default_factory=list)
 
 
 class LaserAutoCalibrationScope(BaseModel):
@@ -222,6 +184,7 @@ class LaserAutoCalibrationScope(BaseModel):
     cell_idx: int | None = None
     include_angle_calibration: bool = True
     include_extension_calibration: bool = True
+    include_gripper_calibration: bool = False
     hold_y_enabled: bool = True
 
 class LaserAutoCalibrationError(BaseModel):
@@ -232,6 +195,13 @@ class LaserAutoCalibrationError(BaseModel):
     correlation_id: str | None = None
     fault_context: dict[str, Any] | None = None
     diagnostic_snapshot: dict[str, Any] | None = None
+
+
+class LaserAutoCalibrationErrorRef(BaseModel):
+    """The client's share of a failure: where it stopped and the id of its log line."""
+
+    phase: str | None = None
+    correlation_id: str | None = None
 
 
 class LaserAutoCalibrationSnapshot(BaseModel):
@@ -260,10 +230,9 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
     angle_results: list[LaserAutoCalibrationAngleResult] = Field(default_factory=list)
     reference_offset_results: list[LaserAutoCalibrationReferenceOffset] = Field(default_factory=list)
-    z_stall_results: list[LaserAutoCalibrationZStallResult] = Field(default_factory=list)
-    stage_detail: dict[str, Any] = Field(default_factory=dict)
+    gripper_open_position: LaserAutoCalibrationGripperResult | None = None
     error: str | None = None
-    error_detail: LaserAutoCalibrationError | None = None
+    error_detail: LaserAutoCalibrationErrorRef | None = None
 
 
 @dataclass
@@ -502,6 +471,12 @@ def _build_candidate_rows(
     return candidates
 
 
+def _z_stall_requested(scan_config: Any) -> bool:
+    """`z_stall_anchor_enabled` is the machine's setting: a probed model is only valid for the
+    machine it was probed on, so fitting one is an explicit per-machine choice, not a per-run one."""
+    return getattr(scan_config, "z_stall_anchor_enabled", False) is True
+
+
 def _build_cell_rows(
     side_name: StorageModuleSideName,
     fine_scan_rows: list[dict[str, Any]],
@@ -561,20 +536,13 @@ __all__ = [
     "AUTO_SCAN_X_MIN_MM",
     "BACK_AUTO_SCAN_X_MAX_MM",
     "ANGLE_DEBUG_DIR_NAME",
-    "STAGE_STALL_CAPTURE_RE",
-    "STAGE_STALL_PROBE_RE",
-    "ANGLE_CAPTURE_RE",
-    "ANGLE_SAMPLE_RE",
-    "ANGLE_SCOUT_SAMPLE_RE",
     "SCAN_SHELF_SCOUT_RE",
     "SCAN_SHELF_HOLE_RE",
-    "SCAN_PROGRESS_SAMPLE_RE",
     "SHELF_EDGES_RE",
     "COARSE_CANDIDATES_RE",
     "SCAN_FINE_RE",
     "SCAN_FINE_RETRY_RE",
     "FINE_DETECTED_CELLS_RE",
-    "ANGLE_RESULT_RE",
     "STAGE_EXTENSION_PROBE_START_MM",
     "STAGE_EXTENSION_PROBE_Y_OFFSET_MM",
     "STAGE_EXTENSION_PROBE_STEP_MM",
@@ -588,8 +556,8 @@ __all__ = [
     "LaserAutoCalibrationAngleResult",
     "LaserAutoCalibrationReferenceOffsetSample",
     "LaserAutoCalibrationReferenceOffset",
-    "LaserAutoCalibrationZStallSample",
-    "LaserAutoCalibrationZStallResult",
+    "LaserAutoCalibrationGripperSample",
+    "LaserAutoCalibrationGripperResult",
     "LaserAutoCalibrationScope",
     "LaserAutoCalibrationSnapshot",
     "_SideState",
@@ -610,4 +578,5 @@ __all__ = [
     "_resolve_stage_stall_probe_x_mm",
     "_build_candidate_rows",
     "_build_cell_rows",
+    "_z_stall_requested",
 ]

@@ -80,6 +80,9 @@ fi
 
 start_api() {
 	cd /app/openshelf_hardware
+	# Only the service reports to Sentry. A `docker exec` or one-off `docker compose run`
+	# shares this environment, DSNs included, but never reaches this function.
+	export OPSHELF_SERVICE_PROCESS=1
 	# Run the environment the image was built with. `uv run` re-syncs on every start,
 	# which installs dev tooling into the runtime environment and can replace installed
 	# versions with a resolution the image was not built or tested against.

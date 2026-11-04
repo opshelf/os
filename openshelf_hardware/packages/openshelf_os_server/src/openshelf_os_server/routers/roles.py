@@ -2,7 +2,7 @@
 from openshelf_os_server.documentation import MessageResponse, response_docs
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel
@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from ..database.session import get_db
 from ..database.models import Role, User
 from .auth_deps import get_current_user, require_permissions
+from openshelf_os_server.errors import api_error
 
 router = APIRouter(
 	prefix="/api/roles",
@@ -92,10 +93,7 @@ async def create_role(
 	existing_result = await db.execute(select(Role).filter(Role.name == request.name))
 	existing = existing_result.scalar_one_or_none()
 	if existing is not None:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="Role with this name already exists"
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "role_name_in_use", "")
 	
 	role = Role(
 		name=request.name,
@@ -127,10 +125,7 @@ async def get_role(
 	role_result = await db.execute(select(Role).filter(Role.id == role_id))
 	role = role_result.scalar_one_or_none()
 	if role is None:
-		raise HTTPException(
-			status_code=status.HTTP_404_NOT_FOUND,
-			detail="Role not found"
-		)
+		raise api_error(status.HTTP_404_NOT_FOUND, "role_not_found", "")
 	
 	return await _build_role_response(db, role)
 
@@ -155,10 +150,7 @@ async def update_role(
 	role_result = await db.execute(select(Role).filter(Role.id == role_id))
 	role = role_result.scalar_one_or_none()
 	if role is None:
-		raise HTTPException(
-			status_code=status.HTTP_404_NOT_FOUND,
-			detail="Role not found"
-		)
+		raise api_error(status.HTTP_404_NOT_FOUND, "role_not_found", "")
 	
 	if request.name is not None:
 		existing_result = await db.execute(
@@ -169,10 +161,7 @@ async def update_role(
 		)
 		existing = existing_result.scalar_one_or_none()
 		if existing is not None:
-			raise HTTPException(
-				status_code=status.HTTP_400_BAD_REQUEST,
-				detail="Role name already in use"
-			)
+			raise api_error(status.HTTP_400_BAD_REQUEST, "role_name_in_use", "")
 		role.name = request.name
 	
 	if request.permissions is not None:
@@ -202,17 +191,11 @@ async def delete_role(
 	role_result = await db.execute(select(Role).filter(Role.id == role_id))
 	role = role_result.scalar_one_or_none()
 	if role is None:
-		raise HTTPException(
-			status_code=status.HTTP_404_NOT_FOUND,
-			detail="Role not found"
-		)
+		raise api_error(status.HTTP_404_NOT_FOUND, "role_not_found", "")
 	
 	user_count = await db.scalar(select(func.count()).select_from(User).filter(User.role_id == role_id))
 	if user_count is not None and user_count > 0:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail=f"Cannot delete role with {user_count} active users"
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "role_in_use", "")
 	
 	await db.delete(role)
 	await db.commit()

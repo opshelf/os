@@ -5,12 +5,12 @@ import asyncio
 import logging
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.exceptions import ConfigError, MotorError, MovementError, ToolError
-from openshelf_os.fridge import FridgeSafetyError
+from openshelf_os.exceptions import ConfigError, FridgeSafetyError, MotorError, MovementError, ToolError
+from openshelf_os.robot.worker import fault_needs_home_axes
 from openshelf_os.storage import StorageModuleCellLocation
 from hardware.exceptions import MotorError as HardwareMotorError
 
@@ -19,12 +19,9 @@ from openshelf_os_server.core.robot import get_robot_worker
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.core.storage_module import side_to_s
-from openshelf_os_server.routers.auth_deps import get_current_user
-from openshelf_os_server.routers.calibration import (
-	_clear_motors_for_move,
-	_ensure_ready,
-	_raise_motor_error,
-)
+from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
+from openshelf_os_server.routers.calibration import _clear_motors_for_move, _ensure_ready, _raise_motor_error
+from openshelf_os_server.errors import api_error
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +30,14 @@ async def ensure_laser_auto_calibration_not_running() -> None:
 	if await is_laser_auto_calibration_running() is False:
 		return
 
-	raise HTTPException(
-		status_code=status.HTTP_409_CONFLICT,
-		detail="laser auto calibration is running",
-	)
+	raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "")
 
 
 async def get_robot_worker_or_503():
 	try:
 		return await get_robot_worker()
-	except ValueError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-			detail="Robot is not initialized",
-		) from exc
+	except ValueError:
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from None
 
 router = APIRouter(prefix="/api/demo", tags=["demo"], dependencies=[Depends(get_current_user)])
 
@@ -108,11 +99,15 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 		await worker.get_status_snapshot(force_refresh=True)
 	except (MotorError, MovementError, ToolError, HardwareMotorError) as exc:
 		logger.error("demo_cycle_hardware_fault", exc_info=True)
-		worker.set_needs_home(f"Demo cycle hardware fault: {exc}")
+		worker.set_needs_home(
+			f"Demo cycle hardware fault: {exc}", axes=fault_needs_home_axes(worker._robot, exc)
+		)
+		await worker.refresh_tray_on_tool()
 		await worker.get_status_snapshot(force_refresh=True)
 	except Exception as exc:
 		logger.error("demo_cycle_unexpected_error", exc_info=True)
-		worker.set_needs_home(f"Demo cycle crashed: {exc}")
+		worker.set_needs_home(f"Demo cycle crashed: {exc}", axes=fault_needs_home_axes(worker._robot, exc))
+		await worker.refresh_tray_on_tool()
 		await worker.get_status_snapshot(force_refresh=True)
 	finally:
 		worker._demo_cycling = False
@@ -124,9 +119,10 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 
 @router.post(
     "/cycle/start",
+    dependencies=[Depends(require_permissions("robot:control"))],
     response_model=SuccessResponse,
     summary="Start the demonstration cycle",
-    responses=response_docs(errors=(400, 401, 409, 503)),
+    responses=response_docs(errors=(400, 401, 403, 409, 503)),
 )
 async def start_demo_cycle() -> SuccessResponse:
 	"""Start the demonstration cycle.
@@ -140,10 +136,7 @@ async def start_demo_cycle() -> SuccessResponse:
 	await ensure_laser_auto_calibration_not_running()
 
 	if _is_running is True:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Demo cycle is already running",
-		)
+		raise api_error(status.HTTP_409_CONFLICT, "demo_running", "")
 
 	worker = await get_robot_worker_or_503()
 
@@ -152,10 +145,7 @@ async def start_demo_cycle() -> SuccessResponse:
 	robot = worker._robot
 
 	if robot._demo_cell_map is None or len(robot._demo_cell_map) == 0:
-		raise HTTPException(
-			status_code=status.HTTP_400_BAD_REQUEST,
-			detail="No demo cell map configured",
-		)
+		raise api_error(status.HTTP_400_BAD_REQUEST, "demo_not_configured", "")
 
 	cells = _build_cell_list(robot)
 
@@ -193,9 +183,10 @@ async def shutdown_demo_cycle() -> None:
 
 @router.post(
     "/cycle/stop",
+    dependencies=[Depends(require_permissions("robot:control"))],
     response_model=SuccessResponse,
     summary="Request demonstration stop",
-    responses=response_docs(errors=(401, 409, 503)),
+    responses=response_docs(errors=(401, 403, 409, 503)),
 )
 async def stop_demo_cycle() -> SuccessResponse:
 	"""Request demonstration stop.
@@ -204,10 +195,7 @@ async def stop_demo_cycle() -> SuccessResponse:
 	demo status for completion; this is not a physical emergency stop.
 	"""
 	if _is_running is False:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail="Demo cycle is not running",
-		)
+		raise api_error(status.HTTP_409_CONFLICT, "demo_not_running", "")
 
 	_stop_event.set()
 
@@ -236,8 +224,9 @@ async def get_demo_cycle_status() -> DemoCycleStatusResponse:
 @router.post(
     "/fridge/{position}",
     response_model=SuccessResponse,
+    dependencies=[Depends(require_permissions("robot:control"))],
     summary="Move the demo fridge door",
-    responses=response_docs(errors=(401, 404, 409, 503)),
+    responses=response_docs(errors=(401, 403, 404, 409, 503)),
 )
 async def move_demo_fridge_door(
 	position: Literal["left", "center", "right"],
@@ -253,30 +242,18 @@ async def move_demo_fridge_door(
 
 	fridge = getattr(worker._robot, "_fridge", None)
 	if fridge is None:
-		raise HTTPException(
-			status_code=status.HTTP_404_NOT_FOUND,
-			detail="Fridge door is not configured for this robot",
-		)
+		raise api_error(status.HTTP_404_NOT_FOUND, "fridge_not_configured", "")
 
 	try:
 		async with manual_motion_guard(f"demo_fridge_{position}", worker=worker):
 			await fridge.move_door_to_named(position)
 	except ConfigError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail=str(exc),
-		) from exc
+		logger.warning("Fridge door move refused", exc_info=exc)
+		raise api_error(status.HTTP_409_CONFLICT, "fridge_not_calibrated", "") from exc
 	except FridgeSafetyError as exc:
-		raise HTTPException(
-			status_code=status.HTTP_409_CONFLICT,
-			detail=str(exc),
-		) from exc
+		logger.warning("Fridge door move refused", exc_info=exc)
+		raise api_error(status.HTTP_409_CONFLICT, "tool_not_retracted", "") from exc
 	except (MotorError, HardwareMotorError) as exc:
-		await _raise_motor_error(
-			worker,
-			f"Fridge door movement failed: {exc}",
-			exc,
-			axes=["fridge_door"],
-		)
+		await _raise_motor_error(worker, "The fridge door could not move.", exc, axes=["fridge_door"])
 
 	return SuccessResponse(message=f"fridge door moved to {position}")

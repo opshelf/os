@@ -226,7 +226,7 @@ async def test_upgrade_finalizes_legacy_physical_success_without_repeated_motion
         assert not await service.prepare_return(workflow, sorted(expected_ids))
         assert workflow.history == history
         assert len(list(await session.scalars(sa.select(StorageBinItem)))) == len(expected_ids)
-        with pytest.raises(BinWorkflowConflict, match="already in the system"):
+        with pytest.raises(BinWorkflowConflict, match="already in the machine"):
             await service.begin_return(tray.barcode)
     enqueue.assert_not_awaited()
 

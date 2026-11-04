@@ -11,8 +11,11 @@ from openshelf_os.robot.worker import RobotWorker
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.core.robot import get_robot_worker
+from openshelf_os_server.errors import api_error
 from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
 from openshelf_os_server.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["cabinet"])
 
@@ -52,30 +55,21 @@ async def check_robot_enabled() -> None:
     if settings.robot.enabled is True:
         return
 
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Robot is not enabled or configured",
-    )
+    raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_disabled", "")
 
 
 async def get_robot_worker_or_error() -> RobotWorker:
     try:
         return await get_robot_worker()
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Robot is not initialized or failed to start",
-        ) from exc
+    except ValueError:
+        raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "robot_not_initialized", "") from None
 
 
 async def ensure_laser_auto_calibration_not_running() -> None:
     if await is_laser_auto_calibration_running() is False:
         return
 
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail="laser auto calibration is running",
-    )
+    raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "")
 
 
 @router.get(
@@ -107,10 +101,11 @@ async def get_cabinet_status(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Cabinet status read failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"message": f"Cabinet status failed: {exc}", "code": "cabinet_status_failed"},
+        logger.error("Cabinet status read failed: %s", exc, exc_info=exc)
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "cabinet_status_failed",
+            "",
         ) from exc
 
 
@@ -134,16 +129,14 @@ async def control_cabinet_release(
         await ensure_laser_auto_calibration_not_running()
         cabinet = worker._robot._cabinet
         if cabinet.is_configured() is False:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "message": "Cabinet GPIO is not configured on this device",
-                    "code": "cabinet_not_configured",
-                },
+            raise api_error(
+                status.HTTP_409_CONFLICT,
+                "cabinet_not_configured",
+                "",
             )
 
         async with manual_motion_guard(
-            f"cabinet_release:{action}", worker=worker
+            f"cabinet_release:{action}", worker=worker, allow_tray_on_tool=True
         ):
             if action == "passive":
                 cabinet_status = await cabinet.set_passive()
@@ -159,11 +152,9 @@ async def control_cabinet_release(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Cabinet release control failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "message": f"Cabinet release {action} failed: {exc}",
-                "code": "cabinet_release_control_failed",
-            },
+        logger.error("Cabinet release %s failed: %s", action, exc, exc_info=exc)
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "cabinet_release_control_failed",
+            "",
         ) from exc

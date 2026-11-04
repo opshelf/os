@@ -20,8 +20,6 @@ class WeightReading(NamedTuple):
 
 class Scale:
     REG_WEIGHT_HI = 0
-    REG_WEIGHT_LO = 1
-    REG_DECIMALS = 2
     REG_STATUS = 3
     REG_TARE = 4
     REG_FULL_SCALE_HI = 25
@@ -38,6 +36,10 @@ class Scale:
     # answer (or fail) inside this window rather than hold the shared lock while
     # pymodbus re-sends for the controller's default 2 s timeout.
     FAST_READ_TIMEOUT_S = 0.1
+
+    # A steady empty pan has nothing to settle, so this many consecutive stable zero
+    # reads end the wait early with no measurement (None) instead of the full timeout.
+    STABLE_ZERO_CONFIRM_READS = 3
 
     CAL_STATUS_ZERO_OK = 0x04
     CAL_STATUS_WEIGHT_OK = 0x08
@@ -260,6 +262,7 @@ class Scale:
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
         saw_unstable = False
+        stable_zero_reads = 0
         collected_weights: list[float] = []
 
         while loop.time() < deadline:
@@ -295,6 +298,15 @@ class Scale:
                     )
 
                     return weight
+
+                stable_zero_reads = stable_zero_reads + 1 if weight is not None else 0
+                if stable_zero_reads >= self.STABLE_ZERO_CONFIRM_READS:
+                    logger.debug(
+                        "Scale steady at zero, ending wait with no measurement",
+                        extra={"unit_id": self.scale_id},
+                    )
+
+                    return None
 
             await asyncio.sleep(poll_interval)
 
@@ -429,7 +441,7 @@ class Scale:
                 extra={"unit_id": self.scale_id},
             )
 
-            return {"success": False, "error": "Failed to write zero calibration command"}
+            return {"success": False, "error": "The scale did not take the zero calibration command. Check its cable, then calibrate again."}
 
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
@@ -446,7 +458,11 @@ class Scale:
             extra={"unit_id": self.scale_id, "timeout_s": timeout},
         )
 
-        return {"success": False, "error": "Zero calibration timeout", "status": await self.get_calibration_status()}
+        return {
+            "success": False,
+            "error": "The scale zero calibration did not finish in time. Check that the scale is empty and steady, then calibrate again.",
+            "status": await self.get_calibration_status(),
+        }
 
     async def calibrate_weight(self, timeout: float = 5.0) -> Dict[str, Any]:
         ok = await self._write_one(self.REG_CAL_WEIGHT, 1)
@@ -457,7 +473,7 @@ class Scale:
                 extra={"unit_id": self.scale_id},
             )
 
-            return {"success": False, "error": "Failed to write weight calibration command"}
+            return {"success": False, "error": "The scale did not take the weight calibration command. Check its cable, then calibrate again."}
 
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
@@ -474,4 +490,8 @@ class Scale:
             extra={"unit_id": self.scale_id, "timeout_s": timeout},
         )
 
-        return {"success": False, "error": "Weight calibration timeout", "status": await self.get_calibration_status()}
+        return {
+            "success": False,
+            "error": "The scale weight calibration did not finish in time. Check that only the reference weight is on the scale, then calibrate again.",
+            "status": await self.get_calibration_status(),
+        }

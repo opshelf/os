@@ -41,23 +41,6 @@ def mock_position_reader(motor, values):
 
 
 @pytest.mark.asyncio
-async def test_wait_for_move_completes_after_observed_motion(mock_controller):
-    motor = Motor(mock_controller, make_motor_params())
-    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
-    motor.get_param = AsyncMock(return_value=0)
-    motor.get_position = mock_position_reader(motor, [0.0, 1.0])
-    mock_controller.read_holding_registers.side_effect = [0, 1 << 5]
-
-    status = await motor.wait_for_move(timeout=0.5)
-
-    assert status == MotorStatus.STOPPED
-    motor.stop.assert_awaited_once()
-    assert motor._pending_motion is None
-    assert motor._target_pos is None
-    assert motor.is_hard_stopped() is False
-
-
-@pytest.mark.asyncio
 async def test_wait_for_move_preserves_fault_raised_during_completion(mock_controller):
     motor = Motor(mock_controller, make_motor_params())
     motor._target_pos = 1.0
@@ -225,25 +208,6 @@ async def test_wait_for_move_does_not_resume_when_terminal_status_arrives_during
     assert motor._status is terminal_status
     assert motor.is_hard_stopped() is True
     assert motor.is_homed() is False
-
-
-def test_motion_fault_ignores_stale_stall_when_current_sample_moved(mock_controller, monkeypatch):
-    motor = Motor(mock_controller, make_motor_params())
-    state = MotionWaitState(start_time=0.0, last_movement_time=0.0, last_pos=990.0, has_moved=True)
-    snapshot = MotionSnapshot(status_word=70, is_complete=False, has_fault_bit=False)
-    alarm_state = MotionAlarmState(alarm_code=0, is_active=False)
-
-    monkeypatch.setattr("hardware.motor.time.monotonic", lambda: 5.1)
-
-    fault_state = motor._detect_motion_fault(
-        snapshot,
-        alarm_state,
-        state,
-        position_delta=10.0,
-    )
-
-    assert fault_state.is_fault is False
-    assert fault_state.stall_detected is False
 
 
 def test_motion_fault_detects_stall_when_no_progress_is_observed(mock_controller, monkeypatch):

@@ -5,7 +5,9 @@ from typing import Any, List, cast
 import sentry_sdk
 
 from openshelf_os.device import get_device_id
-from openshelf_os.operating_mode import get_operating_mode, should_enable_sentry
+from openshelf_os.operating_mode import get_operating_mode, is_service_process, is_sentry_reporting_enabled
+
+logger = logging.getLogger(__name__)
 
 try:
 	from sentry_sdk.integrations.logging import LoggingIntegration
@@ -18,12 +20,14 @@ device_id = get_device_id()
 
 def _configure_sentry() -> bool:
 	mode = get_operating_mode()
-	if should_enable_sentry(mode) is False:
-		logging.debug("Sentry disabled for openshelf_os: mode=%s", mode.value)
+	# Initialized in every mode so the runtime toggle can turn reporting on; the
+	# before_send hooks drop everything while it is off.
+	if is_service_process() is False:
+		logger.debug("Sentry disabled for openshelf_os: not the service process")
 		return False
 
 	if sentry_dsn == "":
-		logging.warning("Sentry enabled for openshelf_os but SENTRY_DSN_HARDWARE is not set")
+		logger.warning("Sentry enabled for openshelf_os but SENTRY_DSN_HARDWARE is not set")
 		return False
 
 	integrations: List[Any] = []
@@ -51,7 +55,7 @@ def _configure_sentry() -> bool:
 	)
 	sentry_sdk.set_tag("device_id", device_id)
 	sentry_sdk.set_context("opshelf_device", {"id": device_id})
-	logging.info("Sentry initialized for openshelf_os", extra={"mode": mode.value})
+	logger.info("Sentry initialized for openshelf_os", extra={"mode": mode.value})
 	return True
 
 SENSITIVE_HEADER_NAMES = {"authorization", "cookie"}
@@ -64,8 +68,18 @@ PYMODBUS_NO_RESPONSE_RETRY_SUFFIX = " retries, continue with next request"
 # carries the marker prefix; a deduplicated frame shows up as
 # ">>>>> Repeating....".
 PYMODBUS_FRAME_DUMP_LINE_PREFIX = ">>>>> "
+# pymodbus logs an exact repeat of its previous log text as this instead of the text,
+# so the original was already reported or dropped and the repeat carries nothing new.
+PYMODBUS_REPEAT_LOG_TEXT = "Repeating...."
 DOOR_MOTOR_RECOVERY_EVENT = "Too many bad door readings; attempting door motor recovery"
 DOOR_MOTOR_RECOVERY_FAILED_PREFIX = "Door motor recovery failed:"
+# Prefix of the fault message the debug fault-injection endpoint builds
+# (`POST /api/robot/debug/motors/{motor}/crash`). The injected fault is reported through the
+# same crash pipeline as a real one so the crash handling can be exercised on a live machine,
+# but it is not an incident: Sentry filters events whose fault message carries this prefix.
+SIMULATED_MOTOR_FAULT_PREFIX = "Simulated motor fault on "
+# Context key the robot worker sets on the error context of an injected fault's report.
+SIMULATED_FAULT_CONTEXT_KEY = "simulated_fault"
 
 
 def _redact_sensitive_mapping(value: Any) -> Any:
@@ -132,10 +146,15 @@ def _is_pymodbus_no_response_retry(message: Any) -> bool:
 	return retry_count.isdigit()
 
 
+def _is_pymodbus_repeat(message: Any) -> bool:
+	return isinstance(message, str) is True and _strip_pymodbus_frame_dump(message) == PYMODBUS_REPEAT_LOG_TEXT
+
+
 def _is_suppressed_pymodbus_log_message(message: Any) -> bool:
 	return (
 		_is_pymodbus_request_id_mismatch(message) is True
 		or _is_pymodbus_no_response_retry(message) is True
+		or _is_pymodbus_repeat(message) is True
 	)
 
 
@@ -188,6 +207,25 @@ def _sentry_log_has_door_motor_recovery_failure(log: dict[str, Any]) -> bool:
 def _event_entries(event: dict[str, Any]) -> list[Any]:
 	entries_value = event.get("entries", [])
 	return cast(list[Any], entries_value) if isinstance(entries_value, list) is True else []
+
+
+def _sentry_event_is_simulated_motor_fault(event: dict[str, Any]) -> bool:
+	"""Whether the event reports an injected debug fault: both the worker's marker and the
+	simulated fault text must be present."""
+	contexts = event.get("contexts")
+	if isinstance(contexts, dict) is False:
+		return False
+
+	worker_error = cast(dict[str, Any], contexts).get("worker_error")
+	hardware_fault = cast(dict[str, Any], contexts).get("hardware_fault")
+	if isinstance(worker_error, dict) is False or isinstance(hardware_fault, dict) is False:
+		return False
+
+	if cast(dict[str, Any], worker_error).get(SIMULATED_FAULT_CONTEXT_KEY) is not True:
+		return False
+
+	message = cast(dict[str, Any], hardware_fault).get("message")
+	return isinstance(message, str) is True and message.startswith(SIMULATED_MOTOR_FAULT_PREFIX)
 
 
 def _sentry_event_has_message(event: dict[str, Any], target: str) -> bool:
@@ -263,6 +301,9 @@ def _sentry_event_has_suppressed_pymodbus_message(event: dict[str, Any]) -> bool
 
 
 def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if is_sentry_reporting_enabled() is False:
+		return None
+
 	if _sentry_event_has_suppressed_pymodbus_message(event) is True:
 		return None
 
@@ -277,6 +318,9 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 	if _sentry_event_has_door_motor_recovery_failure(event) is True:
 		return None
 
+	if _sentry_event_is_simulated_motor_fault(event) is True:
+		return None
+
 	request_value = event.get("request")
 	if isinstance(request_value, dict) is True:
 		request = cast(dict[str, Any], request_value)
@@ -288,6 +332,9 @@ def _before_send_sentry_event(event: dict[str, Any], _hint: dict[str, Any]) -> d
 
 
 def _before_send_sentry_log(log: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+	if is_sentry_reporting_enabled() is False:
+		return None
+
 	if _sentry_log_is_suppressed_pymodbus_message(log) is True:
 		return None
 

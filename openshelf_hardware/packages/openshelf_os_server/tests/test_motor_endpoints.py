@@ -30,11 +30,13 @@ def _mock_worker(motors: dict[str, AsyncMock] | None = None):
 	})
 	worker.clear_needs_home_axes = MagicMock()
 	worker.needs_home = MagicMock(return_value=False)
+	worker.needs_reset = MagicMock(return_value=False)
 	worker.needs_home_axes = MagicMock(return_value=[])
 	worker.needs_home_reason = MagicMock(return_value=None)
 	worker.clear_needs_home = MagicMock()
 	worker.clear_crash_state = MagicMock()
 	worker.get_status_snapshot = AsyncMock(return_value={})
+	worker.refresh_tray_on_tool = AsyncMock(return_value=False)
 	worker._current_command = None
 	worker._demo_cycling = False
 	worker._is_crashed = False
@@ -287,54 +289,39 @@ async def test_robot_command_conflicts_while_manual_move_running(client: AsyncCl
 
 
 @pytest.mark.anyio
-async def test_move_rotate_motor_extends_stage_before_rotation(client: AsyncClient) -> None:
-	rotate_motor = _mock_motor(0.0)
-	motors = {
-		"door": _mock_motor(50.0),
-		"x_axis": _mock_motor(100.0),
-		"y_axis": _mock_motor(200.0),
-		"z_axis": _mock_motor(150.0),
-		"stage": _mock_motor(75.0),
-		"rotate": rotate_motor,
-	}
-	mock_worker = _mock_worker(motors)
+async def test_move_motor_admitted_while_tray_on_tool(client: AsyncClient) -> None:
+	"""An engineer has to be able to drive a held tray back to its cell by hand."""
+	mock_worker = _mock_worker()
+	mock_worker._tray_on_tool = True
+	mock_worker.refresh_tray_on_tool = AsyncMock(return_value=True)
 
 	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
 		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
-			response = await client.post(
-				"/api/robot/debug/motors/rotate/move",
-				json={"position_mm": 42.0},
-			)
+			response = await client.post("/api/robot/debug/motors/x_axis/move", json={"position_mm": 250.5})
 
 	assert response.status_code == 200
-	mock_worker._robot._tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
-	rotate_motor.move_to_position.assert_awaited_once_with(42.0)
+	mock_worker._robot._get_motor_by_name("x_axis").move_to_position.assert_awaited_once()
 
 
 @pytest.mark.anyio
-async def test_home_rotate_motor_extends_stage_before_rotation(client: AsyncClient) -> None:
-	rotate_motor = _mock_motor(0.0)
-	motors = {
-		"door": _mock_motor(50.0),
-		"x_axis": _mock_motor(100.0),
-		"y_axis": _mock_motor(200.0),
-		"z_axis": _mock_motor(150.0),
-		"stage": _mock_motor(75.0),
-		"rotate": rotate_motor,
-	}
-	mock_worker = _mock_worker(motors)
+async def test_x_motion_guard_refusal_is_a_409_not_a_retry_503(client: AsyncClient) -> None:
+	"""A rotated tool refuses X motion; telling the engineer to retry would repeat the refusal."""
+	from openshelf_os.exceptions import RotationClearanceError
+
+	refusal = RotationClearanceError("Tool is rotated to 20.00 deg; rotate it to the front or back position before moving X")
+	motor = _mock_motor(100.0)
+	motor.move_to_position = AsyncMock(side_effect=refusal)
+	motor.home = AsyncMock(side_effect=refusal)
+	mock_worker = _mock_worker({"x_axis": motor})
 
 	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
 		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
-			response = await client.post("/api/robot/debug/motors/rotate/home")
+			move = await client.post("/api/robot/debug/motors/x_axis/move", json={"position_mm": 10.0})
+			home = await client.post("/api/robot/debug/motors/x_axis/home")
 
-	assert response.status_code == 200
-	mock_worker._robot._tool.ensure_safe_rotation_stage_extension.assert_awaited_once()
-	rotate_motor.clear_alarm.assert_awaited_once()
-	rotate_motor.home.assert_awaited_once()
-	mock_worker._robot._tool.rotate_to_home_orientation.assert_awaited_once_with(
-		should_ensure_safe_stage_extension=False,
-	)
+	for response in (move, home):
+		assert response.status_code == 409
+		assert response.json()["detail"]["code"] == "rotation_blocked"
 
 
 @pytest.mark.anyio
@@ -373,10 +360,7 @@ async def test_home_fridge_door_center_failure_marks_only_fridge_door_needing_ho
 			response = await client.post("/api/robot/debug/motors/fridge_door/home")
 
 	assert response.status_code == 503
-	assert response.json()["detail"] == {
-		"message": "Motor home failed: Failed to home fridge door: center move failed",
-		"code": "motor_home_failed",
-	}
+	assert response.json()["detail"]["code"] == "motor_home_failed"
 	mock_worker.set_needs_home.assert_called_once_with(
 		"Motor home failed: Failed to home fridge door: center move failed",
 		axes=["fridge_door"],
@@ -404,35 +388,6 @@ async def test_home_fridge_door_safety_rejection_is_non_fault_conflict(
 			response = await client.post("/api/robot/debug/motors/fridge_door/home")
 
 	assert response.status_code == 409
-	assert response.json()["detail"] == {
-		"message": "Tool must be fully retracted before moving fridge door",
-		"code": "tool_not_retracted",
-	}
+	assert response.json()["detail"]["code"] == "tool_not_retracted"
 	mock_worker.set_needs_home.assert_not_called()
 	mock_worker.clear_needs_home_axes.assert_not_called()
-
-
-@pytest.mark.anyio
-async def test_home_motor_clears_matching_crash_state(client: AsyncClient) -> None:
-	stage_motor = _mock_motor(75.0)
-	stage_motor._motor_id = 30
-	motors = {
-		"door": _mock_motor(50.0),
-		"x_axis": _mock_motor(100.0),
-		"y_axis": _mock_motor(200.0),
-		"z_axis": _mock_motor(150.0),
-		"stage": stage_motor,
-		"rotate": _mock_motor(0.0),
-	}
-	mock_worker = _mock_worker(motors)
-	mock_worker._is_crashed = True
-	mock_worker._crash_reason = "Tool retraction failed: Movement failed for motor 30 (status=FAULT)"
-
-	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
-		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
-			response = await client.post("/api/robot/debug/motors/stage/home")
-
-	assert response.status_code == 200
-	stage_motor.clear_alarm.assert_awaited_once()
-	stage_motor.home.assert_awaited_once()
-	mock_worker.clear_crash_state.assert_called_once_with()

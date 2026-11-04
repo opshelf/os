@@ -34,6 +34,7 @@ class QueuedOperation(BaseModel):
     timestamp: datetime
     admission_generation: int = Field(default=0, exclude=True)
     command_id: Optional[str] = None
+    correlation_id: Optional[str] = None
     visibility: Optional[str] = None
     location: Optional[dict[str, Any]] = None
     item_data: Optional[dict[str, Any]] = None
@@ -47,6 +48,7 @@ class WorkerStatus(BaseModel):
     error_queue: List[WorkerError] = Field(default_factory=list)
     is_crashed: bool = False
     crash_reason: Optional[str] = None
+    crash_code: Optional[str] = None
     crash_context: Optional[dict[str, Any]] = None
     is_emergency_stopped: bool = False
     is_emergency_stop_active: bool = False
@@ -54,6 +56,7 @@ class WorkerStatus(BaseModel):
     needs_home: bool = False
     needs_home_reason: Optional[str] = None
     needs_home_axes: List[str] = Field(default_factory=list)
+    tray_on_tool: bool = False
 
 
 class WorkerStatusWithQueue(WorkerStatus):
