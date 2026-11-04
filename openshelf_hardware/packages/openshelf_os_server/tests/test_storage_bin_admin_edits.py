@@ -167,7 +167,7 @@ async def _crash_interrupted_return(db, barcode: str) -> tuple[bin_storage.BinSt
     service = bin_storage.BinStorageService(db)
     taken = await service.begin("retrieve", items[0], None)
     await service.transition(taken, "awaiting_operator")
-    await service.close(taken)
+    await service.close(taken, items[0].barcode)
     returned = await service.begin_return(barcode)
     assert await service.prepare_return(returned, [items[1].id, items[2].id]) is True
     await service.handle_robot_result(
@@ -258,9 +258,10 @@ async def test_admin_edits_a_bin_member_while_the_bin_is_outside():
                 .where(StorageBin.barcode == "900000000310")
             )
         ).scalars().all()
-        taken = await service.begin("retrieve", await db.get(Item, member[0].item_id), None)
+        taken_item = await db.get(Item, member[0].item_id)
+        taken = await service.begin("retrieve", taken_item, None)
         await service.transition(taken, "awaiting_operator")
-        await service.close(taken)
+        await service.close(taken, taken_item.barcode)
         remaining = await db.get(Item, member[1].item_id)
 
         denied = None
@@ -533,7 +534,7 @@ async def test_admin_resized_members_do_not_block_an_item_put_back():
         service = bin_storage.BinStorageService(db)
         taken_out = await service.begin("retrieve", items[2], None)
         await service.transition(taken_out, "awaiting_operator")
-        await service.close(taken_out)
+        await service.close(taken_out, items[2].barcode)
 
         # While the bin is out an admin resizes the members it still holds past its capacity.
         # The item taken out goes back in, so only it is checked against the bin.
@@ -579,7 +580,7 @@ async def test_a_member_left_out_of_the_return_does_not_hold_room_for_an_item_pu
         service = bin_storage.BinStorageService(db)
         taken_out = await service.begin("retrieve", items[2], None)
         await service.transition(taken_out, "awaiting_operator")
-        await service.close(taken_out)
+        await service.close(taken_out, items[2].barcode)
 
         # An admin resizes one member while the bin is out. The member the operator
         # leaves unchecked on the return is on its way out, so only the resized
@@ -633,7 +634,7 @@ async def test_a_member_left_out_of_the_return_does_not_set_the_bins_access_leve
         service = bin_storage.BinStorageService(db)
         taken_out = await service.begin("retrieve", items[2], None)
         await service.transition(taken_out, "awaiting_operator")
-        await service.close(taken_out)
+        await service.close(taken_out, items[2].barcode)
 
         # The member the operator leaves unchecked was re-leveled while the bin was
         # out, and the item going back in matches it. The member that stays is level 1,
@@ -665,7 +666,7 @@ async def test_an_item_put_back_must_match_the_members_access_level():
         service = bin_storage.BinStorageService(db)
         taken_out = await service.begin("retrieve", items[2], None)
         await service.transition(taken_out, "awaiting_operator")
-        await service.close(taken_out)
+        await service.close(taken_out, items[2].barcode)
         await storage_router.update_item(
             storage_router.ItemUpdateRequest(barcode=items[2].barcode, access_level_id=2),
             session=db,

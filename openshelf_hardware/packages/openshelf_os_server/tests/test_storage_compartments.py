@@ -7,7 +7,7 @@ from openshelf_os.config.settings import StorageBinSettings
 from openshelf_os_server.core import bin_storage
 from openshelf_os_server.core.bin_storage import BinStorageService
 from openshelf_os_server.core.storage import StorageService
-from openshelf_os_server.database.models import StorageBin, StorageBinItem, StorageBinWorkflow
+from openshelf_os_server.database.models import Item, StorageBin, StorageBinItem, StorageBinWorkflow
 from openshelf_os_server.database.session import AsyncSessionLocal
 
 
@@ -36,7 +36,7 @@ async def item(db, number, width=40, length=70, height=90):
 
 async def finish(service, workflow, present):
     await service.transition(workflow, "awaiting_operator")
-    await service.close(workflow)
+    await service.close(workflow, (await service.session.get(Item, workflow.item_id)).barcode if workflow.operation == "retrieve" else None)
     tray_row = await service.session.get(StorageBin, workflow.bin_id)
     returned = await service.begin_return(tray_row.barcode)
     selected = [entry["id"] for entry in (await service.serialize_bin(tray_row))["items"]]

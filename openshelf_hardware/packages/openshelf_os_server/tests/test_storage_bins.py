@@ -220,7 +220,7 @@ async def test_return_rejects_occupied_tray_home(monkeypatch) -> None:
         checkout = await service.begin("retrieve", items[0], None)
         assert checkout is not None
         await service.transition(checkout, "awaiting_operator")
-        await service.close(checkout)
+        await service.close(checkout, items[0].barcode)
         returned = await service.begin_return(barcode)
         assert returned is not None
         returned_id = returned.id
@@ -286,7 +286,7 @@ async def test_return_requires_occupancy_then_enqueues_once(monkeypatch):
         service = BinStorageService(db)
         w = await service.begin("retrieve", items[0], None)
         await service.transition(w, "awaiting_operator")
-        await service.close(w)
+        await service.close(w, items[0].barcode)
         returned = await service.begin_return(trays[0].barcode)
         request = storage_router.BinWorkflowReturn(confirmed_item_ids=[])
         worker.get_cached_scale_status = lambda: SimpleNamespace(occupied=False)
@@ -313,7 +313,7 @@ async def test_return_close_and_store_use_persisted_state_across_sessions(monkey
         service = BinStorageService(close_db)
         checkout = await service.begin("retrieve", items[0], None)
         await service.transition(checkout, "awaiting_operator")
-        await service.close(checkout)
+        await service.close(checkout, items[0].barcode)
         returned = await service.begin_return(trays[0].barcode)
         workflow_id, tray_id = returned.id, trays[0].id
         selected_id, omitted_id = items[0].id, items[1].id
@@ -375,11 +375,12 @@ async def test_stale_checkout_close_does_not_reapply_membership_after_return(ope
         checkout = await service.begin(operation, target, None)
         await service.transition(checkout, "awaiting_operator")
         target_id, tray_id = target.id, trays[0].id
+        scan = target.barcode if operation == "retrieve" else None
 
         async with AsyncSessionLocal() as winner_db:
             winner = BinStorageService(winner_db)
             current = await winner_db.get(StorageBinWorkflow, checkout.id)
-            await winner.close(current)
+            await winner.close(current, scan)
             returned = await winner.begin_return("900000008000")
             # Reverse the checkout's membership change during a later return.
             assert await winner.prepare_return(
@@ -389,8 +390,8 @@ async def test_stale_checkout_close_does_not_reapply_membership_after_return(ope
             completed_history = current.history
 
         assert checkout.state == "awaiting_operator"
-        await service.close(checkout)
-        await service.close(checkout)
+        await service.close(checkout, scan)
+        await service.close(checkout, scan)
         assert checkout.state == "completed"
         assert checkout.history == completed_history
         member = await service.item_bin(target_id)
@@ -410,7 +411,7 @@ async def test_return_rejects_unexpected_and_cross_tray_items_before_motion():
         service = BinStorageService(db)
         w = await service.begin("retrieve", items[0], None)
         await service.transition(w, "awaiting_operator")
-        await service.close(w)
+        await service.close(w, items[0].barcode)
         returned = await service.begin_return(trays[0].barcode)
         rid, other_id = returned.id, items[2].id
         with pytest.raises(BinWorkflowConflict, match="never in this bin|compartment"):
@@ -444,7 +445,7 @@ async def test_restart_finalizes_recorded_physical_return_without_motion():
         service = BinStorageService(db)
         w = await service.begin("retrieve", items[0], None)
         await service.transition(w, "awaiting_operator")
-        await service.close(w)
+        await service.close(w, items[0].barcode)
         returned = await service.begin_return(trays[0].barcode)
         await service.prepare_return(returned, [])
         returned.resolution = {**returned.resolution, "physical_return_completed": True}
@@ -580,7 +581,7 @@ async def test_crash_reset_records_contents_confirmed_for_an_interrupted_return(
         service = BinStorageService(db)
         taken = await service.begin("retrieve", items[0], None)
         await service.transition(taken, "awaiting_operator")
-        await service.close(taken)
+        await service.close(taken, items[0].barcode)
         returned = await service.begin_return(trays[0].barcode)
         # The operator put the item back and removed the other one before the return crashed.
         assert await service.prepare_return(returned, [items[0].id])
@@ -635,7 +636,7 @@ async def test_crash_recovery_endpoint_leaves_conflicting_return_outside(monkeyp
 async def _checked_out_tray(service, items, trays):
     checkout = await service.begin("retrieve", items[0], None)
     await service.transition(checkout, "awaiting_operator")
-    await service.close(checkout)
+    await service.close(checkout, items[0].barcode)
     return trays[0]
 
 
@@ -676,7 +677,7 @@ async def test_deleted_tray_item_is_not_presumed_back_in_its_tray():
         service = BinStorageService(db)
         taken = await service.begin("retrieve", items[2], None)
         await service.transition(taken, "awaiting_operator")
-        await service.close(taken)
+        await service.close(taken, items[2].barcode)
         deleted_id = items[2].id
         await storage_router.delete_item(
             storage_router.BarcodeRequest(barcode=items[2].barcode),
@@ -701,7 +702,7 @@ async def test_scanned_return_after_a_retrieval_does_not_presume_the_taken_item_
         service = BinStorageService(db)
         taken = await service.begin("retrieve", items[0], None)
         await service.transition(taken, "awaiting_operator")
-        await service.close(taken)
+        await service.close(taken, items[0].barcode)
 
         returned = await service.begin_return(trays[0].barcode)
         contents = {c["id"]: c["confirmed"] for c in (await service.serialize_workflow(returned))["contents"]}
@@ -736,7 +737,7 @@ async def test_scanned_return_confirms_a_retrieved_item_put_back_by_a_later_retu
         service = BinStorageService(db)
         taken = await service.begin("retrieve", items[0], None)
         await service.transition(taken, "awaiting_operator")
-        await service.close(taken)
+        await service.close(taken, items[0].barcode)
         put_back = await service.begin_return(trays[0].barcode)
         await service.prepare_return(put_back, [items[0].id, items[1].id])
         await service.complete_return(put_back)
@@ -756,7 +757,7 @@ async def test_import_return_after_a_settled_retrieval_does_not_restore_the_take
         service = BinStorageService(db)
         taken = await service.begin("retrieve", items[0], None)
         await service.transition(taken, "awaiting_operator")
-        await service.close(taken)
+        await service.close(taken, items[0].barcode)
         settled = await service.begin_return(trays[0].barcode)
         await service.prepare_return(settled, settled.resolution["confirmed_item_ids"])
         await service.complete_return(settled)
@@ -783,7 +784,7 @@ async def test_import_return_after_a_recovered_retrieval_does_not_restore_the_ta
         service = BinStorageService(db)
         taken = await service.begin("retrieve", items[0], None)
         await service.transition(taken, "awaiting_operator")
-        await service.close(taken)
+        await service.close(taken, items[0].barcode)
         trays[0].status = "at_home"
         await db.commit()
         imported = await StorageService(db).create_item(
@@ -797,3 +798,50 @@ async def test_import_return_after_a_recovered_retrieval_does_not_restore_the_ta
         returned = await service.begin_return(trays[0].barcode)
 
         assert items[0].id not in returned.resolution["candidate_item_ids"]
+
+
+@pytest.mark.anyio
+async def test_a_take_closed_without_a_removal_scan_leaves_the_item_in_the_bin():
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        taken = await service.begin("retrieve", items[0], None)
+        await service.transition(taken, "awaiting_operator")
+        await storage_router.close_tray_workflow(taken.id, None, db)
+        assert taken.state == "cancelled"
+        assert (await service.item_bin(items[0].id)).id == trays[0].id
+        # Returning the tray presumes the untaken item is still inside.
+        returned = await service.begin_return(trays[0].barcode)
+        assert set(returned.resolution["confirmed_item_ids"]) == {items[0].id, items[1].id}
+
+
+@pytest.mark.anyio
+async def test_a_take_is_recorded_only_with_the_taken_items_label():
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        taken = await service.begin("retrieve", items[0], None)
+        await service.transition(taken, "awaiting_operator")
+        workflow_id, item_id, label, other_label = (
+            taken.id, items[0].id, items[0].barcode, items[1].barcode
+        )
+        with pytest.raises(HTTPException) as refused:
+            await storage_router.close_tray_workflow(
+                workflow_id, storage_router.BinWorkflowClose(scanned_barcode=other_label), db
+            )
+        assert refused.value.status_code == 409
+        assert await service.item_bin(item_id) is not None
+        taken = await db.get(StorageBinWorkflow, workflow_id)
+        assert taken.state == "awaiting_operator"
+
+        await storage_router.close_tray_workflow(
+            workflow_id,
+            storage_router.BinWorkflowClose(
+                scanned_barcode=label, mismatched_barcodes=[other_label]
+            ),
+            db,
+        )
+        assert taken.state == "completed"
+        assert await service.item_bin(item_id) is None
+        scan = taken.resolution["removal_scan"]
+        assert (scan["barcode"], scan["mismatched_barcodes"]) == (label, [other_label])
