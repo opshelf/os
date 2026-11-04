@@ -50,7 +50,7 @@ def _fit_text(text: str, width: int) -> tuple[str, ImageFont.FreeTypeFont]:
 def render_label(payload: str, location: str | None = None) -> Image.Image:
     """Render a Code 128 barcode using the layout tuned on the T9E-US.
 
-    The payload is printed as a human-readable line under the bars, joined by a mid dot to
+    The payload is printed as a human-readable line above the bars, joined by a mid dot to
     the storage location when given (bin labels).
     """
     code = barcode.get("code128", payload, writer=ImageWriter())
@@ -80,12 +80,12 @@ def render_label(payload: str, location: str | None = None) -> Image.Image:
 
     label = Image.new("L", (LABEL_WIDTH_DOTS, LABEL_HEIGHT_DOTS), 255)
     x = LEFT_MARGIN_DOTS + (available_width - barcode_image.width) // 2
-    y = TOP_MARGIN_DOTS + (available_height - barcode_image.height) // 2
+    y = TOP_MARGIN_DOTS + text_height + (available_height - barcode_image.height) // 2
     label.paste(barcode_image, (x, y))
 
+    # Text sits above the bars so it stays visible over the back lip of a shelf.
     text_x = LEFT_MARGIN_DOTS + (available_width - font.getlength(text)) / 2
-    text_y = TOP_MARGIN_DOTS + available_height + TEXT_GAP_DOTS
-    ImageDraw.Draw(label).text((text_x, text_y), text, font=font, fill=0)
+    ImageDraw.Draw(label).text((text_x, TOP_MARGIN_DOTS), text, font=font, fill=0)
     return label
 
 
