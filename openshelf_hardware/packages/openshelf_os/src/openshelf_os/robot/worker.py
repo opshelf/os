@@ -230,6 +230,12 @@ def _normalize_command(command: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
         return None
 
     command_name = command.get("command")
+    # Screens wait for a reset's home or recover to show up and finish, so those stay visible.
+    if command_name in {"home", "recover"}:
+        reset: Dict[str, Any] = {"command": command_name}
+        if command.get("axes"):
+            reset["axes"] = list(command["axes"])
+        return reset
     if command_name not in {"store_item", "retrieve_item"}:
         return None
 
