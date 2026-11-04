@@ -120,9 +120,9 @@ class USBPrinter:
                 raise OSError(errno.EIO, "short write to printer")
             total += n
 
-    def print_label(self, payload: str, *, feed_dots: int) -> None:
+    def print_label(self, payload: str, *, feed_dots: int, location: str | None = None) -> None:
         """Write a Code 128 label job with the configured feed distance to the printer."""
-        self._write_all(build_label_job(payload, feed_dots=feed_dots))
+        self._write_all(build_label_job(payload, feed_dots=feed_dots, location=location))
 
 
 router = APIRouter(tags=["printer"])
@@ -219,10 +219,21 @@ async def get_printer_status() -> PrinterStatusResponse:
     )
 
 
+def _bin_home_label(payload: str) -> str | None:
+    """Home cell of the multi-item bin with this barcode, as ``F:shelf:cell``."""
+    for bin_setting in get_root_config().storage.bins:
+        if bin_setting.barcode == payload:
+            home = bin_setting.home_location
+            side = "F" if home.side == "front_module" else "B"
+            return f"{side}:{home.shelf_idx}:{home.cell_idx}"
+    return None
+
+
 def _print_payload(payload: str) -> bool:
     if get_operating_mode() == OperatingMode.mock:
         return True
 
+    location = _bin_home_label(payload)
     settings = get_settings()
     if settings.printer.enabled is False:
         logger.info("Printer disabled; skipping label print for %s", payload)
@@ -230,7 +241,7 @@ def _print_payload(payload: str) -> bool:
 
     with printer_io_lock:
         try:
-            printer.print_label(payload, feed_dots=settings.printer.feed_dots)
+            printer.print_label(payload, feed_dots=settings.printer.feed_dots, location=location)
         finally:
             printer.close()
     return True
@@ -248,9 +259,10 @@ async def print_label(request: PrintLabelRequest) -> PrintLabelResponse:
 
     Requires `printer:print` or the relay service credential. Takes the barcode in the
     request body, so every customer barcode is printable. The device renders it as a Code
-    128 label; mock mode simulates printing without a physical artifact. This operation has
-    no idempotency key; a retry may print another label. A printer write failure returns
-    `503`.
+    128 label with the barcode as text below it; a multi-item bin's label adds its home
+    cell (e.g. `F:0:0`). Mock mode simulates printing without a physical artifact. This
+    operation has no idempotency key; a retry may print another label. A printer write
+    failure returns `503`.
     """
     return PrintLabelResponse(
         message="success",
