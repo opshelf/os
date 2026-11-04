@@ -67,7 +67,8 @@ def render_label(payload: str, location: str | None = None) -> Image.Image:
     ).convert("L")
 
     available_width = LABEL_WIDTH_DOTS - LEFT_MARGIN_DOTS - RIGHT_MARGIN_DOTS
-    text, font = _fit_text(f"{payload} · {location}" if location else payload, available_width)
+    # One dot narrower: the text is double-struck one dot to the right.
+    text, font = _fit_text(f"{payload} · {location}" if location else payload, available_width - 1)
     text_height = font.getbbox("Ag")[3] + TEXT_GAP_DOTS
     available_height = LABEL_HEIGHT_DOTS - TOP_MARGIN_DOTS - BOTTOM_MARGIN_DOTS - text_height
     source_width, source_height = barcode_image.size
@@ -86,8 +87,11 @@ def render_label(payload: str, location: str | None = None) -> Image.Image:
     label.paste(barcode_image, (x, y))
 
     # Text sits above the bars so it stays visible over the back lip of a shelf.
-    text_x = LEFT_MARGIN_DOTS + (available_width - font.getlength(text)) / 2
-    ImageDraw.Draw(label).text((text_x, TOP_MARGIN_DOTS), text, font=font, fill=0)
+    # Double-striking one dot apart thickens the strokes without closing the zeros' counters.
+    text_x = LEFT_MARGIN_DOTS + (available_width - 1 - font.getlength(text)) / 2
+    draw = ImageDraw.Draw(label)
+    for dx in (0, 1):
+        draw.text((text_x + dx, TOP_MARGIN_DOTS), text, font=font, fill=0)
     return label
 
 
