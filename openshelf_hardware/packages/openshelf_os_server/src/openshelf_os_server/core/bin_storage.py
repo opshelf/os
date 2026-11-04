@@ -1272,7 +1272,14 @@ class BinStorageService:
         await self.session.commit()
         return workflow
 
-    async def close(self, workflow: StorageBinWorkflow) -> None:
+    async def close(
+        self,
+        workflow: StorageBinWorkflow,
+        scanned_barcode: Optional[str] = None,
+        mismatched_barcodes: Sequence[str] = (),
+    ) -> None:
+        """Finish a take or place instruction. A take is recorded only with a scan of the taken
+        item's label; without one it is cancelled and the item stays in the bin."""
         if workflow.state in {"completed", "cancelled", "failed"}:
             return
         # Claim the persisted instruction before changing its state or membership.
@@ -1322,10 +1329,27 @@ class BinStorageService:
                 )
             item.enrollment_weight_pending = False
             item.enrollment_storage_completed = True
-        elif member is not None:
-            if member.bin_id != tray.id:
-                raise BinWorkflowConflict("This item is already in another bin.")
-            await self.session.delete(member)
+        else:
+            if scanned_barcode is None:
+                await self.transition(workflow, "cancelled", "closed without a removal scan")
+                return
+            if scanned_barcode != item.barcode:
+                await self.session.rollback()
+                raise BinWorkflowConflict("The scanned label is not the item to take.")
+            if member is not None:
+                if member.bin_id != tray.id:
+                    raise BinWorkflowConflict("This item is already in another bin.")
+                await self.session.delete(member)
+            workflow.resolution = {
+                **(workflow.resolution or {}),
+                "removal_scan": {
+                    "barcode": scanned_barcode,
+                    "mismatched_barcodes": list(mismatched_barcodes),
+                    "at": _utc_now().isoformat(),
+                },
+            }
+            await self.transition(workflow, "completed", "removal confirmed by scan")
+            return
         await self.transition(workflow, "completed")
 
     async def begin_return(

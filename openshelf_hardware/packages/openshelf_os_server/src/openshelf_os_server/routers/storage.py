@@ -226,6 +226,11 @@ class TrayBarcode(BaseModel):
     barcode: str = Field(min_length=1, max_length=BARCODE_MAX_LENGTH)
 
 
+class BinWorkflowClose(BaseModel):
+    scanned_barcode: Optional[str] = Field(default=None, min_length=1, max_length=BARCODE_MAX_LENGTH, description="The taken item's label, scanned by the operator. Required to record a take.")
+    mismatched_barcodes: List[str] = Field(default_factory=list, max_length=50, description="Other labels scanned before the right one, kept for audit.")
+
+
 class StorageCellResponse(BaseModel):
     """Response payload for a storage cell."""
 
@@ -1040,12 +1045,14 @@ async def begin_tray_return(request: TrayBarcode, session: AsyncSession = Depend
 
 
 @router.post("/bin-workflows/{workflow_id}/close", responses=response_docs(model=BinWorkflowEnvelope, errors=(401, 403, 404, 409, 422)), dependencies=[Depends(require_permissions("storage:write"))])
-async def close_tray_workflow(workflow_id: str, session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
-    """Finish a take or place instruction and leave its tray outside. Closing a return dialog cancels that return without changing contents or moving hardware. No IO occupancy is required."""
+async def close_tray_workflow(workflow_id: str, request: BinWorkflowClose | None = None,
+                              session: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Finish a take or place instruction and leave its tray outside. A take is recorded only with `scanned_barcode` matching the item; without it the take is cancelled and the item stays in the bin, and any other label is refused with 409. Closing a return dialog cancels that return without changing contents or moving hardware. No IO occupancy is required."""
     service = BinStorageService(session)
     workflow = await _tray_workflow(session, workflow_id)
+    request = request or BinWorkflowClose()
     try:
-        await service.close(workflow)
+        await service.close(workflow, request.scanned_barcode, request.mismatched_barcodes)
     except BinWorkflowConflict as exc:
         raise api_error(409, "bin_workflow_conflict", str(exc)) from exc
     if get_operating_mode() == common.OperatingMode.mock:
