@@ -379,6 +379,8 @@
 	// The backdrop is pointer-events:none, so a drag that starts on the panel and ends in the
 	// dimmed area (or vice versa) still dispatches one click whose target is a shared
 	// ancestor; the mousedown and mouseup flags are what tell the two apart.
+	// Toasts float over the page, so dismissing one is not a click outside the grid.
+	const GRID_SURFACES = '.shelf-list, .selection-overlay, .toast-stack';
 	let outsideGridPress = false;
 	let outsideGridRelease = false;
 
@@ -387,7 +389,7 @@
 		if (target === null) {
 			return false;
 		}
-		return target.closest('.shelf-list, .selection-overlay') === null;
+		return target.closest(GRID_SURFACES) === null;
 	}
 
 	function didOutsideMouseDown(event: MouseEvent): void {
@@ -410,7 +412,7 @@
 		if (target === null) {
 			return;
 		}
-		if (target.closest('.shelf-list, .selection-overlay') !== null) {
+		if (target.closest(GRID_SURFACES) !== null) {
 			return;
 		}
 		if (target.closest('button, a') !== null) {
@@ -578,9 +580,20 @@
 		if (isPrintingTrayLabel === true) {
 			return;
 		}
+		// The label's home cell comes from the saved bin, so only its barcode prints.
+		const barcode = trayBarcode.trim();
+		const saved = currentTray;
+		if (saved === null) {
+			postToast('error', 'Save the bin before printing; this cell has no saved multi-item bin.');
+			return;
+		}
+		if (barcode !== saved.barcode) {
+			postToast('error', `Save the bin before printing; the saved barcode for this cell is ${saved.barcode}.`);
+			return;
+		}
 		isPrintingTrayLabel = true;
 		try {
-			const result = await printPrinterLabel(trayBarcode.trim());
+			const result = await printPrinterLabel(barcode);
 			if (result.printed === false) {
 				postToast('error', 'The printer is turned off, so the label was not printed.');
 			} else {
@@ -1935,8 +1948,7 @@
 							type="button"
 							class="tray-barcode-button"
 							onclick={() => void didPrintTrayLabel()}
-							disabled={currentTray === null || trayDirty() || busy === true || isPrintingTrayLabel === true}
-							title={currentTray === null || trayDirty() ? 'Save the bin first; the label prints its cell.' : undefined}
+							disabled={/^[\x20-\x7E]{1,255}$/.test(trayBarcode.trim()) === false || busy === true || isPrintingTrayLabel === true}
 						>
 							print label
 						</button>
