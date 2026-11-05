@@ -32,6 +32,11 @@ class _FtdiI2CBus:
         self._i2c = raw_i2c
         self._lock = threading.Lock()
 
+    # Called by the adafruit TCA9548A and bus-device drivers, not by this repo:
+    # dead-code scans report it unused (removed once in 1f83fa04).
+    def try_lock(self) -> bool:
+        return self._lock.acquire(blocking=False)
+
     def unlock(self) -> None:
         if self._lock.locked() is True:
             self._lock.release()
