@@ -240,6 +240,14 @@ class RpiGpioBackend:
                         logger.debug("Failed to remove RPi GPIO event detect", extra={"pin": pin})
 
             for pin in list(self._configured):
+                # Outputs keep driving their last level (GpioManager.close() has
+                # already written any shutdown value): cleanup() floats the pin,
+                # and on boards that switch power relays from Pi pins that drops
+                # every rail on each API restart.
+                spec = self._configured_specs.get(pin)
+                if spec is not None and spec.direction == "output":
+                    continue
+
                 try:
                     gpio.cleanup(pin)
                 except Exception:
