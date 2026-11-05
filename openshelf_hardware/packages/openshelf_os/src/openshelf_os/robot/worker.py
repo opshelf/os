@@ -405,6 +405,8 @@ class RobotWorker:
         self._current_operation: Optional[QueuedOperation] = None
         self._command_started_at: Optional[float] = None
         self._running = False
+        # The one hardware-releasing teardown; once it exists the worker cannot start again.
+        self._shutdown_task: Optional[asyncio.Task[None]] = None
         self._command_queue: asyncio.Queue[QueuedOperation] = asyncio.Queue()
         self._error_queue: List[WorkerError] = []
         self._queued_commands: List[QueuedOperation] = []
@@ -1974,6 +1976,8 @@ class RobotWorker:
 
     async def start(self) -> None:
         logger.info("RobotWorker.start() called, _running=%s", self._running)
+        if self._shutdown_task is not None:
+            raise RuntimeError("Robot hardware was released by shutdown")
         if self._running:
             logger.info("RobotWorker already running, returning early")
             return
@@ -2004,7 +2008,20 @@ class RobotWorker:
         self._robot.release_motion_safety()
         logger.info("RobotWorker.start() complete")
 
+    @property
+    def hardware_released(self) -> bool:
+        return self._shutdown_task is not None
+
     async def shutdown(self) -> None:
+        # Shielded so a cancelled caller (a /stop request cut off by the server shutdown) cannot
+        # abort the teardown; every caller awaits the same run, and a failed run is retried.
+        task = self._shutdown_task
+        if task is None or (task.done() is True and (task.cancelled() is True or task.exception() is not None)):
+            task = asyncio.create_task(self._shutdown(), name="robot-worker-shutdown")
+            self._shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown(self) -> None:
         logger.info("Shutting down robot worker")
         self._running = False
 

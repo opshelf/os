@@ -230,6 +230,7 @@ CODE_MESSAGES: dict[str, str] = {
 	"robot_crashed": "The robot stopped on a fault. Inspect it and home it before running again.",
 	"robot_disabled": "The robot is not set up to move. Check its settings.",
 	"robot_not_initialized": "The robot has not started. Check the robot status.",
+	"robot_restart_required": "The robot was shut down. Restart the service to start it again.",
 	"role_in_use": "This role still has operators assigned to it. Reassign them first.",
 	"role_name_in_use": "That role name is already in use.",
 	"role_not_found": "That role no longer exists.",

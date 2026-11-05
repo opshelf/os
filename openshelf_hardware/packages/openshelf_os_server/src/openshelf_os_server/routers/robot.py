@@ -1090,9 +1090,12 @@ async def start_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) 
 
     Starts worker processing; requires `robot:control`. This is a worker lifecycle
     operation, not command submission. Returns `409` while laser auto-calibration is active
-    and `503` if the robot is unavailable.
+    and `503` if the robot is unavailable. Returns `409` with `robot_restart_required` after
+    `POST /api/robot/stop`, which releases the robot hardware until the service restarts.
     """
     await _ensure_laser_auto_calibration_not_running()
+    if worker.hardware_released is True:
+        raise api_error(status.HTTP_409_CONFLICT, "robot_restart_required", "")
     await worker.start()
     return SuccessResponse()
 
@@ -1110,7 +1113,8 @@ async def start_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) 
 async def stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -> SuccessResponse:
     """Shut down the robot worker.
 
-    Waits for worker shutdown; requires `robot:control`. This differs from submitting a
+    Waits for worker shutdown, which releases the robot hardware, so the worker starts again only
+    after a service restart; requires `robot:control`. This differs from submitting a
     queued `stop` command and is not a physical emergency stop. Unavailable during laser
     auto-calibration.
     """
