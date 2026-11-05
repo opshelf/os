@@ -379,6 +379,8 @@
 	// The backdrop is pointer-events:none, so a drag that starts on the panel and ends in the
 	// dimmed area (or vice versa) still dispatches one click whose target is a shared
 	// ancestor; the mousedown and mouseup flags are what tell the two apart.
+	// Toasts float over the page, so dismissing one is not a click outside the grid.
+	const GRID_SURFACES = '.shelf-list, .selection-overlay, .toast-stack';
 	let outsideGridPress = false;
 	let outsideGridRelease = false;
 
@@ -387,7 +389,7 @@
 		if (target === null) {
 			return false;
 		}
-		return target.closest('.shelf-list, .selection-overlay') === null;
+		return target.closest(GRID_SURFACES) === null;
 	}
 
 	function didOutsideMouseDown(event: MouseEvent): void {
@@ -410,7 +412,7 @@
 		if (target === null) {
 			return;
 		}
-		if (target.closest('.shelf-list, .selection-overlay') !== null) {
+		if (target.closest(GRID_SURFACES) !== null) {
 			return;
 		}
 		if (target.closest('button, a') !== null) {
