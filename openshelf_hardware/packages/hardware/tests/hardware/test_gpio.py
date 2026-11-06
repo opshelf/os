@@ -157,3 +157,55 @@ def test_input_change_log_ends_a_clean_edge_pair_with_the_final_state(monkeypatc
 
     messages = [record.getMessage() for record in caplog.records]
     assert messages == ["estop: LOW", "estop: HIGH (1 more change since the last line)"]
+
+
+class FakeRpiGpio:
+    BCM = "BCM"
+    IN = "in"
+    OUT = "out"
+    HIGH = 1
+    LOW = 0
+    PUD_OFF = "off"
+    PUD_UP = "up"
+    PUD_DOWN = "down"
+
+    def __init__(self) -> None:
+        self.levels: dict[int, int] = {}
+        self.cleaned: list[int] = []
+
+    def setmode(self, _mode) -> None: ...
+
+    def setwarnings(self, _flag) -> None: ...
+
+    def setup(self, pin: int, _direction, pull_up_down=None, initial=None) -> None:
+        if initial is not None:
+            self.levels[pin] = initial
+
+    def output(self, pin: int, level: int) -> None:
+        self.levels[pin] = level
+
+    def input(self, pin: int) -> int:
+        return self.levels.get(pin, 0)
+
+    def cleanup(self, pin: int) -> None:
+        self.cleaned.append(pin)
+        self.levels.pop(pin, None)
+
+
+def test_rpi_close_keeps_power_relay_outputs_driven(monkeypatch) -> None:
+    # N3 boards switch the drive power relays straight from Pi pins; floating
+    # them on close would cut every rail on each API restart.
+    from hardware.gpio import rpi
+
+    fake = FakeRpiGpio()
+    monkeypatch.setattr(rpi, "GPIO", fake)
+    backend = rpi.RpiGpioBackend()
+    relay = GpioPinSpec(name="pwr_out0", board="rpi", pin=24, direction="output", inverted=True, initial=False)
+    estop = GpioPinSpec(name="estop", board="rpi", pin=18, direction="input")
+    backend.setup_output(relay)
+    backend.setup_input(estop)
+
+    backend.close()
+
+    assert fake.levels[24] == fake.HIGH
+    assert fake.cleaned == [18]
