@@ -6,7 +6,7 @@ import time
 import openshelf_os.common as c
 
 from enum import Enum
-from typing import Optional, Literal, List, Any, Awaitable, Callable, Sequence
+from typing import Optional, Literal, List, Any, Awaitable, Callable, Collection, Sequence
 from openshelf_os.common import Motor as MotorConfig
 from hardware.controller import SharedModbusController as Controller
 from hardware.laser import LaserSensor
@@ -278,6 +278,7 @@ class Tool:
         self._laser_enabled = self._params.laser.enabled
         self._laser_ready = False
         self._laser = None
+        self._failed_config_motors: List[Motor] = []
 
         if self._laser_enabled is True:
             laser_cfg = self._params.laser
@@ -313,7 +314,9 @@ class Tool:
             self._logger.warning("init motor configure failed: %s", e, exc_info=e)
             return False
 
-    def _mark_configured_motors_ready(self, failed_config_motors: List[Motor]) -> None:
+    def _mark_configured_motors_ready(
+        self, failed_config_motors: List[Motor], failed_components: Collection[str] = ()
+    ) -> None:
         for component, motor in (
             ("x_axis", self._mx),
             ("y_axis", self._my),
@@ -321,7 +324,11 @@ class Tool:
             ("stage", self._ms),
             ("rotate", self._mr),
         ):
-            if motor is None or self._did_motor_configure_fail(motor, failed_config_motors) is True:
+            if (
+                motor is None
+                or component in failed_components
+                or self._did_motor_configure_fail(motor, failed_config_motors) is True
+            ):
                 continue
             self._emit_init(component, "ready")
 
@@ -345,6 +352,7 @@ class Tool:
                 did_configure = await self._configure_axis_isolated(motor, isolate)
                 if did_configure is False and motor is not None:
                     failed_config_motors.append(motor)
+            self._failed_config_motors = failed_config_motors
 
             if self._laser is not None:
                 self._emit_init("laser", "configuring")
@@ -372,6 +380,17 @@ class Tool:
             await self._handle_fault(e)
 
             raise MotorError(f"Tool configuration failed: {str(e)}") from e
+
+    async def startup_home(self, isolate: bool = False) -> None:
+        """Home every configured axis after configure(home_on_init=False)."""
+        await self.home(
+            isolate=isolate,
+            failed_config_motors=self._failed_config_motors,
+            y_pre_home_clearance_mm=Y_STARTUP_HOME_CLEARANCE_MM,
+        )
+
+    def mark_configured_motors_ready(self, failed_components: Collection[str] = ()) -> None:
+        self._mark_configured_motors_ready(self._failed_config_motors, failed_components)
 
     @property
     def is_tray_held(self) -> bool:

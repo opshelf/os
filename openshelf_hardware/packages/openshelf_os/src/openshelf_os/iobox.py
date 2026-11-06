@@ -525,6 +525,14 @@ class IOBox:
     def get_door_state(self) -> Optional[bool]:
         return self._door_open
 
+    async def stop_door(self) -> None:
+        if self._md is not None:
+            await self._md.stop()
+
+    def mark_door_ready(self) -> None:
+        if self._md is not None and self._status is not IOBoxStatus.ERROR:
+            self._emit_init("door", "ready")
+
     def _door_zero_clamp_mm(self) -> float:
         """How far below zero a closed door may read.
 

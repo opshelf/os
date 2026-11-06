@@ -1493,6 +1493,9 @@ class Motor():
             await self.set_param("Position High", pulse[0])
             await self.set_param("Position Low", pulse[1])
 
+            if self._safety:
+                await self._safety.wait_clear()
+
             self._safety_interrupted_move = False
             self._clear_pending_motion()
             await self._verify_brake_output_before_motion_trigger()
@@ -2415,6 +2418,7 @@ class Motor():
         restore_peak_current: int | None = None
         restore_following_error = False
         home_failed = False
+        safety_stopped = False
 
         try:
             self._emit_init("homing")
@@ -2446,6 +2450,10 @@ class Motor():
             except Exception as e:
                 raise MotorConfigError(f"Failed during pre-home approach: {str(e)}") from e
 
+            # Wait before the homing overrides go on, so a blocked axis does not sit on them.
+            if self._safety:
+                await self._safety.wait_clear()
+
             try:
                 await self._prepare_home_motion(home_rpm, home_dir)
             except Exception as e:
@@ -2464,6 +2472,10 @@ class Motor():
                 )
                 await self._set_and_verify_peak_current(int(homing_peak_current))
 
+            if self._safety:
+                await self._safety.wait_clear()
+
+            self._safety_interrupted_move = False
             try:
                 await self._start_path_zero()
             except Exception as e:
@@ -2475,6 +2487,16 @@ class Motor():
 
             if self._on_move_complete is not None:
                 self._on_move_complete(elapsed)
+
+            if self._safety_interrupted_move is True:
+                # The pause stopped the drive short of its limit and the seek is not
+                # restarted, so zeroing here would set home wherever the axis stopped.
+                self._safety_interrupted_move = False
+                self._is_homed = False
+                safety_stopped = True
+                raise MotorError(
+                    f"Homing of motor {self._motor_id} was stopped by the safety guard and did not complete"
+                )
 
             if stop == MotorStatus.STOPPED:
                 is_y_axis = getattr(self._params, "motor_name", None) == "y_axis"
@@ -2534,11 +2556,12 @@ class Motor():
             home_failed = True
             if isinstance(e, MotorTimeoutError):
                 self._is_homed = False
-            reason = (
-                "Homing timed out. Check for an obstruction, then home it again."
-                if isinstance(e, MotorTimeoutError)
-                else "Homing failed. Check the motor before homing it again."
-            )
+            if safety_stopped is True:
+                reason = "Homing was stopped by a safety guard. Clear it, then home it again."
+            elif isinstance(e, MotorTimeoutError):
+                reason = "Homing timed out. Check for an obstruction, then home it again."
+            else:
+                reason = "Homing failed. Check the motor before homing it again."
             self._emit_init("failed", detail="home", reason=reason)
             if not isinstance(e, (MotorError, MotorConfigError, MotorTimeoutError)):
                 raise MotorError(f"Unexpected error during homing: {str(e)}") from e
