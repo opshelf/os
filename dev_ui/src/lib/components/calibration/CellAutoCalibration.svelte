@@ -602,15 +602,41 @@
 
 		// The only request that may start motion. The stream, its reconnects and its error
 		// probes all subscribe only, so a dropped connection can never start a second run.
-		// An undelivered request starts nothing, so it must not fall through to a subscribe.
 		await refreshStreamAuthentication();
 		const startError = await getLaserAutoCalibrationStreamError(activeRequestedScope, {
 			reportNetworkFailure: true
 		});
 
 		if (startError !== null) {
-			isConnecting = false;
-			error = startError.message;
+			// Status 0 is a lost response, not a refusal: the server may have started the run
+			// before the connection dropped. Attach (subscribe only) to a live run of this scope
+			// so it keeps its stream and Abort; never send a second start-capable request.
+			let startedSnapshot: LaserAutoCalibrationSnapshot | null = null;
+
+			if (startError.status === 0) {
+				try {
+					const status = await getLaserAutoCalibrationStatus();
+
+					if (
+						shouldAutoConnect(status) === true &&
+						buildLaserAutoCalibrationStreamUrl(getSnapshotRequestedScope(status)) ===
+							buildLaserAutoCalibrationStreamUrl(activeRequestedScope)
+					) {
+						startedSnapshot = status;
+					}
+				} catch {
+					// Show the start error below.
+				}
+			}
+
+			if (startedSnapshot === null) {
+				isConnecting = false;
+				error = startError.message;
+				return;
+			}
+
+			snapshot = startedSnapshot;
+			didConnectStream();
 			return;
 		}
 
