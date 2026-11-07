@@ -46,6 +46,7 @@ from openshelf_os.barcode_service import (
     BarcodeService,
     describe_missing_scanner,
 )
+from hardware.exceptions import MotorSafetyStopError
 from openshelf_os.exceptions import (
     GripVerificationError,
     MotorError,
@@ -1570,6 +1571,17 @@ class RobotWorker:
                 )
             except Exception as publish_error:
                 logger.warning("Failed to publish command failure: %s", publish_error, exc_info=publish_error)
+
+            if isinstance(command, (HomeCommand, InitializeCommand, RecoverCommand)) and _is_caused_by(
+                err, MotorSafetyStopError
+            ):
+                # A door, the light curtain or the e-stop stopped the boot or reset home: an operator
+                # event, not a drive fault, so no crash and no crash report. The home stays owed; the
+                # safety dialog's Reset sends it again once the guard clears. Tray workflow commands
+                # fall through: their `execution_error` already fails the persisted workflow.
+                self.set_needs_home(str(err))
+                logger.info("Home stopped by a safety guard; a home is still owed: %s", err)
+                return
 
             if is_grip_fault:
                 self.set_needs_home(str(err), axes=fault_needs_home_axes(self._robot, err))

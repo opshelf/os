@@ -10,6 +10,7 @@ from typing import Iterator, Optional
 
 from hardware.exceptions import ModbusConnectionError
 from hardware.exceptions import MotorConfigError as HardwareMotorConfigError
+from hardware.exceptions import MotorSafetyStopError
 from hardware.exceptions import MotorTimeoutError as HardwareMotorTimeoutError
 from openshelf_os.config.exceptions import ConfigError
 from openshelf_os.exceptions import (
@@ -42,6 +43,7 @@ FAULT_MESSAGES: dict[str, str] = {
     "motor_timeout": "A motor did not reach its target in time. Check for an obstruction, then reset the robot.",
     RETRIEVE_FAILED_CODE: "The robot could not retrieve the item. Check the robot before continuing.",
     "rotation_blocked": "The robot could not turn the tray or bin. Clear the way and try again.",
+    "safety_stopped": "A safety guard stopped the robot before it finished. Clear it, then reset the robot.",
     STORE_FAILED_CODE: "The robot could not store the item. Check the robot before continuing.",
     WORKER_ERROR_CODE: "The robot stopped the command after an internal error. Check the robot before continuing.",
 }
@@ -71,6 +73,8 @@ def fault_code(exc: BaseException) -> Optional[str]:
     """
     config = False
     for current in reversed(list(exception_chain(exc))):
+        if isinstance(current, MotorSafetyStopError):
+            return "safety_stopped"
         if isinstance(current, GripVerificationError):
             return current.failure_code
         if isinstance(current, RotationClearanceError):
