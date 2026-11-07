@@ -12,7 +12,7 @@ from openshelf_os.exceptions import (
 )
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.robot.commands import StoreItemCommand
-from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE
+from openshelf_os.robot.worker import EMERGENCY_STOP_CODE, TRAY_ON_TOOL_CODE
 from openshelf_os_server.core import bin_storage
 from openshelf_os_server.core.bin_storage import BinStorageService, BinWorkflowConflict
 from openshelf_os_server.core.manual_motion import manual_motion_guard
@@ -535,6 +535,25 @@ async def test_a_pick_that_never_lifted_the_tray_leaves_no_unfinished_motion():
         assert await service.crash_interrupted_workflows() == []
         assert await service.has_unfinished_motion() is False
         assert (await service.item_bin(items[0].id)).id == trays[0].id
+
+
+@pytest.mark.anyio
+async def test_a_retrieve_refused_by_a_held_emergency_stop_leaves_the_tray_home():
+    """The worker refuses a queued retrieve before starting it while the e-stop is held; the tray never left."""
+    async with AsyncSessionLocal() as db:
+        items, trays = await setup_trays(db)
+        service = BinStorageService(db)
+        w = await service.begin("retrieve", items[0], None)
+        await service.handle_robot_result(
+            _motion_failure(w, "retrieve_item", EMERGENCY_STOP_CODE), FakeWorker()
+        )
+
+        assert w.state == "cancelled"
+        assert w.resolution["failure_code"] == EMERGENCY_STOP_CODE
+        await db.refresh(trays[0])
+        assert trays[0].status == "at_home"
+        assert await service.crash_interrupted_workflows() == []
+        assert await service.has_unfinished_motion() is False
 
 
 @pytest.mark.anyio

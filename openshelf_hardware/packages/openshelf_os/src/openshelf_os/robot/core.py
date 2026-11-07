@@ -90,7 +90,9 @@ POWER_CYCLE_BOOT_TIMEOUT_S = 20.0
 POWER_CYCLE_BOOT_POLL_S = 0.25
 
 
-STARTUP_HOME_SKIPPED_CABINET_OPEN = "Startup homing skipped because the cabinet doors were open"
+STARTUP_HAZARD_CABINET_OPEN = "the cabinet doors were open"
+STARTUP_HOME_SKIPPED_CABINET_OPEN = f"Startup homing skipped because {STARTUP_HAZARD_CABINET_OPEN}"
+STARTUP_SAFETY_POLL_S = 0.05
 STARTUP_HOME_SKIPPED_TRAY_ON_TOOL = "Startup homing skipped because the gripper holds a tray"
 # Tail of the refusal for a barcode missing from the demo cell map; callers match on it, so edit it here only.
 DEMO_MAP_MISSING_SUFFIX = " is not in the demo cell map."
@@ -146,6 +148,7 @@ class Robot:
             self._grid = StorageGrid()
 
         self._init_reporter: Optional[InitProgressReporter] = None
+        self._failed_init_components: set[str] = set()
 
         self._state: RobotState = RobotState(current_cell=None)
         self._operation_context: dict[str, Any] = {}
@@ -184,6 +187,11 @@ class Robot:
             )
 
     def _emit_init(self, component: str, phase: str, detail: str = "", reason: Optional[str] = None) -> None:
+        # Remembered so a startup safety trip does not relabel a failed component as ready.
+        if phase == "failed":
+            self._failed_init_components.add(component)
+        else:
+            self._failed_init_components.discard(component)
         reporter = getattr(self, "_init_reporter", None)
         if reporter is None:
             return
@@ -194,7 +202,7 @@ class Robot:
 
     def set_init_progress_reporter(self, reporter: Optional[InitProgressReporter]) -> None:
         self._init_reporter = reporter
-        self._tool._init_reporter = reporter
+        self._tool._init_reporter = self._emit_init
         self._io._init_reporter = reporter
 
         def _bind(component: str) -> Callable[[str, str, Optional[str]], None]:
@@ -256,11 +264,10 @@ class Robot:
     async def configure(self, isolate: bool = False, home_on_init: bool = True) -> Optional[str]:
         """Connect and configure the hardware, homing it if asked.
 
-        Returns why a requested startup home was skipped, or None. The safety
-        guard only starts with the worker, after this returns, so nothing else
-        stops a startup home from running with the cabinet open.
+        Returns why a requested startup home was skipped or stopped, or None.
         """
         startup_home_skip_reason: Optional[str] = None
+        self._failed_init_components = set()
         self._emit_init("motor_bus", "connecting")
         try:
             await self._connect_controller("motor", self._motorbus, self._bus_settings["motor"])
@@ -303,26 +310,19 @@ class Robot:
             gpio.apply_initial_outputs()
             gpio.observe_all_inputs()
 
-        # The pre-home clearance jog happens during tool.configure, before the
-        # worker exists, so the guard has to start sampling here or the boot-time
-        # crush scenario goes unguarded. The worker replaces the listener when it
+        # The pre-home clearance jog of the startup home runs before the worker
+        # exists, so the guard has to start sampling here or the boot-time crush
+        # scenario goes unguarded. The worker replaces the listener when it
         # connects; start() is idempotent so its later start is a no-op.
         weight_guard = getattr(self, "_weight_guard", None)
         if weight_guard is not None:
             weight_guard.set_listener(self._stop_motion_on_weight_change)
             await weight_guard.start()
 
-        if home_on_init is True and self._are_cabinet_doors_open_at_startup() is True:
-            self._logger.warning("Startup homing skipped: cabinet doors are open")
-            home_on_init = False
-            startup_home_skip_reason = STARTUP_HOME_SKIPPED_CABINET_OPEN
-
-        await self._tool.configure(isolate=isolate, home_on_init=home_on_init)
-        if home_on_init is True and self._tool.is_tray_held is True:
-            # The tool may still be in a cell or the IO box, so the door stays put as well.
-            home_on_init = False
-            startup_home_skip_reason = STARTUP_HOME_SKIPPED_TRAY_ON_TOOL
-        await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready, home_on_init=home_on_init)
+        # Homing waits until every sensor is live, so the startup home is watched by
+        # the same inputs that guard motion once the worker runs.
+        await self._tool.configure(isolate=isolate, home_on_init=False)
+        await self._io.configure(isolate=isolate, scale_bus_ready=scale_bus_ready, home_on_init=False)
         cabinet = getattr(self, "_cabinet", None)
         if cabinet is not None:
             self._emit_init("cabinet", "configuring")
@@ -335,12 +335,109 @@ class Robot:
                     raise
                 self._logger.warning("Cabinet configure failed", exc_info=exc)
 
+        if home_on_init is True:
+            if self._tool.is_tray_held is True:
+                # The tool may still be in a cell or the IO box, so the door stays put as well.
+                startup_home_skip_reason = STARTUP_HOME_SKIPPED_TRAY_ON_TOOL
+            else:
+                startup_home_skip_reason = await self._run_startup_home(isolate)
+
         for name in _INIT_MOTOR_COMPONENTS:
             motor = self._get_motor_by_name(name)
             if motor is not None:
                 motor._on_move_complete = self._did_complete_motor_move
 
         return startup_home_skip_reason
+
+    async def _run_startup_home(self, isolate: bool) -> Optional[str]:
+        """Home every axis unless a safety input is tripped before or during it.
+
+        The worker's guards and e-stop monitor only start after configure returns, so
+        this watch is what stops the drives here. A trip blocks the interlock (moves
+        pause at their next poll), abandons the home and leaves the interlock blocked
+        for the worker to release once its own guards agree. Returns why the home was
+        skipped or stopped, or None when it completed.
+        """
+        hazard = self._startup_motion_hazard()
+        if hazard is not None:
+            self.block_motion_for_safety()
+            self._logger.warning("Startup homing skipped: %s", hazard)
+            return f"Startup homing skipped because {hazard}"
+
+        home = asyncio.create_task(self._startup_home_sequence(isolate), name="startup-home")
+        watch = asyncio.create_task(self._watch_startup_hazards(), name="startup-safety-watch")
+        try:
+            await asyncio.wait({home, watch}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (home, watch):
+                if task.done() is False:
+                    task.cancel()
+            await asyncio.gather(home, watch, return_exceptions=True)
+
+        if watch.cancelled() is True:
+            home.result()
+            return None
+
+        hazard = watch.result()
+        # The cancelled home may have left a drive mid-move between interlock polls.
+        for stop in (self._tool.stop, self._io.stop_door):
+            try:
+                await stop()
+            except Exception as exc:
+                self._logger.warning("Stop after a startup safety trip failed", exc_info=exc)
+        self._tool.mark_configured_motors_ready(self._failed_init_components)
+        self._io.mark_door_ready()
+        self._logger.warning("Startup homing stopped: %s", hazard)
+        return f"Startup homing stopped because {hazard}"
+
+    async def _startup_home_sequence(self, isolate: bool) -> None:
+        await self._tool.startup_home(isolate=isolate)
+        try:
+            await self._io.home_door()
+        except Exception as exc:
+            if isolate is False:
+                raise
+            self._logger.warning("init iobox home_door failed: %s", exc, exc_info=exc)
+
+    async def _watch_startup_hazards(self) -> str:
+        while True:
+            hazard = self._startup_motion_hazard()
+            if hazard is not None:
+                self.block_motion_for_safety()
+                return hazard
+            await asyncio.sleep(STARTUP_SAFETY_POLL_S)
+
+    def _startup_motion_hazard(self) -> Optional[str]:
+        """Why motion must not start or continue before the worker runs, or None."""
+        if self._motion_safety.blocked is True:
+            # Only the weight guard blocks the interlock before the worker exists.
+            return "the weight guard tripped"
+
+        try:
+            if self._is_emergency_stop_pressed() is True:
+                return "the emergency stop was pressed"
+        except Exception as exc:
+            self._logger.warning("Emergency stop read failed before startup homing", exc_info=exc)
+            return "the emergency stop could not be read"
+
+        if self._are_cabinet_doors_open_at_startup() is True:
+            return STARTUP_HAZARD_CABINET_OPEN
+
+        if self._io.get_curtain_state() is True and self._io.get_door_state() is True:
+            return "the light curtain was blocked with the IO door open"
+
+        return None
+
+    def _is_emergency_stop_pressed(self) -> bool:
+        estop_config = self._config.get("robot.emergency_stop", None)
+        if estop_config is not None and getattr(estop_config, "enabled", True) is False:
+            return False
+
+        gpio = getattr(self, "_gpio", None)
+        if gpio is None or gpio.has_pin("estop") is False:
+            return False
+
+        return gpio.input("estop").read() is True
 
     def _are_cabinet_doors_open_at_startup(self) -> bool:
         cabinet = getattr(self, "_cabinet", None)

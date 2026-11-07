@@ -32,7 +32,7 @@ from openshelf_os.exceptions import (
 from openshelf_os.robot.commands import DeliverTrayCommand, ReturnTrayCommand
 
 
-from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE, RobotWorker
+from openshelf_os.robot.worker import EMERGENCY_STOP_CODE, TRAY_ON_TOOL_CODE, RobotWorker
 
 
 from openshelf_os_server.core.manual_motion import get_manual_motion_operation
@@ -95,9 +95,11 @@ RESTART_INTERRUPTED_CODE = "command_interrupted"
 
 # A pick whose grip check failed before anything was lifted: the tray never left its shelf, so
 # cancelling the command leaves inventory as it was and no tray needs operator recovery. A
-# retrieve the worker refused up front because the gripper holds a tray never started either; a
-# return refused the same way still has its tray in the IO box, so it is not in this class.
-TRAY_NEVER_LEFT_CODES = {GRIP_PICK_FAILED_CODE, TRAY_ON_TOOL_CODE}
+# retrieve the worker refused up front (the gripper holds a tray, or the emergency stop is held)
+# never started either; a return refused the same way still has its tray in the IO box, so it is
+# not in this class.
+TRAY_NEVER_LEFT_CODES = {GRIP_PICK_FAILED_CODE, TRAY_ON_TOOL_CODE, EMERGENCY_STOP_CODE}
+REFUSED_BEFORE_START_CODES = {TRAY_ON_TOOL_CODE, EMERGENCY_STOP_CODE}
 
 logger = logging.getLogger(__name__)
 
@@ -1792,7 +1794,7 @@ class BinStorageService:
             code = payload.get("code")
             error = str(payload.get("error") or "Bin motion failed")
             if code in TRAY_NEVER_LEFT_CODES and (
-                code != TRAY_ON_TOOL_CODE or workflow.state == "retrieving_bin"
+                code not in REFUSED_BEFORE_START_CODES or workflow.state == "retrieving_bin"
             ):
                 # Nothing was lifted, so the command is cancelled: the tray stays home and the
                 # workflow leaves no unfinished motion behind.

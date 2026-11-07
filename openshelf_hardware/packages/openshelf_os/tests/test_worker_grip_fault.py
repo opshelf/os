@@ -134,6 +134,31 @@ async def test_grip_fault_cancels_the_command_and_recovers_without_homing(failur
         assert worker._is_crashed is False
 
 
+async def test_recover_without_axes_keeps_a_needs_home():
+    """A recover homes only its axes; clearing the requirement would open motion on lost axes."""
+    RobotWorker._instance = None
+    worker = RobotWorker(PickRobot(None))  # type: ignore[arg-type]
+    events = await worker.subscribe_events()
+    worker.set_needs_home("Motor 2 faulted", axes=["y_axis"])
+    worker.set_crash_state("Motor 2 faulted")
+    await worker.enqueue_command(RecoverCommand())
+    worker._running = True
+    task = asyncio.create_task(worker.process_commands())
+    try:
+        recover = await _next_event(events, lambda e: e.get("command") == "recover")
+
+        assert recover["message"] == "success"
+        assert worker._is_crashed is False
+        assert worker.needs_home_axes() == ["y_axis"]
+        assert worker.needs_reset() is True
+    finally:
+        worker._running = False
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        RobotWorker._instance = None
+
+
 async def test_partial_home_keeps_a_needs_home_it_cannot_attribute_to_axes():
     """After an e-stop every axis is untrusted, so a tool-only home must not open the interlock."""
     # An empty list would home nothing yet still count as a successful home.

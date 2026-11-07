@@ -905,7 +905,7 @@ export function buildLaserAutoCalibrationStreamUrl(
 
 export async function getLaserAutoCalibrationStreamError(
 	request: LaserAutoCalibrationRequest,
-	options: { subscribeOnly?: boolean } = {}
+	options: { subscribeOnly?: boolean; reportNetworkFailure?: boolean } = {}
 ): Promise<ApiError | null> {
 	const url = buildLaserAutoCalibrationStreamUrl(request, options);
 
@@ -915,7 +915,7 @@ export async function getLaserAutoCalibrationStreamError(
 			headers: { Accept: 'text/event-stream' }
 		});
 	} catch {
-		return null;
+		return options.reportNetworkFailure === true ? new ApiError(API_UNREACHABLE_MESSAGE, 0) : null;
 	}
 
 	if (response.ok === true) {

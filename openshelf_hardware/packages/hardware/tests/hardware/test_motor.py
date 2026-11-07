@@ -589,6 +589,14 @@ async def test_jog_fails_when_the_safety_guard_stops_it(mock_controller):
         ),
         safety=SimpleNamespace(blocked=True, wait_clear=AsyncMock()),
     )
+    triggered_before_wait = []
+
+    async def wait_clear():
+        triggered_before_wait.append(
+            any(c.args[1] == 0x6002 for c in mock_controller.write_single_register.await_args_list)
+        )
+
+    motor._safety.wait_clear.side_effect = wait_clear
 
     async def fake_wait_for_move(*args, **kwargs):
         # The guard is blocked, so the motion monitor stops the drive and then has
@@ -604,6 +612,36 @@ async def test_jog_fails_when_the_safety_guard_stops_it(mock_controller):
 
     with pytest.raises(MotorError, match="safety guard"):
         await motor.jog(1.0)
+
+    # A blocked guard is waited out before the drive is triggered, not after it moved.
+    assert triggered_before_wait[0] is False
+
+
+@pytest.mark.asyncio
+async def test_home_paused_by_the_safety_guard_fails_instead_of_zeroing_where_it_stopped(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(),
+        safety=SimpleNamespace(blocked=True, wait_clear=AsyncMock()),
+    )
+    motor.clear_alarm = AsyncMock()
+    motor._move_near_home = AsyncMock()
+    motor._prepare_home_motion = AsyncMock()
+    motor._start_path_zero = AsyncMock()
+    motor._set_zero_position = AsyncMock()
+
+    async def fake_wait_for_move(*args, **kwargs):
+        # The seek stops short of the limit and nothing restarts it once the guard clears.
+        await motor._pause_for_safety_if_needed(SimpleNamespace(reset=lambda _t: None))
+        return MotorStatus.STOPPED
+
+    motor.wait_for_move = fake_wait_for_move
+
+    with pytest.raises(MotorError, match="safety guard"):
+        await motor.home()
+
+    motor._set_zero_position.assert_not_awaited()
+    assert motor.is_homed() is False
 
 
 def direction_recording_motor(mock_controller, **overrides) -> tuple[Motor, list[int]]:

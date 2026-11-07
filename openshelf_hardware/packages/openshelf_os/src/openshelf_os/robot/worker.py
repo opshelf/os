@@ -79,6 +79,7 @@ IO_BOX_OCCUPIED_ERROR = "The IO box is not empty. Take the item off the scale an
 ESTOP_POLL_INTERVAL_SECONDS = 0.05
 ESTOP_UNAVAILABLE_REASON = "The emergency stop could not be read. Check the robot before continuing."
 PHYSICAL_ESTOP_REASON = "The emergency stop was pressed. Release it, then reset the robot."
+EMERGENCY_STOP_CODE = "emergency_stop"
 TRAY_ON_TOOL_CODE = "tray_on_tool"
 TRAY_ON_TOOL_ERROR = "The gripper is still holding a tray or bin. Release it and take it off the tool."
 # Between commands the tool is always empty: every workflow that grips a tray places or releases
@@ -1273,8 +1274,10 @@ class RobotWorker:
                 exc_info=True,
             )
 
+        # The first reading is taken before start() can release the interlock.
+        previous_active = await self._poll_estop(estop_input, None)
         self._estop_monitor_task = asyncio.create_task(
-            self._monitor_estop(estop_input),
+            self._monitor_estop(estop_input, previous_active),
             name="emergency-stop-monitor",
         )
         logger.info(
@@ -1322,40 +1325,33 @@ class RobotWorker:
         finally:
             wakeup.clear()
 
-    async def _monitor_estop(self, estop_input: Any) -> None:
-        previous_active: Optional[bool] = None
-
+    async def _monitor_estop(self, estop_input: Any, previous_active: Optional[bool] = None) -> None:
         while self._running is True:
-            try:
-                is_active = estop_input.read() is True
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning("Emergency stop input read failed: %s", exc)
-                self._is_estop_active = True
-                if previous_active is not True or self._is_emergency_stopped is False:
-                    await self.emergency_stop(ESTOP_UNAVAILABLE_REASON)
-                previous_active = True
-                await self._wait_for_estop_poll()
-                continue
-
-            self._is_estop_active = is_active
-            if is_active is True and (previous_active is not True or self._is_emergency_stopped is False):
-                await self.emergency_stop(PHYSICAL_ESTOP_REASON)
-            elif (
-                is_active is False
-                and previous_active is True
-                and self._is_emergency_stopped is True
-                and isinstance(self._current_command, HomeCommand)
-                and self._safety_motion_blocked is False
-            ):
-                self._robot.release_motion_safety()
-
-            if previous_active is True and is_active is False:
-                await self._publish_status()
-
-            previous_active = is_active
             await self._wait_for_estop_poll()
+            previous_active = await self._poll_estop(estop_input, previous_active)
+
+    async def _poll_estop(self, estop_input: Any, previous_active: Optional[bool]) -> bool:
+        """Read the button once, stopping on a press or an unreadable input; returns the reading."""
+        try:
+            is_active = estop_input.read() is True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Emergency stop input read failed: %s", exc)
+            self._is_estop_active = True
+            if previous_active is not True or self._is_emergency_stopped is False:
+                await self.emergency_stop(ESTOP_UNAVAILABLE_REASON)
+            return True
+
+        self._is_estop_active = is_active
+        # Releasing the button never releases motion: the operator resets with a new home.
+        if is_active is True and (previous_active is not True or self._is_emergency_stopped is False):
+            await self.emergency_stop(PHYSICAL_ESTOP_REASON)
+
+        if previous_active is True and is_active is False:
+            await self._publish_status()
+
+        return is_active
 
     def _should_enable_barcode(self) -> bool:
         disable_raw: str = os.getenv("OPENSHELF_DISABLE_BARCODE", "false")  # type: ignore[assignment]
@@ -1531,7 +1527,8 @@ class RobotWorker:
                 if self.needs_home() and isinstance(command, (HomeCommand, RecoverCommand)):
                     if command.axes is not None:
                         self.clear_needs_home_axes(list(command.axes))
-                    else:
+                    elif isinstance(command, HomeCommand):
+                        # A recover without axes homes nothing, so it cannot answer a needs-home.
                         self.clear_needs_home()
                     logger.info("Needs-home flag cleared after successful homing")
             if isinstance(result, RobotCommandSuccessful):
@@ -1862,7 +1859,22 @@ class RobotWorker:
                                     if operation is not queued_operation
                                 ]
                             continue
-                        if (
+                        if self._is_estop_active is True and isinstance(command, StopCommand) is False:
+                            # A started command would sit on the blocked interlock and move the
+                            # moment the button is released, so it is refused instead.
+                            await self._publish_command_failure(
+                                command,
+                                self._emergency_stop_reason or PHYSICAL_ESTOP_REASON,
+                                queued_operation,
+                                code=EMERGENCY_STOP_CODE,
+                            )
+                            self._queued_commands = [
+                                operation
+                                for operation in self._queued_commands
+                                if operation is not queued_operation
+                            ]
+                            is_rejected_before_start = True
+                        elif (
                             isinstance(command, TRAY_ON_TOOL_ALLOWED_COMMANDS) is False
                             and await self.refresh_tray_on_tool() is True
                         ):
@@ -1906,9 +1918,10 @@ class RobotWorker:
                             continue
 
                         if isinstance(command, (HomeCommand, RecoverCommand)) and (self._is_crashed is True or self._is_emergency_stopped is True):
-                            if self._is_estop_active is True:
-                                logger.info("Keeping motion safety engaged while emergency stop is active")
-                            elif self._safety_motion_blocked is False:
+                            # The light curtain counts again once this command is current, so
+                            # evaluate before releasing or the first moves run unguarded.
+                            await self._evaluate_safety_guard()
+                            if self._may_release_motion_safety() is True:
                                 self._robot.release_motion_safety()
                                 logger.info("Released motion safety for homing in stopped state")
 
@@ -2004,8 +2017,12 @@ class RobotWorker:
         await self._start_estop_monitor()
         logger.info("Task created: %s", self._worker_task)
         await self.refresh_tray_on_tool()
+        await self._evaluate_safety_guard()
         await self._publish_status()
-        self._robot.release_motion_safety()
+        # The interlock may hold a block from the e-stop, a guard, or a startup safety
+        # trip in configure; only release it when nothing is holding motion back.
+        if self._may_release_motion_safety() is True:
+            self._robot.release_motion_safety()
         logger.info("RobotWorker.start() complete")
 
     @property
@@ -2170,8 +2187,22 @@ class RobotWorker:
         phase = context.get("phase")
         return phase in {"io_place.open_door", "io_pick.open_door", "deliver_tray.open_door", "return_tray.open_door"}
 
-    def _should_ignore_light_curtain(self) -> bool:
+    def _is_stopped(self) -> bool:
         return self._is_crashed is True or self._is_emergency_stopped is True
+
+    def _may_release_motion_safety(self) -> bool:
+        # While stopped, only the recovery home or recover command may run the robot, so it
+        # is the only thing that may release the interlock; the e-stop button never does.
+        if self._is_estop_active is True or self._safety_motion_blocked is True:
+            return False
+        if self._is_stopped() is False:
+            return True
+        return isinstance(self._current_command, (HomeCommand, RecoverCommand))
+
+    def _should_ignore_light_curtain(self) -> bool:
+        # Only while idle: the recovery home or recover command that clears the stop moves
+        # the robot, so the curtain guards it like any other motion.
+        return self._is_stopped() is True and self._current_command is None
 
     def _weight_change_source(self, *, bypassed: bool) -> Optional[dict[str, Any]]:
         """Safety source for the weight-change guard, absent when there is no guard."""
@@ -2190,7 +2221,7 @@ class RobotWorker:
             "active": (
                 state.get("active") is True
                 and bypassed is False
-                and self._should_ignore_light_curtain() is False
+                and self._is_stopped() is False
             ),
             "bypassed": bypassed,
         }
@@ -2336,8 +2367,7 @@ class RobotWorker:
         elif (
             self._safety_motion_blocked is False
             and previous_motion_blocked is True
-            and self._is_crashed is False
-            and self._is_emergency_stopped is False
+            and self._may_release_motion_safety() is True
         ):
             self._robot.release_motion_safety()
 
@@ -2374,9 +2404,7 @@ class RobotWorker:
 
     def _on_light_curtain_change(self, state: Optional[bool]) -> None:
         async def _handle() -> None:
-            if self._should_ignore_light_curtain() is True:
-                return
-
+            # Recorded even while ignored, so a recovery home starts from the real state.
             self._logger.debug(
                 "Light curtain sensor change received",
                 extra={
@@ -2498,7 +2526,7 @@ class RobotWorker:
                 self._awaiting_safety_ack = False
                 if self._safety_motion_blocked is True:
                     self._safety_motion_blocked = False
-                    if self._is_crashed is False and self._is_emergency_stopped is False:
+                    if self._may_release_motion_safety() is True:
                         self._robot.release_motion_safety()
                 accepted = True
 

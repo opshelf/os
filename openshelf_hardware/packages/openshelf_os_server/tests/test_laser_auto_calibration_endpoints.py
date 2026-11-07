@@ -20,38 +20,145 @@ from openshelf_os_server.core.laser_auto_calibration import LaserAutoCalibration
 # to shape a scan through the scan config pin the constants instead.
 
 
+async def _sleep_long(*_args) -> None:
+    await asyncio.sleep(10)
+
+
 @pytest.mark.asyncio
-async def test_abort_stops_tool_while_session_cancels() -> None:
+async def test_abort_stops_the_robot_directly_and_homes_only_after_that_stop_returns() -> None:
+    """A step slow to unwind must not keep moving, and the direct stop must not land on the home."""
     manager = LaserAutoCalibrationManager()
-    robot = SimpleNamespace(stop=AsyncMock())
-    worker = SimpleNamespace(_robot=robot)
+    calls: list[str] = []
+    stop_release = asyncio.Event()
 
-    async def did_run() -> None:
+    async def stop() -> None:
+        calls.append('stop')
+        if len(calls) == 1:
+            await stop_release.wait()
+            calls.append('stop returned')
+
+    worker = SimpleNamespace(
+        _robot=SimpleNamespace(stop=stop),
+        set_needs_home=MagicMock(),
+        get_status_snapshot=AsyncMock(),
+        refresh_tray_on_tool=AsyncMock(return_value=False),
+    )
+
+    async def home(_worker) -> None:
+        calls.append('home')
+
+    with patch.object(manager, '_validate_requested_scope_config'), patch.object(
+        manager, '_get_current_calibration_params', AsyncMock(return_value={})
+    ):
+        with patch.object(manager, '_run_requested_scope', AsyncMock(side_effect=_sleep_long)):
+            with patch.object(manager, '_restore_in_memory_calibration_params'):
+                with patch.object(manager, '_home_after_abort', home):
+                    await manager.ensure_session_started(worker)
+                    await asyncio.sleep(0)
+                    abort = asyncio.create_task(manager.abort())
+                    for _ in range(5):
+                        await asyncio.sleep(0)
+                    assert calls == ['stop']
+                    stop_release.set()
+                    await abort
+                    await manager._task if manager._task is not None else None
+
+    assert calls[:2] == ['stop', 'stop returned']
+    assert calls[-1] == 'home'
+    assert manager._snapshot.state == 'cancelled'
+
+
+@pytest.mark.asyncio
+async def test_abort_homes_inside_the_motion_lock_even_when_the_step_fails_with_a_hardware_error() -> None:
+    """The cancelled step can surface as a motor error with the cancel still pending. The session
+    must still stop, home while holding the manual motion lock, and end cancelled."""
+    from openshelf_os_server.core import manual_motion
+
+    manager = LaserAutoCalibrationManager()
+    manager._abort_requested = True
+    calls: list[str] = []
+    robot = SimpleNamespace(stop=AsyncMock(side_effect=lambda: calls.append('stop')))
+    worker = SimpleNamespace(
+        _robot=robot,
+        set_needs_home=MagicMock(),
+        get_status_snapshot=AsyncMock(),
+        refresh_tray_on_tool=AsyncMock(return_value=False),
+    )
+
+    async def step(*_args) -> None:
+        asyncio.current_task().cancel()
+        raise RuntimeError('Motor 2 stopped away from target')
+
+    async def home(_worker) -> None:
+        await asyncio.sleep(0)
+        calls.append(f'home locked={manual_motion._motion_lock.locked()}')
+
+    with patch.object(manager, '_get_current_calibration_params', AsyncMock(return_value={})):
+        with patch.object(manager, '_run_requested_scope', step):
+            with patch.object(manager, '_restore_in_memory_calibration_params'):
+                with patch.object(manager, '_home_after_abort', home):
+                    await asyncio.create_task(manager._run_session(worker, 'laser-session'))
+
+    assert calls == ['stop', 'home locked=True']
+    assert manager._snapshot.state == 'cancelled'
+    worker.set_needs_home.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_abort_during_failure_bookkeeping_still_ends_in_a_terminal_state() -> None:
+    """A step fails for real; an abort lands while the failure handler awaits the diagnostic
+    snapshot. The session must end failed with the task cleared, never stuck cancelling."""
+    manager = LaserAutoCalibrationManager()
+    snapshot_started = asyncio.Event()
+
+    async def status_snapshot(**_kwargs) -> dict:
+        snapshot_started.set()
         await asyncio.sleep(10)
+        return {}
 
-    task = asyncio.create_task(did_run())
+    worker = SimpleNamespace(
+        _robot=SimpleNamespace(stop=AsyncMock()),
+        set_needs_home=MagicMock(),
+        get_status_snapshot=status_snapshot,
+        refresh_tray_on_tool=AsyncMock(return_value=False),
+    )
 
-    async with manager._lock:
-        manager._active_worker = worker
-        manager._task = task
-        manager._snapshot = LaserAutoCalibrationSnapshot(
-            state='running',
-            session_id='laser-session',
-            current_stage='angle-calibration',
-            updated_at='2026-01-01T00:00:00+00:00',
-        )
+    with patch.object(manager, '_validate_requested_scope_config'), patch.object(
+        manager, '_get_current_calibration_params', AsyncMock(return_value={})
+    ):
+        with patch.object(manager, '_run_requested_scope', AsyncMock(side_effect=RuntimeError('motor stalled'))):
+            with patch.object(manager, '_restore_in_memory_calibration_params'):
+                await manager.ensure_session_started(worker)
+                task = manager._task
+                await asyncio.wait_for(snapshot_started.wait(), 5)
+                await manager.abort()
+                await asyncio.wait_for(task, 5)
 
-    snapshot = await manager.abort()
+    assert manager._snapshot.state == 'failed'
+    assert manager._task is None
+    with pytest.raises(RuntimeError):
+        await manager.abort()
 
-    robot.stop.assert_awaited_once()
-    assert snapshot.state == 'running'
-    assert snapshot.current_stage == 'cancelling'
+
+@pytest.mark.asyncio
+async def test_session_that_cannot_read_its_params_ends_failed() -> None:
+    manager = LaserAutoCalibrationManager()
+    manager._snapshot.state = 'starting'
+    worker = SimpleNamespace(get_status_snapshot=AsyncMock(return_value={}))
+
+    with patch.object(
+        manager, '_get_current_calibration_params', AsyncMock(side_effect=ValueError('no grid'))
+    ):
+        await manager._run_session(worker, 'laser-session')
+
+    assert manager._snapshot.state == 'failed'
 
 
 @pytest.mark.asyncio
 async def test_run_session_cancel_homes_via_abort_without_needs_home() -> None:
     manager = LaserAutoCalibrationManager()
     worker = SimpleNamespace(
+        _robot=SimpleNamespace(stop=AsyncMock()),
         set_needs_home=MagicMock(),
         get_status_snapshot=AsyncMock(),
         refresh_tray_on_tool=AsyncMock(return_value=False),
@@ -92,7 +199,7 @@ async def test_abort_during_grip_probe_with_contact_left_flags_needs_home() -> N
     tool.extend_empty = AsyncMock()
     tool.retract_empty = AsyncMock()
     worker = SimpleNamespace(
-        _robot=SimpleNamespace(_tool=tool),
+        _robot=SimpleNamespace(_tool=tool, stop=AsyncMock()),
         set_needs_home=MagicMock(),
         get_status_snapshot=AsyncMock(),
         refresh_tray_on_tool=AsyncMock(return_value=False),

@@ -24,6 +24,13 @@ class MotionSafetyInterlock:
         self._clear.set()
 
     async def wait_clear(self) -> None:
+        if self._clear.is_set():
+            return
+        # A cancelled task's cleanup must not park here: nothing would wake it, and the
+        # canceller awaiting it (startup home, e-stop terminalization) would hang with it.
+        task = asyncio.current_task()
+        if task is not None and task.cancelling() > 0:
+            raise asyncio.CancelledError
         await self._clear.wait()
 
 

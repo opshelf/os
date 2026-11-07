@@ -39,6 +39,9 @@ class LaserAutoCalibrationManager(
         self._reference_offset_entries: list[LaserAutoCalibrationReferenceOffset] = []
         self._active_worker: RobotWorker | None = None
         self._abort_requested = False
+        # Set once abort()'s direct stop has returned; the abort home waits for it so that stop
+        # can never land on the home.
+        self._abort_stop_done: asyncio.Event | None = None
         self._scans_dir = _build_default_scans_dir()
         self._motion_diagnostic_session_id: str | None = None
         self._motion_diagnostic_correlation_id: str | None = None
@@ -70,6 +73,7 @@ class LaserAutoCalibrationManager(
             self._reference_offset_entries = []
             self._active_worker = worker
             self._abort_requested = False
+            self._abort_stop_done = None
             self._run_dir = None
             self._snapshot = LaserAutoCalibrationSnapshot(
                 state="starting",
@@ -92,8 +96,6 @@ class LaserAutoCalibrationManager(
         return snapshot
 
     async def abort(self) -> LaserAutoCalibrationSnapshot:
-        worker: RobotWorker | None = None
-
         async with self._lock:
             if self._task is None or self._task.done() is True:
                 raise RuntimeError("No laser auto calibration session is running")
@@ -102,17 +104,22 @@ class LaserAutoCalibrationManager(
                 return self._snapshot.model_copy(deep=True)
 
             worker = self._active_worker
+            stop_done = asyncio.Event()
+            self._abort_stop_done = stop_done
             self._abort_requested = True
             self._task.cancel()
             self._snapshot.current_stage = "cancelling"
             self._snapshot.updated_at = _get_timestamp()
             snapshot = self._snapshot.model_copy(deep=True)
 
+        # Stop directly as well: a step that is slow to unwind from the cancel would keep moving.
+        try:
+            if worker is not None:
+                await worker._robot.stop()
+        finally:
+            stop_done.set()
+
         await self._publish(snapshot)
-
-        if worker is not None:
-            await worker._robot.stop()
-
         return snapshot
 
     async def subscribe(self) -> tuple[asyncio.Queue[LaserAutoCalibrationSnapshot], LaserAutoCalibrationSnapshot]:
@@ -155,7 +162,7 @@ class LaserAutoCalibrationManager(
         if requested_scope is None:
             requested_scope = LaserAutoCalibrationScope()
 
-        original_params = await self._get_current_calibration_params(worker)
+        original_params: Any = None
         session_correlation_id = get_correlation_id()
         self._motion_diagnostic_session_id = session_id
         self._motion_diagnostic_correlation_id = session_correlation_id
@@ -167,56 +174,39 @@ class LaserAutoCalibrationManager(
         )
 
         try:
-            async with manual_motion_guard(
-                "laser_auto_calibration", worker=worker
-            ), self._hold_y_enabled(worker, requested_scope):
-                await self._run_requested_scope(worker, requested_scope)
+            original_params = await self._get_current_calibration_params(worker)
+            # The abort's stop and home run inside the guard, so no manual move can start
+            # between the cancelled step and the home.
+            async with manual_motion_guard("laser_auto_calibration", worker=worker):
+                try:
+                    async with self._hold_y_enabled(worker, requested_scope):
+                        await self._run_requested_scope(worker, requested_scope)
+                except asyncio.CancelledError:
+                    await self._finish_abort(worker, original_params)
+                    return
+                except Exception:
+                    if self._abort_requested is False:
+                        raise
+                    # A step interrupted by the abort can fail with a hardware error instead of
+                    # the cancellation; it still has to end in the abort's home.
+                    logger.warning("laser_auto_calibration_abort_interrupted_step", exc_info=True)
+                    await self._finish_abort(worker, original_params)
+                    return
             await self._set_terminal_state("completed", None)
         except asyncio.CancelledError:
-            current_task = asyncio.current_task()
-
-            if current_task is not None:
-                while current_task.cancelling() > 0:
-                    current_task.uncancel()
-
-            self._restore_in_memory_calibration_params(worker, original_params)
-
-            try:
-                await self._home_after_abort(worker)
-            except Exception as exc:
-                logger.error("laser_auto_calibration_abort_home_failed", exc_info=True)
-                worker.set_needs_home(
-                    "Laser auto calibration abort homing failed",
-                    axes=fault_needs_home_axes(worker._robot, exc),
-                )
-                await worker.get_status_snapshot(force_refresh=True)
-                await self._set_terminal_state(
-                    "failed",
-                    "The laser calibration stopped, but the robot could not be homed. Reset the robot before continuing.",
-                )
-                return
-
+            # Cancelled before the scope ran or after it finished: none of its motion is in flight.
+            await _absorb_cancellation()
+            if original_params is not None:
+                self._restore_in_memory_calibration_params(worker, original_params)
             await self._set_terminal_state("cancelled", None)
-            return
         except Exception as exc:
-            if self._abort_requested:
-                raise asyncio.CancelledError() from exc
-            self._restore_in_memory_calibration_params(worker, original_params)
-            error_detail = await self._build_error_detail(worker, exc)
-            logger.error(
-                "laser_auto_calibration_failed",
-                extra={"error_detail": error_detail.model_dump(mode="json")},
-                exc_info=True,
-            )
-            await self._persist_failure_metadata(error_detail)
-            # error is operator copy; the exception stays in the log line and run metadata.
-            await self._set_terminal_state(
-                "failed",
-                failure_detail(exc, "laser_calibration_failed")[1],
-                error_detail=LaserAutoCalibrationErrorRef(
-                    phase=error_detail.phase, correlation_id=error_detail.correlation_id
-                ),
-            )
+            try:
+                await self._fail_session(worker, exc, original_params)
+            except asyncio.CancelledError:
+                # An abort landed during the failure bookkeeping. The real failure came first and
+                # no motion is in flight on this path, so end failed rather than stuck cancelling.
+                await _absorb_cancellation()
+                await self._set_terminal_state("failed", failure_detail(exc, "laser_calibration_failed")[1])
         finally:
             self._set_motion_diagnostic_context(worker)
 
@@ -228,7 +218,52 @@ class LaserAutoCalibrationManager(
                     self._task = None
                     self._active_worker = None
                     self._abort_requested = False
+                    self._abort_stop_done = None
 
+
+    async def _fail_session(self, worker: RobotWorker, exc: Exception, original_params: Any) -> None:
+        if original_params is not None:
+            self._restore_in_memory_calibration_params(worker, original_params)
+        error_detail = await self._build_error_detail(worker, exc)
+        logger.error(
+            "laser_auto_calibration_failed",
+            extra={"error_detail": error_detail.model_dump(mode="json")},
+            exc_info=True,
+        )
+        await self._persist_failure_metadata(error_detail)
+        # error is operator copy; the exception stays in the log line and run metadata.
+        await self._set_terminal_state(
+            "failed",
+            failure_detail(exc, "laser_calibration_failed")[1],
+            error_detail=LaserAutoCalibrationErrorRef(
+                phase=error_detail.phase, correlation_id=error_detail.correlation_id
+            ),
+        )
+
+    async def _finish_abort(self, worker: RobotWorker, original_params: Any) -> None:
+        await _absorb_cancellation()
+        stop_done = self._abort_stop_done
+        if stop_done is not None:
+            await stop_done.wait()
+        self._restore_in_memory_calibration_params(worker, original_params)
+
+        try:
+            await worker._robot.stop()
+            await self._home_after_abort(worker)
+        except Exception as exc:
+            logger.error("laser_auto_calibration_abort_home_failed", exc_info=True)
+            worker.set_needs_home(
+                "Laser auto calibration abort homing failed",
+                axes=fault_needs_home_axes(worker._robot, exc),
+            )
+            await worker.get_status_snapshot(force_refresh=True)
+            await self._set_terminal_state(
+                "failed",
+                "The laser calibration stopped, but the robot could not be homed. Reset the robot before continuing.",
+            )
+            return
+
+        await self._set_terminal_state("cancelled", None)
 
     def _hold_y_enabled(
         self,
@@ -303,6 +338,20 @@ class LaserAutoCalibrationManager(
                 extra={"metadata_path": str(metadata_path)},
                 exc_info=True,
             )
+
+async def _absorb_cancellation() -> None:
+    """Consume this task's pending cancellations so the abort's home is not cancelled with it."""
+    task = asyncio.current_task()
+    if task is None:
+        return
+    while task.cancelling() > 0:
+        # A cancel requested but not yet delivered fires at the next await; take it here.
+        try:
+            await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            pass
+        task.uncancel()
+
 
 _manager = LaserAutoCalibrationManager()
 
