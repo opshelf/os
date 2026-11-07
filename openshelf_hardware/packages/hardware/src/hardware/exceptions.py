@@ -80,6 +80,10 @@ class MotorError(HardwareError):
     """Base class for motor-related errors."""
     pass
 
+class MotorSafetyStopError(MotorError):
+    """A safety guard stopped a home before it finished; the drive did not fault."""
+    pass
+
 class MotorTimeoutError(MotorError):
     """Motor operation timed out."""
     pass

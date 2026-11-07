@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 from hardware.exceptions import (
     MotorError, MotorTimeoutError, MotorLimitError,
-    MotorConfigError
+    MotorConfigError, MotorSafetyStopError
 )
 
 MOTOR_MOVE_TIMEOUT = 180.0
@@ -280,6 +280,7 @@ class Motor():
         self._safety_interrupted_move = False
         self._target_pos: Optional[float] = None
         self._last_fault_context: dict[str, Any] | None = None
+        self._last_fault_was_hardware = False
         self._last_bad_position_log_at = None
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
@@ -1422,6 +1423,7 @@ class Motor():
 
             t0 = time.monotonic()
             self._last_fault_context = None
+            self._last_fault_was_hardware = False
             did_start = await self._start_absolute_move(value, rpm, accel)
             if did_start is False:
                 return
@@ -2041,6 +2043,12 @@ class Motor():
             alarm_state=alarm_state,
             fault_state=fault_state,
         )
+        # Alarm 32 with the fault bit is how these drives report any stop during a homing seek,
+        # the guard's stop included (lb4a-3: status word 65), not a drive fault.
+        self._last_fault_was_hardware = (
+            not self._is_software_motion_fault_only(snapshot, alarm_state, fault_state)
+            and not (homing and alarm_state.alarm_code == 32)
+        )
         self._last_fault_context = {
             "motor_id": self._motor_id,
             "status_word": snapshot.status_word,
@@ -2476,6 +2484,7 @@ class Motor():
                 await self._safety.wait_clear()
 
             self._safety_interrupted_move = False
+            self._last_fault_was_hardware = False
             try:
                 await self._start_path_zero()
             except Exception as e:
@@ -2488,13 +2497,19 @@ class Motor():
             if self._on_move_complete is not None:
                 self._on_move_complete(elapsed)
 
-            if self._safety_interrupted_move is True:
+            safety_interrupted = self._safety_interrupted_move
+            self._safety_interrupted_move = False
+            if safety_interrupted is True and not (stop == MotorStatus.FAULT and self._last_fault_was_hardware):
                 # The pause stopped the drive short of its limit and the seek is not
                 # restarted, so zeroing here would set home wherever the axis stopped.
-                self._safety_interrupted_move = False
+                # A real drive fault after the pause falls through and still crashes.
                 self._is_homed = False
+                self._hard_stopped = True
+                # The seek may have stopped on the limit with the counter off, so the next home
+                # seeks from here: an approach to the backoff target would drive into the switch.
+                self._should_skip_pre_home_once = True
                 safety_stopped = True
-                raise MotorError(
+                raise MotorSafetyStopError(
                     f"Homing of motor {self._motor_id} was stopped by the safety guard and did not complete"
                 )
 

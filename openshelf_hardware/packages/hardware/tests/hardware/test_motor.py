@@ -14,7 +14,7 @@ from hardware.motor import (
     Motor,
     MotorStatus,
 )
-from hardware.exceptions import MotorConfigError, MotorError, MotorLimitError
+from hardware.exceptions import MotorConfigError, MotorError, MotorLimitError, MotorSafetyStopError
 from hardware.servo import GripObject, Servo
 
 def make_motor_params(**overrides):
@@ -637,11 +637,91 @@ async def test_home_paused_by_the_safety_guard_fails_instead_of_zeroing_where_it
 
     motor.wait_for_move = fake_wait_for_move
 
-    with pytest.raises(MotorError, match="safety guard"):
+    # Its own type, so the worker treats it as an owed home rather than a drive fault.
+    with pytest.raises(MotorSafetyStopError, match="safety guard"):
         await motor.home()
 
     motor._set_zero_position.assert_not_awaited()
     assert motor.is_homed() is False
+
+
+@pytest.mark.asyncio
+async def test_home_drive_alarm_after_a_guard_pause_still_raises_a_drive_fault(mock_controller):
+    motor = Motor(
+        mock_controller,
+        make_motor_params(),
+        safety=SimpleNamespace(blocked=True, wait_clear=AsyncMock()),
+    )
+    motor.clear_alarm = AsyncMock()
+    motor._move_near_home = AsyncMock()
+    motor._prepare_home_motion = AsyncMock()
+    motor._start_path_zero = AsyncMock()
+    motor._set_zero_position = AsyncMock()
+    motor.stop = AsyncMock()
+    motor._dump_flight_recorder = Mock(return_value=None)
+
+    async def fake_wait_for_move(*args, **kwargs):
+        # A drive alarm right after the guard clears is a hardware fault, not a safety stop.
+        state = MotionWaitState(start_time=0.0, last_movement_time=0.0)
+        await motor._pause_for_safety_if_needed(state)
+        return await motor._finish_fault(
+            True,
+            MotionSnapshot(status_word=1, is_complete=False, has_fault_bit=False),
+            MotionAlarmState(alarm_code=7, is_active=True),
+            MotionFaultState(is_fault=True, stall_detected=False, no_progress=False),
+            state,
+        )
+
+    motor.wait_for_move = fake_wait_for_move
+
+    with pytest.raises(MotorError, match="faulted during homing") as raised:
+        await motor.home()
+
+    assert not isinstance(raised.value, MotorSafetyStopError)
+    motor._set_zero_position.assert_not_awaited()
+    assert motor.is_hard_stopped() is True
+
+
+@pytest.mark.asyncio
+async def test_home_stopped_on_its_seek_by_the_guard_is_a_safety_stop_and_skips_the_next_approach(mock_controller):
+    # lb4a-3: the guard stopped X mid-seek; the drive then read alarm 32 with the fault bit
+    # (status word 65), which crashed the robot, and every later home's approach drove X into
+    # its limit because the seek had left the counter off.
+    motor = Motor(
+        mock_controller,
+        make_motor_params(),
+        safety=SimpleNamespace(blocked=True, wait_clear=AsyncMock()),
+    )
+    motor.clear_alarm = AsyncMock()
+    motor._prepare_home_motion = AsyncMock()
+    motor._start_path_zero = AsyncMock()
+    motor._set_zero_position = AsyncMock()
+    motor.stop = AsyncMock()
+    motor._dump_flight_recorder = Mock(return_value=None)
+    motor._move_to_position = AsyncMock()
+    motor.get_position = AsyncMock(return_value=10.2)
+
+    async def fake_wait_for_move(*args, **kwargs):
+        state = MotionWaitState(start_time=0.0, last_movement_time=0.0)
+        await motor._pause_for_safety_if_needed(state)
+        return await motor._finish_fault(
+            True,
+            MotionSnapshot(status_word=65, is_complete=False, has_fault_bit=True),
+            MotionAlarmState(alarm_code=32, is_active=False),
+            MotionFaultState(is_fault=True, stall_detected=False, no_progress=False),
+            state,
+        )
+
+    motor.wait_for_move = fake_wait_for_move
+
+    with pytest.raises(MotorSafetyStopError, match="safety guard"):
+        await motor.home()
+
+    motor._set_zero_position.assert_not_awaited()
+    assert motor.is_homed() is False
+    motor._move_to_position.reset_mock()
+    await motor._move_near_home(rpm=100)
+    motor._move_to_position.assert_not_awaited()
 
 
 def direction_recording_motor(mock_controller, **overrides) -> tuple[Motor, list[int]]:

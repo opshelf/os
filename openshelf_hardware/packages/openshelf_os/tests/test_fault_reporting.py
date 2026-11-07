@@ -215,6 +215,77 @@ async def test_hold_active_at_move_entry_does_not_spend_the_gantry_deadline() ->
     tool._handle_fault.assert_not_awaited()
 
 
+def _gantry_paused_by(safety: MotionSafetyInterlock, *, timeout_seconds: float) -> Tool:
+    tool = build_fault_reporting_tool()
+
+    async def wait_for_move(*args, **kwargs) -> MotorStatus:
+        # Motor.wait_for_move stops and waits out a hold, then finishes the move.
+        await asyncio.sleep(0.05)
+        await safety.wait_clear()
+        await asyncio.sleep(0.05)
+        return MotorStatus.STOPPED
+
+    for motor in (tool._mx, tool._my):
+        motor._safety = safety
+        motor.move_to_position_no_wait = AsyncMock(return_value=True)
+        motor.wait_for_move = wait_for_move
+        motor.stop = AsyncMock()
+    tool.gantry_wait = partial(Tool.gantry_wait, tool, timeout_seconds=timeout_seconds)
+    tool._handle_fault = AsyncMock()
+    return tool
+
+
+@pytest.mark.asyncio
+async def test_door_held_mid_move_past_the_gantry_deadline_resumes_instead_of_faulting() -> None:
+    # A door held open longer than the gantry deadline timed the move out on resume, which the
+    # worker reports as a hardware fault: crash dialog and crash report for a safety pause.
+    safety = MotionSafetyInterlock()
+    tool = _gantry_paused_by(safety, timeout_seconds=0.3)
+
+    move_task = asyncio.create_task(tool.move(AxisCoordinate(x=12.0, y=34.0, s=0, z_offset=0.0)))
+    await asyncio.sleep(0.02)
+    safety.block()
+    await asyncio.sleep(0.5)
+    assert not move_task.done()
+    safety.unblock()
+    await move_task
+
+    tool._handle_fault.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gantry_that_never_finishes_still_times_out() -> None:
+    safety = MotionSafetyInterlock()
+    safety.block()
+    tool = _gantry_paused_by(safety, timeout_seconds=0.2)
+    safety.unblock()
+
+    async def stalled(*args, **kwargs) -> MotorStatus:
+        await asyncio.sleep(10)
+        return MotorStatus.STOPPED
+
+    tool._mx.wait_for_move = stalled
+    tool._my.wait_for_move = stalled
+
+    with pytest.raises(MovementError, match="Gantry wait exceeded 0.2s timeout"):
+        await asyncio.wait_for(tool.move(AxisCoordinate(x=12.0, y=34.0, s=0, z_offset=0.0)), 2)
+
+
+def test_interlock_counts_only_blocked_time(monkeypatch) -> None:
+    now = [100.0]
+    monkeypatch.setattr("hardware.curtain.time.monotonic", lambda: now[0])
+    safety = MotionSafetyInterlock()
+    now[0] = 105.0
+    safety.block()
+    now[0] = 107.0
+    safety.block()
+    assert safety.held_seconds() == 2.0
+    now[0] = 108.0
+    safety.unblock()
+    now[0] = 120.0
+    assert safety.held_seconds() == 3.0
+
+
 def _stopping_sibling(fault_context: dict | None):
     async def sibling() -> None:
         try:
