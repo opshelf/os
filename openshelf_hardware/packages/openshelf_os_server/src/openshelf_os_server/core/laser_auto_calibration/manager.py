@@ -115,7 +115,7 @@ class LaserAutoCalibrationManager(
         # Stop directly as well: a step that is slow to unwind from the cancel would keep moving.
         try:
             if worker is not None:
-                await worker._robot.stop()
+                await worker._robot.stop_motion()
         finally:
             stop_done.set()
 
@@ -248,7 +248,7 @@ class LaserAutoCalibrationManager(
         self._restore_in_memory_calibration_params(worker, original_params)
 
         try:
-            await worker._robot.stop()
+            await worker._robot.stop_motion()
             await self._home_after_abort(worker)
         except Exception as exc:
             logger.error("laser_auto_calibration_abort_home_failed", exc_info=True)

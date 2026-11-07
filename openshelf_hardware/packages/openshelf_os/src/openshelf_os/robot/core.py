@@ -488,6 +488,13 @@ class Robot:
         if cabinet is not None:
             await cabinet.stop()
 
+    async def stop_motion(self) -> None:
+        """Halt every motor. Unlike stop(), the shutdown, the curtain and cabinet monitors keep running."""
+        try:
+            await self._tool.stop()
+        finally:
+            await self._io.stop_door()
+
     def get_power_rail_states(self) -> Dict[str, Optional[bool]]:
         """Whether each rail is currently powered. None if the pin is unavailable.
 

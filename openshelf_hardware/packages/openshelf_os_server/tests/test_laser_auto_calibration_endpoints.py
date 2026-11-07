@@ -38,7 +38,7 @@ async def test_abort_stops_the_robot_directly_and_homes_only_after_that_stop_ret
             calls.append('stop returned')
 
     worker = SimpleNamespace(
-        _robot=SimpleNamespace(stop=stop),
+        _robot=SimpleNamespace(stop_motion=stop),
         set_needs_home=MagicMock(),
         get_status_snapshot=AsyncMock(),
         refresh_tray_on_tool=AsyncMock(return_value=False),
@@ -77,7 +77,7 @@ async def test_abort_homes_inside_the_motion_lock_even_when_the_step_fails_with_
     manager = LaserAutoCalibrationManager()
     manager._abort_requested = True
     calls: list[str] = []
-    robot = SimpleNamespace(stop=AsyncMock(side_effect=lambda: calls.append('stop')))
+    robot = SimpleNamespace(stop_motion=AsyncMock(side_effect=lambda: calls.append('stop')))
     worker = SimpleNamespace(
         _robot=robot,
         set_needs_home=MagicMock(),
@@ -117,7 +117,7 @@ async def test_abort_during_failure_bookkeeping_still_ends_in_a_terminal_state()
         return {}
 
     worker = SimpleNamespace(
-        _robot=SimpleNamespace(stop=AsyncMock()),
+        _robot=SimpleNamespace(stop_motion=AsyncMock()),
         set_needs_home=MagicMock(),
         get_status_snapshot=status_snapshot,
         refresh_tray_on_tool=AsyncMock(return_value=False),
@@ -158,7 +158,7 @@ async def test_session_that_cannot_read_its_params_ends_failed() -> None:
 async def test_run_session_cancel_homes_via_abort_without_needs_home() -> None:
     manager = LaserAutoCalibrationManager()
     worker = SimpleNamespace(
-        _robot=SimpleNamespace(stop=AsyncMock()),
+        _robot=SimpleNamespace(stop_motion=AsyncMock()),
         set_needs_home=MagicMock(),
         get_status_snapshot=AsyncMock(),
         refresh_tray_on_tool=AsyncMock(return_value=False),
@@ -199,7 +199,7 @@ async def test_abort_during_grip_probe_with_contact_left_flags_needs_home() -> N
     tool.extend_empty = AsyncMock()
     tool.retract_empty = AsyncMock()
     worker = SimpleNamespace(
-        _robot=SimpleNamespace(_tool=tool, stop=AsyncMock()),
+        _robot=SimpleNamespace(_tool=tool, stop_motion=AsyncMock()),
         set_needs_home=MagicMock(),
         get_status_snapshot=AsyncMock(),
         refresh_tray_on_tool=AsyncMock(return_value=False),
