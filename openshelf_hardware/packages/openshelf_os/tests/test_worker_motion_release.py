@@ -119,6 +119,25 @@ async def test_start_keeps_the_interlock_blocked_while_the_estop_is_pressed() ->
         assert robot._motion_safety.blocked is True
 
 
+async def test_start_keeps_the_interlock_blocked_on_a_crashed_boot_with_a_startup_hazard() -> None:
+    # Stopped and idle, the worker ignores the curtain, so only the crash keeps start() from releasing.
+    robot = InterlockRobot()
+    robot.curtain_blocked = True
+    robot.io_door_open = True
+    robot.block_motion_for_safety()
+    RobotWorker._instance = None
+    worker = RobotWorker(robot)
+    worker.set_crash_state("Motor 5 faulted")
+    try:
+        await worker.start()
+
+        assert worker.get_safety_status()["active_sources"] == []
+        assert robot._motion_safety.blocked is True
+    finally:
+        await worker.shutdown()
+        RobotWorker._instance = None
+
+
 async def test_start_keeps_the_interlock_blocked_while_a_cabinet_door_is_open() -> None:
     # Nothing re-blocks after start(): the guard only blocks on its own inactive-to-active change.
     robot = InterlockRobot()

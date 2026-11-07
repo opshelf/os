@@ -2020,11 +2020,7 @@ class RobotWorker:
         await self._publish_status()
         # The interlock may hold a block from the e-stop, a guard, or a startup safety
         # trip in configure; only release it when nothing is holding motion back.
-        if (
-            self._is_estop_active is False
-            and self._is_emergency_stopped is False
-            and self._safety_motion_blocked is False
-        ):
+        if self._may_release_motion_safety() is True:
             self._robot.release_motion_safety()
         logger.info("RobotWorker.start() complete")
 
