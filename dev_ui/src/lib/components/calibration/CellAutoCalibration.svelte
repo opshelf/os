@@ -637,7 +637,13 @@
 				await loginAsDeveloper();
 			}
 		} catch {
-			// The start request reports the rejection.
+			// A rejected refresh clears the session; sign in once more, as the stream
+			// helper does. If that fails too, the start request reports the rejection.
+			try {
+				await loginAsDeveloper();
+			} catch {
+				// The start request reports the rejection.
+			}
 		}
 	}
 
