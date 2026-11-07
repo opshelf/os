@@ -602,8 +602,11 @@
 
 		// The only request that may start motion. The stream, its reconnects and its error
 		// probes all subscribe only, so a dropped connection can never start a second run.
+		// An undelivered request starts nothing, so it must not fall through to a subscribe.
 		await refreshStreamAuthentication();
-		const startError = await getLaserAutoCalibrationStreamError(activeRequestedScope);
+		const startError = await getLaserAutoCalibrationStreamError(activeRequestedScope, {
+			reportNetworkFailure: true
+		});
 
 		if (startError !== null) {
 			isConnecting = false;
