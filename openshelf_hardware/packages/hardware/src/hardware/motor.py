@@ -2447,7 +2447,7 @@ class Motor():
                     await self._move_away_from_home(pre_home_clearance_mm, self._params.ret_rpm)
                 if skip_pre_home_approach is True:
                     self._logger.warning(
-                        "Skipping pre-home approach for diagnostic homing",
+                        "Skipping pre-home approach",
                         extra={
                             "motor_id": self._motor_id,
                             "motor_name": getattr(self._params, "motor_name", None),
