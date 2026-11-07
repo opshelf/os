@@ -838,6 +838,15 @@ class Tool:
                 return
 
             wait_timeout = remaining_timeout
+            # A guard hold pauses the motors mid-move; that time is not spent on the deadline,
+            # or a door held open past it would read as a gantry fault (crash) on resume.
+            interlocks = list({
+                id(s): s for m in commanded_motors.values() if (s := getattr(m, "_safety", None)) is not None
+            }.values())
+            held_at_start = sum(s.held_seconds() for s in interlocks)
+
+            def held_since_start() -> float:
+                return sum(s.held_seconds() for s in interlocks) - held_at_start
 
             async def start_then_wait(start: Awaitable[bool], motor: Motor) -> MotorStatus:
                 if await start is False:
@@ -908,7 +917,9 @@ class Tool:
 
             try:
                 while tasks:
-                    remaining_timeout = timeout_seconds - (time.monotonic() - start_time)
+                    remaining_timeout = timeout_seconds - (
+                        time.monotonic() - start_time - held_since_start()
+                    )
 
                     if remaining_timeout <= 0:
                         stop_errors = await stop_all_and_drain(set(tasks))
@@ -916,17 +927,31 @@ class Tool:
                             self._logger.error("Failed to stop gantry after timeout: %s", ", ".join(stop_errors))
                         raise MotorWaitTimeoutError(f"Gantry wait exceeded {timeout_seconds}s timeout")
 
-                    done, pending = await asyncio.wait(
-                        set(tasks),
-                        timeout=remaining_timeout,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
+                    held = [s for s in interlocks if s.blocked]
+                    if held:
+                        # No deadline while held: wake when an axis finishes or the hold clears.
+                        # Plain Tasks, not a gather: cancelling a gather leaves an unretrieved
+                        # CancelledError that asyncio logs as an ERROR at GC.
+                        waiters = {asyncio.ensure_future(s.wait_clear()) for s in held}
+                        try:
+                            done, pending = await asyncio.wait(
+                                {*tasks, *waiters}, return_when=asyncio.FIRST_COMPLETED
+                            )
+                        finally:
+                            for waiter in waiters:
+                                waiter.cancel()
+                        done -= waiters
+                        pending -= waiters
+                    else:
+                        done, pending = await asyncio.wait(
+                            set(tasks),
+                            timeout=remaining_timeout,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
 
                     if not done:
-                        stop_errors = await stop_all_and_drain(pending)
-                        if stop_errors:
-                            self._logger.error("Failed to stop gantry after timeout: %s", ", ".join(stop_errors))
-                        raise MotorWaitTimeoutError(f"Gantry wait exceeded {timeout_seconds}s timeout")
+                        # Timed out, or a hold ran out the wait: the top re-checks the deadline.
+                        continue
 
                     for task in done:
                         axis, _motor = tasks.pop(task)

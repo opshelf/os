@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Callable, Optional
 
 from hardware.gpio import DigitalInput, GpioEvent, GpioSubscription
@@ -14,14 +15,27 @@ class MotionSafetyInterlock:
         self._clear = asyncio.Event()
         self._clear.set()
         self.blocked = False
+        self._held_total_s = 0.0
+        self._blocked_since: Optional[float] = None
 
     def block(self) -> None:
+        if self._blocked_since is None:
+            self._blocked_since = time.monotonic()
         self.blocked = True
         self._clear.clear()
 
     def unblock(self) -> None:
+        if self._blocked_since is not None:
+            self._held_total_s += time.monotonic() - self._blocked_since
+            self._blocked_since = None
         self.blocked = False
         self._clear.set()
+
+    def held_seconds(self) -> float:
+        """Total time spent blocked, so motion deadlines can leave out time a guard held them."""
+        if self._blocked_since is None:
+            return self._held_total_s
+        return self._held_total_s + time.monotonic() - self._blocked_since
 
     async def wait_clear(self) -> None:
         if self._clear.is_set():
