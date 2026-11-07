@@ -79,6 +79,7 @@ IO_BOX_OCCUPIED_ERROR = "The IO box is not empty. Take the item off the scale an
 ESTOP_POLL_INTERVAL_SECONDS = 0.05
 ESTOP_UNAVAILABLE_REASON = "The emergency stop could not be read. Check the robot before continuing."
 PHYSICAL_ESTOP_REASON = "The emergency stop was pressed. Release it, then reset the robot."
+EMERGENCY_STOP_CODE = "emergency_stop"
 TRAY_ON_TOOL_CODE = "tray_on_tool"
 TRAY_ON_TOOL_ERROR = "The gripper is still holding a tray or bin. Release it and take it off the tool."
 # Between commands the tool is always empty: every workflow that grips a tray places or releases
@@ -1865,7 +1866,7 @@ class RobotWorker:
                                 command,
                                 self._emergency_stop_reason or PHYSICAL_ESTOP_REASON,
                                 queued_operation,
-                                code="emergency_stop",
+                                code=EMERGENCY_STOP_CODE,
                             )
                             self._queued_commands = [
                                 operation
