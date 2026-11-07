@@ -18,6 +18,7 @@ def make_iobox() -> IOBox:
     motor.get_param.return_value = 0
     motor.get_position.return_value = 0.0
     motor.is_bus_busy = Mock(return_value=False)
+    motor.is_homed = Mock(return_value=True)
 
     iobox = IOBox.__new__(IOBox)
     iobox._md = motor
@@ -134,7 +135,7 @@ async def test_door_home_cancelled_mid_way_is_redone_next_cycle() -> None:
     iobox = make_iobox()
     homing = asyncio.Event()
 
-    async def slow_home() -> None:
+    async def slow_home(**_: object) -> None:
         homing.set()
         await asyncio.Event().wait()
 
@@ -170,3 +171,44 @@ async def test_door_read_is_skipped_while_the_door_drive_is_busy() -> None:
     iobox._md.get_position.return_value = 0.0
     assert await iobox.refresh_door_state() is False
     iobox._md.get_position.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unhomed_door_homes_without_positional_moves() -> None:
+    # After a power cycle the drive zeroes wherever the door stopped, e.g. fully open; the
+    # 2 mm pre-home close then pushed the door into its open end stop and failed the home.
+    iobox = make_iobox()
+    iobox._md.is_homed.return_value = False
+    iobox._md.get_position.return_value = 1.74
+
+    await iobox.home_door()
+
+    iobox._md.move_to_position.assert_not_awaited()
+    iobox._md.home.assert_awaited_once_with(skip_pre_home_approach=True)
+    assert iobox._door_home_pending is False
+
+
+@pytest.mark.asyncio
+async def test_homed_door_closes_and_approaches_before_homing() -> None:
+    iobox = make_iobox()
+
+    await iobox.home_door()
+
+    iobox._md.move_to_position.assert_awaited_once_with(2.0, rpm=500)
+    iobox._md.home.assert_awaited_once_with(skip_pre_home_approach=False)
+
+
+@pytest.mark.asyncio
+async def test_unhomed_door_reads_open_until_homed() -> None:
+    # An unhomed position near zero said "closed" while the door stood open, which kept a
+    # blocked light curtain from stopping motion.
+    iobox = make_iobox()
+    iobox._md.is_homed.return_value = False
+    iobox._md.get_position.return_value = 1.74
+
+    assert await iobox.refresh_door_state(force=True) is True
+    assert iobox.get_door_state() is True
+    iobox._md.get_position.assert_not_awaited()
+
+    iobox._md.is_homed.return_value = True
+    assert await iobox.refresh_door_state(force=True) is False

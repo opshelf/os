@@ -439,7 +439,9 @@ class IOBox:
         self._door_home_pending = True
         try:
             async with self._door_motion_lock:
-                if not self._curtain_state:
+                # An unhomed drive counts from wherever power-up found the door, so a
+                # positional close could drive it into the open end stop instead.
+                if not self._curtain_state and self._md.is_homed() is True:
                     door_cfg = self._params.motors.by_name("door")
                     await self._move_door_with_retry(
                         door_cfg.lower_lim,
@@ -493,7 +495,8 @@ class IOBox:
         if self._md is None:
             raise IOBoxError("Door motor not configured or disabled")
 
-        await self._md.home()
+        # The fast approach also targets coordinates an unhomed drive cannot vouch for.
+        await self._md.home(skip_pre_home_approach=self._md.is_homed() is not True)
         self._cache_door_closed_after_home()
 
 
@@ -579,6 +582,16 @@ class IOBox:
         # refresh stays pending.
         if self._md.is_bus_busy():
             return self._door_open
+
+        # Without a home the position is relative to wherever the door sat at power-up, so it
+        # cannot show the door closed; report it open so the light curtain keeps guarding it.
+        if self._md.is_homed() is not True:
+            if self._door_open is not True:
+                self._logger.info("Door not homed; treating it as open")
+            self._door_open = True
+            self._door_candidate_state = None
+            self._door_candidate_since = None
+            return True
 
         if self._door_force_refresh_on_block:
             self._logger.debug("Forcing door refresh after curtain block")
