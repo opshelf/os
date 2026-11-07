@@ -200,23 +200,13 @@ class LaserAutoCalibrationManager(
                 self._restore_in_memory_calibration_params(worker, original_params)
             await self._set_terminal_state("cancelled", None)
         except Exception as exc:
-            if original_params is not None:
-                self._restore_in_memory_calibration_params(worker, original_params)
-            error_detail = await self._build_error_detail(worker, exc)
-            logger.error(
-                "laser_auto_calibration_failed",
-                extra={"error_detail": error_detail.model_dump(mode="json")},
-                exc_info=True,
-            )
-            await self._persist_failure_metadata(error_detail)
-            # error is operator copy; the exception stays in the log line and run metadata.
-            await self._set_terminal_state(
-                "failed",
-                failure_detail(exc, "laser_calibration_failed")[1],
-                error_detail=LaserAutoCalibrationErrorRef(
-                    phase=error_detail.phase, correlation_id=error_detail.correlation_id
-                ),
-            )
+            try:
+                await self._fail_session(worker, exc, original_params)
+            except asyncio.CancelledError:
+                # An abort landed during the failure bookkeeping. The real failure came first and
+                # no motion is in flight on this path, so end failed rather than stuck cancelling.
+                await _absorb_cancellation()
+                await self._set_terminal_state("failed", failure_detail(exc, "laser_calibration_failed")[1])
         finally:
             self._set_motion_diagnostic_context(worker)
 
@@ -230,6 +220,25 @@ class LaserAutoCalibrationManager(
                     self._abort_requested = False
                     self._abort_stop_done = None
 
+
+    async def _fail_session(self, worker: RobotWorker, exc: Exception, original_params: Any) -> None:
+        if original_params is not None:
+            self._restore_in_memory_calibration_params(worker, original_params)
+        error_detail = await self._build_error_detail(worker, exc)
+        logger.error(
+            "laser_auto_calibration_failed",
+            extra={"error_detail": error_detail.model_dump(mode="json")},
+            exc_info=True,
+        )
+        await self._persist_failure_metadata(error_detail)
+        # error is operator copy; the exception stays in the log line and run metadata.
+        await self._set_terminal_state(
+            "failed",
+            failure_detail(exc, "laser_calibration_failed")[1],
+            error_detail=LaserAutoCalibrationErrorRef(
+                phase=error_detail.phase, correlation_id=error_detail.correlation_id
+            ),
+        )
 
     async def _finish_abort(self, worker: RobotWorker, original_params: Any) -> None:
         await _absorb_cancellation()

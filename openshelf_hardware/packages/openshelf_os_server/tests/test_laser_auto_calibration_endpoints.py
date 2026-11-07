@@ -105,6 +105,42 @@ async def test_abort_homes_inside_the_motion_lock_even_when_the_step_fails_with_
 
 
 @pytest.mark.asyncio
+async def test_abort_during_failure_bookkeeping_still_ends_in_a_terminal_state() -> None:
+    """A step fails for real; an abort lands while the failure handler awaits the diagnostic
+    snapshot. The session must end failed with the task cleared, never stuck cancelling."""
+    manager = LaserAutoCalibrationManager()
+    snapshot_started = asyncio.Event()
+
+    async def status_snapshot(**_kwargs) -> dict:
+        snapshot_started.set()
+        await asyncio.sleep(10)
+        return {}
+
+    worker = SimpleNamespace(
+        _robot=SimpleNamespace(stop=AsyncMock()),
+        set_needs_home=MagicMock(),
+        get_status_snapshot=status_snapshot,
+        refresh_tray_on_tool=AsyncMock(return_value=False),
+    )
+
+    with patch.object(manager, '_validate_requested_scope_config'), patch.object(
+        manager, '_get_current_calibration_params', AsyncMock(return_value={})
+    ):
+        with patch.object(manager, '_run_requested_scope', AsyncMock(side_effect=RuntimeError('motor stalled'))):
+            with patch.object(manager, '_restore_in_memory_calibration_params'):
+                await manager.ensure_session_started(worker)
+                task = manager._task
+                await asyncio.wait_for(snapshot_started.wait(), 5)
+                await manager.abort()
+                await asyncio.wait_for(task, 5)
+
+    assert manager._snapshot.state == 'failed'
+    assert manager._task is None
+    with pytest.raises(RuntimeError):
+        await manager.abort()
+
+
+@pytest.mark.asyncio
 async def test_session_that_cannot_read_its_params_ends_failed() -> None:
     manager = LaserAutoCalibrationManager()
     manager._snapshot.state = 'starting'
