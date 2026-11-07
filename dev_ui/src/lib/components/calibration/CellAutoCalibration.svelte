@@ -19,6 +19,7 @@
 	import { formatLaserFailure, normalizeLaserAutoCalibrationSnapshot } from '$lib/api';
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideLabel } from '$lib/side';
 	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
+	import { developerPin, ensureValidToken, isAuthenticated, loginAsDeveloper } from '$lib/auth';
 	import { postToast } from '$lib/toasts';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
@@ -52,7 +53,6 @@
 	let selectedCell = $state<string>('');
 	let activeRequestedScope = $state<LaserAutoCalibrationRequest | null>(null);
 	let stream = $state<ReconnectingEventSource | null>(null);
-	let isStreamSubscribeOnly = false;
 
 	const isSessionActive = $derived.by(() => {
 		if (snapshot === null) {
@@ -152,7 +152,7 @@
 			syncScopeSelection(getSnapshotRequestedScope(nextSnapshot));
 
 			if (shouldAutoConnect(nextSnapshot) === true) {
-				void didConnectStream(true);
+				didConnectStream();
 			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load auto calibration status.';
@@ -401,7 +401,6 @@
 		isStreamOpen = true;
 		error = '';
 		message = 'Auto calibration started.';
-		isStreamSubscribeOnly = true;
 	}
 
 	function didReceiveSnapshot(event: Event): void {
@@ -421,7 +420,6 @@
 			}
 
 			error = '';
-			isStreamSubscribeOnly = true;
 
 			if (snapshot.state === 'completed') {
 				message = 'Laser auto calibration completed.';
@@ -449,19 +447,18 @@
 		isConnecting = false;
 		isStreamOpen = false;
 
-		if (isTerminalSnapshot(snapshot) === true && isStreamSubscribeOnly === true) {
+		if (isTerminalSnapshot(snapshot) === true) {
 			didCloseStream();
 			return;
 		}
 
 		if (snapshot === null || shouldAutoConnect(snapshot) === false) {
 			const request = activeRequestedScope ?? getRequestedScope();
-			const shouldSubscribeOnly = isStreamSubscribeOnly;
 
 			didCloseStream();
 
 			const streamError = await getLaserAutoCalibrationStreamError(request, {
-				subscribeOnly: shouldSubscribeOnly
+				subscribeOnly: true
 			});
 			error = streamError?.message ?? 'Laser auto calibration stream disconnected.';
 			message = '';
@@ -598,20 +595,59 @@
 		activeRequestedScope = getRequestedScope();
 		measuredGripperResult = null;
 
-		didConnectStream(false);
-	}
-
-	function didConnectStream(shouldSubscribeOnly: boolean): void {
 		didCloseStream();
 		isConnecting = true;
 		error = '';
 		message = '';
-		isStreamSubscribeOnly = shouldSubscribeOnly;
+
+		// The only request that may start motion. The stream, its reconnects and its error
+		// probes all subscribe only, so a dropped connection can never start a second run.
+		await refreshStreamAuthentication();
+		const startError = await getLaserAutoCalibrationStreamError(activeRequestedScope);
+
+		if (startError !== null) {
+			isConnecting = false;
+			error = startError.message;
+			return;
+		}
+
+		// Seed the running state so a stream error before the first event reconnects
+		// instead of dropping a run that is already moving the robot.
+		try {
+			snapshot = await getLaserAutoCalibrationStatus();
+		} catch {
+			// The stream's first event carries the same snapshot.
+		}
+
+		didConnectStream();
+	}
+
+	async function refreshStreamAuthentication(): Promise<void> {
+		if (developerPin() === null) {
+			return;
+		}
+
+		try {
+			if (isAuthenticated() === true) {
+				await ensureValidToken();
+			} else {
+				await loginAsDeveloper();
+			}
+		} catch {
+			// The start request reports the rejection.
+		}
+	}
+
+	function didConnectStream(): void {
+		didCloseStream();
+		isConnecting = true;
+		error = '';
+		message = '';
 
 		const nextStream = createReconnectingEventSource({
 			path: () =>
 				buildLaserAutoCalibrationStreamUrl(activeRequestedScope ?? getRequestedScope(), {
-					subscribeOnly: isStreamSubscribeOnly
+					subscribeOnly: true
 				}),
 			onOpen: didOpenStream,
 			onError: didReceiveStreamError,

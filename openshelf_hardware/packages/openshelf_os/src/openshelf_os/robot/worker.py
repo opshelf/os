@@ -1526,7 +1526,8 @@ class RobotWorker:
                 if self.needs_home() and isinstance(command, (HomeCommand, RecoverCommand)):
                     if command.axes is not None:
                         self.clear_needs_home_axes(list(command.axes))
-                    else:
+                    elif isinstance(command, HomeCommand):
+                        # A recover without axes homes nothing, so it cannot answer a needs-home.
                         self.clear_needs_home()
                     logger.info("Needs-home flag cleared after successful homing")
             if isinstance(result, RobotCommandSuccessful):
