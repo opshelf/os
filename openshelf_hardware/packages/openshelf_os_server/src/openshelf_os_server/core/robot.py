@@ -11,7 +11,6 @@ from openshelf_os.common import (
     ConfigError,
     ConfigMissingError,
     ConfigValidationError,
-    assert_config,
 )
 
 from openshelf_os_server.core.init_progress import (
@@ -31,7 +30,7 @@ from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import BinStorageService, reserved_bin_locations
 from openshelf_os_server.core.command_lifecycle import handle_worker_lifecycle
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.settings import get_root_config
+from openshelf_os_server.settings import check_config_requirements, get_root_config
 
 logger = logging.getLogger(__name__)
 
@@ -99,13 +98,7 @@ def _report_printer_status() -> None:
 
 def validate_robot_config() -> None:
     try:
-        config = get_root_config()
-        assert_config(config, requirements=[
-            "robot.tool.parameters.IDLE_POSITION",
-            "robot.tool.parameters.PICKUP_POSITION_L",
-            "robot.tool.parameters.PICKUP_POSITION_H",
-            "robot.tool.parameters.PICKUP_POSITION_MULTI_ITEM",
-        ])
+        check_config_requirements(get_root_config())
         logger.info("Robot config validated successfully")
     except ConfigMissingError as err:
         logger.error("Config file not found: %s", err.path, exc_info=err)

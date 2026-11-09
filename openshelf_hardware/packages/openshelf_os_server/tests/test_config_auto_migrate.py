@@ -71,7 +71,8 @@ def config_file(tmp_path, v4_config, monkeypatch):
     monkeypatch.setattr(settings, "CONFIG_PATH", path)
     monkeypatch.setattr(settings, "MODE_FILE", mode_file)
     settings.clear_config_cache()
-    return path, raw
+    yield path, raw
+    settings.clear_config_cache()
 
 
 def test_get_root_config_auto_migrates_v4_and_backs_up(config_file):

@@ -31,7 +31,7 @@ from openshelf_os_server.settings import (
     get_operating_mode,
     get_root_config,
     get_settings,
-    save_root_config,
+    update_root_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -163,9 +163,7 @@ async def update_printer_config(request: PrinterFeedConfig) -> PrinterFeedConfig
     Requires `printer:print`. Persists the feed distance used after printing. This updates
     configuration without printing a test label.
     """
-    config = get_root_config()
-    config.printer.feed_dots = request.feed_dots
-    save_root_config(config)
+    config = update_root_config(lambda draft: setattr(draft.printer, "feed_dots", request.feed_dots))
     return PrinterFeedConfig(feed_dots=config.printer.feed_dots)
 
 

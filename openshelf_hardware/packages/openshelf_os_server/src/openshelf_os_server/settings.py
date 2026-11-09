@@ -4,15 +4,15 @@ import json
 import logging
 import os
 import secrets
+import threading
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from pydantic import BaseModel
 
 from openshelf_os.config.schema import CURRENT_SCHEMA_VERSION
 
-from openshelf_os.config.exceptions import ConfigError
-from openshelf_os.config_migrations.apply import migrate_config_file
+from openshelf_os.config.store import ABSENT_REVISION, ConfigStore
 
 from openshelf_os.common import (
     RootConfig,
@@ -29,8 +29,7 @@ from openshelf_os.common import (
     CONFIG_PATH,
     is_insecure_published_secret,
     OperatingMode,
-    write_json_file_with_backup,
-    load_and_validate_config,
+    assert_config,
 )
 from openshelf_os.operating_mode import get_operating_mode as get_shared_operating_mode, has_production_traits
 from openshelf_os.runtime_state import DATA_DIR_ENV, paths_for_config_file
@@ -106,9 +105,7 @@ class Settings(BaseModel):
         )
 
 
-_cached_config: Optional[RootConfig] = None
 _cached_settings: Optional[Settings] = None
-_cached_config_path: Optional[Path] = None
 
 
 def get_operating_mode() -> OperatingMode:
@@ -268,87 +265,64 @@ def _apply_env_overrides(data: dict) -> dict:
     return data
 
 
-def _migrate_legacy_settings(settings_path: Path, config_path: Path) -> None:
-    logger.info("Migrating legacy settings.json to config.json")
-
-    legacy_data = _load_legacy_settings(settings_path)
-    merged_data = _build_minimal_config(legacy_data)
-
-    write_json_file_with_backup(
-        config_path,
-        merged_data,
-        indent="\t",
-        backup_group_name="config",
-    )
-
-    logger.info("Migration complete: %s created from %s", config_path, settings_path)
-    logger.warning(
-        "Legacy settings.json retained for backup. "
-        "Remove manually after verifying config.json works correctly."
-    )
+# Requirements the robot needs at initialization; every config write must also meet them, so a
+# saved config can never fail the next startup.
+ROBOT_CONFIG_REQUIREMENTS = (
+    "robot.tool.parameters.IDLE_POSITION",
+    "robot.tool.parameters.PICKUP_POSITION_L",
+    "robot.tool.parameters.PICKUP_POSITION_H",
+    "robot.tool.parameters.PICKUP_POSITION_MULTI_ITEM",
+)
 
 
-def _auto_migrate_config(path: Path) -> None:
-    """Migrate the active config file in place before first use; startup fails loud otherwise."""
-    try:
-        changed, changes, backup = migrate_config_file(path)
-    except (OSError, ValueError) as exc:
-        logger.error("Config auto-migration failed: %s", exc, exc_info=exc)
-        raise ConfigError(str(exc)) from None
-    if changed:
-        logger.info(
-            "Auto-migrated config %s (%s); rollback backup at %s",
-            path,
-            "; ".join(changes),
-            backup,
+def check_config_requirements(config: RootConfig) -> None:
+    assert_config(config, requirements=list(ROBOT_CONFIG_REQUIREMENTS))
+
+
+_store: Optional[ConfigStore] = None
+_store_lock = threading.Lock()
+
+
+def _open_store() -> ConfigStore:
+    config_path = CONFIG_PATH
+
+    def store(initial: Optional[dict] = None) -> ConfigStore:
+        return ConfigStore(config_path, overlay=_apply_env_overrides, check=check_config_requirements, initial=initial)
+
+    if config_path.exists() is True:
+        return store()
+
+    legacy = _find_config_path()
+    if legacy is not None and legacy.name == "settings.json":
+        logger.info("Migrating legacy settings.json to config.json")
+        migrated = store()
+        migrated.replace(_build_minimal_config(_load_legacy_settings(legacy)), expected_revision=ABSENT_REVISION)
+        logger.warning(
+            "Legacy settings.json retained for backup. "
+            "Remove manually after verifying config.json works correctly."
         )
+        return migrated
+
+    logger.warning("No config file found in %s, using defaults", _config_paths())
+    return store(initial=_build_minimal_config({}))
+
+
+def get_config_store() -> ConfigStore:
+    """The one entry point for reading, validating and writing the active config file."""
+    global _store
+
+    with _store_lock:
+        if _store is None:
+            _store = _open_store()
+        return _store
 
 
 def get_root_config() -> RootConfig:
-    global _cached_config, _cached_config_path
-
-    if _cached_config is not None:
-        return _cached_config
-
-    config_path = CONFIG_PATH
-    settings_path = LEGACY_SETTINGS_PATH
-
-    if get_operating_mode() == OperatingMode.production and config_path.exists() is False and settings_path.exists() is True:
-        _migrate_legacy_settings(settings_path, config_path)
-
-    found_path = _find_config_path()
-
-    if found_path is None:
-        logger.warning("No config file found in %s, using defaults", _config_paths())
-        data = _build_minimal_config({})
-        data = _apply_env_overrides(data)
-        _cached_config = load_and_validate_config(data)
-        _cached_config_path = CONFIG_PATH
-        return _cached_config
-
-    logger.info("Loading config from %s", found_path)
-    _cached_config_path = found_path
-
-    if found_path.name == "settings.json":
-        logger.warning(
-            "Loading from legacy settings.json - config.json migration may have failed"
-        )
-        legacy_data = _load_legacy_settings(found_path)
-        data = _build_minimal_config(legacy_data)
-    else:
-        _auto_migrate_config(found_path)
-        with open(found_path, "r") as f:
-            data = json.load(f)
-
-    data = _apply_env_overrides(data)
-
     try:
-        _cached_config = load_and_validate_config(data, str(found_path))
+        return get_config_store().load()
     except ConfigValidationError as e:
         logger.error("Config validation failed: %s", e, exc_info=e)
         raise
-
-    return _cached_config
 
 
 def get_settings() -> Settings:
@@ -363,34 +337,36 @@ def get_settings() -> Settings:
 
 
 def clear_config_cache() -> None:
-    global _cached_config, _cached_settings
-    _cached_config = None
+    """Forget the loaded config; the next read loads the file again."""
+    global _store, _cached_settings
+    with _store_lock:
+        _store = None
     _cached_settings = None
 
 
 def get_config_path() -> Optional[Path]:
-    return _cached_config_path
+    return get_config_store().path
 
 
-def save_root_config(config: RootConfig, *, version_id: str | None = None) -> None:
-    global _cached_config, _cached_settings, _cached_config_path
-
-    if _cached_config_path is None:
-        _cached_config_path = CONFIG_PATH
-
-    _cached_config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    data = config.model_dump(mode="json")
-    write_json_file_with_backup(
-        _cached_config_path,
-        data,
-        indent="\t",
-        backup_group_name="config",
-        backup_mode=paths_for_config_file(_cached_config_path).mode.value,
-        version_id=version_id,
-    )
-
-    _cached_config = config
+def update_root_config(mutate: Callable[[RootConfig], Optional[RootConfig]], *, version_id: str | None = None) -> RootConfig:
+    """Change the config through a private copy; only the fields `mutate` changes are written."""
+    global _cached_settings
+    config = get_config_store().update(mutate, version_id=version_id)
     _cached_settings = None
+    return config
 
-    logger.info("Config saved to %s", _cached_config_path)
+
+def save_root_config(config: RootConfig, *, version_id: str | None = None) -> RootConfig:
+    """Persist the fields of `config` that differ from the loaded config."""
+    global _cached_settings
+    saved = get_config_store().save(config, version_id=version_id)
+    _cached_settings = None
+    return saved
+
+
+def replace_root_config(document: dict, *, expected_revision: str) -> RootConfig:
+    """Write a whole config document (the config editor), guarded by the revision it was read at."""
+    global _cached_settings
+    config = get_config_store().replace(document, expected_revision=expected_revision)
+    _cached_settings = None
+    return config

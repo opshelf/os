@@ -16,7 +16,7 @@ from openshelf_os_server.core.iobox_sizer import (
 	measure_iobox_size,
 	reload_iobox_sizer_config,
 )
-from openshelf_os_server.settings import get_root_config, save_root_config
+from openshelf_os_server.settings import get_root_config, update_root_config
 from openshelf_os_server.errors import api_error
 from .auth_deps import get_current_user, require_permissions
 
@@ -136,9 +136,7 @@ async def update_config_endpoint(config: IOBoxSizerConfig) -> dict[str, Any]:
 	it, returning the new configuration and status. This is a replacement rather than a
 	partial patch.
 	"""
-	root_config = get_root_config()
-	root_config.robot.io.sizer = config
-	save_root_config(root_config)
+	update_root_config(lambda draft: setattr(draft.robot.io, "sizer", config))
 	await reload_iobox_sizer_config()
 	return {"success": True, "config": config.model_dump(mode="json"), "status": get_iobox_sizer_status()}
 
@@ -163,9 +161,7 @@ async def calibrate_tof_blank_endpoint(request: TofBlankCalibrationRequest | Non
 	except Exception as exc:
 		raise _unavailable_error(exc) from exc
 
-	root_config = get_root_config()
-	root_config.robot.io.sizer.calibration.tof_blank_mm = blank_values
-	save_root_config(root_config)
+	update_root_config(lambda draft: setattr(draft.robot.io.sizer.calibration, "tof_blank_mm", blank_values))
 	await reload_iobox_sizer_config()
 	return {"success": True, "tof_blank_mm": blank_values}
 

@@ -1,5 +1,5 @@
 from openshelf_os.config.types import AxisCoordinate, TwoInt
-from openshelf_os.config.exceptions import ConfigError, ConfigValidationError, ConfigMissingError
+from openshelf_os.config.exceptions import ConfigError, ConfigValidationError, ConfigMissingError, ConfigRequirementError
 from openshelf_os.config.file_io import write_json_file_with_backup, create_timestamped_json_backup
 from openshelf_os.config.settings import (
     BARCODE_MAX_LENGTH,
@@ -56,7 +56,7 @@ from openshelf_os.config.models import (
     Robot,
 )
 from openshelf_os.config.root import RootConfig
-from openshelf_os.config.loader import CONFIG_PATH, load_and_validate_config, load_config_file, resolve_grid_path, assert_config
+from openshelf_os.config.loader import CONFIG_PATH, load_and_validate_config, load_config_file, resolve_grid_path, assert_config, config_requirement_issues
 
 __all__ = [
     "AxisCoordinate",
@@ -120,4 +120,6 @@ __all__ = [
     "load_config_file",
     "resolve_grid_path",
     "assert_config",
+    "config_requirement_issues",
+    "ConfigRequirementError",
 ]

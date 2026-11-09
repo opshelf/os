@@ -43,6 +43,7 @@ SUCCESSFUL_READ_METHODS = frozenset(["GET", "HEAD"])
 # like their GET counterparts, and only failures are recorded.
 SUCCESSFUL_READ_POST_ENDPOINTS = frozenset([
     "/api/storage/items/lookup",
+    "/api/system/config/validate",
 	"/api/users/login-barcode/resolve",
 ])
 SUCCESSFUL_READ_EXCLUDED_ENDPOINTS = frozenset([

@@ -745,7 +745,6 @@ class ApplyRunnerMixin:
         try:
             storage_grid.save(version_id=version_id)
             save_root_config(next_config, version_id=version_id)
-            clear_config_cache()
             worker._robot.reload_parameters()
         except Exception:
             try:
@@ -755,7 +754,6 @@ class ApplyRunnerMixin:
 
             try:
                 save_root_config(config)
-                clear_config_cache()
                 worker._robot.reload_parameters()
             except Exception:
                 logger.error("laser_auto_calibration_config_rollback_failed", exc_info=True)
@@ -834,7 +832,6 @@ class ApplyRunnerMixin:
 
         if apply_config is not config:
             save_root_config(apply_config)
-            clear_config_cache()
 
         if reference_result is not None:
             await self._publish_reference_offset_applied(reference_result, persisted=True)
@@ -911,7 +908,6 @@ class ApplyRunnerMixin:
 
         if next_config is not config:
             save_root_config(next_config)
-            clear_config_cache()
 
             if reference_result is not None:
                 await self._publish_reference_offset_applied(reference_result, persisted=True)
@@ -949,7 +945,6 @@ class ApplyRunnerMixin:
         next_config.robot.tool.parameters = Parameters.model_validate(params_dict)
 
         save_root_config(next_config)
-        clear_config_cache()
         worker._robot.reload_parameters()
 
 
