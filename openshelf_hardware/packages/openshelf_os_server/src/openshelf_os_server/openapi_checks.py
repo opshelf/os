@@ -39,10 +39,16 @@ def validate_document(document: dict[str, Any]) -> None:
                     for media in response["content"].values():
                         schema = media.get("schema", {})
                         assert schema, f"Missing response schema: {label} {code}"
+                        # A typed map (`dict[str, str]`) has no fixed properties to list;
+                        # its value schema under additionalProperties specifies it. A bare
+                        # `true` or `{}` there still leaves the object unspecified.
+                        value_schema = schema.get("additionalProperties")
+                        typed_map = isinstance(value_schema, dict) and bool(value_schema)
                         assert not (
                             schema.get("type") == "object"
                             and not schema.get("properties")
                             and not schema.get("$ref")
+                            and not typed_map
                         ), f"Unspecified response object: {label}"
     uri = "urn:opshelf:openapi"
     registry = Registry().with_resource(
