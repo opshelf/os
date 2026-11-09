@@ -32,7 +32,7 @@ from openshelf_os.common import (
     assert_config,
 )
 from openshelf_os.operating_mode import get_operating_mode as get_shared_operating_mode, has_production_traits
-from openshelf_os.runtime_state import DATA_DIR_ENV, paths_for_config_file
+from openshelf_os.runtime_state import DATA_DIR_ENV
 from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORT,
     DEFAULT_MOTOR_PORT,
@@ -265,6 +265,19 @@ def _apply_env_overrides(data: dict) -> dict:
     return data
 
 
+def _migrate_legacy_settings(settings_path: Path, config_path: Path) -> None:
+    logger.info("Migrating legacy settings.json to config.json")
+    ConfigStore(config_path, overlay=_apply_env_overrides).replace(
+        _build_minimal_config(_load_legacy_settings(settings_path)),
+        expected_revision=ABSENT_REVISION,
+    )
+    logger.info("Migration complete: %s created from %s", config_path, settings_path)
+    logger.warning(
+        "Legacy settings.json retained for backup. "
+        "Remove manually after verifying config.json works correctly."
+    )
+
+
 # Requirements the robot needs at initialization; every config write must also meet them, so a
 # saved config can never fail the next startup.
 ROBOT_CONFIG_REQUIREMENTS = (
@@ -294,14 +307,8 @@ def _open_store() -> ConfigStore:
 
     legacy = _find_config_path()
     if legacy is not None and legacy.name == "settings.json":
-        logger.info("Migrating legacy settings.json to config.json")
-        migrated = store()
-        migrated.replace(_build_minimal_config(_load_legacy_settings(legacy)), expected_revision=ABSENT_REVISION)
-        logger.warning(
-            "Legacy settings.json retained for backup. "
-            "Remove manually after verifying config.json works correctly."
-        )
-        return migrated
+        _migrate_legacy_settings(legacy, config_path)
+        return store()
 
     logger.warning("No config file found in %s, using defaults", _config_paths())
     return store(initial=_build_minimal_config({}))
