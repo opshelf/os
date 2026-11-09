@@ -247,5 +247,28 @@ async def test_homing_seek_stops_when_it_keeps_driving_on_an_engaged_home_switch
 
     assert status is MotorStatus.FAULT
     motor.stop.assert_awaited()
-    assert motor._home_limit_overrun is True
-    assert motor._last_fault_context["home_limit_overrun_s"] == 0.05
+    assert motor._home_guard_trip == "switch_overrun"
+
+
+@pytest.mark.asyncio
+async def test_homing_seek_stops_once_it_turns_past_the_full_travel(mock_controller):
+    """lb5-1's stage drove away from home and kept turning: the switch never engaged and the
+    counter ran past twice the travel, where position reads are rejected as garbage."""
+    motor = Motor(mock_controller, make_motor_params(lim=100.0), home_limit_input=Mock(read=Mock(return_value=False)))
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.get_param = AsyncMock(return_value=0)
+    counts = iter(range(0, 10_000_000, 2_000))  # 16 mm of travel per read at 80 mm/rev, 10000 ppr
+
+    async def did_get_position():
+        motor._last_seen_raw_position = next(counts)
+        return motor._cur_pos
+
+    motor.get_position = AsyncMock(side_effect=did_get_position)
+    mock_controller.read_holding_registers.return_value = 0
+
+    status = await motor.wait_for_move(timeout=5.0, homing=True)
+
+    assert status is MotorStatus.FAULT
+    assert motor._home_guard_trip == "overtravel"
+    travelled_mm = motor._last_seen_raw_position / 10000 * 80.0
+    assert 120.0 < travelled_mm <= 136.0

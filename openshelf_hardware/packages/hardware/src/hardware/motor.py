@@ -65,6 +65,12 @@ HOME_LIMIT_VERIFY_TIMEOUT_S = 0.5
 # turns while the axis stays put on its switch (a slipping coupling or belt), and without a
 # limit the seek would grind on until the no-progress timeout.
 HOME_LIMIT_OVERRUN_S = 3.0
+# A seek starts at most one full travel from its stop, so turning further means the drive runs
+# the wrong way or turns without moving the axis (lb5-1 stage 2026-11-09: +54 mm/s away from home
+# until the 30 s no-progress fault). Measured on the raw counter, which keeps counting while
+# get_position() rejects readings past twice the travel.
+HOME_OVERTRAVEL_MARGIN_MM = 20.0
+HOME_OVERTRAVEL_MARGIN_FRACTION = 0.1
 HOME_LIMIT_VERIFY_POLL_INTERVAL_S = 0.02
 # SO2 as the drive's own brake output. 0x24 is BRAKE with no inversion: the
 # output is open-collector common-anode, so asserted sinks the line, energises
@@ -141,6 +147,7 @@ class MotionWaitState:
     last_pos: Optional[float] = None
     has_moved: bool = False
     home_limit_engaged_at: Optional[float] = None
+    home_start_raw: Optional[int] = None
 
     def reset(self, now: float) -> None:
         self.start_time = now
@@ -148,6 +155,7 @@ class MotionWaitState:
         self.last_pos = None
         self.has_moved = False
         self.home_limit_engaged_at = None
+        self.home_start_raw = None
 
 
 @dataclass(frozen=True)
@@ -292,7 +300,8 @@ class Motor():
         self._logger = logger.getChild(f"motor.{self._motor_id}")
         self._safety = safety
         self._simulated_fault = False
-        self._home_limit_overrun = False
+        self._home_guard_trip: Optional[str] = None
+        self._last_seen_raw_position: Optional[int] = None
         self._on_move_complete: Optional[Callable[[float], None]] = None
         self._on_init_progress: Optional[Callable[[str, str, Optional[str]], None]] = None
         self._is_homed = False
@@ -754,6 +763,7 @@ class Motor():
                 logical_pos = self._params.physical_to_logical(physical_pos)
 
                 if abs(logical_pos) > max_valid:
+                    self._last_seen_raw_position = pos
                     fallback_pos = self._cur_pos if self._cur_pos is not None else 0.0
 
                     now = time.monotonic()
@@ -781,6 +791,7 @@ class Motor():
                     return fallback_pos
 
             self._last_raw_position = pos
+            self._last_seen_raw_position = pos
             self._last_position_read_latency_s = time.monotonic() - read_started_at
             self._cur_pos = logical_pos
 
@@ -1630,8 +1641,10 @@ class Motor():
                 if fault_state.is_fault:
                     return await self._finish_fault(homing, snapshot, alarm_state, fault_state, state)
 
-                if homing is True and self._is_home_limit_overrun(state) is True:
-                    return await self._finish_home_limit_overrun(snapshot, alarm_state, state)
+                if homing is True:
+                    trip = self._home_guard_trip_for(state)
+                    if trip is not None:
+                        return await self._finish_home_guard_trip(trip, snapshot, alarm_state, state)
 
                 if time.monotonic() - state.start_time > timeout:
                     return await self._finish_timeout(timeout, homing, state)
@@ -1689,6 +1702,13 @@ class Motor():
             setattr(exc, "fault_context", fault_context)
             raise
 
+    def _home_guard_trip_for(self, state: MotionWaitState) -> Optional[str]:
+        if self._is_home_limit_overrun(state) is True:
+            return "switch_overrun"
+        if self._is_home_overtravel(state) is True:
+            return "overtravel"
+        return None
+
     def _is_home_limit_overrun(self, state: MotionWaitState) -> bool:
         if self._home_limit_input is None:
             return False
@@ -1706,18 +1726,34 @@ class Motor():
             return False
         return now - state.home_limit_engaged_at > HOME_LIMIT_OVERRUN_S
 
-    async def _finish_home_limit_overrun(
+    def _home_overtravel_limit_mm(self) -> float:
+        travel_mm = float(self._params.lim) - float(getattr(self._params, "lower_lim", 0.0) or 0.0)
+        return travel_mm + max(HOME_OVERTRAVEL_MARGIN_MM, travel_mm * HOME_OVERTRAVEL_MARGIN_FRACTION)
+
+    def _is_home_overtravel(self, state: MotionWaitState) -> bool:
+        raw = self._last_seen_raw_position
+        if raw is None:
+            return False
+        if state.home_start_raw is None:
+            state.home_start_raw = raw
+            return False
+        ppr = getattr(self._params, "ppr", 10000)
+        travelled_mm = abs(raw - state.home_start_raw) / ppr * float(self._params.mpr)
+        return travelled_mm > self._home_overtravel_limit_mm()
+
+    async def _finish_home_guard_trip(
         self,
+        trip: str,
         snapshot: MotionSnapshot,
         alarm_state: MotionAlarmState,
         state: MotionWaitState,
     ) -> MotorStatus:
         await self.stop()
         self._clear_pending_motion()
-        self._home_limit_overrun = True
+        self._home_guard_trip = trip
         self._last_fault_was_hardware = True
         dump_path = self._dump_flight_recorder(
-            reason="home_limit_overrun",
+            reason=f"home_{trip}",
             state=state,
             snapshot=snapshot,
             alarm_state=alarm_state,
@@ -1726,15 +1762,16 @@ class Motor():
             "motor_id": self._motor_id,
             "status_word": snapshot.status_word,
             "alarm_code": alarm_state.alarm_code,
-            "home_limit_overrun_s": HOME_LIMIT_OVERRUN_S,
+            "home_guard_trip": trip,
             "flight_recorder_path": dump_path,
         }
         self._logger.warning(
-            "Homing still driving after the home switch engaged",
+            "Homing seek stopped by its guard",
             extra={
                 "motor_id": self._motor_id,
+                "trip": trip,
                 "elapsed": time.monotonic() - state.start_time,
-                "overrun_s": HOME_LIMIT_OVERRUN_S,
+                "overtravel_limit_mm": self._home_overtravel_limit_mm(),
                 "flight_recorder_path": dump_path,
             },
         )
@@ -2486,7 +2523,7 @@ class Motor():
             await self._motion_guard(None)
 
         self._simulated_fault = False
-        self._home_limit_overrun = False
+        self._home_guard_trip = None
         restore_peak_current: int | None = None
         restore_following_error = False
         home_failed = False
@@ -2625,13 +2662,14 @@ class Motor():
                 self._is_homed = False
                 self._hard_stopped = True
 
-                if self._home_limit_overrun is True:
-                    overrun = MotorError(
-                        f"Motor {self._motor_id} kept driving {HOME_LIMIT_OVERRUN_S:.0f} s after its "
-                        "home switch engaged; check the coupling and belt"
-                    )
-                    setattr(overrun, "fault_context", self._last_fault_context)
-                    raise overrun
+                if self._home_guard_trip is not None:
+                    if self._home_guard_trip == "switch_overrun":
+                        detail = f"kept driving {HOME_LIMIT_OVERRUN_S:.0f} s after its home switch engaged"
+                    else:
+                        detail = f"turned more than {self._home_overtravel_limit_mm():.0f} mm, past its full travel"
+                    tripped = MotorError(f"Motor {self._motor_id} {detail} while homing")
+                    setattr(tripped, "fault_context", self._last_fault_context)
+                    raise tripped
                 raise MotorError(f"Motor {self._motor_id} faulted during homing")
             else:
                 self._is_homed = False
