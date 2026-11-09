@@ -2,16 +2,19 @@
 
 import copy
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import delete, select
 
 from openshelf_os import laser_calibration as laser_module
 from openshelf_os.common import Parameters
 from openshelf_os.laser_calibration.reference_offsets import ReferenceOffsetResult, ReferenceOffsetSample
 from openshelf_os.laser_calibration.scan import ScanDetectedCell, ScanDetectedShelf
 from openshelf_os.laser_calibration.grip_edge import GripEdgeResult, GripEdgeSample
+from openshelf_os.robot.core import Robot
 from openshelf_os.storage import (
     CalibrationCoordinate,
     Cell,
@@ -19,8 +22,12 @@ from openshelf_os.storage import (
     Dimensions,
     Shelf,
     StorageGrid,
+    StorageModuleCellLocation,
     StorageModuleSide,
 )
+from openshelf_os_server.core.storage import StorageService
+from openshelf_os_server.database.models import Item, ItemLocation
+from openshelf_os_server.database.session import AsyncSessionLocal
 from openshelf_os_server.core.laser_auto_calibration import (
     LaserAutoCalibrationManager,
     LaserAutoCalibrationScope,
@@ -224,7 +231,7 @@ async def test_start_without_a_manual_datum_cell_never_starts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cell_scoped_run_on_the_datum_derives_and_persists_the_offset() -> None:
+async def test_cell_scoped_run_on_the_datum_derives_and_persists_the_offset(seeded_db) -> None:
 	"""The datum's own cell is the narrow scope that does re-derive the frame."""
 	manager = LaserAutoCalibrationManager()
 	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
@@ -237,7 +244,7 @@ async def test_cell_scoped_run_on_the_datum_derives_and_persists_the_offset() ->
 	config = _build_root_config(scan_config)
 	grid = _build_source_grid(include_second_shelf=True)
 	saved_configs: list[object] = []
-	worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid))
+	worker = SimpleNamespace(_robot=SimpleNamespace(_grid=grid, sync_occupied_cells=MagicMock()))
 	target = SimpleNamespace(shelf_idx=0, cell_idx=0)
 	analysis = _build_analysis(include_second_shelf=True)
 
@@ -285,6 +292,67 @@ async def test_cell_scoped_run_on_the_datum_derives_and_persists_the_offset() ->
 	assert result.samples[0].shelf_idx == 0
 	assert result.applied is True
 	assert result.persisted is True
+
+
+async def _clear_plate_a_and_cell() -> None:
+	"""The session DB is shared with modules that leave items at front 0/1, so clear both ways."""
+	async with AsyncSessionLocal() as session:
+		await session.execute(
+			delete(ItemLocation).where(
+				(ItemLocation.item_id.in_(select(Item.id).where(Item.barcode == "plate-a")))
+				| ((ItemLocation.side == "front_module") & (ItemLocation.shelf_idx == 0) & (ItemLocation.cell_idx == 1))
+			)
+		)
+		await session.execute(delete(Item).where(Item.barcode == "plate-a"))
+		await session.commit()
+
+
+@pytest_asyncio.fixture
+async def stored_plate_a(seeded_db):
+	await _clear_plate_a_and_cell()
+	async with AsyncSessionLocal() as session:
+		storage = StorageService(session)
+		await storage.create_item(barcode="plate-a", name="plate-a", dimensions=None)
+		await storage.add_item_location("plate-a", StorageModuleSide.FRONT, 0, 1)
+	yield
+	await _clear_plate_a_and_cell()
+
+
+async def test_applied_rescan_keeps_stored_items_in_the_robot_grid(stored_plate_a, tmp_path: Path) -> None:
+	"""Sentry OPENSHELF-API-CV: the apply swapped in the grid file, which holds no item occupancy,
+	so a later store picked a cell the database still showed holding a plate."""
+	grid_path = tmp_path / "storage.json"
+	_build_source_grid().save_to_file(str(grid_path))
+	occupied = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=1)
+	robot = SimpleNamespace(_grid=laser_module.load_grid(grid_path), _logger=MagicMock())
+	robot.sync_occupied_cells = MethodType(Robot.sync_occupied_cells, robot)
+	robot.sync_occupied_cells([("front_module", 0, 1)])
+	manager = LaserAutoCalibrationManager()
+	manager._snapshot.requested_scope = LaserAutoCalibrationScope(
+		mode="cell", side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=1
+	)
+	config = _build_root_config(_build_scan_config(xy_offset=CONFIGURED_OFFSET))
+	analysis = _build_analysis()
+
+	with (
+		patch("openshelf_os_server.core.laser_auto_calibration.get_root_config", return_value=config),
+		patch("openshelf_os_server.core.laser_auto_calibration.apply_runner.get_root_config", return_value=config),
+		patch("openshelf_os_server.core.laser_auto_calibration.resolve_grid_path", return_value=str(grid_path)),
+		patch(
+			"openshelf_os_server.core.laser_auto_calibration.laser_module.find_detected_cell_for_candidate",
+			return_value=analysis.shelves[0].cells[0],
+		),
+		patch("openshelf_os_server.core.laser_auto_calibration.laser_module.apply_single_cell_rescan"),
+	):
+		await manager._persist_single_cell_result(
+			SimpleNamespace(_robot=robot),
+			StorageModuleSide.FRONT,
+			analysis,
+			SimpleNamespace(shelf_idx=0, cell_idx=1),
+			MagicMock(),
+		)
+
+	assert robot._grid.get_cell(occupied).status == CellStatus.OCCUPIED
 
 
 @pytest.mark.asyncio
