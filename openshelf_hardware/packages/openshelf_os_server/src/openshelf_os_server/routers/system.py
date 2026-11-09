@@ -7,7 +7,7 @@ import os
 import signal
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 import sentry_sdk
@@ -188,15 +188,17 @@ async def set_sentry_reporting(request: SentryReportingUpdateRequest) -> SentryR
     response_model=RestartResponse,
     dependencies=[Depends(require_permissions("robot:control"))],
     summary="Request an API restart",
-    responses=response_docs(errors=(401, 403)),
+    responses=response_docs(errors=(401, 403, 409)),
 )
 async def restart_api() -> RestartResponse:
 	"""Request an API restart.
 
-	Schedules a process exit so the container supervisor can restart the service. The
+	Refuses with `409` while the robot moves, has queued work, runs the demo cycle or
+	calibrates. Schedules a process exit so the container supervisor can restart the service. The
 	response is sent before the restart; active connections can then close. Does not change
 	the operating mode. Reconnect and check health before resuming work.
 	"""
+	await _ensure_safe_to_restart()
 	logger.info("api_restart_requested")
 	_schedule_api_restart()
 	return RestartResponse(message="Restarting API container...")
@@ -274,7 +276,14 @@ async def _ensure_safe_to_restart() -> None:
 		worker = await get_robot_worker()
 	except ValueError:
 		return
-	ensure_robot_available_for_manual_motion(worker)
+	try:
+		ensure_robot_available_for_manual_motion(worker)
+	except HTTPException as exc:
+		# A safety interruption holds the robot still; restarting is safe, and the fix for a
+		# wrong e-stop or GPIO setting may be exactly this save.
+		detail: dict[str, Any] = exc.detail if isinstance(exc.detail, dict) else {}
+		if detail.get("reason") != "safety_interruption":
+			raise
 
 
 @router.get(

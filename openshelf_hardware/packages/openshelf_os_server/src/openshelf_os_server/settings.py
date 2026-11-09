@@ -225,6 +225,18 @@ def _build_minimal_config(data: dict) -> dict:
     }
 
 
+_generated_jwt_secret: Optional[str] = None
+
+
+def _process_jwt_secret() -> str:
+    """One generated secret per process: the overlay runs on every config write, and a fresh
+    secret each time would invalidate every session on each save."""
+    global _generated_jwt_secret
+    if _generated_jwt_secret is None:
+        _generated_jwt_secret = secrets.token_urlsafe(32)
+    return _generated_jwt_secret
+
+
 def _apply_env_overrides(data: dict) -> dict:
     if "auth" not in data:
         data["auth"] = {}
@@ -259,7 +271,7 @@ def _apply_env_overrides(data: dict) -> dict:
                 "JWT_SECRET is a published default, using a generated secret instead; "
                 "existing tokens stop verifying"
             )
-        jwt_secret = secrets.token_urlsafe(32)
+        jwt_secret = _process_jwt_secret()
     data["auth"]["jwt_secret"] = jwt_secret
 
     return data

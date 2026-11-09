@@ -89,3 +89,18 @@ def test_typed_update_keeps_an_edit_made_on_disk_after_load(config_path):
     on_disk = json.loads(config_path.read_text())
     assert on_disk["printer"] == {"feed_dots": 5}
     assert on_disk["robot_app"]["home_on_init"] is False
+
+
+def test_generated_jwt_secret_survives_a_config_write(config_path, monkeypatch):
+    # Without an env or file secret the overlay generates one; a new one per write would sign
+    # every session out on each save.
+    monkeypatch.delenv("JWT_SECRET")
+    monkeypatch.setenv("ENV", "dev")
+    store = _store(config_path)
+    secret = store.load().auth.jwt_secret
+
+    store.update(lambda draft: setattr(draft.printer, "feed_dots", 5))
+
+    assert store.load().auth.jwt_secret == secret
+    assert "auth" not in json.loads(config_path.read_text())
+

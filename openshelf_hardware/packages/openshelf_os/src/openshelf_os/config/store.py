@@ -107,6 +107,13 @@ def _lookup(node: Any, path: PathKey) -> Any:
     return node
 
 
+def _lookup_or_missing(node: Any, path: PathKey) -> Any:
+    try:
+        return _lookup(node, path)
+    except (KeyError, IndexError, TypeError):
+        return _DELETE
+
+
 def apply_changes(document: dict[str, Any], changes: list[tuple[PathKey, Any]], after: dict[str, Any]) -> None:
     """Patch `document` in place. Where its shape diverges from `after` (a legacy alias, a list of
     another length) the whole subtree at the divergence is taken from `after`."""
@@ -262,14 +269,26 @@ class ConfigStore:
             document = copy.deepcopy(self._document)
         apply_changes(document, changes, after)
         try:
-            return self._write(document, version_id)
+            return self._write(document, version_id, expect=changes)
         except Exception:
             # Drop any in-place edits a caller made to the cached instance.
             self._install(self.effective(self._document))
             raise
 
-    def _write(self, document: dict[str, Any], version_id: str | None) -> RootConfig:
+    def _write(
+        self,
+        document: dict[str, Any],
+        version_id: str | None,
+        expect: list[tuple[PathKey, Any]] | None = None,
+    ) -> RootConfig:
         config = self.validate(document)
+        if expect is not None:
+            # A legacy alias left in the document can win over a patched field in a
+            # before-validator; refuse a write that would silently not take effect.
+            result = config.model_dump(mode="json")
+            for path, value in expect:
+                if value is not _DELETE and _lookup_or_missing(result, path) != value:
+                    raise ConfigError(f"{'.'.join(map(str, path))} did not take effect in {self.path}")
         write_json_file_with_backup(
             self.path,
             document,
