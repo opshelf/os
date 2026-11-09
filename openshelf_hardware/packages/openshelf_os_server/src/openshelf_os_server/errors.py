@@ -110,6 +110,9 @@ DEFAULT_STATUS_CODES: dict[int, str] = {
 # Text shown when a message arrived empty, was a bare code word, or turned out
 # to be server-side detail with nothing operator-usable left in it.
 CODE_MESSAGES: dict[str, str] = {
+	"fridge_not_calibrated": "Calibrate the fridge door positions first.",
+	"fridge_not_configured": "The demo fridge is not enabled on this machine.",
+	"tool_not_retracted": "Retract the tool before moving the fridge door.",
 	"access_level_invalid": "Choose an access level and try again.",
 	"access_level_not_found": "That access level no longer exists.",
 	"admin_already_created": "The administrator account already exists.",

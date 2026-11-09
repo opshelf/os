@@ -3,13 +3,13 @@ from openshelf_os_server.documentation import response_docs
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 
 from openshelf_os.common import AxisCoordinate
-from openshelf_os.exceptions import MotorError, MovementError, ToolError
+from openshelf_os.exceptions import ConfigError, FridgeSafetyError, MotorError, MovementError, ToolError
 from openshelf_os.robot.worker import fault_needs_home_axes
 from openshelf_os.storage import StorageModuleCellLocation
 from hardware.exceptions import MotorError as HardwareMotorError
@@ -20,7 +20,7 @@ from openshelf_os_server.core.manual_motion import manual_motion_guard
 from openshelf_os_server.routers.common import SuccessResponse
 from openshelf_os_server.core.storage_module import side_to_s
 from openshelf_os_server.routers.auth_deps import get_current_user, require_permissions
-from openshelf_os_server.routers.calibration import _ensure_ready, _clear_motors_for_move
+from openshelf_os_server.routers.calibration import _clear_motors_for_move, _ensure_ready, _raise_motor_error
 from openshelf_os_server.errors import api_error
 
 logger = logging.getLogger(__name__)
@@ -82,18 +82,21 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 				if _stop_event.is_set() is True:
 					break
 
-				await robot.io_place(coord, nudge_override=nudge)
+				await robot.io_place(coord, nudge_override=nudge, location=location)
 
 				if _stop_event.is_set() is True:
-					await robot.io_pick(coord)
+					await robot.io_pick(coord, location=location)
 					break
 
-				await robot.io_pick(coord)
+				await robot.io_pick(coord, location=location)
 
 				if _stop_event.is_set() is True:
 					break
 	except asyncio.CancelledError:
 		logger.info("demo_cycle_cancelled")
+	except FridgeSafetyError as exc:
+		logger.warning("demo_cycle_fridge_safety_rejected: %s", exc)
+		await worker.get_status_snapshot(force_refresh=True)
 	except (MotorError, MovementError, ToolError, HardwareMotorError) as exc:
 		logger.error("demo_cycle_hardware_fault", exc_info=True)
 		worker.set_needs_home(
@@ -216,3 +219,41 @@ async def get_demo_cycle_status() -> DemoCycleStatusResponse:
 		current_cell_index=_current_cell_index,
 		total_cells=_total_cells,
 	)
+
+
+@router.post(
+    "/fridge/{position}",
+    response_model=SuccessResponse,
+    dependencies=[Depends(require_permissions("robot:control"))],
+    summary="Move the demo fridge door",
+    responses=response_docs(errors=(401, 403, 404, 409, 503)),
+)
+async def move_demo_fridge_door(
+	position: Literal["left", "center", "right"],
+) -> SuccessResponse:
+	"""Move the demo fridge door.
+
+	Moves the door to a named position: `left` or `right` opens it and `center` closes it.
+	Used by the demo door shortcuts; unavailable when no fridge is configured.
+	"""
+	await ensure_laser_auto_calibration_not_running()
+	worker = await get_robot_worker_or_503()
+	_ensure_ready(worker)
+
+	fridge = getattr(worker._robot, "_fridge", None)
+	if fridge is None:
+		raise api_error(status.HTTP_404_NOT_FOUND, "fridge_not_configured", "")
+
+	try:
+		async with manual_motion_guard(f"demo_fridge_{position}", worker=worker):
+			await fridge.move_door_to_named(position)
+	except ConfigError as exc:
+		logger.warning("Fridge door move refused", exc_info=exc)
+		raise api_error(status.HTTP_409_CONFLICT, "fridge_not_calibrated", "") from exc
+	except FridgeSafetyError as exc:
+		logger.warning("Fridge door move refused", exc_info=exc)
+		raise api_error(status.HTTP_409_CONFLICT, "tool_not_retracted", "") from exc
+	except (MotorError, HardwareMotorError) as exc:
+		await _raise_motor_error(worker, "The fridge door could not move.", exc, axes=["fridge_door"])
+
+	return SuccessResponse(message=f"fridge door moved to {position}")

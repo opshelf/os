@@ -16,6 +16,7 @@ from openshelf_os.common import load_config_file
 from openshelf_os.exceptions import (
     MotorError, ConfigError,
     GripperError, GripVerificationError, MovementError, MotorWaitTimeoutError, RotationClearanceError,
+    FridgeSafetyError,
     GRIP_DROPPED_CODE, GRIP_PICK_FAILED_CODE, GRIP_RELEASE_FAILED_CODE
 )
 
@@ -612,15 +613,27 @@ class Tool:
     #  High-level operations
     # ------------------------------------------------------------------ #
 
-    async def pick(self, coordinate: c.AxisCoordinate, *, loaded: bool = True) -> None:
+    async def pick(
+        self,
+        coordinate: c.AxisCoordinate,
+        *,
+        loaded: bool = True,
+        stage_extension_mm: float | None = None,
+        before_approach: Callable[[], Awaitable[None]] | None = None,
+        after_retract: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         """Pick the tray at `coordinate`; `loaded=False` only when its cell is known empty."""
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
             await self._gs.safe_open()
             await self.move(coordinate)
+            # Open any door gating the cell before rotating: rotation may extend
+            # the stage to its rotation-safe extension.
+            if before_approach is not None:
+                await before_approach()
             await self.rotate_to_position(target_position)
-            await self.extend_empty(coordinate)
+            await self.extend_empty(coordinate, stage_extension_mm=stage_extension_mm)
             require_grip(
                 await self._gs.open(),
                 "grip",
@@ -629,8 +642,12 @@ class Tool:
             )
             await self.retract(loaded=loaded)
             require_grip(await self._gs.read_state(), "retract", is_enabled=self.is_grip_detection_enabled)
+            if after_retract is not None:
+                await after_retract()
 
         except Exception as e:
+            if isinstance(e, FridgeSafetyError):
+                raise
             await self._handle_fault(e)
             if isinstance(e, MovementError):
                 raise
@@ -681,18 +698,34 @@ class Tool:
         """Open the fingers and confirm they hold nothing before the tool withdraws."""
         require_release(await self._gs.close(), phase, is_enabled=self.is_grip_detection_enabled)
 
-    async def place(self, coordinate: c.AxisCoordinate, *, loaded: bool = True):
+    async def place(
+        self,
+        coordinate: c.AxisCoordinate,
+        *,
+        loaded: bool = True,
+        stage_extension_mm: float | None = None,
+        before_approach: Callable[[], Awaitable[None]] | None = None,
+        after_retract: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         """Set the gripped tray down at `coordinate`; `loaded=False` only for a known-empty tray."""
         try:
             target_position: Literal["front", "back"] = "front" if coordinate.s == 0 else "back"
 
             await self.move(coordinate)
+            # Open any door gating the cell before rotating: rotation may extend
+            # the stage to its rotation-safe extension.
+            if before_approach is not None:
+                await before_approach()
             await self.rotate_to_position(target_position)
-            await self.extend(coordinate, loaded=loaded)
+            await self.extend(coordinate, loaded=loaded, stage_extension_mm=stage_extension_mm)
             await self.release("place release")
             await self.retract_empty()
+            if after_retract is not None:
+                await after_retract()
 
         except Exception as e:
+            if isinstance(e, FridgeSafetyError):
+                raise
             await self._handle_fault(e)
 
             if isinstance(e, MovementError):
@@ -798,6 +831,14 @@ class Tool:
             if hasattr(e, "fault_context"):
                 setattr(err, "fault_context", getattr(e, "fault_context"))
             raise err from e
+
+    def x_axis_travel_middle_mm(self) -> float:
+        """Return the midpoint of the configured X-axis travel."""
+        if self._mx is None:
+            raise ConfigError("X-axis motor is not configured")
+
+        lower_lim = float(getattr(self._mx._params, "lower_lim", 0.0))
+        return (lower_lim + float(self._mx._params.lim)) / 2.0
 
     async def gantry_wait(
         self,
@@ -1141,6 +1182,14 @@ class Tool:
 
         return abs(float(current_angle) - float(target_angle)) <= ROTATION_POSITION_EPSILON_DEG
 
+    async def is_rotated_back(self) -> bool:
+        """Return whether the rotate motor is at the configured back angle."""
+        rotation_back = await self.get_param("ROTATION_BACK")
+        if rotation_back is None:
+            raise ConfigError("Missing ROTATION_BACK parameter")
+
+        return await self.is_rotation_at_position(float(rotation_back))
+
     async def ensure_safe_rotation_stage_extension(self) -> bool:
         """Prepare the stage and verify both tool axes are safe for rotation.
 
@@ -1374,12 +1423,22 @@ class Tool:
             self._mg.move_to_position(grip_ext, rpm=grip_rpm, accel=grip_accel),
         )
 
-    async def extend(self, coordinate: Optional[c.AxisCoordinate] = None, *, loaded: bool = True) -> None:
+    async def extend(
+        self,
+        coordinate: Optional[c.AxisCoordinate] = None,
+        *,
+        loaded: bool = True,
+        stage_extension_mm: float | None = None,
+    ) -> None:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for extension")
 
         try:
-            slide_ext = await self._get_shelf_slide_extension(coordinate)
+            slide_ext = (
+                stage_extension_mm
+                if stage_extension_mm is not None
+                else await self._get_shelf_slide_extension(coordinate)
+            )
             grip_ext = await self.get_param("Z_EXTENSION_PLACE")
             grip_rpm = await self.get_param("Z_MOVE_RPM")
             grip_accel = await self.get_param("Z_MOVE_ACCEL")
@@ -1455,12 +1514,21 @@ class Tool:
 
             raise MovementError(f"Tool multi-item IO extension failed: {str(e)}") from e
 
-    async def extend_empty(self, coordinate: Optional[c.AxisCoordinate] = None) -> None:
+    async def extend_empty(
+        self,
+        coordinate: Optional[c.AxisCoordinate] = None,
+        *,
+        stage_extension_mm: float | None = None,
+    ) -> None:
         if self._mg is None or self._ms is None:
             raise MotorError("Tool motors (z_axis, stage) required for empty extension")
 
         try:
-            slide_ext = await self._get_shelf_slide_extension(coordinate)
+            slide_ext = (
+                stage_extension_mm
+                if stage_extension_mm is not None
+                else await self._get_shelf_slide_extension(coordinate)
+            )
             grip_ext = await self.get_param("Z_EXTENSION_PICK")
             grip_rpm = await self.get_param("Z_MOVE_RPM")
             grip_accel = await self.get_param("Z_MOVE_ACCEL")
@@ -1548,6 +1616,34 @@ class Tool:
             await z_retract()
             await stage_retract()
         await self._ms.idle()
+
+    async def is_fully_retracted(self, *, tolerance_mm: float = 1.0) -> bool:
+        """Return whether stage and Z are at their configured retract targets."""
+        if self._mg is None or self._ms is None:
+            return False
+
+        try:
+            z_homed = self._mg.is_homed()
+            stage_homed = self._ms.is_homed()
+            if z_homed is not True or stage_homed is not True:
+                return False
+
+            z_position, stage_position = await asyncio.gather(
+                self._mg.get_position(),
+                self._ms.get_position(),
+            )
+        except Exception:
+            return False
+
+        z_target = self._get_float_param("Z_RETRACT_POSITION_MM", DEFAULT_Z_RETRACT_TARGET_MM)
+        stage_target = self._get_float_param(
+            "STAGE_RETRACT_POSITION_MM",
+            DEFAULT_STAGE_RETRACT_TARGET_MM,
+        )
+        return (
+            float(z_position) <= z_target + tolerance_mm
+            and float(stage_position) <= stage_target + tolerance_mm
+        )
 
     async def tool_wait(
         self,

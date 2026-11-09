@@ -11,11 +11,13 @@ from uuid import uuid4
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Literal, Optional, ParamSpec, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, FiniteFloat
 from openshelf_os_server.sse import EventSourceResponse
 
 from openshelf_os.common import AxisCoordinate
 from openshelf_os.common import Parameters
+from openshelf_os.config.settings import DemoFridgeDoorPositionsSettings
+from openshelf_os.exceptions import FridgeSafetyError
 from openshelf_os.tool import MAX_PICK_LIFT_MM, require_grip
 from openshelf_os.robot.worker import axis_named_in, fault_needs_home_axes, is_rotation_clearance_refusal
 from openshelf_os.storage import (
@@ -2627,6 +2629,182 @@ async def save_rotation_angles(request: RotateSaveRequest):
 		worker._robot.reload_parameters()
 	except ValueError:
 		pass
+
+	return {"success": True}
+
+
+FRIDGE_DOOR_EDGE_CLEARANCE_MM = 2.5
+
+
+class FridgeDoorCalibrationResponse(BaseModel):
+	left: float
+	center: float
+	right: float
+	lower_limit: float
+	upper_limit: float
+
+
+class FridgeDoorMoveRequest(BaseModel):
+	position: FiniteFloat
+
+
+class FridgeDoorSaveRequest(BaseModel):
+	left: FiniteFloat
+	center: FiniteFloat
+	right: FiniteFloat
+
+
+class FridgeDoorMoveResponse(BaseModel):
+	success: bool
+	position: float
+
+
+def _get_fridge_motor_config():
+	config = get_root_config()
+	motor = config.demo.fridge.motor
+	if motor is None or motor.enabled is False:
+		raise api_error(status.HTTP_404_NOT_FOUND, "fridge_not_configured", "The fridge door motor is not configured.")
+	return config, motor
+
+
+def _default_fridge_positions(lower_limit: float, upper_limit: float) -> tuple[float, float, float]:
+	left = lower_limit + FRIDGE_DOOR_EDGE_CLEARANCE_MM
+	center = (lower_limit + upper_limit) / 2.0
+	right = upper_limit - FRIDGE_DOOR_EDGE_CLEARANCE_MM
+	if not left < center < right:
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "The fridge door travel is too short for the required edge clearance.")
+	return left, center, right
+
+
+def _validate_fridge_positions(
+	request: FridgeDoorSaveRequest,
+	*,
+	lower_limit: float,
+	upper_limit: float,
+) -> DemoFridgeDoorPositionsSettings:
+	if not lower_limit <= request.left < request.center < request.right <= upper_limit:
+		raise api_error(
+			status.HTTP_400_BAD_REQUEST,
+			"request_invalid",
+			f"Fridge positions must satisfy {lower_limit} <= left < center < right <= {upper_limit}.",
+		)
+
+	return DemoFridgeDoorPositionsSettings(
+		open_left=request.left,
+		closed=request.center,
+		open_right=request.right,
+	)
+
+
+@router.get(
+    "/fridge",
+    response_model=FridgeDoorCalibrationResponse,
+    summary="Read fridge door calibration",
+    responses=response_docs(model=FridgeDoorCalibrationResponse, errors=(401, 404, 503)),
+)
+async def get_fridge_door_calibration() -> FridgeDoorCalibrationResponse:
+	"""Read fridge door calibration.
+
+	Returns the saved left/center/right door positions together with the configured motor
+	limits. Falls back to travel-based defaults until positions are saved. Only available
+	in demo or development mode.
+	"""
+	config, motor = _get_fridge_motor_config()
+	lower_limit = float(motor.lower_lim)
+	upper_limit = float(motor.lim)
+	positions = config.demo.fridge.door_positions_mm
+
+	if positions is None:
+		left, center, right = _default_fridge_positions(lower_limit, upper_limit)
+	else:
+		left = float(positions.open_left)
+		center = float(positions.closed)
+		right = float(positions.open_right)
+
+	return FridgeDoorCalibrationResponse(
+		left=left,
+		center=center,
+		right=right,
+		lower_limit=lower_limit,
+		upper_limit=upper_limit,
+	)
+
+
+@router.post(
+    "/fridge/move",
+    dependencies=[ROBOT_CONTROL],
+    summary="Test a fridge door position",
+    responses=response_docs(model=FridgeDoorMoveResponse, errors=(400, 401, 403, 409, 503)),
+)
+async def move_fridge_door_for_calibration(request: FridgeDoorMoveRequest):
+	"""Test a fridge door position.
+
+	Moves the fridge door to the requested millimeter position under the manual-motion
+	guard, rejecting positions outside the configured door limits. The tool must be fully
+	retracted before the door can move.
+	"""
+	await ensure_laser_auto_calibration_not_running()
+	worker = await get_robot_worker_or_503()
+	_ensure_ready(worker)
+
+	fridge = getattr(worker._robot, "_fridge", None)
+	if fridge is None:
+		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "fridge_not_configured", "The fridge door is not available in the active runtime.")
+
+	motor = fridge._door
+	lower_limit = float(motor._params.lower_lim)
+	upper_limit = float(motor._params.lim)
+	if request.position < lower_limit or request.position > upper_limit:
+		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", f"The fridge position must be within {lower_limit}-{upper_limit} mm.")
+
+	try:
+		async with manual_motion_guard("calibration_fridge_door", worker=worker):
+			await fridge.move_door_to(request.position)
+	except FridgeSafetyError as exc:
+		logger.warning("Fridge door move refused", exc_info=exc)
+		raise api_error(status.HTTP_409_CONFLICT, "tool_not_retracted", "") from exc
+	except (MotorError, HardwareMotorError) as exc:
+		await _raise_motor_error(worker, "The fridge door could not move.", exc, axes=["fridge_door"])
+
+	return {"success": True, "position": request.position}
+
+
+@router.post(
+    "/fridge/save",
+    response_model=BooleanSuccess,
+    dependencies=[ROBOT_CONTROL],
+    summary="Save fridge door calibration",
+    responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 503)),
+)
+async def save_fridge_door_calibration(request: FridgeDoorSaveRequest):
+	"""Save fridge door calibration.
+
+	Persists left/center/right door positions after validating their order and the door
+	motor limits, and refreshes the runtime fridge settings. Does not move the door.
+	"""
+	await ensure_laser_auto_calibration_not_running()
+	config, motor = _get_fridge_motor_config()
+	positions = _validate_fridge_positions(
+		request,
+		lower_limit=float(motor.lower_lim),
+		upper_limit=float(motor.lim),
+	)
+
+	next_config = config.model_copy(deep=True)
+	next_config.demo.fridge.door_positions_mm = positions
+	next_config = type(config).model_validate(next_config.model_dump(mode="json"))
+
+	save_root_config(next_config)
+
+	try:
+		worker = await get_robot_worker()
+	except ValueError:
+		worker = None
+
+	if worker is not None:
+		fridge = getattr(worker._robot, "_fridge", None)
+		if fridge is not None:
+			fridge.update_settings(next_config.demo.fridge)
 
 	return {"success": True}
 

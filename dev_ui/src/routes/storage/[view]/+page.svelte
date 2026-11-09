@@ -3,7 +3,15 @@
 	import { page } from '$app/state';
 	import CalibrationPage from '$lib/components/calibration/CalibrationPage.svelte';
 
-	type CalibrationView = 'layout' | 'cell_auto' | 'cell_manual' | 'stage' | 'io' | 'rotation' | 'test';
+	type CalibrationView =
+		| 'layout'
+		| 'cell_auto'
+		| 'cell_manual'
+		| 'stage'
+		| 'io'
+		| 'rotation'
+		| 'fridge'
+		| 'test';
 
 	const views: Record<string, CalibrationView> = {
 		layout: 'layout',
@@ -12,6 +20,7 @@
 		stage: 'stage',
 		'io-box': 'io',
 		'tool-rotation': 'rotation',
+		fridge: 'fridge',
 		test: 'test'
 	};
 

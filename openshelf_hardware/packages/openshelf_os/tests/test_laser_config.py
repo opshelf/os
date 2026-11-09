@@ -45,6 +45,19 @@ MINIMAL_CONFIG_DICT = {
 }
 
 
+def test_demo_config_only_sets_mapping_path():
+    data = copy.deepcopy(MINIMAL_CONFIG_DICT)
+    data["demo"] = {
+        "enabled": False,
+        "cell_map_path": "data/custom-demo.json",
+    }
+
+    config = RootConfig.model_validate(data)
+
+    assert config.demo.cell_map_path == "data/custom-demo.json"
+    assert config.demo.fridge.enabled is False
+
+
 @pytest.mark.parametrize("function", [0xA0, 0xA1, 0x21])
 def test_motor_rejects_unsupported_brake_output_function(function: int):
     """0xA1 was inverted path-complete: a status signal, not a brake output."""

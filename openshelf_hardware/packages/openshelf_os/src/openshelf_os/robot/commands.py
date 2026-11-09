@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from openshelf_os.common import AxisCoordinate
 
-MotorAxis = Literal["x_axis", "y_axis", "z_axis", "stage", "rotate", "door"]
+MotorAxis = Literal["x_axis", "y_axis", "z_axis", "stage", "rotate", "door", "fridge_door"]
 
 
 class StopCommand(BaseModel):

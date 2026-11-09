@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from openshelf_os.common import AxisCoordinate
+from openshelf_os.exceptions import FridgeSafetyError
 from openshelf_os.robot.core import Robot
 from openshelf_os.robot.status import RobotCommandError
 from openshelf_os.storage import (
@@ -82,6 +83,22 @@ def item_payload(barcode: str, location: StorageModuleCellLocation | None = None
     if location is not None:
         payload["location"] = location.model_dump()
     return payload
+
+
+@pytest.mark.asyncio
+async def test_store_preserves_fridge_safety_rejection() -> None:
+    location = StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)
+    grid = build_grid()
+    robot = build_store_robot(grid)
+    robot._fridge = SimpleNamespace(is_fridge_cell=lambda cell: cell == location)
+    robot.io_pick = AsyncMock(
+        side_effect=FridgeSafetyError("Tool must be fully retracted before moving fridge door")
+    )
+
+    with pytest.raises(FridgeSafetyError, match="fully retracted"):
+        await robot.store(item_payload("ordinary-item", location))
+
+    assert grid.get_cell(location).status == CellStatus.AVAILABLE
 
 
 @pytest.mark.asyncio

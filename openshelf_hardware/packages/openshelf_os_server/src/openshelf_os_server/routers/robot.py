@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 from openshelf_os.common import ConfigError
 from openshelf_os.config.settings import BARCODE_MAX_LENGTH
-from openshelf_os.exceptions import RotationClearanceError
+from openshelf_os.exceptions import FridgeSafetyError, RotationClearanceError
 from openshelf_os.operating_mode import OperatingMode
 from openshelf_os.storage import CellItem, CellStatus, Dimensions, StorageModuleCellLocation
 from openshelf_os.robot.commands import (
@@ -1729,6 +1729,9 @@ async def home_motor(
                 # The full sequence also recovers an unhomed X: a provisional X home gives the
                 # clearance move coordinates, and X re-homes verified once the tool is straight.
                 await worker._robot._tool._home_rotate_sequence()
+            elif motor_name == "fridge_door":
+                # Homes against the end stop, then parks the door at its closed center.
+                await worker._robot._fridge.home_door()
             elif skip_pre_home_approach is True:
                 await motor.home(skip_pre_home_approach=True)
             else:
@@ -1742,6 +1745,9 @@ async def home_motor(
             return {"success": True, "motor": motor_name}
     except HTTPException:
         raise
+    except FridgeSafetyError as exc:
+        logger.warning("Fridge door home refused", exc_info=exc)
+        raise api_error(status.HTTP_409_CONFLICT, "tool_not_retracted", "") from exc
     except RotationClearanceError as exc:
         logging.warning("Motor home refused", exc_info=exc)
         raise api_error(
@@ -1751,6 +1757,9 @@ async def home_motor(
         ) from exc
     except Exception as exc:
         logger.error("Motor home failed: %s", exc, exc_info=exc)
+        if motor_name == "fridge_door":
+            worker.set_needs_home(f"Motor home failed: {exc}", axes=["fridge_door"])
+            await worker.get_status_snapshot(force_refresh=True)
         raise hardware_api_error(
             exc,
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2003,7 +2012,10 @@ async def move_motor(
 
     try:
         async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker, allow_tray_on_tool=True):
-            if motor_name == "rotate":
+            if motor_name == "fridge_door":
+                # The fridge checks the tool is retracted before the door moves.
+                await worker._robot._fridge.move_door_to(request.position_mm)
+            elif motor_name == "rotate":
                 if await worker._robot._tool.is_rotation_at_position(request.position_mm):
                     return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
 
@@ -2014,10 +2026,14 @@ async def move_motor(
                 finally:
                     await worker._robot._tool.restore_safe_rotation_x_position(original_x)
             else:
+                assert motor is not None
                 await motor.move_to_position(request.position_mm)
             return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
     except HTTPException:
         raise
+    except FridgeSafetyError as exc:
+        logger.warning("Fridge door move refused", exc_info=exc)
+        raise api_error(status.HTTP_409_CONFLICT, "tool_not_retracted", "") from exc
     except RotationClearanceError as exc:
         logging.warning("Motor move refused", exc_info=exc)
         raise api_error(

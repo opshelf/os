@@ -9,6 +9,18 @@ from openshelf_os.tool import (
 )
 
 
+@pytest.mark.asyncio
+async def test_is_rotated_back_compares_motor_to_configured_back_angle() -> None:
+    tool = Tool.__new__(Tool)
+    tool.get_param = AsyncMock(return_value=184.0)
+    tool.is_rotation_at_position = AsyncMock(return_value=True)
+
+    assert await tool.is_rotated_back() is True
+
+    tool.get_param.assert_awaited_once_with("ROTATION_BACK")
+    tool.is_rotation_at_position.assert_awaited_once_with(184.0)
+
+
 def _mock_stage_motor(
     limit: float = 50.0, position: float = 0.0, safe_extension_mm: float = 8.5
 ) -> AsyncMock:

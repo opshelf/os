@@ -108,6 +108,7 @@ def _axis_motors(robot: Any) -> dict[str, Any]:
         "stage": getattr(tool, "_ms", None),
         "rotate": getattr(tool, "_mr", None),
         "door": getattr(io, "_md", None),
+        "fridge_door": getattr(getattr(robot, "_fridge", None), "_door", None),
     }
     return {axis: motor for axis, motor in motors.items() if motor is not None}
 

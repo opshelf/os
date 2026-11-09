@@ -81,3 +81,4 @@ def should_enable_demo_features(mode: OperatingMode | None = None) -> bool:
     current_mode = mode if mode is not None else get_operating_mode()
 
     return current_mode == OperatingMode.demo
+
