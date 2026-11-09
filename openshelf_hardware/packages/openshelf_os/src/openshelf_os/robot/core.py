@@ -101,7 +101,7 @@ V24_POWER_RAILS: Dict[str, PowerRail] = {
 N3_POWER_RAILS: Dict[str, PowerRail] = {
     "pwr_out0": PowerRail("X axis drive", ("x_axis",)),
     "pwr_y": PowerRail("Y axis drive", ("y_axis",)),
-    "pwr_out1": PowerRail("IO box and fridge door", ("door", "fridge_door")),
+    "pwr_out1": PowerRail("IO box", ("door", "fridge_door")),
     "pwr_out2": PowerRail("network switch", ()),
     "pwr_out3": PowerRail("aux 1", ()),
     "pwr_aux2": PowerRail("aux 2", ()),
