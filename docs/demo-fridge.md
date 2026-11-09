@@ -7,11 +7,14 @@ Configure the fridge under the top-level `demo` object. The values below are
 illustrative; measure the installed door travel, center, cell coordinate, and
 required stage reach before enabling it.
 
-For initial motor calibration, configure only the motor and leave `enabled`
-false. This exposes `fridge_door` in the
-`FRIDGE MOTORS` section without enabling fridge storage workflows or automatic
-startup homing. Every fridge home operation moves from the detected endpoint to
-the configured center, or to the midpoint of travel until positions are saved.
+With `enabled` false (the default) the machine has no fridge: the API does not
+configure, home or report the fridge door, never owes it a home, refuses the
+fridge calibration endpoints, and the developer UI shows no fridge motors section
+or calibration tab, even when a `motor` block is present. To commission a fridge,
+set `enabled` true with the motor, provisional `door_positions_mm` inside the
+motor limits and at least one cell, then home the door and refine the positions
+in the fridge calibration tab. Every fridge home operation moves from the
+detected endpoint to the configured center.
 
 ```json
 {

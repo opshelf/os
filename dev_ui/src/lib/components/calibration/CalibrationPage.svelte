@@ -9,6 +9,7 @@
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
 	import FridgeCalibration from '$lib/components/calibration/FridgeCalibration.svelte';
 	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
+	import { getMotors } from '$lib/api';
 	import { devicePath } from '$lib/nav';
 	import { sideIndex } from '$lib/side';
 
@@ -39,6 +40,20 @@
 		? parseInt(page.url.searchParams.get('cell')!, 10)
 		: undefined;
 
+	// The API lists the fridge door motor only when demo.fridge.enabled, so a machine
+	// without a fridge shows no fridge tab.
+	let hasFridge = $state(false);
+
+	$effect(() => {
+		getMotors()
+			.then((motors) => {
+				hasFridge = motors.io.some((motor) => motor.name === 'fridge_door');
+			})
+			.catch(() => {
+				hasFridge = false;
+			});
+	});
+
 	function tabHref(path: string): string {
 		return `${devicePath(path)}${page.url.search}`;
 	}
@@ -53,7 +68,9 @@
 		rotation
 	</a>
 	<a class:selected={selectedView === 'io'} href={tabHref('/storage/io-box')}>io box</a>
-	<a class:selected={selectedView === 'fridge'} href={tabHref('/storage/fridge')}>fridge</a>
+	{#if hasFridge}
+		<a class:selected={selectedView === 'fridge'} href={tabHref('/storage/fridge')}>fridge</a>
+	{/if}
 	<a class:selected={selectedView === 'test'} href={tabHref('/storage/test')}>test</a>
 </div>
 
@@ -72,7 +89,7 @@
 	<IOBoxCalibration />
 {:else if selectedView === 'rotation'}
 	<RotationCalibration />
-{:else if selectedView === 'fridge'}
+{:else if selectedView === 'fridge' && hasFridge}
 	<FridgeCalibration />
 {/if}
 

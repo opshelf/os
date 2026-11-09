@@ -82,9 +82,9 @@ class PowerRail(NamedTuple):
     gripper: bool = False
 
 
-# The four switched power rails. Asserting a pin CUTS that rail; clearing it --
+# Switched power rails of the V2.4 board. Asserting a pin CUTS that rail; clearing it --
 # the default state -- applies power.
-POWER_RAILS: Dict[str, PowerRail] = {
+V24_POWER_RAILS: Dict[str, PowerRail] = {
     "pwr_out0": PowerRail(
         "tool drives and gripper",
         ("x_axis", "y_axis", "z_axis", "stage", "rotate"),
@@ -94,6 +94,28 @@ POWER_RAILS: Dict[str, PowerRail] = {
     "pwr_out2": PowerRail("peripherals", ()),
     "pwr_out3": PowerRail("aux", ()),
 }
+# N3 (ctrl-v3.0) relays POW_CTRL_X/Y/IO/PERI/AUX1/AUX2, driven straight from Pi pins. Measured
+# on lb5-2 2026-11-09: the Y relay drops only the Y drive and the IO relay the IO door and fridge
+# door drives; no relay feeds Z, stage, rotate or the gripper. X is listed per the schematic
+# even though lb5-2's X relay did not drop its drive, because an unlisted axis would stay homed.
+N3_POWER_RAILS: Dict[str, PowerRail] = {
+    "pwr_out0": PowerRail("X axis drive", ("x_axis",)),
+    "pwr_y": PowerRail("Y axis drive", ("y_axis",)),
+    "pwr_out1": PowerRail("IO box and fridge door", ("door", "fridge_door")),
+    "pwr_out2": PowerRail("network switch", ()),
+    "pwr_out3": PowerRail("aux 1", ()),
+    "pwr_aux2": PowerRail("aux 2", ()),
+}
+
+
+def power_rails_for(gpio_pins: Any) -> Dict[str, PowerRail]:
+    """The rail map of the board the pin map describes: N3 drives its relays from Pi pins."""
+    relay = gpio_pins.get("pwr_out0") if isinstance(gpio_pins, dict) else None
+    if relay is not None and getattr(relay, "board", None) == "rpi":
+        return N3_POWER_RAILS
+    return V24_POWER_RAILS
+
+
 POWER_CYCLE_HOLD_S = 3.0
 POWER_CYCLE_BOOT_TIMEOUT_S = 20.0
 POWER_CYCLE_BOOT_POLL_S = 0.25
@@ -568,7 +590,7 @@ class Robot:
         gpio = getattr(self, "_gpio", None)
         states: Dict[str, Optional[bool]] = {}
 
-        for rail in POWER_RAILS:
+        for rail in self.power_rails():
             if gpio is None or gpio.has_pin(rail) is False:
                 states[rail] = None
                 continue
@@ -646,12 +668,14 @@ class Robot:
         The optional ``on_cut`` callback runs synchronously after power is cut and
         before the hold begins.
         """
-        if rail not in POWER_RAILS:
+        rails = self.power_rails()
+        if rail not in rails:
             raise ConfigError(f"Unknown power rail '{rail}'")
 
-        spec = POWER_RAILS[rail]
+        spec = rails[rail]
+        axes = self.power_rail_axes(rail)
 
-        for name in spec.axes:
+        for name in axes:
             motor = self._get_motor_by_name(name)
             if motor is not None and motor._status is MotorStatus.MOVING:
                 raise MotorError(f"Refusing to power cycle {rail} while {name} is moving")
@@ -660,7 +684,7 @@ class Robot:
         if gpio is None or gpio.has_pin(rail) is False:
             raise ConfigError(f"GPIO pin {rail} is not configured")
 
-        for name in spec.axes:
+        for name in axes:
             motor = self._get_motor_by_name(name)
             if motor is None:
                 continue
@@ -690,7 +714,7 @@ class Robot:
             output.write(False)  # cleared restores it
             configure_error: MotorError | None = None
             try:
-                await self._reconfigure_after_power_cycle(spec.axes)
+                await self._reconfigure_after_power_cycle(axes)
             except MotorError as exc:
                 # _reconfigure_after_power_cycle already logged per-axis failure reasons.
                 configure_error = exc
@@ -698,7 +722,16 @@ class Robot:
         if configure_error is not None:
             raise configure_error
 
-        return spec.axes
+        return axes
+
+    def power_rails(self) -> Dict[str, PowerRail]:
+        config = getattr(self, "_config", None)
+        gpio_config = getattr(getattr(config, "robot", None), "gpio", None)
+        return power_rails_for(getattr(gpio_config, "pins", None))
+
+    def power_rail_axes(self, rail: str) -> tuple[str, ...]:
+        """The rail's axes that this machine has; a cut only owes a home for a fitted motor."""
+        return tuple(name for name in self.power_rails()[rail].axes if self._get_motor_by_name(name) is not None)
 
     async def idle(self) -> None:
         idle_position = await self._tool.get_param("IDLE_POSITION")

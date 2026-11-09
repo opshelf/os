@@ -2633,9 +2633,6 @@ async def save_rotation_angles(request: RotateSaveRequest):
 	return {"success": True}
 
 
-FRIDGE_DOOR_EDGE_CLEARANCE_MM = 2.5
-
-
 class FridgeDoorCalibrationResponse(BaseModel):
 	left: float
 	center: float
@@ -2662,18 +2659,10 @@ class FridgeDoorMoveResponse(BaseModel):
 def _get_fridge_motor_config():
 	config = get_root_config()
 	motor = config.demo.fridge.motor
-	if motor is None or motor.enabled is False:
-		raise api_error(status.HTTP_404_NOT_FOUND, "fridge_not_configured", "The fridge door motor is not configured.")
+	# A machine without demo.fridge.enabled has no fridge, calibration included.
+	if config.demo.fridge.enabled is not True or motor is None or motor.enabled is False:
+		raise api_error(status.HTTP_404_NOT_FOUND, "fridge_not_configured", "")
 	return config, motor
-
-
-def _default_fridge_positions(lower_limit: float, upper_limit: float) -> tuple[float, float, float]:
-	left = lower_limit + FRIDGE_DOOR_EDGE_CLEARANCE_MM
-	center = (lower_limit + upper_limit) / 2.0
-	right = upper_limit - FRIDGE_DOOR_EDGE_CLEARANCE_MM
-	if not left < center < right:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "The fridge door travel is too short for the required edge clearance.")
-	return left, center, right
 
 
 def _validate_fridge_positions(
@@ -2706,27 +2695,17 @@ async def get_fridge_door_calibration() -> FridgeDoorCalibrationResponse:
 	"""Read fridge door calibration.
 
 	Returns the saved left/center/right door positions together with the configured motor
-	limits. Falls back to travel-based defaults until positions are saved. Only available
-	in demo or development mode.
+	limits. Only available when `demo.fridge.enabled`; an enabled fridge always has positions.
 	"""
 	config, motor = _get_fridge_motor_config()
-	lower_limit = float(motor.lower_lim)
-	upper_limit = float(motor.lim)
 	positions = config.demo.fridge.door_positions_mm
 
-	if positions is None:
-		left, center, right = _default_fridge_positions(lower_limit, upper_limit)
-	else:
-		left = float(positions.open_left)
-		center = float(positions.closed)
-		right = float(positions.open_right)
-
 	return FridgeDoorCalibrationResponse(
-		left=left,
-		center=center,
-		right=right,
-		lower_limit=lower_limit,
-		upper_limit=upper_limit,
+		left=float(positions.open_left),
+		center=float(positions.closed),
+		right=float(positions.open_right),
+		lower_limit=float(motor.lower_lim),
+		upper_limit=float(motor.lim),
 	)
 
 

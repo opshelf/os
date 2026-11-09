@@ -227,3 +227,25 @@ def test_motion_fault_detects_stall_when_no_progress_is_observed(mock_controller
 
     assert fault_state.is_fault is True
     assert fault_state.stall_detected is True
+
+
+@pytest.mark.asyncio
+async def test_homing_seek_stops_when_it_keeps_driving_on_an_engaged_home_switch(mock_controller, monkeypatch):
+    """A slipping coupling keeps the drive turning while the axis sits on its switch; the seek
+    must stop on the switch instead of grinding into the stop until the 30 s no-progress fault."""
+    import hardware.motor as motor_module
+
+    monkeypatch.setattr(motor_module, "HOME_LIMIT_OVERRUN_S", 0.05)
+    motor = Motor(mock_controller, make_motor_params(), home_limit_input=Mock(read=Mock(return_value=True)))
+    motor.stop = AsyncMock(return_value=MotorStatus.STOPPED)
+    motor.get_param = AsyncMock(return_value=0)
+    counter = iter(range(10_000))
+    motor.get_position = AsyncMock(side_effect=lambda: float(next(counter)))
+    mock_controller.read_holding_registers.return_value = 0
+
+    status = await motor.wait_for_move(timeout=5.0, homing=True)
+
+    assert status is MotorStatus.FAULT
+    motor.stop.assert_awaited()
+    assert motor._home_limit_overrun is True
+    assert motor._last_fault_context["home_limit_overrun_s"] == 0.05

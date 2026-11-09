@@ -31,9 +31,20 @@ def _fridge_motor() -> Motor:
     )
 
 
-def _config() -> RootConfig:
+def _config(*, enabled: bool = True) -> RootConfig:
     config = RootConfig.model_validate(settings._build_minimal_config({}))
-    config.demo.fridge = DemoFridgeSettings(motor=_fridge_motor())
+    if enabled is False:
+        # A motor block alone is not a fridge.
+        config.demo.fridge = DemoFridgeSettings(motor=_fridge_motor())
+        return config
+    stage = _fridge_motor().model_copy(update={"motor_name": "stage", "motor_id": 3, "lim": 100})
+    config.robot.tool.motors.root = [*config.robot.tool.motors.root, stage]
+    config.demo.fridge = DemoFridgeSettings(
+        enabled=True,
+        motor=_fridge_motor(),
+        door_positions_mm={"open_left": 2.5, "closed": 407.0, "open_right": 811.5},
+        cells=[{"location": {"side": "back_module", "shelf_idx": 0, "cell_idx": 0}, "stage_extension_mm": 46.0}],
+    )
     return config
 
 
@@ -62,18 +73,14 @@ def _calibration_api() -> FastAPI:
 
 
 @pytest.mark.anyio
-async def test_get_fridge_calibration_defaults_to_installed_travel(monkeypatch) -> None:
-    monkeypatch.setattr(calibration, "get_root_config", _config)
+async def test_fridge_calibration_is_absent_unless_the_fridge_is_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(calibration, "get_root_config", lambda: _config(enabled=False))
 
-    response = await calibration.get_fridge_door_calibration()
+    with pytest.raises(HTTPException) as raised:
+        await calibration.get_fridge_door_calibration()
 
-    assert response.model_dump() == {
-        "left": 2.5,
-        "center": 407.0,
-        "right": 811.5,
-        "lower_limit": 0.0,
-        "upper_limit": 814.0,
-    }
+    assert raised.value.status_code == 404
+    assert raised.value.detail["code"] == "fridge_not_configured"
 
 
 @pytest.mark.anyio

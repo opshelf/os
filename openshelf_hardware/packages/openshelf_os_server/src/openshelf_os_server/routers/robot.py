@@ -30,7 +30,7 @@ from openshelf_os.robot.commands import (
     StoreItemCommand,
 )
 import logging
-from openshelf_os.robot.core import POWER_CYCLE_HOLD_S, POWER_RAILS
+from openshelf_os.robot.core import POWER_CYCLE_HOLD_S, V24_POWER_RAILS
 from openshelf_os.robot.worker import TRAY_ON_TOOL_ALLOWED_COMMANDS, RobotWorker
 from openshelf_os_server.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1775,21 +1775,27 @@ async def home_motor(
     responses=response_docs(model=PowerRailsResponse, errors=(401, 503)),
 )
 async def get_power_rails() -> dict:
-    """Read the four switched power rails.
+    """Read the board's switched power rails.
 
     Reports what each rail feeds, the axes that lose their encoder reference when it is
     cut, and the current output state. `powered` is `null` when the rail cannot be read.
     Cut power only through the rail cycle operation: driving the output directly drops
     the drives without reconfiguring or re-homing the axes that lose their reference.
     """
-    states: dict[str, bool | None] = {rail: None for rail in POWER_RAILS}
+    robot = None
     try:
-        worker = await get_robot_worker()
-        states = worker._robot.get_power_rail_states()
+        robot = (await get_robot_worker())._robot
     except ValueError:
         robot = get_robot_instance()
-        if robot is not None:
-            states = robot.get_power_rail_states()
+
+    if robot is None:
+        rails = V24_POWER_RAILS
+        states: dict[str, bool | None] = {rail: None for rail in rails}
+        axes_of = {rail: spec.axes for rail, spec in rails.items()}
+    else:
+        rails = robot.power_rails()
+        states = robot.get_power_rail_states()
+        axes_of = {rail: robot.power_rail_axes(rail) for rail in rails}
 
     return {
         "hold_seconds": POWER_CYCLE_HOLD_S,
@@ -1797,11 +1803,11 @@ async def get_power_rails() -> dict:
             {
                 "rail": rail,
                 "supplies": spec.supplies,
-                "axes": list(spec.axes),
+                "axes": list(axes_of[rail]),
                 "gripper": spec.gripper,
                 "powered": states.get(rail),
             }
-            for rail, spec in POWER_RAILS.items()
+            for rail, spec in rails.items()
         ],
     }
 
@@ -1824,7 +1830,7 @@ async def power_cycle_rail(
     active command or queued work returns `409`; a tray workflow that is idle between
     steps does not block the cycle.
     """
-    if rail not in POWER_RAILS:
+    if rail not in worker._robot.power_rails():
         logger.info("Power rail %s not found", rail)
         raise api_error(
             status.HTTP_404_NOT_FOUND,
@@ -1834,7 +1840,7 @@ async def power_cycle_rail(
 
     try:
         async with manual_motion_guard(f"power_cycle:{rail}", worker=worker, allow_tray_on_tool=True):
-            cut_axes = list(POWER_RAILS[rail].axes)
+            cut_axes = list(worker._robot.power_rail_axes(rail))
 
             def _mark_axes_for_homing() -> None:
                 if cut_axes:

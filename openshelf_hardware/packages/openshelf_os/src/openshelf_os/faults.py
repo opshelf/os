@@ -38,6 +38,7 @@ FAULT_MESSAGES: dict[str, str] = {
     GRIP_RELEASE_FAILED_CODE: "The gripper did not release the bin. Check the tool before continuing.",
     "motor_alarm": "A motor drive raised an alarm and stopped. Clear the alarm, then reset the robot.",
     "motor_bus_disconnected": "A device on the machine bus is not connected. Check its cable and power.",
+    "home_switch_overrun": "A motor kept turning after its home switch engaged. Check its coupling and belt, then reset the robot.",
     "motor_fault": "The robot reported a motor fault. Check the robot before continuing.",
     "motor_stalled": "A motor stalled before reaching its target. Check for an obstruction, then reset the robot.",
     "motor_timeout": "A motor did not reach its target in time. Check for an obstruction, then reset the robot.",
@@ -85,6 +86,8 @@ def fault_code(exc: BaseException) -> Optional[str]:
             return "motor_timeout"
         fault_context = getattr(current, "fault_context", None)
         if isinstance(fault_context, dict):
+            if fault_context.get("home_limit_overrun_s"):
+                return "home_switch_overrun"
             if fault_context.get("alarm_code"):
                 return "motor_alarm"
             if fault_context.get("stall_detected") or fault_context.get("no_progress"):

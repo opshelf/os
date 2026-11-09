@@ -113,3 +113,30 @@ async def test_power_cycle_reconfigures_every_axis_it_dropped(monkeypatch) -> No
         motor.configure.assert_awaited_once()
         # Reconfiguring must not resurrect the homed flag.
         assert motor._is_homed is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_fridge", [True, False])
+async def test_n3_io_relay_cut_unhomes_both_doors_and_only_fitted_ones(monkeypatch, has_fridge) -> None:
+    """On N3 the IO relay also feeds the fridge door; an axis it drops but the map misses would
+    keep moving on a reset counter, and an axis the machine lacks must never owe a home."""
+    gpio = GpioManager(
+        {"pwr_out1": GpioPinSpec(name="pwr_out1", board="rpi", pin=25, direction="output")},
+        fake=True,
+    )
+    motors = {"door": make_motor()}
+    if has_fridge:
+        motors["fridge_door"] = make_motor()
+    robot = make_robot(gpio, motors)
+    robot._config = SimpleNamespace(robot=SimpleNamespace(gpio=SimpleNamespace(pins={
+        "pwr_out0": SimpleNamespace(board="rpi"),
+        "pwr_out1": SimpleNamespace(board="rpi"),
+    })))
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    axes = await robot.power_cycle_rail("pwr_out1")
+
+    assert axes == (("door", "fridge_door") if has_fridge else ("door",))
+    for motor in motors.values():
+        assert motor._is_homed is False
+        motor.configure.assert_awaited_once()

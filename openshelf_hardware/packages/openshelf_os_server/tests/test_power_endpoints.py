@@ -4,6 +4,7 @@ import pytest
 from httpx import AsyncClient
 from openshelf_os_server.routers import robot as robot_router
 from openshelf_os.exceptions import MotorError
+from openshelf_os.robot.core import V24_POWER_RAILS
 from unittest.mock import MagicMock, AsyncMock, patch
 
 
@@ -23,6 +24,8 @@ def _mock_worker(power_cycle: AsyncMock | None = None):
 	worker._crash_reason = None
 
 	robot = MagicMock()
+	robot.power_rails = MagicMock(return_value=V24_POWER_RAILS)
+	robot.power_rail_axes = lambda rail: V24_POWER_RAILS[rail].axes
 	robot.get_power_rail_states = MagicMock(
 		return_value={"pwr_out0": True, "pwr_out1": False, "pwr_out2": None, "pwr_out3": True}
 	)
