@@ -13,6 +13,9 @@ from openshelf_os.config.laser_scan import (
 from openshelf_os.laser_calibration.angle.capture import enter_capture_mode
 from openshelf_os.laser_calibration.defaults import Z_OFFSET_MODEL_PARAM_TOLERANCE_MM
 
+from openshelf_os_server.core.storage import StorageService
+from openshelf_os_server.database.session import AsyncSessionLocal
+
 from .models import *
 
 
@@ -202,6 +205,20 @@ def _get_x_axis_lower_limit_mm(worker: RobotWorker) -> float | None:
         return None
 
     return float(limit)
+
+
+async def _install_applied_grid(worker: RobotWorker, grid_path: Path) -> None:
+    """Hand the robot the applied grid with the database's stored items marked occupied.
+
+    The grid file carries no inventory, and store allocation reads only the robot grid, so
+    swapping it in bare let the next store pick a cell that still held a plate (Sentry
+    OPENSHELF-API-CV).
+    """
+    grid = laser_module.load_grid(grid_path)
+    async with AsyncSessionLocal() as session:
+        occupied = await StorageService(session).get_all_occupied_cells()
+    worker._robot._grid = grid
+    worker._robot.sync_occupied_cells([(side, shelf_idx, cell_idx) for side, shelf_idx, cell_idx, _ in occupied])
 
 
 class ApplyRunnerMixin:
@@ -752,7 +769,7 @@ class ApplyRunnerMixin:
                     persisted=reference_persisted.get(completed_result.side, False),
                 )
 
-        worker._robot._grid = laser_module.load_grid(grid_path)
+        await _install_applied_grid(worker, grid_path)
 
     async def _persist_single_shelf_result(
         self,
@@ -822,7 +839,7 @@ class ApplyRunnerMixin:
         if reference_result is not None:
             await self._publish_reference_offset_applied(reference_result, persisted=True)
 
-        worker._robot._grid = laser_module.load_grid(grid_path)
+        await _install_applied_grid(worker, grid_path)
 
     async def _persist_single_cell_result(
         self,
@@ -899,7 +916,7 @@ class ApplyRunnerMixin:
             if reference_result is not None:
                 await self._publish_reference_offset_applied(reference_result, persisted=True)
 
-        worker._robot._grid = laser_module.load_grid(grid_path)
+        await _install_applied_grid(worker, grid_path)
 
     async def _get_current_calibration_params(self, worker: RobotWorker) -> dict[str, float]:
         front = await worker._robot._tool.get_param("ROTATION_FRONT")
