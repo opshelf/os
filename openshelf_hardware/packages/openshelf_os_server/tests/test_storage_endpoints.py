@@ -111,3 +111,18 @@ async def test_add_item_location_occupied_returns_conflict(client: AsyncClient) 
         json={**location_data, "barcode": second_item['barcode']}, headers=headers
     )
     assert conflict_response.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_item_with_a_non_finite_size_is_refused_not_stored(client: AsyncClient) -> None:
+    # JSON parsers accept NaN, and NaN compared false with `<= 0`, so the item was saved
+    # with a width the robot's fit check cannot use.
+    response = await client.post(
+        "/api/storage/items",
+        content=b'{"barcode": "nan-size-1", "name": "Bottle", "dimensions": {"width": NaN, "height": 10, "length": 10}}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    async with AsyncSessionLocal() as db:
+        assert await StorageService(db).get_item("nan-size-1") is None

@@ -23,9 +23,6 @@ TEXT_MAX_SIZE = 28
 TEXT_MIN_SIZE = 14
 FONT_PATH = os.path.join(os.path.dirname(barcode.__file__), "fonts", "DejaVuSansMono.ttf")
 
-# The T9E-US ignores a feed command after a raster job. Configurable blank
-# raster rows advance the finished label far enough to clear the enclosure.
-
 # Kept in the job for compatibility with the printer, although its effective
 # darkness is stored in non-volatile printer configuration.
 HEATING_DOTS = 9
@@ -95,6 +92,8 @@ def render_label(payload: str, location: str | None = None) -> Image.Image:
     return label
 
 
+# The T9E-US ignores a feed command after a raster job. Configurable blank
+# raster rows advance the finished label far enough to clear the enclosure.
 def _add_feed_rows(label: Image.Image, feed_dots: int) -> Image.Image:
     if feed_dots < 0:
         raise ValueError("feed_dots must be non-negative")
