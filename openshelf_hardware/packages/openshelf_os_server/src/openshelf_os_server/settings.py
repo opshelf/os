@@ -249,6 +249,14 @@ def _apply_env_overrides(data: dict) -> dict:
         data["auth"]["dev_mode"] = False
         data["auth"]["require_auth"] = True
         data["auth"]["enabled"] = True
+    else:
+        # Production, demo and mock never sign anyone in automatically, whatever the file
+        # says: a config saved while in development mode carries the three values above,
+        # and a file shared between modes (OPENSHELF_CONFIG_PATH, or the single config.json
+        # of an older device) would otherwise run unauthenticated as the developer admin.
+        data["auth"]["dev_mode"] = False
+        data["auth"]["require_auth"] = True
+        data["auth"]["dev_auto_user"] = None
 
     # A blank JWT_SECRET (e.g. an unset compose passthrough) must not override a
     # usable secret, otherwise tokens would be signed with an empty key. The literal

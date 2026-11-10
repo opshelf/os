@@ -10,6 +10,9 @@ from alembic import context
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from openshelf_os_server.database.base import Base
+# Registers every table on Base.metadata; without it `alembic revision --autogenerate`
+# compares against empty metadata and proposes dropping the whole schema.
+from openshelf_os_server.database import models  # noqa: F401
 
 config = context.config
 

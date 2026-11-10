@@ -352,12 +352,3 @@ async def _absorb_cancellation() -> None:
             pass
         task.uncancel()
 
-
-_manager = LaserAutoCalibrationManager()
-
-def get_laser_auto_calibration_manager() -> LaserAutoCalibrationManager:
-    return _manager
-
-
-async def is_laser_auto_calibration_running() -> bool:
-    return await _manager.is_active()

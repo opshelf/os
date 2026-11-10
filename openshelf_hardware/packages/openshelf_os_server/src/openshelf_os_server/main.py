@@ -585,17 +585,10 @@ def _alembic_config(database_url: str) -> Optional[Config]:
 		logger.warning("alembic_directory_missing", script_location=str(script_location))
 		return None
 
-	# Historical resolution, kept as is: the packaged alembic.ini is not found from
-	# here, so the fallback Config is what runs in the image. Loading that ini would
-	# make alembic/env.py call fileConfig(), which disables the app loggers that
-	# configure_logging() already installed.
-	alembic_ini_path = Path(__file__).parent.parent.parent.parent.parent / "alembic.ini"
-
-	if alembic_ini_path.exists() is False:
-		logger.warning("alembic_ini_missing", path=str(alembic_ini_path), action="using_fallback_config")
-		alembic_cfg = Config()
-	else:
-		alembic_cfg = Config(str(alembic_ini_path))
+	# No ini file on purpose: loading the packaged alembic.ini would make alembic/env.py
+	# call fileConfig(), which disables the app loggers that configure_logging()
+	# already installed.
+	alembic_cfg = Config()
 
 	alembic_cfg.set_main_option("script_location", str(script_location))
 	alembic_cfg.set_main_option("sqlalchemy.url", database_url)
@@ -1316,11 +1309,11 @@ async def system_info() -> dict[str, str | None]:
 	"""
 	lan_ip: str | None = None
 	try:
-		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-		lan_ip = socket.inet_ntoa(
-			fcntl.ioctl(s.fileno(), 0x8915, struct.pack("256s", b"wlan0"))[20:24]
-		)
-		s.close()
+		# The ioctl raises when there is no wlan0; the socket is closed either way.
+		with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+			lan_ip = socket.inet_ntoa(
+				fcntl.ioctl(s.fileno(), 0x8915, struct.pack("256s", b"wlan0"))[20:24]
+			)
 	except OSError:
 		pass
 

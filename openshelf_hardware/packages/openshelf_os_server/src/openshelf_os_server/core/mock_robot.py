@@ -53,19 +53,6 @@ def _utcnow() -> datetime:
 	return datetime.now(timezone.utc)
 
 
-def _command_response(row: MockRobotCommand) -> dict[str, Any]:
-	return {
-		"command_id": row.command_id,
-		"request_id": row.request_id,
-		"command": row.payload.get("command"),
-		"status": row.status,
-		"result": row.result,
-		"created_at": row.created_at.isoformat(),
-		"started_at": row.started_at.isoformat() if row.started_at is not None else None,
-		"completed_at": row.completed_at.isoformat() if row.completed_at is not None else None,
-	}
-
-
 def _deterministic_weight(barcode: str) -> float:
 	digest = hashlib.sha256(barcode.encode("utf-8")).digest()
 	return float(100 + int.from_bytes(digest[:2], "big") % 4901)
