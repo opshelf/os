@@ -50,6 +50,8 @@
 	let defs = $state<Record<string, Schema>>({});
 	let query = $state('');
 	let expanded = $state<Set<string>>(new Set());
+	// number inputs holding text the browser cannot parse; kept outside the draft, which cannot hold NaN
+	let badInputs = $state<Set<string>>(new Set());
 	let serverIssues = $state<Issue[]>([]);
 	let isLoading = $state(true);
 	let isValidating = $state(false);
@@ -76,6 +78,11 @@
 			}
 			const key = id === null || id === '' ? '' : id;
 			byRow.set(key, [...(byRow.get(key) ?? []), key === '' ? `${issue.path}: ${issue.message}` : issue.message]);
+		}
+		for (const id of badInputs) {
+			if (rowIds.has(id)) {
+				byRow.set(id, [...(byRow.get(id) ?? []), 'Enter a number.']);
+			}
 		}
 		for (const row of rows) {
 			const local = row.field.kind === 'group' ? null : localIssue(row.field, row.value);
@@ -134,6 +141,7 @@
 			revision = current.revision;
 			original = current.data ?? {};
 			draft = clone(original);
+			badInputs = new Set();
 			serverIssues = [];
 		} catch (err) {
 			if (seq === loadSeq) {
@@ -186,7 +194,25 @@
 		return JSON.parse(JSON.stringify(value)) as JsonValue;
 	}
 
+	function setBadInput(id: string, isBad: boolean): void {
+		if (badInputs.has(id) !== isBad) {
+			const next = new Set(badInputs);
+			if (isBad) {
+				next.add(id);
+			} else {
+				next.delete(id);
+			}
+			badInputs = next;
+		}
+	}
+
+	function discard(): void {
+		draft = clone(original);
+		badInputs = new Set();
+	}
+
 	function setValue(path: PathKey[], value: JsonValue | typeof UNSET): void {
+		setBadInput(pathId(path), false);
 		const next = setAt(clone(draft), path, value);
 		draft = value === UNSET ? pruneAbsent(next, original, path) : next;
 	}
@@ -205,12 +231,25 @@
 
 	// Writes the draft back only when it differs from the typed number, so in-progress text
 	// ("-", "-0", ".05") is not rewritten while typing; revert/discard/reload still update the field.
-	function syncNumber(node: HTMLInputElement, value: JsonValue | undefined): void {
+	function syncNumber(node: HTMLInputElement, value: JsonValue | undefined, isBad: boolean): void {
+		if (isBad && node.validity.badInput) {
+			return;
+		}
 		const text = typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
-		if (node.value === text || (text !== '' && node.value !== '' && Number(node.value) === value)) {
+		if (node.validity.badInput === false && (node.value === text || (text !== '' && node.value !== '' && Number(node.value) === value))) {
 			return;
 		}
 		node.value = text;
+	}
+
+	// an unparsable number reads as '' (same as a cleared field); leave the draft alone and flag the row
+	function didInputNumber(event: Event & { currentTarget: HTMLInputElement }, row: Row): void {
+		const input = event.currentTarget;
+		if (input.validity.badInput) {
+			setBadInput(row.id, true);
+		} else {
+			setValue(row.path, parseNumber(input.value, row));
+		}
 	}
 
 	function parseRaw(text: string): JsonValue {
@@ -413,9 +452,9 @@
 										step={row.field.kind === 'integer' ? 1 : 'any'}
 										min={row.field.min}
 										max={row.field.max}
-										{@attach (node) => syncNumber(node, value)}
+										{@attach (node) => syncNumber(node, value, badInputs.has(row.id))}
 										placeholder={value === null ? 'null' : ''}
-										oninput={(event) => setValue(row.path, parseNumber(event.currentTarget.value, row))}
+										oninput={(event) => didInputNumber(event, row)}
 									/>
 									{#if isRegisterField(row.key)}<span class="text muted hint">{hex(value)}</span>{/if}
 									<span class="text muted hint">{boundsHint(row.field)}</span>
@@ -472,7 +511,7 @@
 				show changes
 			</button>
 			<span class="spacer-flexible"></span>
-			<button onclick={() => (draft = clone(original))} disabled={changes.length === 0 || isSaving}>discard</button>
+			<button onclick={discard} disabled={(changes.length === 0 && badInputs.size === 0) || isSaving}>discard</button>
 			<button
 				class="primary"
 				onclick={didClickSave}
