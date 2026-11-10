@@ -1512,6 +1512,9 @@ async def _perform_cycle_test(worker, location: StorageModuleCellLocation) -> No
 			grid.save()
 		except (MotorError, HardwareMotorError, ToolError) as e:
 			await _raise_motor_error(worker, "The cycle test failed.", e)
+		except HTTPException:
+			# The pre-retract already answered a motor fault with 409 and needs_home.
+			raise
 		except Exception as exc:
 			raise api_error(
 				status.HTTP_500_INTERNAL_SERVER_ERROR,
