@@ -35,14 +35,19 @@
 
 	const links: NavLink[] = [
 		{ href: '/', label: 'status' },
+		{ href: '/config', label: 'config' },
 		{ href: '/storage', label: 'storage' },
 		{ href: '/camera', label: 'cameras' },
+		{ href: '/motors', label: 'motors' }
+	];
+
+	// pages used less often share the "more" item, which opens them as a second row, so
+	// the first row fits the robot's 1024px wide screen
+	const moreLinks: NavLink[] = [
 		{ href: '/scale', label: 'scale' },
 		{ href: '/sizer', label: 'sizer', requiresSizer: true },
 		{ href: '/scanner', label: 'scanner' },
 		{ href: '/printer', label: 'printer' },
-		{ href: '/motors', label: 'motors' },
-		{ href: '/config', label: 'config' },
 		{ href: '/wifi', label: 'wifi' }
 	];
 
@@ -55,6 +60,10 @@
 	let deviceLabel = $state('');
 	let isSizerEnabled = $state(false);
 	let statusStream: ReturnType<typeof createReconnectingEventSource> | null = null;
+
+	const isMoreOpen = $derived(
+		moreLinks.some((link) => isActiveLink(link.href, $page.url.pathname))
+	);
 
 	// Status stream faults have no page of their own, so the layout reports them to the
 	// toast queue: the message changes when the fault changes and goes empty once the
@@ -190,17 +199,19 @@
 <nav>
 	<ul>
 		{#each links as link}
-			{#if link.requiresSizer !== true || isSizerEnabled === true}
-				<li>
-					<a
-						href={devicePath(link.href)}
-						class:active={isActiveLink(link.href, $page.url.pathname)}
-					>
-						{link.label}
-					</a>
-				</li>
-			{/if}
+			<li>
+				<a
+					href={devicePath(link.href)}
+					class:active={isActiveLink(link.href, $page.url.pathname)}
+				>
+					{link.label}
+				</a>
+			</li>
 		{/each}
+
+		<li>
+			<a href={devicePath(moreLinks[0].href)} class:active={isMoreOpen}>more</a>
+		</li>
 
 		<li class="spacer-flexible"></li>
 
@@ -214,6 +225,23 @@
 			</li>
 		{/if}
 	</ul>
+
+	{#if isMoreOpen === true}
+		<ul>
+			{#each moreLinks as link}
+				{#if link.requiresSizer !== true || isSizerEnabled === true}
+					<li>
+						<a
+							href={devicePath(link.href)}
+							class:active={isActiveLink(link.href, $page.url.pathname)}
+						>
+							{link.label}
+						</a>
+					</li>
+				{/if}
+			{/each}
+		</ul>
+	{/if}
 </nav>
 
 <main>
