@@ -41,27 +41,48 @@ class SharedModbusController:
         self.client = None
         self.lock = asyncio.Lock()
         self._unit_ready_at: dict[int, float] = {}
+        self._quiet_until = 0.0
+        self._quiet_unit = 0
+        self._quiet_over = asyncio.Event()
 
     def is_unit_busy(self, unit_id: int) -> bool:
         """Whether a busy write holds frames to `unit_id` back right now."""
         return self._unit_ready_at.get(int(unit_id), 0.0) > time.monotonic()
 
+    def _hold_off_s(self, unit_id: int) -> float:
+        """Seconds until a frame to `unit_id` may go out: its busy window or the port's quiet window."""
+        return max(self._unit_ready_at.get(unit_id, 0.0), self._quiet_until) - time.monotonic()
+
+    def _trace_pdu(self, sending: bool, pdu: Any) -> Any:
+        """pymodbus hook: the reply a cancelled request left outstanding ends the quiet window."""
+        if (
+            not sending
+            and getattr(pdu, "dev_id", None) == self._quiet_unit
+            and self._quiet_until > time.monotonic()
+        ):
+            self._quiet_until = 0.0
+            woken, self._quiet_over = self._quiet_over, asyncio.Event()
+            woken.set()
+        return pdu
+
     @contextlib.asynccontextmanager
     async def _port_for_unit(self, unit_id: int):
-        """Hold the port lock once `unit_id` is out of its busy window.
+        """Hold the port lock once `unit_id` is out of its busy window and the port is quiet.
 
         Waits outside the lock, so other units keep the bus while this one is busy. The
         window is re-checked under the lock: a busy write queued ahead of this caller can
-        start it after the first check.
+        start it, and a cancelled request ahead of it can leave the port outstanding,
+        after the first check.
         """
         unit_id = int(unit_id)
         while True:
-            delay = self._unit_ready_at.get(unit_id, 0.0) - time.monotonic()
+            delay = self._hold_off_s(unit_id)
             if delay > 0:
-                await asyncio.sleep(delay)
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._quiet_over.wait(), delay)
                 continue
             await self.lock.acquire()
-            if self._unit_ready_at.get(unit_id, 0.0) <= time.monotonic():
+            if self._hold_off_s(unit_id) <= 0:
                 break
             self.lock.release()
         try:
@@ -97,6 +118,19 @@ class SharedModbusController:
                     # I/O error. Treating that as transient reconnected the shared bus,
                     # re-sent the request (a write included) and kept the cancelled
                     # caller running for seconds. Hand the cancellation back instead.
+                    #
+                    # The drive still owes its reply, and RTU frames carry no transaction
+                    # id: pymodbus would resolve the next request to that unit with it.
+                    # Keep the port quiet until that reply lands (`_trace_pdu`), or the
+                    # response timeout passes for a drive that never answers; pymodbus
+                    # drops what arrives meanwhile (the cancelled request's future is
+                    # done) and clears its receive buffer when the next frame is sent.
+                    ctx = self.client.ctx if self.client else None
+                    future = getattr(ctx, "response_future", None)
+                    if future is None or future.cancelled() or not future.done():
+                        timeout = ctx.comm_params.timeout_connect if ctx else self.timeout
+                        self._quiet_unit = ctx.request_dev_id if ctx else 0
+                        self._quiet_until = max(self._quiet_until, time.monotonic() + timeout)
                     raise cancellation
 
                 if attempt < attempts - 1:
@@ -195,7 +229,8 @@ class SharedModbusController:
                 bytesize=8,
                 retries=3,
                 stopbits=1,
-                framer=pymodbus.FramerType.RTU
+                framer=pymodbus.FramerType.RTU,
+                trace_pdu=self._trace_pdu,
             )
             
             connected = await self.client.connect()

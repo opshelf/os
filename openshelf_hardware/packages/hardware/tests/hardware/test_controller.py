@@ -4,20 +4,27 @@ import pty
 import time
 
 import pytest
+from pymodbus.framer import FramerRTU
 from unittest.mock import AsyncMock, Mock
 from hardware.controller import SharedModbusController
 from hardware.exceptions import ModbusError
 
 
 @pytest.fixture
-def silent_serial_port():
-    """A serial port nothing answers on, driven by the real pymodbus client."""
+def serial_drive():
+    """A serial port for the real pymodbus client plus the drive's end of it (a pty master)."""
     master, slave = pty.openpty()
     try:
-        yield os.ttyname(slave)
+        yield os.ttyname(slave), master
     finally:
         os.close(master)
         os.close(slave)
+
+
+@pytest.fixture
+def silent_serial_port(serial_drive):
+    """A serial port nothing answers on, driven by the real pymodbus client."""
+    return serial_drive[0]
 
 
 async def test_bounded_read_fails_inside_its_own_timeout(silent_serial_port):
@@ -59,6 +66,59 @@ async def test_a_cancelled_read_is_cancelled_instead_of_retried_over_a_reconnect
 
     assert elapsed < 0.5
     controller._reconnect.assert_not_awaited()
+
+
+@pytest.mark.parametrize("late_reply", [True, False])
+async def test_next_frame_after_a_cancelled_request_waits_for_the_stale_reply(serial_drive, late_reply):
+    # A cancelled read leaves the drive's reply outstanding and RTU frames carry no transaction
+    # id, so pymodbus resolves the next request to that unit with the stale reply: the stop a
+    # cancelled move sends would be acknowledged before the drive had answered it. The hold
+    # ends when that reply lands, so the stop is not delayed by the whole response timeout; a
+    # drive that never answers is waited out for that long.
+    port, drive = serial_drive
+    os.set_blocking(drive, False)
+    frames: list[tuple[float, bytes]] = []
+    asyncio.get_running_loop().add_reader(drive, lambda: frames.append((time.monotonic(), os.read(drive, 256))))
+
+    def rtu(payload: bytes) -> bytes:
+        return payload + FramerRTU.compute_CRC(payload).to_bytes(2, "big")
+
+    timeout = 0.5
+    controller = SharedModbusController(port, 9600, timeout=timeout)
+    await controller.connect()
+
+    read = asyncio.create_task(controller.read_holding_registers(1, 0))
+    await asyncio.sleep(0.1)
+    assert len(frames) == 1
+    started = time.monotonic()
+    read.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await read
+    assert time.monotonic() - started < 0.2
+
+    stop_frame = rtu(bytes([1, 6, 0x60, 0x02, 0, 0x40]))
+    stop = asyncio.create_task(controller.write_single_register(1, 0x6002, 0x40))
+    await asyncio.sleep(0.1)
+    assert len(frames) == 1
+    if late_reply:
+        os.write(drive, rtu(bytes([1, 3, 2, 0x12, 0x34])))
+        await asyncio.sleep(0.1)
+        assert len(frames) == 2
+        assert frames[1][0] - started < timeout - 0.1
+    else:
+        await asyncio.sleep(timeout / 2)
+        assert len(frames) == 1
+        await asyncio.sleep(timeout / 2)
+        assert len(frames) == 2
+        assert frames[1][0] - started >= timeout - 0.05
+    assert frames[1][1] == stop_frame
+    # The stale reply did not answer the stop.
+    assert not stop.done()
+
+    os.write(drive, stop_frame)
+    await asyncio.wait_for(stop, 1.0)
+    asyncio.get_running_loop().remove_reader(drive)
+    await controller.close()
 
 
 @pytest.mark.asyncio
