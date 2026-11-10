@@ -351,4 +351,3 @@ async def _absorb_cancellation() -> None:
         except asyncio.CancelledError:
             pass
         task.uncancel()
-

@@ -508,12 +508,14 @@ async def _retract_tool_for_move(
 
 	`blocked_message` reports a retract that finished with the tool still past the rotation
 	clearance limits as blocked (409, no `needs_home`) instead of as a motor fault, the same
-	way the rotation route already reports clearance failures.
+	way the rotation route already reports clearance failures. Only the clearance shortfall
+	Tool.retract wraps (a MovementError cause) counts: a drive fault (a failed move, recovery
+	home or position read) leaves the axis position untrusted and still flags homing.
 	"""
 	try:
 		await tool.retract()
 	except MovementError as e:
-		if blocked_message is None:
+		if blocked_message is None or not isinstance(e.__cause__, MovementError):
 			# tool.retract() wraps every failure, drive faults included, as MovementError,
 			# which most callers' (MotorError, HardwareMotorError) clauses do not catch.
 			await _raise_motor_error(worker, "The tool could not retract.", e)
