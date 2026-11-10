@@ -117,3 +117,19 @@ def test_failed_validation_fails_startup_and_leaves_file_untouched(config_file):
         settings.get_root_config()
     assert path.read_bytes() == broken_raw
     assert list(path.parent.glob("config.json.*.bak")) == []
+
+
+def test_saving_in_development_does_not_write_the_automatic_sign_in(config_file, monkeypatch):
+    # Development forces the developer auto-login when the config loads. Saving wrote it back
+    # into the file, and a device's production config.json was found carrying it.
+    path, _raw = config_file
+    settings.MODE_FILE.write_text("development")
+    monkeypatch.setenv("ENV", "dev")
+    settings.clear_config_cache()
+
+    config = settings.get_root_config()
+    assert config.auth.dev_mode is True and config.auth.require_auth is False
+    settings.save_root_config(config)
+
+    saved_auth = json.loads(path.read_bytes())["auth"]
+    assert {"dev_mode", "require_auth", "dev_auto_user"}.isdisjoint(saved_auth)

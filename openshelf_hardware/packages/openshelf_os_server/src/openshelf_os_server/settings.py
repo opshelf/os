@@ -390,6 +390,14 @@ def save_root_config(config: RootConfig, *, version_id: str | None = None) -> No
     _cached_config_path.parent.mkdir(parents=True, exist_ok=True)
 
     data = config.model_dump(mode="json")
+    if has_production_traits(get_operating_mode()) is False:
+        # Development mode forces its automatic developer sign-in when the config is
+        # loaded. Writing that back put it into files other modes read: a device's
+        # production config.json was found carrying it.
+        auth = data.get("auth")
+        if isinstance(auth, dict):
+            for key in ("dev_mode", "require_auth", "dev_auto_user"):
+                auth.pop(key, None)
     write_json_file_with_backup(
         _cached_config_path,
         data,

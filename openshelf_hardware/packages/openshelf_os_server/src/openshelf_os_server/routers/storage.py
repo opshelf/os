@@ -1225,8 +1225,18 @@ async def create_item(
     metadata = item.item_metadata or {}
     access_level_id = item.access_level_id
     member_bin = await bin_service.item_bin(existing.id) if existing is not None else None
+    provided_fields = item.model_fields_set
+    if existing is not None:
+        # A re-post changes what it names. A field it omits keeps its stored value, as
+        # weight already does; it used to reset the size to the 1 mm default, the
+        # metadata to empty and the access level to none.
+        if "dimensions" not in provided_fields:
+            dimensions = existing.dimensions
+        if "item_metadata" not in provided_fields:
+            metadata = existing.item_metadata or {}
+        if "access_level_id" not in provided_fields:
+            access_level_id = existing.access_level_id
     if member_bin is not None:
-        provided_fields = item.model_fields_set
         dimensions_changed = (
             "dimensions" in provided_fields and item.dimensions != existing.dimensions
         )
@@ -1242,12 +1252,6 @@ async def create_item(
             )
         if (dimensions_changed or access_changed) and await bin_service.bin_in_motion(member_bin.id):
             raise api_error(409, "bin_workflow_conflict", "Wait for the bin to finish moving.")
-        if "dimensions" not in provided_fields:
-            dimensions = existing.dimensions
-        if "item_metadata" not in provided_fields:
-            metadata = existing.item_metadata or {}
-        if "access_level_id" not in provided_fields:
-            access_level_id = existing.access_level_id
     try:
         db_item = await storage_service.create_item(
             barcode=item.barcode,
