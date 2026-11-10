@@ -26,8 +26,6 @@ export type RobotInitState = {
 	components: RobotInitComponent[];
 };
 
-export const isApiConnected = writable(true);
 export const robotStatus = writable<WorkerStatusPayload | null>(null);
 export const robotStatusError = writable('');
-export const robotStatusLastUpdate = writable('');
 export const robotInit = writable<RobotInitState | null>(null);

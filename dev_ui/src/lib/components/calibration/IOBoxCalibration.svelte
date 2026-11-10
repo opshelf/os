@@ -439,7 +439,16 @@
 		}
 
 		const field = selectedFields[axis];
-		const delta = editValues[field] - ioboxPosition[field];
+		const target: unknown = editValues[field];
+
+		// An emptied number field binds null, and null - position is -position: without
+		// this check "move" jogged the axis to 0 mm.
+		if (typeof target !== 'number' || Number.isFinite(target) === false) {
+			error = 'Enter a number for every position before moving.';
+			return false;
+		}
+
+		const delta = target - ioboxPosition[field];
 
 		return didClickJog(axis, delta);
 	}

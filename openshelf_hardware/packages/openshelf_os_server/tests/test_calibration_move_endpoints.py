@@ -157,3 +157,19 @@ async def test_iobox_multi_item_test_stops_when_no_tray_is_gripped(monkeypatch) 
 	# Only the safety retract the route runs before it rotates; the transfer itself has to
 	# stop at the failed tray grip without retracting onto the tray.
 	assert retract_call_count == 1
+
+
+async def test_a_non_finite_motion_target_is_refused_before_it_can_be_clamped(client) -> None:
+	# `max(0, min(limit, nan))` is the limit: a NaN angle from an emptied field turned the
+	# tool to its maximum angle, and a NaN jog or stage target reached the motors as well.
+	json_headers = {"Content-Type": "application/json"}
+
+	rotate = await client.post("/api/calibration/rotation/rotate?angle=NaN")
+	jog = await client.post(
+		"/api/calibration/jog", content=b'{"axis": "x", "delta": NaN}', headers=json_headers
+	)
+	stage = await client.post(
+		"/api/calibration/stage/move", content=b'{"position": Infinity}', headers=json_headers
+	)
+
+	assert [rotate.status_code, jog.status_code, stage.status_code] == [422, 422, 422]

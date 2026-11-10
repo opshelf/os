@@ -216,7 +216,6 @@
 <style>
 	.reading {
 		font-family: monospace;
-		font-size: 1.1.5em;
 	}
 
 	input[type='text'] {

@@ -354,8 +354,19 @@
 		editZ = currentPosition.z_offset;
 	}
 
+	// An emptied number field binds null, and null - position is -position: without this
+	// check "move" jogged the axis to 0 mm.
+	function isEnteredNumber(value: unknown): value is number {
+		return typeof value === 'number' && Number.isFinite(value);
+	}
+
 	async function didClickMoveX(): Promise<void> {
 		if (currentPosition === null) {
+			return;
+		}
+
+		if (isEnteredNumber(editX) === false) {
+			error = 'Enter a number for X.';
 			return;
 		}
 
@@ -373,6 +384,11 @@
 			return;
 		}
 
+		if (isEnteredNumber(editY) === false) {
+			error = 'Enter a number for Y.';
+			return;
+		}
+
 		const delta = editY - currentPosition.y;
 
 		if (delta === 0) {
@@ -384,6 +400,11 @@
 
 	async function didClickMoveZ(): Promise<void> {
 		if (currentPosition === null) {
+			return;
+		}
+
+		if (isEnteredNumber(editZ) === false) {
+			error = 'Enter a number for Z.';
 			return;
 		}
 

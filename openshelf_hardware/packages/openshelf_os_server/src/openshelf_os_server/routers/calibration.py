@@ -146,14 +146,14 @@ class MoveRequest(BaseModel):
 
 class MovePositionRequest(BaseModel):
 	side: StorageModuleSide
-	x: float = Field(description="Position or extension in millimeters")
-	y: float = Field(description="Position or extension in millimeters")
-	z_offset: float = 0.0
+	x: FiniteFloat = Field(description="Position or extension in millimeters")
+	y: FiniteFloat = Field(description="Position or extension in millimeters")
+	z_offset: FiniteFloat = 0.0
 
 
 class JogRequest(BaseModel):
 	axis: Literal["x", "y", "z", "stage"]
-	delta: float = Field(description="Signed displacement in millimeters")
+	delta: FiniteFloat = Field(description="Signed displacement in millimeters")
 
 
 class TestRequest(BaseModel):
@@ -308,9 +308,9 @@ class SaveRequest(BaseModel):
 	side: StorageModuleSide
 	shelf_idx: int
 	cell_idx: int
-	x: float = Field(description="Position or extension in millimeters")
-	y: float = Field(description="Position or extension in millimeters")
-	z_offset: float = Field(description="Position or extension in millimeters")
+	x: FiniteFloat = Field(description="Position or extension in millimeters")
+	y: FiniteFloat = Field(description="Position or extension in millimeters")
+	z_offset: FiniteFloat = Field(description="Position or extension in millimeters")
 	status: Optional[str] = None
 	is_manual: Optional[bool] = None
 	dimensions: Optional[Dimensions] = Field(
@@ -1322,7 +1322,7 @@ GRIP_PROBE_MAX_DEVIATION_MM = 5.0
 
 
 class GripProbeRequest(TestRequest):
-	z_offsets: list[float] = Field(min_length=1, max_length=GRIP_PROBE_MAX_POINTS)
+	z_offsets: list[FiniteFloat] = Field(min_length=1, max_length=GRIP_PROBE_MAX_POINTS)
 
 
 class GripProbePoint(BaseModel):
@@ -1935,20 +1935,20 @@ def _round_iobox_position(position: IOBoxPositionResponse) -> IOBoxPositionRespo
 class IOBoxJogRequest(BaseModel):
 	position: IOBoxPositionName
 	axis: IOBoxAxis
-	delta: float = Field(description="Signed displacement in millimeters")
+	delta: FiniteFloat = Field(description="Signed displacement in millimeters")
 
 
 class IOBoxSaveRequest(BaseModel):
-	pickup_low_x: float = Field(description="Position or extension in millimeters")
-	pickup_low_y: float = Field(description="Position or extension in millimeters")
-	pickup_high_x: float = Field(description="Position or extension in millimeters")
-	pickup_high_y: float = Field(description="Position or extension in millimeters")
-	z_extension: float = Field(description="Position or extension in millimeters")
-	stage_extension: float = Field(description="Position or extension in millimeters")
-	multi_item_x: float = Field(description="Position or extension in millimeters")
-	multi_item_y: float = Field(description="Position or extension in millimeters")
-	multi_item_z_extension: float = Field(description="Position or extension in millimeters")
-	multi_item_stage_extension: float = Field(description="Position or extension in millimeters")
+	pickup_low_x: FiniteFloat = Field(description="Position or extension in millimeters")
+	pickup_low_y: FiniteFloat = Field(description="Position or extension in millimeters")
+	pickup_high_x: FiniteFloat = Field(description="Position or extension in millimeters")
+	pickup_high_y: FiniteFloat = Field(description="Position or extension in millimeters")
+	z_extension: FiniteFloat = Field(description="Position or extension in millimeters")
+	stage_extension: FiniteFloat = Field(description="Position or extension in millimeters")
+	multi_item_x: FiniteFloat = Field(description="Position or extension in millimeters")
+	multi_item_y: FiniteFloat = Field(description="Position or extension in millimeters")
+	multi_item_z_extension: FiniteFloat = Field(description="Position or extension in millimeters")
+	multi_item_stage_extension: FiniteFloat = Field(description="Position or extension in millimeters")
 
 
 class IOBoxDoorPositionResponse(BaseModel):
@@ -2509,8 +2509,8 @@ class RotationAnglesResponse(BaseModel):
 
 
 class RotateSaveRequest(BaseModel):
-	front: float
-	back: float
+	front: FiniteFloat
+	back: FiniteFloat
 
 
 @router.get(
@@ -2540,7 +2540,11 @@ async def get_rotation_angles() -> RotationAnglesResponse:
     summary="Test tool rotation",
     responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 503)),
 )
-async def rotate_to_angle(angle: float):
+async def rotate_to_angle(
+	# NaN passes float parsing and `max(0, min(limit, nan))` returns the limit, so an
+	# empty angle field turned the tool to its maximum angle.
+	angle: float = Query(allow_inf_nan=False),
+):
 	"""Test tool rotation.
 
 	Rotates to the requested angle, clamped to the configured motor limits. Positions the
@@ -2783,8 +2787,8 @@ class ShelfStageExtensionResponse(BaseModel):
 
 
 class ShelfStageExtensionSaveRequest(BaseModel):
-	front: float
-	back: float
+	front: FiniteFloat
+	back: FiniteFloat
 
 
 @router.get(
@@ -2854,7 +2858,7 @@ async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 
 
 class StageMoveRequest(BaseModel):
-	position: float
+	position: FiniteFloat
 
 
 @router.post(

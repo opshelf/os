@@ -119,6 +119,20 @@ if (process.env.SLOW === '1') {
 	await wait(61000);
 	check('a fault a page still reports returns on its own', has('x axis is faulted'));
 	check('a fault nothing reports anymore stays hidden', has('printer is offline') === false);
+	// A page that unmounts its error on retry releases it without reporting it as over;
+	// the dismissal must not hide the same failure for the rest of the session.
+	const retry = createToastSource('error');
+	const failed = createToastSource('error');
+
+	retry.report('the y axis did not home');
+	await wait(0);
+	dismiss('the y axis did not home');
+	retry.release();
+	console.log('waiting out the acknowledgement window...');
+	await wait(61000);
+	failed.report('the y axis did not home');
+	check('a dismissed, released failure is shown when it happens again', has('the y axis did not home'));
+	failed.report('');
 	live.report('');
 }
 
