@@ -7,7 +7,7 @@ import os
 import signal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
 
 import sentry_sdk
@@ -18,6 +18,7 @@ from openshelf_os.config.exceptions import ConfigRequirementError, ConfigValidat
 from openshelf_os.config.root import RootConfig
 from openshelf_os.config.store import ConfigConflictError
 
+from openshelf_os_server.core.init_progress import OVERALL_INITIALIZING, get_init_tracker
 from openshelf_os_server.core.laser_auto_calibration import is_laser_auto_calibration_running
 from openshelf_os_server.core.manual_motion import ensure_robot_available_for_manual_motion, get_manual_motion_operation
 from openshelf_os_server.core.robot import get_robot_worker
@@ -235,7 +236,6 @@ class ConfigSaveRequest(BaseModel):
 	section: str = "robot"
 	data: Any
 	revision: str
-	restart: bool = True
 
 
 class ConfigSaveResponse(BaseModel):
@@ -272,18 +272,16 @@ async def _ensure_safe_to_restart() -> None:
 		raise api_error(status.HTTP_409_CONFLICT, "calibration_running", "")
 	if get_manual_motion_operation() is not None:
 		raise api_error(status.HTTP_409_CONFLICT, "movement_in_progress", "")
+	# The startup home runs before the worker is published and holds neither lock above.
+	if get_init_tracker().snapshot()["phase"] == OVERALL_INITIALIZING:
+		raise api_error(status.HTTP_409_CONFLICT, "robot_not_initialized", "")
 	try:
 		worker = await get_robot_worker()
 	except ValueError:
 		return
-	try:
-		ensure_robot_available_for_manual_motion(worker)
-	except HTTPException as exc:
-		# A safety interruption holds the robot still; restarting is safe, and the fix for a
-		# wrong e-stop or GPIO setting may be exactly this save.
-		detail: dict[str, Any] = exc.detail if isinstance(exc.detail, dict) else {}
-		if detail.get("reason") != "safety_interruption":
-			raise
+	# A safety interruption holds the robot still; restarting is safe, and the fix for a wrong
+	# e-stop or GPIO setting may be exactly this save. Parked or queued work still blocks.
+	ensure_robot_available_for_manual_motion(worker, allow_safety_interruption=True)
 
 
 @router.get(
@@ -364,12 +362,11 @@ async def save_config_section(request: ConfigSaveRequest) -> ConfigSaveResponse:
 	Requires `robot:control`. Replaces the section in the config file when the file is still
 	at `revision` (`409 config_changed` otherwise) and the result passes every startup check
 	(`422 config_invalid`; call `POST /config/validate` for the field paths). The previous file
-	is kept as a timestamped backup. With `restart`, refuses with `409` while the robot moves,
-	has queued work, or calibrates, and otherwise restarts the API after responding.
+	is kept as a timestamped backup. Refuses with `409` while the robot moves, has queued work,
+	or calibrates, and otherwise restarts the API after responding.
 	"""
 	section = _editable_section(request.section)
-	if request.restart is True:
-		await _ensure_safe_to_restart()
+	await _ensure_safe_to_restart()
 
 	document = get_config_store().document()
 	if document.revision != request.revision:
@@ -382,7 +379,6 @@ async def save_config_section(request: ConfigSaveRequest) -> ConfigSaveResponse:
 	except (ConfigValidationError, ConfigRequirementError) as exc:
 		raise api_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "config_invalid", "") from exc
 
-	logger.info("config_section_saved", section=section, restart=request.restart)
-	if request.restart is True:
-		_schedule_api_restart()
-	return ConfigSaveResponse(revision=get_config_store().document().revision, restarting=request.restart)
+	logger.info("config_section_saved", section=section)
+	_schedule_api_restart()
+	return ConfigSaveResponse(revision=get_config_store().document().revision, restarting=True)

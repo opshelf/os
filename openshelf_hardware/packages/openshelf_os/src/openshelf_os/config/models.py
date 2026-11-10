@@ -17,9 +17,17 @@ def _positive(v: Union[int, float], name: str) -> Union[int, float]:
 def _pair_len2(
     v: List[Union[int, float]], name: str
 ) -> Tuple[Union[int, float], Union[int, float]]:
-    if len(v) != 2:
+    if isinstance(v, (list, tuple)) is False or len(v) != 2:
         raise ValueError(f"{name} must be a 2-element list/tuple")
     return v[0], v[1]
+
+
+def _ints(values: Any, name: str) -> Tuple[int, ...]:
+    # int() raises TypeError on null/list items, which pydantic does not wrap into a field issue
+    try:
+        return tuple(int(item) for item in values)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{name} values must be numbers") from None
 
 
 class Motor(BaseModel):
@@ -258,7 +266,8 @@ class IOBoxSizerDetectionConfig(BaseModel):
         if isinstance(value, (list, tuple)) is False or len(value) != 3:
             raise ValueError("white_rgb_min must be a 3-element list/tuple")
 
-        rgb = tuple(int(component) for component in value)
+        r, g, b = _ints(value, "white_rgb_min")
+        rgb = (r, g, b)
         if any(component < 0 or component > 255 for component in rgb):
             raise ValueError("white_rgb_min values must be in range 0..255")
 
@@ -607,7 +616,8 @@ class Parameters(BaseModel):
     @classmethod
     def _pairs_to_tuple(cls, v):
         a, b = _pair_len2(v, "position")
-        return int(a), int(b)
+        x, y = _ints((a, b), "position")
+        return x, y
 
 
 class Gripper(BaseModel):

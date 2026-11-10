@@ -3,7 +3,6 @@ from openshelf_os_server.documentation import HealthResponse, SystemInfoResponse
 
 import asyncio
 import fcntl
-import json
 import os
 import secrets
 import subprocess
@@ -48,7 +47,7 @@ from openshelf_os import (
     _sentry_log_is_suppressed_pymodbus_message,
     _strip_pymodbus_frame_dump,
 )
-from openshelf_os.common import CONFIG_PATH, OperatingMode
+from openshelf_os.common import OperatingMode
 from openshelf_os.operating_mode import is_sentry_reporting_enabled, is_service_process
 from openshelf_os.runtime_state import RuntimeStatePaths
 from openshelf_os_server.core.logging_config import configure_logging, get_logger, get_correlation_id
@@ -97,6 +96,8 @@ from openshelf_os_server.settings import (
 	DEFAULT_DEVELOPER_PIN,
 	DEVELOPER_SYSTEM_USER_EMAIL,
 	configured_developer_pin,
+	get_config_path,
+	get_config_store,
 	get_operating_mode,
 	get_settings,
 )
@@ -739,23 +740,15 @@ def _get_tool_camera_url(settings: Settings) -> str | None:
 	if settings.tool_camera.rtsp_url != "":
 		return settings.tool_camera.rtsp_url
 
-	config_paths = [CONFIG_PATH]
-
-	for config_path in config_paths:
-		if config_path.exists() is False:
-			continue
-
-		try:
-			with open(config_path) as f:
-				config = json.load(f)
-
-			poe_camera = config.get("robot", {}).get("tool", {}).get("poe_camera", {})
-			url = poe_camera.get("url") or poe_camera.get("stream_uri")
-			if url is not None and url != "":
-				logger.info("tool_camera_url_from_config", config_path=str(config_path), url=url)
-				return str(url)
-		except Exception as e:
-			logger.warning("failed_to_read_config", config_path=str(config_path), error=str(e), exc_info=e)
+	try:
+		config = get_config_store().document().data
+		poe_camera = config.get("robot", {}).get("tool", {}).get("poe_camera", {})
+		url = poe_camera.get("url") or poe_camera.get("stream_uri")
+		if url is not None and url != "":
+			logger.info("tool_camera_url_from_config", config_path=str(get_config_path()), url=url)
+			return str(url)
+	except Exception as e:
+		logger.warning("failed_to_read_config", config_path=str(get_config_path()), error=str(e), exc_info=e)
 
 	return None
 

@@ -103,3 +103,22 @@ def test_generated_jwt_secret_survives_a_config_write(config_path, monkeypatch):
 
     assert store.load().auth.jwt_secret == secret
     assert "auth" not in json.loads(config_path.read_text())
+
+
+def test_typed_update_keeps_an_untouched_field_fed_by_a_legacy_shim(config_path):
+    # robot.enabled is read as robot_app.enabled only while robot_app is absent; patching
+    # robot_app.home_on_init alone would silently turn the robot off.
+    document = json.loads(config_path.read_text())
+    document.pop("robot_app")
+    document["robot"]["enabled"] = True
+    config_path.write_text(json.dumps(document))
+    store = _store(config_path)
+    assert store.load().robot_app.enabled is True
+
+    store.update(lambda draft: setattr(draft.robot_app, "home_on_init", False))
+
+    assert store.load().robot_app.enabled is True
+    reloaded = _store(config_path).load()
+    assert reloaded.robot_app.enabled is True
+    assert reloaded.robot_app.home_on_init is False
+    assert "auth" not in json.loads(config_path.read_text())

@@ -48,7 +48,7 @@ def _has_pending_commands(worker_state: dict[str, Any]) -> bool:
 	return any(operation is not current_operation for operation in queued_commands)
 
 
-def ensure_robot_available_for_manual_motion(worker) -> None:
+def ensure_robot_available_for_manual_motion(worker, *, allow_safety_interruption: bool = False) -> None:
 	worker_state = cast(dict[str, Any], getattr(worker, "__dict__", {}))
 	current_command = worker_state.get("_current_command")
 	is_demo_cycling = worker_state.get("_demo_cycling", False)
@@ -62,7 +62,7 @@ def ensure_robot_available_for_manual_motion(worker) -> None:
 		)
 	)
 
-	if is_safety_blocking is True:
+	if is_safety_blocking is True and allow_safety_interruption is False:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_conflict_detail(

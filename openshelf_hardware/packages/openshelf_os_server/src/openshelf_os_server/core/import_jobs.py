@@ -58,7 +58,7 @@ from openshelf_os_server.database.models import (
     User,
 )
 from openshelf_os_server.database.session import AsyncSessionLocal
-from openshelf_os_server.settings import get_operating_mode
+from openshelf_os_server.settings import get_config_path, get_operating_mode, get_root_config
 
 logger = logging.getLogger(__name__)
 
@@ -179,8 +179,7 @@ def _robot_grid() -> Any:
     try:
         from openshelf_os.storage import StorageGrid  # noqa: PLC0415
 
-        config = common.load_config_file(common.CONFIG_PATH)
-        return StorageGrid.load_from_file(common.resolve_grid_path(config, common.CONFIG_PATH))
+        return StorageGrid.load_from_file(common.resolve_grid_path(get_root_config(), get_config_path()))
     except Exception as exc:  # pragma: no cover - depends on device files
         logger.warning("import_fit_check_grid_unavailable: %s", exc, exc_info=exc)
         return None

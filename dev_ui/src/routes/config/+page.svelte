@@ -42,6 +42,7 @@
 	const RESTART_TIMEOUT_MS = 90_000;
 
 	let section = $state('robot');
+	let loadedSection = $state('robot');
 	let revision = $state('');
 	let original = $state<JsonValue>({});
 	let draft = $state<JsonValue>({});
@@ -54,6 +55,7 @@
 	let isValidating = $state(false);
 	let isSaving = $state(false);
 	let validateSeq = 0;
+	let loadSeq = 0;
 	let editor = $state<HTMLDivElement>();
 	let editorTop = $state(0);
 	let changesDialog = $state<HTMLDialogElement>();
@@ -66,9 +68,9 @@
 
 	const issuesByRow = $derived.by(() => {
 		const byRow = new Map<string, string[]>();
-		const prefix = `${section}.`;
+		const prefix = `${loadedSection}.`;
 		for (const issue of serverIssues) {
-			let id = issue.path.startsWith(prefix) ? issue.path.slice(prefix.length) : issue.path === section ? '' : null;
+			let id = issue.path.startsWith(prefix) ? issue.path.slice(prefix.length) : issue.path === loadedSection ? '' : null;
 			while (id !== null && id !== '' && rowIds.has(id) === false) {
 				id = id.includes('.') ? id.slice(0, id.lastIndexOf('.')) : '';
 			}
@@ -114,23 +116,34 @@
 	);
 
 	async function load(): Promise<void> {
+		const seq = ++loadSeq;
+		const target = section;
 		isLoading = true;
 		try {
 			const [current, sectionSchema] = await Promise.all([
-				apiFetch<SectionResponse>(`/system/config?section=${encodeURIComponent(section)}`),
-				apiFetch<Schema>(`/system/config/schema?section=${encodeURIComponent(section)}`)
+				apiFetch<SectionResponse>(`/system/config?section=${encodeURIComponent(target)}`),
+				apiFetch<Schema>(`/system/config/schema?section=${encodeURIComponent(target)}`)
 			]);
+			if (seq !== loadSeq) {
+				return;
+			}
 			const { ['$defs']: sharedDefs, ...rest } = sectionSchema;
 			defs = (sharedDefs ?? {}) as Record<string, Schema>;
 			schema = rest;
+			loadedSection = target;
 			revision = current.revision;
 			original = current.data ?? {};
 			draft = clone(original);
 			serverIssues = [];
 		} catch (err) {
-			postToast('error', err instanceof Error ? err.message : 'The configuration could not be read.');
+			if (seq === loadSeq) {
+				section = loadedSection;
+				postToast('error', err instanceof Error ? err.message : 'The configuration could not be read.');
+			}
 		} finally {
-			isLoading = false;
+			if (seq === loadSeq) {
+				isLoading = false;
+			}
 		}
 	}
 
@@ -146,7 +159,7 @@
 			const result = await apiFetch<ValidateResponse>('/system/config/validate', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ section, data: draft })
+				body: JSON.stringify({ section: loadedSection, data: draft })
 			});
 			if (seq === validateSeq) {
 				serverIssues = result.issues;
@@ -253,7 +266,7 @@
 			await apiFetch('/system/config', {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ section, data: draft, revision, restart: true })
+				body: JSON.stringify({ section: loadedSection, data: draft, revision })
 			});
 			postToast('status', 'Configuration saved. The API is restarting.');
 			if ((await waitForApi()) === false) {
@@ -448,7 +461,7 @@
 
 <dialog class="changes-dialog" bind:this={changesDialog} onclick={didClickDialog}>
 	<div class="dialog-head">
-		<span>{changes.length} {changes.length === 1 ? 'change' : 'changes'} in {section}</span>
+		<span>{changes.length} {changes.length === 1 ? 'change' : 'changes'} in {loadedSection}</span>
 		<span class="spacer-flexible"></span>
 		<button onclick={() => changesDialog?.close()}>close</button>
 	</div>

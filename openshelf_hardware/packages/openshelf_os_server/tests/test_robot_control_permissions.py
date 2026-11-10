@@ -50,7 +50,7 @@ ROBOT_CONTROL_ROUTES: list[tuple[str, str, Any]] = [
     ("POST", "/api/system/restart", None),
     ("PUT", "/api/system/sentry-reporting", {"enabled": True}),
     ("GET", "/api/system/config", None),
-    ("PUT", "/api/system/config", {"data": {}, "revision": "absent", "restart": False}),
+    ("PUT", "/api/system/config", {"data": {}, "revision": "absent"}),
 ]
 
 
