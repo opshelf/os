@@ -3,7 +3,6 @@ import asyncio
 import json
 import logging
 import time
-import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Callable
 from contextvars import ContextVar
@@ -110,14 +109,25 @@ def should_skip_after_response(request: Request, status_code: int) -> bool:
     return is_successful_read_excluded_endpoint(request.url.path)
 
 
+def _encodable_text(value: str) -> str:
+    # JSON admits an escaped lone surrogate ("\ud800") that no UTF-8 encoder accepts, so
+    # hashing the entry and serving it back would both fail and the request would go
+    # unrecorded. Keep the entry and mark the character instead.
+    return value.encode("utf-8", "replace").decode("utf-8")
+
+
 def redact_sensitive_values(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            key: REDACTED_VALUE if key.lower() in SENSITIVE_FIELD_NAMES else redact_sensitive_values(child)
+            _encodable_text(key): REDACTED_VALUE
+            if key.lower() in SENSITIVE_FIELD_NAMES
+            else redact_sensitive_values(child)
             for key, child in value.items()
         }
     if isinstance(value, list):
         return [redact_sensitive_values(item) for item in value]
+    if isinstance(value, str):
+        return _encodable_text(value)
     return value
 
 
@@ -210,15 +220,18 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				error_message=error_message or "",
 				duration_ms=duration_ms
 			)
-		except Exception:
-			traceback.print_exc()
+		except Exception as exc:
+			logger.error(
+				f"Audit entry not written for {request.method} {request.url.path}",
+				exc_info=exc,
+			)
 
 		return response
-	
+
 	async def _log_request(
 		self,
 		request: Request,
-		request_body: Optional[Dict[str, Any]],
+		request_body: Optional[Any],
 		response_status: int,
 		response_body: Optional[Dict[str, Any]],
 		error_message: Optional[str],
@@ -242,8 +255,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
 				method = request.method
 				endpoint = str(request.url.path)
 				command_records = command_records_context.get()
-				ip_address = request.client.host if request.client else None
-				user_agent = request.headers.get("user-agent")
+				# Hash exactly what the row stores: verify recomputes the entry hash from the
+				# stored columns, and these two are stored as "" when the request has none.
+				ip_address = request.client.host if request.client else ""
+				user_agent = request.headers.get("user-agent") or ""
 				correlation_id = request.headers.get("X-Correlation-ID")
 
 				last_seq_no = None
@@ -300,8 +315,8 @@ class AuditMiddleware(BaseHTTPMiddleware):
 					response_body=response_body,
 					command_records=command_records,
 					error_message=error_message or "",
-					ip_address=ip_address or "",
-					user_agent=user_agent or "",
+					ip_address=ip_address,
+					user_agent=user_agent,
 					request_duration_ms=duration_ms,
 					correlation_id=correlation_id,
 					seq_no=seq_no,
@@ -334,5 +349,8 @@ class AuditMiddleware(BaseHTTPMiddleware):
 
 				db.add(audit_log)
 				await db.commit()
-			except Exception:
-				traceback.print_exc()
+			except Exception as exc:
+				logger.error(
+					f"Audit entry not written for {request.method} {request.url.path}",
+					exc_info=exc,
+				)

@@ -1,6 +1,7 @@
 """Audit log query API endpoints."""
 from openshelf_os_server.documentation import response_docs
 from datetime import datetime
+from itertools import combinations
 from typing import Optional, List, Any, cast
 
 from fastapi import APIRouter, Depends, Query, status
@@ -30,9 +31,11 @@ class AuditLogResponse(BaseModel):
 	timestamp: str
 	method: str
 	endpoint: str
-	request_body: Optional[dict]
+	# Whatever JSON the client sent: a list or scalar body is recorded as it arrived, and
+	# one such row must not make the page it sits on unreadable.
+	request_body: Optional[Any]
 	response_status: int
-	response_body: Optional[dict]
+	response_body: Optional[Any]
 	command_records: Optional[List[dict]]
 	error_message: Optional[str]
 	ip_address: Optional[str]
@@ -132,9 +135,9 @@ async def list_audit_logs(
 				timestamp=log.timestamp.isoformat(),
 				method=str(log.method),
 				endpoint=str(log.endpoint),
-				request_body=cast(dict[str, Any], log.request_body),
+				request_body=log.request_body,
 				response_status=int(log.response_status),
-				response_body=cast(dict[str, Any], log.response_body),
+				response_body=log.response_body,
 				command_records=cast(list[dict[str, Any]], log.command_records),
 				error_message=str(log.error_message) if log.error_message is not None else None,
 				ip_address=str(log.ip_address) if log.ip_address is not None else None,
@@ -182,9 +185,9 @@ async def get_audit_log(
 		timestamp=log.timestamp.isoformat(),
 		method=str(log.method),
 		endpoint=str(log.endpoint),
-		request_body=cast(dict[str, Any], log.request_body),
+		request_body=log.request_body,
 		response_status=int(log.response_status),
-		response_body=cast(dict[str, Any], log.response_body),
+		response_body=log.response_body,
 		command_records=cast(list[dict[str, Any]], log.command_records),
 		error_message=str(log.error_message) if log.error_message is not None else None,
 		ip_address=str(log.ip_address) if log.ip_address is not None else None,
@@ -192,6 +195,24 @@ async def get_audit_log(
 		request_duration_ms=int(log.request_duration_ms) if log.request_duration_ms is not None else None,
 		correlation_id=str(log.correlation_id) if log.correlation_id is not None else None,
 	)
+
+
+# Entries written before the middleware hashed what it stores: a request without a
+# User-Agent header (or without a client address) was hashed with null in that field and
+# stored as "". Such an entry is intact, so its hash is also tried with null there.
+_BLANK_HASHED_AS_NULL_FIELDS = ("ip_address", "user_agent")
+
+
+def _entry_hash_matches(entry_hash: Optional[str], payload: dict[str, Any]) -> bool:
+	if entry_hash == sha256_hex(canonicalize_payload(payload)):
+		return True
+	blank = [field for field in _BLANK_HASHED_AS_NULL_FIELDS if payload.get(field) == ""]
+	for count in range(1, len(blank) + 1):
+		for fields in combinations(blank, count):
+			legacy_payload = {**payload, **dict.fromkeys(fields)}
+			if entry_hash == sha256_hex(canonicalize_payload(legacy_payload)):
+				return True
+	return False
 
 
 @router.get(
@@ -250,11 +271,8 @@ async def verify_audit_chain(
 		# Historical protected entries were hashed before correlation_id existed.
 		if log.correlation_id is not None:
 			payload["correlation_id"] = log.correlation_id
-		payload_bytes = canonicalize_payload(payload)
-		recomputed_hash = sha256_hex(payload_bytes)
-
 		# Check entry hash matches
-		if log.entry_hash != recomputed_hash:
+		if _entry_hash_matches(log.entry_hash, payload) is False:
 			first_error_seq = log.seq_no
 			error_message = "Entry hash mismatch"
 			break
