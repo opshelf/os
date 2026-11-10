@@ -330,6 +330,25 @@ export function setAt(data: JsonValue, path: PathKey[], value: JsonValue | typeo
 	return container as JsonValue;
 }
 
+/** After a leaf was removed from `data`, drops ancestor objects left empty that `original` did not
+ *  have as an object (restoring a null the original held), so reverting under an absent group
+ *  does not leave `{}` behind. */
+export function pruneAbsent(data: JsonValue, original: JsonValue | undefined, path: PathKey[]): JsonValue {
+	let next = data;
+	for (let depth = path.length - 1; depth >= 1; depth -= 1) {
+		const parent = path.slice(0, depth);
+		const node = getAt(next, parent);
+		const was = getAt(original, parent);
+		const isEmpty = node !== null && typeof node === 'object' && Array.isArray(node) === false && Object.keys(node).length === 0;
+		const wasObject = was !== null && typeof was === 'object';
+		if (isEmpty === false || wasObject) {
+			break;
+		}
+		next = setAt(next, parent, was === undefined ? UNSET : was);
+	}
+	return next;
+}
+
 export function sameValue(a: JsonValue | undefined, b: JsonValue | undefined): boolean {
 	return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -341,6 +360,13 @@ export function changedLeaves(
 	path: PathKey[] = []
 ): Array<{ path: PathKey[]; before: JsonValue | undefined; after: JsonValue | undefined }> {
 	const isObject = (v: JsonValue | undefined) => v !== null && typeof v === 'object' && v !== undefined;
+	// a group missing (or null) in one document is compared leaf by leaf against the other side
+	const isFilled = (v: JsonValue | undefined) => isObject(v) && Array.isArray(v) === false && Object.keys(v as object).length > 0;
+	if ((before === undefined || before === null) && isFilled(after)) {
+		before = {};
+	} else if ((after === undefined || after === null) && isFilled(before)) {
+		after = {};
+	}
 	if (isObject(before) && isObject(after) && Array.isArray(before) === Array.isArray(after)) {
 		const keys = new Set([...Object.keys(before as object), ...Object.keys(after as object)]);
 		return [...keys].flatMap((key) =>

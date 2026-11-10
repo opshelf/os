@@ -160,3 +160,45 @@ async def test_cleared_position_number_is_a_field_issue_not_a_server_error(clien
     assert saved.json()["detail"]["code"] == "config_invalid"
     assert path.read_bytes() == before
     assert restarts == []
+
+
+@pytest.mark.anyio
+async def test_nan_in_the_body_is_refused_so_the_next_boot_can_read_the_file(client, config_path):
+    path, restarts = config_path
+    before = path.read_bytes()
+    current = (await client.get("/api/system/config")).json()
+    robot = current["data"]
+    robot["grid"]["scan"] = {"front_bounds_x_min_mm": float("nan")}
+    body = json.dumps({"section": "robot", "data": robot, "revision": current["revision"]}, allow_nan=True)
+
+    saved = await client.put("/api/system/config", content=body, headers={"Content-Type": "application/json"})
+
+    assert saved.status_code == 422
+    assert saved.json()["detail"]["code"] == "config_invalid"
+    assert path.read_bytes() == before
+    assert restarts == []
+
+
+@pytest.mark.anyio
+async def test_editing_robot_app_keeps_a_robot_enabled_flag_from_an_old_file(client, config_path):
+    path, _ = config_path
+    document = json.loads(path.read_text())
+    document.pop("robot_app", None)
+    document["robot"]["enabled"] = True
+    document["schema_version"] = 8
+    path.write_text(json.dumps(document))
+    settings.clear_config_cache()
+
+    current = (await client.get("/api/system/config", params={"section": "robot_app"})).json()
+    section = {**current["data"], "home_on_init": False}
+    saved = await client.put(
+        "/api/system/config",
+        json={"section": "robot_app", "data": section, "revision": current["revision"]},
+    )
+
+    assert saved.status_code == 200, saved.text
+    settings.clear_config_cache()
+    reloaded = settings.get_root_config()
+    assert reloaded.robot_app.enabled is True
+    assert reloaded.robot_app.home_on_init is False
+    assert "enabled" not in json.loads(path.read_text())["robot"]

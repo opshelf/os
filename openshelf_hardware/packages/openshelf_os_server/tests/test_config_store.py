@@ -63,6 +63,20 @@ def test_write_that_would_fail_startup_requirements_is_refused(config_path):
     assert config_path.read_bytes() == before
 
 
+def test_replace_with_a_non_finite_number_is_refused_and_the_file_unchanged(config_path):
+    store = _store(config_path)
+    document = store.document()
+    document.data["robot"]["grid"]["scan"] = {"front_bounds_x_min_mm": float("nan")}
+    before = config_path.read_bytes()
+
+    with pytest.raises(ConfigValidationError) as raised:
+        store.replace(document.data, expected_revision=document.revision)
+
+    assert raised.value.errors[0]["loc"] == ("robot", "grid", "scan", "front_bounds_x_min_mm")
+    assert config_path.read_bytes() == before
+    store.load()
+
+
 def test_replace_refuses_a_document_read_before_the_file_changed(config_path):
     store = _store(config_path)
     document = store.document()

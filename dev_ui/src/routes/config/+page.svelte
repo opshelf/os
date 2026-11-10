@@ -13,6 +13,7 @@
 		isRegisterField,
 		localIssue,
 		pathId,
+		pruneAbsent,
 		setAt,
 		type JsonValue,
 		type PathKey,
@@ -187,7 +188,8 @@
 	}
 
 	function setValue(path: PathKey[], value: JsonValue | typeof UNSET): void {
-		draft = setAt(clone(draft), path, value);
+		const next = setAt(clone(draft), path, value);
+		draft = value === UNSET ? pruneAbsent(next, original, path) : next;
 	}
 
 	function revert(row: Row): void {
@@ -200,6 +202,16 @@
 			return row.field.nullable ? null : Number.NaN;
 		}
 		return Number(text);
+	}
+
+	// Writes the draft back only when it differs from the typed number, so in-progress text
+	// ("-", "-0", ".05") is not rewritten while typing; revert/discard/reload still update the field.
+	function syncNumber(node: HTMLInputElement, value: JsonValue | undefined): void {
+		const text = typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
+		if (node.value === text || (text !== '' && node.value !== '' && Number(node.value) === value)) {
+			return;
+		}
+		node.value = text;
 	}
 
 	function parseRaw(text: string): JsonValue {
@@ -357,6 +369,9 @@
 									<span class="text muted">
 										{row.present ? `${row.childCount} ${Array.isArray(row.value) ? 'items' : 'fields'}` : 'not set, defaults apply'}
 									</span>
+									{#each issues as message, index (index)}
+										<div class="issue">{message}</div>
+									{/each}
 								</td>
 							{:else}
 							<td class="value">
@@ -388,7 +403,7 @@
 										step={row.field.kind === 'integer' ? 1 : 'any'}
 										min={row.field.min}
 										max={row.field.max}
-										value={typeof value === 'number' && Number.isFinite(value) ? value : ''}
+										{@attach (node) => syncNumber(node, value)}
 										placeholder={value === null ? 'null' : ''}
 										oninput={(event) => setValue(row.path, parseNumber(event.currentTarget.value, row))}
 									/>

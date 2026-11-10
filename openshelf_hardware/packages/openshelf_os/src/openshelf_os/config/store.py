@@ -22,16 +22,17 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from openshelf_os.config.exceptions import ConfigError
+from openshelf_os.config.exceptions import ConfigError, ConfigValidationError
 from openshelf_os.config.file_io import write_json_file_with_backup
 from openshelf_os.config.loader import load_and_validate_config
 from openshelf_os.config.root import RootConfig
-from openshelf_os.config_migrations.apply import migrate_config_file
+from openshelf_os.config_migrations.apply import load_config_json, migrate_config_file
 from openshelf_os.runtime_state import paths_for_config_file
 
 logger = logging.getLogger(__name__)
@@ -71,12 +72,21 @@ def _read_bytes(path: Path) -> bytes | None:
 
 def _parse(path: Path, raw: bytes) -> dict[str, Any]:
     try:
-        data = json.loads(raw)
+        return load_config_json(raw)
     except json.JSONDecodeError as exc:
         raise ConfigError(f"Invalid JSON in {path}: {exc}") from exc
-    if isinstance(data, dict) is False:
-        raise ConfigError(f"{path}: config root must be an object")
-    return data
+    except ValueError as exc:
+        raise ConfigError(f"{path}: {exc}") from exc
+
+
+def _non_finite_paths(node: Any, prefix: tuple[str | int, ...] = ()) -> list[tuple[str | int, ...]]:
+    if isinstance(node, float):
+        return [] if math.isfinite(node) else [prefix]
+    if isinstance(node, dict):
+        return [p for key, value in node.items() for p in _non_finite_paths(value, prefix + (key,))]
+    if isinstance(node, list):
+        return [p for index, value in enumerate(node) for p in _non_finite_paths(value, prefix + (index,))]
+    return []
 
 
 def diff_paths(before: Any, after: Any, prefix: PathKey = ()) -> list[tuple[PathKey, Any]]:
@@ -165,7 +175,13 @@ class ConfigStore:
         return load_and_validate_config(data, str(self.path))
 
     def validate(self, document: dict[str, Any]) -> RootConfig:
-        """Everything a write requires: model validation plus the startup requirements."""
+        """Everything a write requires: model validation plus the startup requirements. A
+        non-finite number is refused too: the boot reader rejects it."""
+        bad = _non_finite_paths(document)
+        if bad:
+            raise ConfigValidationError(
+                [{"loc": path, "msg": "Non-finite number"} for path in bad], str(self.path)
+            )
         config = self.effective(document)
         if self._check is not None:
             self._check(config)
