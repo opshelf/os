@@ -42,7 +42,6 @@
 	const RESTART_TIMEOUT_MS = 90_000;
 
 	let section = $state('robot');
-	let file = $state('');
 	let revision = $state('');
 	let original = $state<JsonValue>({});
 	let draft = $state<JsonValue>({});
@@ -55,6 +54,9 @@
 	let isValidating = $state(false);
 	let isSaving = $state(false);
 	let validateSeq = 0;
+	let editor = $state<HTMLDivElement>();
+	let editorTop = $state(0);
+	let changesDialog = $state<HTMLDialogElement>();
 
 	const rows = $derived(buildRows(draft, schema, defs));
 	const rowIds = $derived(new Set(rows.map((row) => row.id)));
@@ -81,6 +83,8 @@
 		}
 		return byRow;
 	});
+	const groupIds = $derived(rows.filter((row) => row.field.kind === 'group').map((row) => row.id));
+	const isAllExpanded = $derived(groupIds.length > 0 && groupIds.every((id) => expanded.has(id)));
 	const issueCount = $derived([...issuesByRow.values()].reduce((sum, list) => sum + list.length, 0));
 
 	// rows under a group that holds an issue or a change stay findable when collapsed
@@ -119,7 +123,6 @@
 			const { ['$defs']: sharedDefs, ...rest } = sectionSchema;
 			defs = (sharedDefs ?? {}) as Record<string, Schema>;
 			schema = rest;
-			file = current.file;
 			revision = current.revision;
 			original = current.data ?? {};
 			draft = clone(original);
@@ -204,8 +207,21 @@
 		expanded = next;
 	}
 
-	function setAllExpanded(open: boolean): void {
-		expanded = open ? new Set(rows.filter((row) => row.field.kind === 'group').map((row) => row.id)) : new Set();
+	function toggleAll(): void {
+		expanded = isAllExpanded ? new Set() : new Set(groupIds);
+	}
+
+	// the editor fills the viewport down to the page margin, wherever the nav ends
+	function measure(): void {
+		if (editor !== undefined) {
+			editorTop = editor.getBoundingClientRect().top + window.scrollY;
+		}
+	}
+
+	function didClickDialog(event: MouseEvent): void {
+		if (event.target === changesDialog) {
+			changesDialog?.close();
+		}
 	}
 
 	function shownValue(row: Row): JsonValue | undefined {
@@ -260,6 +276,7 @@
 	}
 
 	onMount(() => {
+		measure();
 		void load();
 	});
 </script>
@@ -268,7 +285,9 @@
 	<title>Config • Openshelf</title>
 </svelte:head>
 
-<div class="editor">
+<svelte:window onresize={measure} />
+
+<div class="editor" bind:this={editor} style={`height: calc(100dvh - ${editorTop}px - var(--page-margin))`}>
 	<div class="toolbar">
 		<select bind:value={section} onchange={didChangeSection} disabled={isSaving}>
 			{#each SECTIONS as name (name)}
@@ -283,16 +302,16 @@
 			spellcheck="false"
 			autocomplete="off"
 		/>
-		<button onclick={() => setAllExpanded(true)} disabled={matches !== null}>expand</button>
-		<button onclick={() => setAllExpanded(false)} disabled={matches !== null}>collapse</button>
-		<span class="file">{file}</span>
+		<button class="toggle-all" onclick={toggleAll} disabled={matches !== null || groupIds.length === 0}>
+			{isAllExpanded ? 'collapse' : 'expand'}
+		</button>
 	</div>
 
 	<div class="tree">
 		{#if isLoading}
-			<p class="muted">Loading…</p>
+			<p class="muted message">Loading…</p>
 		{:else if shownRows.length === 0}
-			<p class="muted">No field matches “{query}”.</p>
+			<p class="muted message">No field matches “{query}”.</p>
 		{:else}
 			<table>
 				<tbody>
@@ -301,7 +320,7 @@
 						{@const changed = changedIds.has(row.id)}
 						{@const value = shownValue(row)}
 						<tr class:changed class:invalid={issues.length > 0} class:absent={row.present === false}>
-							<td class="key" style={`padding-left: ${0.5 + row.depth * 1.25}em`}>
+							<td class="key" style={`padding-left: calc(0.5em + ${row.depth} * (var(--control) + 0.5em))`}>
 								{#if row.field.kind === 'group'}
 									<button
 										class="twisty"
@@ -311,23 +330,27 @@
 									>
 										{matches !== null || expanded.has(row.id) ? '−' : '+'}
 									</button>
+								{:else}
+									<span class="twisty-space"></span>
 								{/if}
-								<span title={row.id}>{row.label}</span>
+								<span class="text" title={row.id}>{row.label}</span>
 								{#if row.field.kind === 'group' && flaggedGroups.has(row.id) && expanded.has(row.id) === false && matches === null}
-									<span class="flag">●</span>
+									<span class="text flag">●</span>
 								{/if}
 							</td>
 							<td class="value">
 								{#if row.field.kind === 'group'}
-									<span class="muted">
+									<span class="text muted">
 										{row.present ? `${row.childCount} ${Array.isArray(row.value) ? 'items' : 'fields'}` : 'not set, defaults apply'}
 									</span>
 								{:else if row.field.kind === 'boolean'}
-									<input
-										type="checkbox"
-										checked={value === true}
-										onchange={(event) => setValue(row.path, event.currentTarget.checked)}
-									/>
+									<span class="text">
+										<input
+											type="checkbox"
+											checked={value === true}
+											onchange={(event) => setValue(row.path, event.currentTarget.checked)}
+										/>
+									</span>
 								{:else if row.field.kind === 'enum'}
 									<select
 										value={JSON.stringify(value ?? null)}
@@ -352,8 +375,8 @@
 										placeholder={value === null ? 'null' : ''}
 										oninput={(event) => setValue(row.path, parseNumber(event.currentTarget.value, row))}
 									/>
-									{#if isRegisterField(row.key)}<span class="muted">{hex(value)}</span>{/if}
-									<span class="muted">{boundsHint(row.field)}</span>
+									{#if isRegisterField(row.key)}<span class="text muted hint">{hex(value)}</span>{/if}
+									<span class="text muted hint">{boundsHint(row.field)}</span>
 								{:else if row.field.kind === 'tuple-raw'}
 									<input
 										type="text"
@@ -398,20 +421,13 @@
 				{/each}
 			</ul>
 		{/if}
-		{#if changes.length > 0}
-			<details>
-				<summary>{changes.length} {changes.length === 1 ? 'change' : 'changes'}</summary>
-				<ul class="changes">
-					{#each changes as change (pathId(change.path))}
-						<li>{pathId(change.path)}: {formatValue(change.before)} → {formatValue(change.after)}</li>
-					{/each}
-				</ul>
-			</details>
-		{/if}
 		<div class="buttons">
-			<span class="muted">
+			<span class="status" class:invalid={issueCount > 0}>
 				{#if isValidating}checking…{:else if issueCount > 0}{issueCount} {issueCount === 1 ? 'issue' : 'issues'}{:else if changes.length > 0}valid{:else}no changes{/if}
 			</span>
+			<button onclick={() => changesDialog?.showModal()} disabled={changes.length === 0}>
+				show changes
+			</button>
 			<span class="spacer-flexible"></span>
 			<button onclick={() => (draft = clone(original))} disabled={changes.length === 0 || isSaving}>discard</button>
 			<button
@@ -425,42 +441,68 @@
 	</div>
 </div>
 
+<dialog class="changes-dialog" bind:this={changesDialog} onclick={didClickDialog}>
+	<div class="dialog-head">
+		<span>{changes.length} {changes.length === 1 ? 'change' : 'changes'} in {section}</span>
+		<span class="spacer-flexible"></span>
+		<button onclick={() => changesDialog?.close()}>close</button>
+	</div>
+	<ul class="changes">
+		{#each changes as change (pathId(change.path))}
+			<li>
+				<span class="change-path">{pathId(change.path)}</span>
+				<span>{formatValue(change.before)} → {formatValue(change.after)}</span>
+			</li>
+		{:else}
+			<li class="muted">no changes</li>
+		{/each}
+	</ul>
+</dialog>
+
 <style>
 	.editor {
+		/* one control height for every field, select and button on the page */
+		--control: calc(1.2em + 14px);
 		display: flex;
 		flex-direction: column;
-		height: calc(100dvh - 9em);
 		gap: 1em;
+		min-height: 20em;
+	}
+
+	.editor :global(button),
+	.editor input:not([type='checkbox']),
+	.editor select,
+	.changes-dialog button {
+		height: var(--control);
+		line-height: 1.2;
+		padding: 5px;
+		border: 2px solid black;
+		background-color: white;
+	}
+
+	.editor button:disabled {
+		color: rgba(0, 0, 0, 0.3);
 	}
 
 	.toolbar {
 		display: flex;
-		gap: 0.75em;
+		gap: 1em;
 		align-items: center;
-		flex-wrap: wrap;
 	}
 
 	.search {
 		flex: 1;
-		min-width: 16em;
-		padding: 5px;
-		border: 2px solid black;
-	}
-
-	select {
-		padding: 4px;
-		border: 2px solid black;
-		background: white;
-	}
-
-	.file {
-		color: rgba(0, 0, 0, 0.5);
+		min-width: 10em;
 	}
 
 	.tree {
 		flex: 1;
 		overflow: auto;
 		border: 2px solid black;
+	}
+
+	.message {
+		padding: 0.5em;
 	}
 
 	.tree table {
@@ -470,8 +512,20 @@
 
 	.tree td {
 		border: none;
-		border-bottom: 1px solid rgba(0, 0, 0, 0.15);
-		padding: 0.3em 0.5em;
+		border-bottom: 2px solid black;
+		padding: 0.5em;
+		vertical-align: top;
+	}
+
+	.tree tr:last-child td {
+		border-bottom: none;
+	}
+
+	/* text cells line up with the controls beside them */
+	.text {
+		display: inline-block;
+		line-height: 1.2;
+		padding: 7px 0;
 		vertical-align: top;
 	}
 
@@ -480,32 +534,42 @@
 		width: 1%;
 	}
 
-	.value input[type='number'],
-	.value input[type='text'] {
-		width: 12em;
-		padding: 2px 4px;
-		border: 1px solid black;
+	.twisty,
+	.twisty-space {
+		display: inline-block;
+		width: var(--control);
+		margin-right: 0.5em;
+		vertical-align: top;
 	}
 
-	.value .muted {
+	.twisty {
+		padding: 5px 0;
+		text-align: center;
+	}
+
+	.value input[type='number'],
+	.value input[type='text'],
+	.value select {
+		width: 12em;
+		vertical-align: top;
+	}
+
+	.value input[type='checkbox'] {
+		vertical-align: middle;
+	}
+
+	.value {
+		white-space: nowrap;
+	}
+
+	.hint {
 		margin-left: 0.5em;
 	}
 
 	.actions {
 		width: 1%;
 		white-space: nowrap;
-	}
-
-	.actions button,
-	.twisty {
-		padding: 0 4px;
-		box-shadow: none;
-		border-width: 1px;
-	}
-
-	.twisty {
-		width: 1.6em;
-		margin-right: 0.4em;
+		text-align: right;
 	}
 
 	tr.changed .key {
@@ -525,10 +589,12 @@
 	.issue {
 		color: #c00;
 		list-style: none;
+		white-space: normal;
+		padding-top: 0.25em;
 	}
 
 	.flag {
-		margin-left: 0.4em;
+		margin-left: 0.5em;
 	}
 
 	.muted {
@@ -541,26 +607,76 @@
 		gap: 0.5em;
 	}
 
-	.changes {
-		list-style: none;
-		max-height: 8em;
-		overflow: auto;
-		padding: 0.5em 0;
-	}
-
 	.buttons {
 		display: flex;
 		gap: 1em;
 		align-items: center;
 	}
 
+	.status {
+		text-transform: uppercase;
+		color: rgba(0, 0, 0, 0.5);
+	}
+
+	.status.invalid {
+		color: #c00;
+	}
+
 	button.primary {
-		background: black;
+		background-color: black;
 		color: white;
 	}
 
 	button.primary:disabled {
-		background: white;
+		background-color: white;
 		color: rgba(0, 0, 0, 0.3);
+	}
+
+	.changes-dialog {
+		margin: auto;
+		width: min(48em, calc(100vw - 2 * var(--page-margin)));
+		max-height: 70vh;
+		padding: 0;
+		border: 2px solid black;
+		box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.25);
+	}
+
+	.changes-dialog[open] {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.changes-dialog::backdrop {
+		background-color: rgba(0, 0, 0, 0.4);
+	}
+
+	.dialog-head {
+		display: flex;
+		align-items: center;
+		gap: 1em;
+		padding: 0.5em;
+		border-bottom: 2px solid black;
+		text-transform: uppercase;
+	}
+
+	.changes {
+		overflow: auto;
+		list-style: none;
+	}
+
+	.changes li {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 1em;
+		padding: 0.5em;
+		border-bottom: 2px solid black;
+	}
+
+	.changes li:last-child {
+		border-bottom: none;
+	}
+
+	.change-path {
+		font-weight: bold;
 	}
 </style>
