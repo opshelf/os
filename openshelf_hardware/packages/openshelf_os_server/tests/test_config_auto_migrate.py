@@ -7,6 +7,7 @@ import json
 import pytest
 
 from openshelf_os.config.exceptions import ConfigError
+from openshelf_os.config.schema import CURRENT_SCHEMA_VERSION
 from openshelf_os_server import settings
 
 
@@ -71,16 +72,17 @@ def config_file(tmp_path, v4_config, monkeypatch):
     monkeypatch.setattr(settings, "CONFIG_PATH", path)
     monkeypatch.setattr(settings, "MODE_FILE", mode_file)
     settings.clear_config_cache()
-    return path, raw
+    yield path, raw
+    settings.clear_config_cache()
 
 
 def test_get_root_config_auto_migrates_v4_and_backs_up(config_file):
     path, raw = config_file
     config = settings.get_root_config()
-    assert config.schema_version == 8
+    assert config.schema_version == CURRENT_SCHEMA_VERSION
     assert path.with_name("config.json.schema-v4.bak").read_bytes() == raw
     on_disk = json.loads(path.read_bytes())
-    assert on_disk["schema_version"] == 8
+    assert on_disk["schema_version"] == CURRENT_SCHEMA_VERSION
     assert on_disk["robot"]["tool"]["parameters"]["PICKUP_POSITION_MULTI_ITEM"] == [0, 0]
     assert "front_shelf_scout_x_mm" in on_disk["robot"]["grid"]["scan"]
     assert on_disk["storage"]["bins"][0]["home_location"]["side"] == "front_module"
@@ -97,11 +99,11 @@ def test_existing_backup_confails_startup_and_leaves_file_untouched(config_file,
 def test_future_version_fails_startup_without_touching_file(config_file, monkeypatch):
     path, raw = config_file
     future = json.loads(raw)
-    future["schema_version"] = 9
+    future["schema_version"] = CURRENT_SCHEMA_VERSION + 1
     path.write_bytes(json.dumps(future).encode())
     with pytest.raises(ConfigError, match="newer than supported"):
         settings.get_root_config()
-    assert json.loads(path.read_bytes())["schema_version"] == 9
+    assert json.loads(path.read_bytes())["schema_version"] == CURRENT_SCHEMA_VERSION + 1
     assert not path.with_name("config.json.schema-v9.bak").exists()
 
 
