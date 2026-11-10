@@ -1,4 +1,6 @@
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 import pytest
@@ -14,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 # single temp dir when both run.
 if os.environ.get("OPENSHELF_TEST_ENV_INITIALIZED") != "1":
 	_tmpdir = Path(tempfile.mkdtemp(prefix="perp_os1_testdb_"))
+	# Every run left its database directory behind in the system temp dir.
+	atexit.register(shutil.rmtree, _tmpdir, ignore_errors=True)
 	_db_path = _tmpdir / "test.db"
 	os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
 	os.environ["JWT_SECRET"] = "test-jwt-secret"

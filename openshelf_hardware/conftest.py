@@ -1,4 +1,6 @@
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -7,6 +9,8 @@ from pathlib import Path
 # conftest; the app reads these at import time (mode file, config path, DB URL).
 if os.environ.get("OPENSHELF_TEST_ENV_INITIALIZED") != "1":
 	_tmpdir = Path(tempfile.mkdtemp(prefix="perp_os1_testdb_"))
+	# Every run left its database directory behind in the system temp dir.
+	atexit.register(shutil.rmtree, _tmpdir, ignore_errors=True)
 	_db_path = _tmpdir / "test.db"
 	os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
 	os.environ["JWT_SECRET"] = "test-jwt-secret"
