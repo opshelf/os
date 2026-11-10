@@ -665,7 +665,6 @@
 	}
 
 	tr.changed .key {
-		font-weight: bold;
 		box-shadow: inset 4px 0 0 black;
 	}
 
@@ -774,7 +773,4 @@
 		border-bottom: none;
 	}
 
-	.change-path {
-		font-weight: bold;
-	}
 </style>

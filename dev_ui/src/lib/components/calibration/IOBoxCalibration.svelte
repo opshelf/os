@@ -951,9 +951,6 @@
 		gap: 0.5em;
 	}
 
-	.axis-label {
-		font-weight: bold;
-	}
 
 	.jog-axis button {
 		min-width: 1.5em;

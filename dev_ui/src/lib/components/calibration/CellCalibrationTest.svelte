@@ -509,7 +509,6 @@
 <style>
 	.field-label {
 		display: block;
-		font-weight: 600;
 		margin-bottom: 0.25rem;
 	}
 

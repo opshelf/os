@@ -129,7 +129,6 @@
 
 	.step-current {
 		color: black;
-		font-weight: bold;
 	}
 
 	.step-pending {

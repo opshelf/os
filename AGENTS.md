@@ -37,6 +37,7 @@
 - A warning or error about a caught exception carries `exc_info=exc`, so the line a client's `ref` points at has the traceback. Leave it off only for a warning repeated on every tick of a polling loop.
 
 ## Dev UI
+- The UI font (Unica Mono) has a single weight: never use faux bold. Do not emit `font-weight: 600/700/bold` (or `font-semibold`/`font-bold`/`<strong>`), keep everything at the default normal weight, and emphasize with color, underline, borders or box-shadow instead.
 - Report errors through the toast system (`postToast('error', …)` from `$lib/toasts`), not inline error text in pages, dialogs, or components.
 - A toast is one operator sentence and nothing else: no request line, code, ref, exception text or `fault_context`. The detail lives in the server log under the request's correlation id.
 - Keep a button's label unchanged while its action is busy or queued — only disable it; do not swap in "homing…"/"queued"-style titles.
