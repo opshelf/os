@@ -1,4 +1,4 @@
-# ruff: noqa: F401, F403, F405
+# ruff: noqa: F403, F405
 from __future__ import annotations
 
 from openshelf_os.laser_calibration.defaults import (
@@ -916,20 +916,6 @@ def find_detected_cell_for_candidate(
 		matched_distance_mm = distance_mm
 
 	return matched_cell
-
-
-def resolve_target_shelf(
-	*,
-	grid: StorageGrid,
-	side: StorageModuleSide,
-	shelf_idx: int,
-) -> Any:
-	try:
-		target_shelf = grid.get_shelf(side, shelf_idx)
-	except IndexError as exc:
-		raise ValueError(f"Shelf {shelf_idx} does not exist on {side.value}") from exc
-
-	return target_shelf
 
 
 def convert_stored_y_mm_to_laser_frame(

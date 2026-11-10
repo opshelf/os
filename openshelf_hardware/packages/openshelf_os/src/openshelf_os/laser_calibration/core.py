@@ -1,4 +1,4 @@
-# ruff: noqa: F401, F403, F405
+# ruff: noqa: F401
 from __future__ import annotations
 
 import argparse
@@ -26,7 +26,7 @@ from openshelf_os.laser_calibration.scan import (
 	ScanDetectedCell,
 	ScanDetectedShelf,
 	build_axis_positions,
-	build_shelves_from_scan,  # noqa: F401 - re-exported for server consumption
+	build_shelves_from_scan,  # re-exported for server consumption
 )
 import openshelf_os.common as common_module
 import openshelf_os.robot.core as robot_module

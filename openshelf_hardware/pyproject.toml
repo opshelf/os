@@ -35,11 +35,3 @@ ignore_missing_imports = true
 warn_unused_ignores = false
 check_untyped_defs = true
 disallow_untyped_defs = false
-
-[[tool.mypy.overrides]]
-module = [
-    "hardware.camera",
-    "hardware.toolcam",
-    "hardware.toolcam_helpers",
-]
-disable_error_code = ["arg-type", "call-overload", "attr-defined"]

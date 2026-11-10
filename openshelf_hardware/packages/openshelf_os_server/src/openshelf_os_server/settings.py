@@ -137,7 +137,8 @@ def _build_minimal_config(data: dict) -> dict:
 
     # These are minimal defaults for testing only.
     # Production deployments MUST provide data/config.json with real calibrated values.
-    # The application will fail to start if config.json is missing in production.
+    # A missing config file is not fatal in any mode: get_root_config logs a warning
+    # and starts on these defaults.
     return {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "name": "openshelf_os",

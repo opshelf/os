@@ -56,22 +56,6 @@ class Scale:
         self.retries = max(0, retries)
         self.retry_delay = retry_delay
 
-    async def connect(self) -> bool:
-        logger.debug(
-            "Connecting to scale controller",
-            extra={
-                "unit_id": self.scale_id,
-                "port": getattr(self.modbus_controller, "port", None),
-                "baudrate": getattr(self.modbus_controller, "baudrate", None),
-            },
-        )
-        await self.modbus_controller.connect()
-        return bool(getattr(self.modbus_controller.client, "connected", True))
-
-    async def close(self) -> None:
-        logger.debug("Closing scale controller", extra={"unit_id": self.scale_id})
-        await self.modbus_controller.close()
-
     async def _read_one(self, addr: int) -> Optional[int]:
         for _ in range(self.retries + 1):
             val = await self.modbus_controller.read_holding_registers(self.scale_id, addr, 1)
@@ -234,10 +218,11 @@ class Scale:
             logger.debug("Scale tare command sent", extra={"unit_id": self.scale_id})
 
             return True
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "Scale tare failed",
                 extra={"unit_id": self.scale_id},
+                exc_info=exc,
             )
             return False
 

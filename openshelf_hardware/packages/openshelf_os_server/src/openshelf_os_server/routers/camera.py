@@ -200,7 +200,7 @@ async def stream_camera(
 			status.HTTP_503_SERVICE_UNAVAILABLE,
 			"camera_unavailable",
 			"",
-		)
+		) from e
 
 	try:
 		is_delivering_frames = await manager.wait_for_fresh_frame(manager.first_frame_timeout)

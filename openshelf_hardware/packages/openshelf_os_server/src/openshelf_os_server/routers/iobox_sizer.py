@@ -64,7 +64,7 @@ class TofBlankCalibrationRequest(BaseModel):
 
 
 def _unavailable_error(exc: Exception) -> HTTPException:
-	logger.warning("IO box sizer unavailable: %s", exc)
+	logger.warning("IO box sizer unavailable", exc_info=exc)
 	return api_error(
 		status.HTTP_503_SERVICE_UNAVAILABLE,
 		"iobox_sizer_unavailable",
