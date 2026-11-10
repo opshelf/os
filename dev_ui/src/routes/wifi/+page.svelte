@@ -18,6 +18,7 @@
 	let message = '';
 
 	const RESCAN_DELAY_MS = 4000;
+	let rescanTimer: ReturnType<typeof setTimeout> | null = null;
 
 	async function didClickRefresh(): Promise<void> {
 		isScanning = true;
@@ -105,7 +106,12 @@
 			error = err instanceof Error ? err.message : 'Failed to connect.';
 		} finally {
 			isConnecting = false;
-			setTimeout(() => {
+			if (rescanTimer !== null) {
+				clearTimeout(rescanTimer);
+			}
+
+			rescanTimer = setTimeout(() => {
+				rescanTimer = null;
 				void didClickRefresh();
 			}, RESCAN_DELAY_MS);
 		}
@@ -117,6 +123,12 @@
 		}
 
 		void didClickRefresh();
+
+		return () => {
+			if (rescanTimer !== null) {
+				clearTimeout(rescanTimer);
+			}
+		};
 	});
 </script>
 
@@ -162,11 +174,11 @@
 
 <div class="action-buttons">
 	<button type="button" on:click={didClickSave} disabled={isConnecting === true}>
-		{isConnecting === true ? 'connecting...' : 'save'}
+		save
 	</button>
 	<button type="button" on:click={didClickReset} disabled={isConnecting === true}>reset</button>
 	<button type="button" on:click={didClickRefresh} disabled={isScanning === true}>
-		{isScanning === true ? 'scanning...' : 'refresh'}
+		refresh
 	</button>
 </div>
 

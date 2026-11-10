@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Iterable, List, Literal, NoReturn, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, FiniteFloat, TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 from openshelf_os.common import ConfigError
 from openshelf_os.config.settings import BARCODE_MAX_LENGTH
@@ -344,7 +344,7 @@ class MotorLimitSwitchesResponse(BaseModel):
 
 
 class MotorMoveRequest(BaseModel):
-    position_mm: float = Field(..., description="Target position in millimeters")
+    position_mm: FiniteFloat = Field(..., description="Target position in millimeters")
 
 
 class SafetyGuardOverrideRequest(BaseModel):

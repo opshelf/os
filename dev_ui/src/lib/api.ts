@@ -17,11 +17,6 @@ export function getApiBase(): string {
 	return `http://${location.hostname}:8000/api`;
 }
 
-export function getApiOrigin(): string {
-	const base = new URL(getApiBase());
-	return base.origin;
-}
-
 export function buildApiUrl(path: string): string {
 	const base = getApiBase();
 	const normalisedPath = path.startsWith('/') ? path : `/${path}`;
@@ -312,20 +307,6 @@ export interface GridCellsBatch {
 	cells: GridCellBatchItem[];
 }
 
-export async function updateGridCell(
-	side: StorageModuleSide,
-	shelfIdx: number,
-	cellIdx: number,
-	payload: GridCellUpdate
-): Promise<{ success: boolean }> {
-	const params = new URLSearchParams({ side: toDeviceSide(side), shelf_idx: String(shelfIdx), cell_idx: String(cellIdx) });
-	return apiFetch<{ success: boolean }>(`/storage/grid/cell?${params}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(payload)
-	});
-}
-
 export async function updateGridCells(
 	side: StorageModuleSide,
 	payload: GridCellsBatch
@@ -433,19 +414,6 @@ export async function moveToCell(
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ side: toDeviceSide(side), shelf_idx: shelfIdx, cell_idx: cellIdx })
-	});
-}
-
-export async function moveToPosition(
-	side: StorageModuleSide,
-	x: number,
-	y: number,
-	zOffset: number
-): Promise<Position> {
-	return apiFetch<Position>('/calibration/move/position', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ side: toDeviceSide(side), x, y, z_offset: zOffset })
 	});
 }
 
@@ -959,18 +927,6 @@ export interface ScaleStatus {
 	raw: number;
 }
 
-export interface ScaleReading {
-	weight_grams: number;
-	decimal_position: number;
-	status: ScaleStatus;
-	raw_registers: {
-		weight_hi: number;
-		weight_lo: number;
-		decimals: number;
-		status: number;
-	};
-}
-
 export interface ScaleCalibrationStatus {
 	zero_ok: boolean;
 	weight_ok: boolean;
@@ -988,10 +944,6 @@ export interface ScaleCalibrationResult {
 	success: boolean;
 	error?: string;
 	status?: ScaleCalibrationStatus;
-}
-
-export async function getScaleReading(): Promise<ScaleReading> {
-	return apiFetch<ScaleReading>('/robot/debug/scale');
 }
 
 export async function getScaleCalibrationStatus(): Promise<ScaleCalibrationStatus> {
@@ -1333,13 +1285,6 @@ export async function moveMotor(
 	});
 }
 
-export interface WifiStatus {
-	connected: boolean;
-	ssid: string | null;
-	signal: number | null;
-	ip: string | null;
-}
-
 export interface WifiNetwork {
 	ssid: string;
 	signal: number;
@@ -1355,10 +1300,6 @@ export interface WifiConnectResponse {
 	success: boolean;
 	ssid: string;
 	message: string;
-}
-
-export async function getWifiStatus(): Promise<WifiStatus> {
-	return apiFetch<WifiStatus>('/wifi/status');
 }
 
 export async function scanWifiNetworks(): Promise<WifiNetworkList> {
@@ -1666,31 +1607,4 @@ export async function moveStage(
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ position })
 	});
-}
-
-export interface PowerRail {
-	rail: string;
-	supplies: string;
-	axes: string[];
-	gripper: boolean;
-	powered: boolean | null;
-}
-
-export interface PowerRailList {
-	hold_seconds: number;
-	rails: PowerRail[];
-}
-
-export async function getPowerRails(): Promise<PowerRailList> {
-	return apiFetch<PowerRailList>('/robot/debug/power');
-}
-
-export interface PowerCycleResult {
-	success: boolean;
-	rail: string;
-	axes_needing_home: string[];
-}
-
-export async function powerCycleRail(rail: string): Promise<PowerCycleResult> {
-	return apiFetch<PowerCycleResult>(`/robot/debug/power/${rail}/cycle`, { method: 'POST' });
 }

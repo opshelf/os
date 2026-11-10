@@ -42,7 +42,22 @@
 		}
 	}
 
+	// parseFloat of an emptied field is NaN, which the robot clamped to its largest angle.
+	function isEnteredAngle(angle: number): boolean {
+		if (Number.isFinite(angle) === true) {
+			return true;
+		}
+
+		message = '';
+		error = 'Enter a number for the angle.';
+		return false;
+	}
+
 	async function didClickRotateFront(): Promise<void> {
+		if (isEnteredAngle(frontAngle) === false) {
+			return;
+		}
+
 		isRotating = true;
 		error = '';
 		message = '';
@@ -58,6 +73,10 @@
 	}
 
 	async function didClickRotateBack(): Promise<void> {
+		if (isEnteredAngle(backAngle) === false) {
+			return;
+		}
+
 		isRotating = true;
 		error = '';
 		message = '';
@@ -73,6 +92,10 @@
 	}
 
 	async function didClickSave(): Promise<void> {
+		if (isEnteredAngle(frontAngle) === false || isEnteredAngle(backAngle) === false) {
+			return;
+		}
+
 		isSaving = true;
 		error = '';
 		message = '';
