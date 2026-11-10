@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { apiFetch } from '$lib/api';
+	import { ApiError, apiFetch } from '$lib/api';
 	import { postToast } from '$lib/toasts';
 	import {
 		UNSET,
@@ -263,7 +263,8 @@
 		await new Promise((resolve) => setTimeout(resolve, 2000));
 		while (Date.now() < deadline) {
 			try {
-				await apiFetch('/health');
+				// /health answers 503 while robot init has failed; the config route does not depend on it
+				await apiFetch(`/system/config?section=${encodeURIComponent(loadedSection)}`);
 				return true;
 			} catch {
 				await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -286,7 +287,17 @@
 				return;
 			}
 			await load();
-			postToast('status', 'The API restarted with the new configuration.');
+			let isRobotReady = true;
+			try {
+				await apiFetch('/health');
+			} catch (err) {
+				isRobotReady = !(err instanceof ApiError && err.status === 503);
+			}
+			if (isRobotReady) {
+				postToast('status', 'The API restarted with the new configuration.');
+			} else {
+				postToast('error', 'The API restarted, but the robot did not initialize with the new configuration.');
+			}
 		} catch (err) {
 			postToast('error', err instanceof Error ? err.message : 'The configuration could not be saved.');
 		} finally {
