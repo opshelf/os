@@ -103,4 +103,3 @@ def test_generated_jwt_secret_survives_a_config_write(config_path, monkeypatch):
 
     assert store.load().auth.jwt_secret == secret
     assert "auth" not in json.loads(config_path.read_text())
-
