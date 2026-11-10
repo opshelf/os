@@ -203,12 +203,12 @@ async def test_reserved_bin_barcode_and_home_never_use_legacy_mutation_without_w
             )
             await session.commit()
 
-    for barcode, location in (
+    for event_barcode, location in (
         (barcode, {"side": "front_module", "shelf_idx": 0, "cell_idx": 0}),
         (f"direct-{reservation}", {"side": home[0], "shelf_idx": home[1], "cell_idx": home[2]}),
     ):
         await process_robot_event(
-            {"command": "store_item", "message": "success", "barcode": barcode, "location": location}
+            {"command": "store_item", "message": "success", "barcode": event_barcode, "location": location}
         )
 
     async with AsyncSessionLocal() as session:

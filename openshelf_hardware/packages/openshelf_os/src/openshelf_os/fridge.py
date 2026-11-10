@@ -255,7 +255,7 @@ class DemoFridge:
     async def close_door(self) -> None:
         try:
             await self.move_door_to_named("center")
-        except FridgeSafetyError:
+        except (FridgeSafetyError, MotorError):
             raise
         except Exception as exc:
             raise MotorError(f"Failed to close fridge door: {exc}") from exc

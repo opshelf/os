@@ -38,25 +38,6 @@ class LaserSensor:
         self.distance_register_index = distance_register_index
         self.distance_scale_mm = distance_scale_mm
 
-    async def connect(self) -> bool:
-        logger.debug(
-            "Connecting to laser controller",
-            extra={
-                "unit_id": self.device_id,
-                "port": getattr(self.modbus_controller, "port", None),
-                "baudrate": getattr(self.modbus_controller, "baudrate", None),
-            },
-        )
-
-        await self.modbus_controller.connect()
-
-        return bool(getattr(self.modbus_controller.client, "connected", True))
-
-    async def close(self) -> None:
-        logger.debug("Closing laser controller", extra={"unit_id": self.device_id})
-
-        await self.modbus_controller.close()
-
     async def read_registers(self, *, timeout_s: Optional[float] = None) -> tuple[int, ...]:
         if timeout_s is not None:
             # One transaction with no retries, so a silent sensor fails inside timeout_s

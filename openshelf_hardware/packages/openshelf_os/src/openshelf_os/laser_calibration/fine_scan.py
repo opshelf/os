@@ -595,15 +595,6 @@ def get_fine_samples_per_point(config_samples_per_point: int) -> int:
 	return max(1, config_samples_per_point)
 
 
-def dimensions_match(
-	actual_mm: float,
-	*,
-	expected_mm: float,
-	tolerance_mm: float,
-) -> bool:
-	return (expected_mm - tolerance_mm) <= actual_mm <= (expected_mm + tolerance_mm)
-
-
 def get_shelf_grouping_threshold_mm(
 	*,
 	step_mm: float,

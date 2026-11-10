@@ -171,7 +171,10 @@ class SharedModbusController:
             await self.connect()
 
             return self.client is not None and self.client.connected
-        except Exception:
+        except Exception as exc:
+            # The caller only reports the original I/O error; without this line nothing
+            # says why the port could not be reopened.
+            logger.warning("Modbus reconnect failed", extra={"port": self.port}, exc_info=exc)
             return False
 
     async def connect(self) -> None:

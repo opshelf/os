@@ -176,7 +176,11 @@ async def create_user(
 	stored hashed. Email must be unique; role and optional access level must exist. Invalid
 	references or duplicate email return `400`.
 	"""
-	existing_result = await db.execute(select(User).filter(User.email == request.email))
+	# Sign-in matches emails case-insensitively, so uniqueness has to as well: two rows
+	# differing only by case would make that lookup fail for both users.
+	existing_result = await db.execute(
+		select(User).filter(func.lower(User.email) == str(request.email).casefold())
+	)
 	existing = existing_result.scalar_one_or_none()
 	if existing is not None:
 		raise api_error(status.HTTP_400_BAD_REQUEST, "email_in_use", "")
@@ -275,7 +279,7 @@ async def update_user(
 	if request.email is not None:
 		existing_result = await db.execute(
 			select(User).filter(
-				User.email == request.email,
+				func.lower(User.email) == str(request.email).casefold(),
 				User.id != user_id
 			)
 		)

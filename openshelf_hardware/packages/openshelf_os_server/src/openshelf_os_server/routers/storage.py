@@ -1712,7 +1712,7 @@ async def delete_shelf(
         grid.remove_shelf(side, shelf_idx)
         return {"success": True}
     except IndexError as exc:
-        raise _grid_location_error(exc)
+        raise _grid_location_error(exc) from exc
     except Exception as exc:
         raise _grid_update_error(exc) from exc
 
@@ -1737,7 +1737,7 @@ async def add_grid_cell(
         grid.add_cell(side, shelf_idx)
         return {"success": True}
     except IndexError as exc:
-        raise _grid_location_error(exc)
+        raise _grid_location_error(exc) from exc
     except Exception as exc:
         raise _grid_update_error(exc) from exc
 
@@ -1787,7 +1787,7 @@ async def delete_cell(
         grid.remove_cell(side, shelf_idx, cell_idx)
         return {"success": True}
     except IndexError as exc:
-        raise _grid_location_error(exc)
+        raise _grid_location_error(exc) from exc
     except Exception as exc:
         raise _grid_update_error(exc) from exc
 
@@ -1813,7 +1813,7 @@ async def update_grid_cell(
         grid = _get_robot_grid()
         cell = grid.get_cell(StorageModuleCellLocation(side=side, shelf_idx=shelf_idx, cell_idx=cell_idx))
     except IndexError as exc:
-        raise _grid_location_error(exc)
+        raise _grid_location_error(exc) from exc
     except Exception as exc:
         raise _grid_load_error(exc) from exc
 
@@ -1842,8 +1842,8 @@ def _validate_grid_cell_update(payload: GridCellUpdate) -> None:
     if payload.status is not None:
         try:
             CellStatus(payload.status)
-        except ValueError:
-            raise api_error(400, "cell_status_invalid", "")
+        except ValueError as exc:
+            raise api_error(400, "cell_status_invalid", "") from exc
 
     if payload.dimensions is not None:
         _validate_grid_dimensions(payload.dimensions)
@@ -1905,7 +1905,7 @@ async def update_grid_cells(
                 StorageModuleCellLocation(side=side, shelf_idx=item.shelf_idx, cell_idx=item.cell_idx)
             )
         except IndexError as exc:
-            raise _grid_location_error(exc)
+            raise _grid_location_error(exc) from exc
         _validate_grid_cell_update(item)
         resolved.append((cell, item))
 
