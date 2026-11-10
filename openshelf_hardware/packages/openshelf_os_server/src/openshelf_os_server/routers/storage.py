@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 
 import openshelf_os.common as common
 from openshelf_os.config.settings import (
@@ -169,9 +169,9 @@ class StorageCellUpdate(BaseModel):
 class GridCellUpdate(BaseModel):
     """Request payload for updating a robot storage-grid cell."""
 
-    x: Optional[float] = Field(default=None, description="Calibration x in millimeters; provide x, y, and z_offset together.")
-    y: Optional[float] = Field(default=None, description="Calibration y in millimeters; provide x, y, and z_offset together.")
-    z_offset: Optional[float] = Field(default=None, description="Calibration z offset in millimeters; provide x, y, and z_offset together.")
+    x: Optional[FiniteFloat] = Field(default=None, description="Calibration x in millimeters; provide x, y, and z_offset together.")
+    y: Optional[FiniteFloat] = Field(default=None, description="Calibration y in millimeters; provide x, y, and z_offset together.")
+    z_offset: Optional[FiniteFloat] = Field(default=None, description="Calibration z offset in millimeters; provide x, y, and z_offset together.")
     status: Optional[str] = Field(default=None, description="Cell status: available, occupied, maintenance, or disabled.")
     is_manual: Optional[bool] = Field(default=None, description="Whether the calibration is locked (manual); omit to keep the current value.")
     dimensions: Optional[DimensionsPayload] = Field(default=None, description="Cell width, height, and length in millimeters; omit to keep the current dimensions.")

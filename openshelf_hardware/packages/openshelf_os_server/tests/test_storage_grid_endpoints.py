@@ -76,6 +76,22 @@ async def test_update_grid_cells_batch_is_atomic_on_missing_cell(client: AsyncCl
 
 
 @pytest.mark.anyio
+async def test_grid_cell_update_refuses_non_finite_calibration(client: AsyncClient, tmp_path) -> None:
+	grid = build_grid(tmp_path)
+
+	with patch("openshelf_os_server.core.robot.robot_worker", build_worker(grid)):
+		response = await client.put(
+			"/api/storage/grid/cell",
+			params={"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
+			content='{"x": Infinity, "y": 1.0, "z_offset": 0.0}',
+			headers={"Content-Type": "application/json"},
+		)
+
+	assert response.status_code == 422
+	assert grid.get_cell(StorageModuleCellLocation(side=StorageModuleSide.FRONT, shelf_idx=0, cell_idx=0)).calibration_point is None
+
+
+@pytest.mark.anyio
 async def test_delete_grid_shelf_refuses_stored_item_at_or_above(client: AsyncClient, tmp_path) -> None:
 	grid = build_grid(tmp_path)
 	grid.add_shelf(StorageModuleSide.FRONT)
