@@ -422,8 +422,8 @@
 			</ul>
 		{/if}
 		<div class="buttons">
-			<span class="status" class:invalid={issueCount > 0}>
-				{#if isValidating}checking…{:else if issueCount > 0}{issueCount} {issueCount === 1 ? 'issue' : 'issues'}{:else if changes.length > 0}valid{:else}no changes{/if}
+			<span class="status" class:invalid={isValidating === false && issueCount > 0} class:valid={isValidating === false && issueCount === 0 && changes.length > 0}>
+				{#if isValidating}checking…{:else if issueCount > 0}invalid ({issueCount}){:else if changes.length > 0}valid{:else}no changes{/if}
 			</span>
 			<button onclick={() => changesDialog?.showModal()} disabled={changes.length === 0}>
 				show changes
@@ -622,6 +622,10 @@
 		color: #c00;
 	}
 
+	.status.valid {
+		color: #007a00;
+	}
+
 	button.primary {
 		background-color: black;
 		color: white;
@@ -668,7 +672,9 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0 1em;
-		padding: 0.5em;
+		/* same height as the header row, whose close button adds 7px of border and padding */
+		line-height: 1.2;
+		padding: calc(0.5em + 7px) 0.5em;
 		border-bottom: 2px solid black;
 	}
 
