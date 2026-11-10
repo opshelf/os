@@ -320,7 +320,7 @@
 						{@const changed = changedIds.has(row.id)}
 						{@const value = shownValue(row)}
 						<tr class:changed class:invalid={issues.length > 0} class:absent={row.present === false}>
-							<td class="key" style={`padding-left: calc(0.5em + ${row.depth} * (var(--control) + 0.5em))`}>
+							<td class="key" style={`padding-left: calc(0.5em + ${row.depth} * (var(--control) + 0.5em) / 2)`}>
 								{#if row.field.kind === 'group'}
 									<button
 										class="twisty"
@@ -338,12 +338,16 @@
 									<span class="text flag">●</span>
 								{/if}
 							</td>
-							<td class="value">
-								{#if row.field.kind === 'group'}
+							{#if row.field.kind === 'group'}
+								<!-- spans to the table edge so the count stays put when deeper rows widen the key column -->
+								<td class="count" colspan="2">
 									<span class="text muted">
 										{row.present ? `${row.childCount} ${Array.isArray(row.value) ? 'items' : 'fields'}` : 'not set, defaults apply'}
 									</span>
-								{:else if row.field.kind === 'boolean'}
+								</td>
+							{:else}
+							<td class="value">
+								{#if row.field.kind === 'boolean'}
 									<span class="text">
 										<input
 											type="checkbox"
@@ -402,10 +406,11 @@
 							<td class="actions">
 								{#if changed}
 									<button onclick={() => revert(row)} title={`was ${formatValue(getAt(original, row.path))}`}>revert</button>
-								{:else if row.field.kind !== 'group' && row.present && row.required === false && row.field.hasDefault}
+								{:else if row.present && row.required === false && row.field.hasDefault}
 									<button onclick={() => setValue(row.path, UNSET)} title="remove from the file; the default applies">unset</button>
 								{/if}
 							</td>
+							{/if}
 						</tr>
 					{/each}
 				</tbody>
@@ -564,6 +569,16 @@
 
 	.hint {
 		margin-left: 0.5em;
+	}
+
+	.count {
+		text-align: right;
+	}
+
+	/* when deep keys make the table wider than the tree, keep the count at the visible edge */
+	.count .text {
+		position: sticky;
+		right: 0.5em;
 	}
 
 	.actions {
