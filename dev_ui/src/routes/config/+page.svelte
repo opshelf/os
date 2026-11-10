@@ -28,7 +28,6 @@
 	const SECTIONS = [
 		'robot',
 		'robot_app',
-		'storage',
 		'sizes',
 		'printer',
 		'scanner',

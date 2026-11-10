@@ -1,4 +1,5 @@
-"""The config editor endpoints write the robot config file: they must never expose or write `auth`,
+"""The config editor endpoints write the robot config file: they must never expose or write `auth` or
+`storage` (tray layout is changed through the storage routes),
 must write nothing while the robot is busy, and must report invalid fields by path."""
 
 import json
@@ -7,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from openshelf_os_server import settings
+from openshelf_os_server.main import app
+from openshelf_os_server.routers.auth_deps import get_current_user
 from openshelf_os_server.core.init_progress import OVERALL_INITIALIZING, get_init_tracker
 from openshelf_os_server.routers import system
 
@@ -28,14 +31,15 @@ def config_path(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_auth_section_is_neither_readable_nor_writable(client, config_path):
+@pytest.mark.parametrize("section", ["auth", "storage"])
+async def test_secret_and_storage_sections_are_neither_readable_nor_writable(client, config_path, section):
     path, _ = config_path
     before = path.read_bytes()
 
-    read = await client.get("/api/system/config", params={"section": "auth"})
+    read = await client.get("/api/system/config", params={"section": section})
     write = await client.put(
         "/api/system/config",
-        json={"section": "auth", "data": {"jwt_secret": "x"}, "revision": "any"},
+        json={"section": section, "data": {"jwt_secret": "x"}, "revision": "any"},
     )
 
     assert read.status_code == 404
@@ -202,3 +206,29 @@ async def test_editing_robot_app_keeps_a_robot_enabled_flag_from_an_old_file(cli
     assert reloaded.robot_app.enabled is True
     assert reloaded.robot_app.home_on_init is False
     assert "enabled" not in json.loads(path.read_text())["robot"]
+
+
+@pytest.mark.anyio
+async def test_robot_control_alone_cannot_read_or_replace_config(client, config_path):
+    path, restarts = config_path
+    before = path.read_bytes()
+    current = (await client.get("/api/system/config")).json()
+    operator = SimpleNamespace(role=SimpleNamespace(permissions=["robot:control", "storage:read"]))
+    app.dependency_overrides[get_current_user] = lambda: operator
+    try:
+        calls = [
+            await client.get("/api/system/config"),
+            await client.get("/api/system/config/schema"),
+            await client.post("/api/system/config/validate", json={"section": "robot", "data": current["data"]}),
+            await client.put(
+                "/api/system/config",
+                json={"section": "printer", "data": current["data"], "revision": current["revision"]},
+            ),
+        ]
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert [call.status_code for call in calls] == [403, 403, 403, 403]
+    assert {call.json()["detail"]["permission"] for call in calls} == {"roles:write"}
+    assert path.read_bytes() == before
+    assert restarts == []

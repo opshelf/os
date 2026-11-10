@@ -206,8 +206,9 @@ async def restart_api() -> RestartResponse:
 
 
 # `auth` carries the JWT secret and is driven by the environment; the schema version belongs to
-# migrations. Neither is editable.
-_UNEDITABLE_SECTIONS = frozenset({"auth", "schema_version"})
+# migrations. Neither is editable. `storage` changes must go through the storage routes, which refuse
+# a relayout of an occupied tray; a saved layout that conflicts with stored bins crash-loops startup.
+_UNEDITABLE_SECTIONS = frozenset({"auth", "schema_version", "storage"})
 
 
 class ConfigSectionResponse(BaseModel):
@@ -254,6 +255,11 @@ def _root_schema() -> dict[str, Any]:
 	return RootConfig.model_json_schema()
 
 
+# Developer tool: rewrites any editable section (printer, storage limits), so it needs an admin
+# permission on top of robot:control. Holding roles:write already allows self-granting anything.
+CONFIG_EDITOR_PERMISSIONS = ["robot:control", "roles:write"]
+
+
 def _config_issues(document: dict[str, Any]) -> list[ConfigIssue]:
 	try:
 		get_config_store().validate(document)
@@ -287,14 +293,14 @@ async def _ensure_safe_to_restart() -> None:
 @router.get(
     "/config",
     response_model=ConfigSectionResponse,
-    dependencies=[Depends(require_permissions("robot:control"))],
+    dependencies=[Depends(require_permissions(CONFIG_EDITOR_PERMISSIONS))],
     summary="Read one section of the config file",
     responses=response_docs(errors=(401, 403, 404)),
 )
 async def get_config_section(section: str = Query("robot")) -> ConfigSectionResponse:
 	"""Read one section of the config file.
 
-	Requires `robot:control`. Returns the section as stored on disk (no environment overrides,
+	Requires `robot:control` and `roles:write`. Returns the section as stored on disk (no environment overrides,
 	no defaults filled in) and the file revision a later save must quote. `auth` and
 	`schema_version` are not readable here.
 	"""
@@ -312,14 +318,14 @@ async def get_config_section(section: str = Query("robot")) -> ConfigSectionResp
 @router.get(
     "/config/schema",
     response_model=dict[str, Any],
-    dependencies=[Depends(require_permissions("robot:control"))],
+    dependencies=[Depends(require_permissions(CONFIG_EDITOR_PERMISSIONS))],
     summary="Read the JSON schema of one config section",
     responses=response_docs(errors=(401, 403, 404)),
 )
 async def get_config_schema(section: str = Query("robot")) -> dict[str, Any]:
 	"""Read the JSON schema of one config section.
 
-	Requires `robot:control`. Returns the section's schema with the shared `$defs`. It covers
+	Requires `robot:control` and `roles:write`. Returns the section's schema with the shared `$defs`. It covers
 	types, bounds and choices; rules across fields are checked by `POST /config/validate`.
 	"""
 	_editable_section(section)
@@ -330,14 +336,14 @@ async def get_config_schema(section: str = Query("robot")) -> dict[str, Any]:
 @router.post(
     "/config/validate",
     response_model=ConfigValidateResponse,
-    dependencies=[Depends(require_permissions("robot:control"))],
+    dependencies=[Depends(require_permissions(CONFIG_EDITOR_PERMISSIONS))],
     summary="Check an edited config section",
     responses=response_docs(errors=(401, 403, 404)),
 )
 async def validate_config_section(request: ConfigValidateRequest) -> ConfigValidateResponse:
 	"""Check an edited config section.
 
-	Requires `robot:control`. Merges `data` into the current file and runs every check a save
+	Requires `robot:control` and `roles:write`. Merges `data` into the current file and runs every check a save
 	and the next startup run. Each issue names the dotted field path it concerns, from the
 	config root; this developer endpoint returns paths on purpose so the editor can mark the
 	field. Writes nothing.
@@ -352,14 +358,14 @@ async def validate_config_section(request: ConfigValidateRequest) -> ConfigValid
 @router.put(
     "/config",
     response_model=ConfigSaveResponse,
-    dependencies=[Depends(require_permissions("robot:control"))],
+    dependencies=[Depends(require_permissions(CONFIG_EDITOR_PERMISSIONS))],
     summary="Save one config section and restart the API",
     responses=response_docs(errors=(401, 403, 404, 409, 422)),
 )
 async def save_config_section(request: ConfigSaveRequest) -> ConfigSaveResponse:
 	"""Save one config section and restart the API.
 
-	Requires `robot:control`. Replaces the section in the config file when the file is still
+	Requires `robot:control` and `roles:write`. Replaces the section in the config file when the file is still
 	at `revision` (`409 config_changed` otherwise) and the result passes every startup check
 	(`422 config_invalid`; call `POST /config/validate` for the field paths). The previous file
 	is kept as a timestamped backup. Refuses with `409` while the robot moves, has queued work,
