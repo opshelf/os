@@ -59,7 +59,7 @@ from openshelf_os.storage import (
 )
 from openshelf_os_server.core.storage_module import StorageModuleSideDto, side_to_s
 from openshelf_os_server.errors import api_error, failure_detail
-from openshelf_os_server.settings import clear_config_cache, get_operating_mode, get_root_config, save_root_config
+from openshelf_os_server.settings import get_config_path, get_operating_mode, get_root_config, save_root_config
 
 logger = logging.getLogger(__name__)
 
@@ -626,7 +626,6 @@ async def update_tray_layout(
             bin_setting.max_items = payload.rows * payload.columns
 
     save_root_config(next_config)
-    clear_config_cache()
 
     try:
         await BinStorageService(session).sync_config()
@@ -746,7 +745,6 @@ async def assign_tray(
     next_config = config.model_copy(deep=True)
     next_config.storage.bins = [*next_config.storage.bins, entry]
     save_root_config(next_config)
-    clear_config_cache()
 
     try:
         await BinStorageService(session).sync_config()
@@ -818,7 +816,6 @@ async def unassign_tray(
         if bin_setting.barcode != entry.barcode
     ]
     save_root_config(next_config)
-    clear_config_cache()
 
     try:
         await BinStorageService(session).sync_config()
@@ -1616,9 +1613,7 @@ def _get_robot_grid():
     if robot_core.robot_worker is not None and robot_core.robot_worker._robot._grid is not None:
         return robot_core.robot_worker._robot._grid
 
-    config_path = common.CONFIG_PATH
-    config = common.load_config_file(config_path)
-    grid_path = common.resolve_grid_path(config, config_path)
+    grid_path = common.resolve_grid_path(get_root_config(), get_config_path())
 
     return StorageGrid.load_from_file(grid_path)
 

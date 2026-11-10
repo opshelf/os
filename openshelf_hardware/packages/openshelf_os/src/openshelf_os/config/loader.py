@@ -4,9 +4,9 @@ import io
 import json
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import ValidationError
-from openshelf_os.config.exceptions import ConfigError, ConfigMissingError, ConfigValidationError
+from openshelf_os.config.exceptions import ConfigError, ConfigMissingError, ConfigRequirementError, ConfigValidationError
 from openshelf_os.config.root import RootConfig
 from openshelf_os.runtime_state import RuntimeStatePaths, paths_for_config_file
 
@@ -50,33 +50,33 @@ def resolve_grid_path(config: RootConfig, config_path: Union[str, Any] = CONFIG_
     return str(runtime_paths.resolve_storage_path(config, config_path=path_obj))
 
 
-def assert_config(config: RootConfig, requirements: Optional[List[str]] = None) -> None:
-    errors: List[str] = []
+def config_requirement_issues(config: RootConfig, requirements: Optional[List[str]] = None) -> List[Tuple[str, str]]:
+    """Cross-section requirements the model does not enforce, as (dotted path, message) pairs."""
+    issues: List[Tuple[str, str]] = []
 
-    if requirements is None:
-        requirements = []
-
-    for req in requirements:
+    for req in requirements or []:
         try:
-            value = config.get(req)
-
-            if value is None:
-                errors.append(f"Required config '{req}' is None")
+            if config.get(req) is None:
+                issues.append((req, f"Required config '{req}' is None"))
         except KeyError:
-            errors.append(f"Required config '{req}' is missing")
+            issues.append((req, f"Required config '{req}' is missing"))
 
     if config.auth.jwt_secret is None and config.auth.require_auth is True:
-        errors.append("auth.jwt_secret is required when auth.require_auth is True")
+        issues.append(("auth.jwt_secret", "auth.jwt_secret is required when auth.require_auth is True"))
 
-    if config.robot_app.enabled is True:
-        if config.robot.bus is None:
-            errors.append("robot.bus is required when robot is enabled")
+    if config.robot_app.enabled is True and config.robot.bus is None:
+        issues.append(("robot.bus", "robot.bus is required when robot is enabled"))
 
     if config.robot.tool.laser.enabled is True:
         if config.robot.bus is None:
-            errors.append("robot.bus is required when robot.tool.laser.enabled is True")
+            issues.append(("robot.bus", "robot.bus is required when robot.tool.laser.enabled is True"))
         elif config.robot.bus.laser is None:
-            errors.append("robot.bus.laser is required when robot.tool.laser.enabled is True")
+            issues.append(("robot.bus.laser", "robot.bus.laser is required when robot.tool.laser.enabled is True"))
 
-    if errors:
-        raise ConfigError("Configuration assertion failed:\n  - " + "\n  - ".join(errors))
+    return issues
+
+
+def assert_config(config: RootConfig, requirements: Optional[List[str]] = None) -> None:
+    issues = config_requirement_issues(config, requirements)
+    if issues:
+        raise ConfigRequirementError(issues)

@@ -39,7 +39,6 @@ def _config_with_bins(monkeypatch: pytest.MonkeyPatch, entries: list[StorageBinS
     base = get_root_config().model_copy(deep=True)
     base.storage.bins = entries
     monkeypatch.setattr(storage_router, "get_root_config", lambda: base)
-    monkeypatch.setattr(storage_router, "clear_config_cache", lambda: None)
     monkeypatch.setattr(storage_router.BinStorageService, "sync_config", AsyncMock())
     return base
 

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class ConfigError(Exception):
@@ -33,3 +33,10 @@ class ConfigMissingError(ConfigError):
         self.path = path
 
         super().__init__(f"Configuration file not found: {path}")
+
+
+class ConfigRequirementError(ConfigError):
+    def __init__(self, issues: List[Tuple[str, str]]):
+        self.issues = issues
+
+        super().__init__("Configuration assertion failed:\n  - " + "\n  - ".join(message for _, message in issues))

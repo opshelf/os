@@ -16,6 +16,7 @@ from openshelf_os.config_migrations import (
     runner,
     v005_module_side_names as v005,
     v006_multi_item_io_pose as v006,
+    v009_fold_legacy_enabled_keys as v009,
 )
 from openshelf_os.config_migrations.v002_laser_parameter_names import (
     SCAN_KEY_RENAMES,
@@ -120,7 +121,7 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
     original = copy.deepcopy(legacy_config)
     migrated, changes = runner.migrate_config(legacy_config)
     assert legacy_config == original
-    assert migrated["schema_version"] == 8
+    assert migrated["schema_version"] == 9
     assert migrated["version"] == original["version"]
     assert migrated["auth"] == original["auth"]
     assert migrated["unknown_root_setting"] == original["unknown_root_setting"]
@@ -130,7 +131,7 @@ def test_migration_preserves_pose_geometry_and_unrelated_values(legacy_config):
     assert not set(UNUSED_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
     assert not set(Z_STALL_PROBE_SCAN_KEYS) & migrated["robot"]["grid"]["scan"].keys()
     assert not set(SCAN_STYLE_KEYS) & migrated["robot"]["grid"]["scan"].keys()
-    assert changes[-1] == "schema_version: 7 -> 8"
+    assert changes[-1] == "schema_version: 8 -> 9"
     config = RootConfig.model_validate(migrated)
     scan = config.robot.grid.scan
 
@@ -278,7 +279,7 @@ def v4_side_config():
 
 def test_v5_renames_module_side_scan_keys_and_bin_sides(v4_side_config):
     migrated, changes = runner.migrate_config(v4_side_config)
-    assert migrated["schema_version"] == 8
+    assert migrated["schema_version"] == 9
     scan = migrated["robot"]["grid"]["scan"]
     assert scan["front_shelf_scout_x_mm"] == 120.0
     assert scan["back_shelf_scout_x_mm"] == 45.0
@@ -346,7 +347,7 @@ def test_startup_rejects_unmigrated_config_without_writing(tmp_path, legacy_conf
     path = tmp_path / "config.json"
     raw = json.dumps(legacy_config).encode()
     path.write_bytes(raw)
-    with pytest.raises(ConfigValidationError, match="requires migration to 8"):
+    with pytest.raises(ConfigValidationError, match="requires migration to 9"):
         load_config_file(path)
     assert path.read_bytes() == raw
     assert list(tmp_path.iterdir()) == [path]
@@ -432,3 +433,59 @@ def test_failed_atomic_replace_keeps_original_and_backup(tmp_path, legacy_config
     assert path.read_text() == raw
     assert path.with_name(path.name + ".schema-v1.bak").read_text() == raw
     assert len(list(tmp_path.iterdir())) == 2
+
+
+@pytest.fixture
+def pre_v9_config(legacy_config):
+    config, _ = runner.migrate_config(legacy_config)
+    config.pop("robot_app", None)
+    config["robot"]["io"].pop("curtain", None)
+    return config
+
+
+def _v9(config, *, robot=None, io=None):
+    """Apply v009 to `config` with the given legacy keys and assert the effective config is unchanged."""
+    before = copy.deepcopy(config)
+    before["robot"].update(robot or {})
+    before["robot"]["io"].update(io or {})
+    snapshot = copy.deepcopy(before)
+    after, changes = v009.migrate(before)
+    assert before == snapshot
+    assert "enabled" not in after["robot"] and "curtain_enabled" not in after["robot"]["io"]
+    assert (
+        RootConfig.model_validate(after).model_dump(mode="json")
+        == RootConfig.model_validate(snapshot).model_dump(mode="json")
+    )
+    return after, changes
+
+
+def test_v9_robot_enabled_moves_to_robot_app_when_absent(pre_v9_config):
+    after, changes = _v9(pre_v9_config, robot={"enabled": True})
+    assert after["robot_app"] == {"enabled": True}
+    assert RootConfig.model_validate(after).robot_app.enabled is True
+    assert changes
+
+
+def test_v9_robot_enabled_is_dropped_when_robot_app_exists(pre_v9_config):
+    pre_v9_config["robot_app"] = {"home_on_init": False}
+    after, _ = _v9(pre_v9_config, robot={"enabled": True})
+    assert after["robot_app"] == {"home_on_init": False}
+
+
+def test_v9_curtain_enabled_moves_to_curtain_when_absent(pre_v9_config):
+    after, _ = _v9(pre_v9_config, io={"curtain_enabled": False})
+    assert after["robot"]["io"]["curtain"] == {"enabled": False}
+    assert RootConfig.model_validate(after).robot.io.curtain.enabled is False
+
+
+def test_v9_curtain_enabled_is_dropped_when_curtain_exists(pre_v9_config):
+    pre_v9_config["robot"]["io"]["curtain"] = {"enabled": True}
+    after, _ = _v9(pre_v9_config, io={"curtain_enabled": False})
+    assert after["robot"]["io"]["curtain"] == {"enabled": True}
+
+
+def test_v9_leaves_a_migrated_document_unchanged(pre_v9_config):
+    pre_v9_config["robot_app"] = {"enabled": True}
+    pre_v9_config["robot"]["io"]["curtain"] = {"enabled": False}
+    after, changes = v009.migrate(pre_v9_config)
+    assert after == pre_v9_config and changes == []

@@ -42,6 +42,7 @@
 		{ href: '/scanner', label: 'scanner' },
 		{ href: '/printer', label: 'printer' },
 		{ href: '/motors', label: 'motors' },
+		{ href: '/config', label: 'config' },
 		{ href: '/wifi', label: 'wifi' }
 	];
 

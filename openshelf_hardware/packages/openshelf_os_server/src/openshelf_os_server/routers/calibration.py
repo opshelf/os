@@ -2082,7 +2082,7 @@ async def save_iobox_door_position(request: IOBoxDoorPositionRequest):
 	await ensure_laser_auto_calibration_not_running()
 	_validate_iobox_door_positions(request.close, request.open)
 
-	config = get_root_config()
+	config = get_root_config().model_copy(deep=True)
 	door_config = _get_iobox_door_config(config)
 	updated_door_config = _with_iobox_door_positions(
 		door_config,
@@ -2454,7 +2454,7 @@ async def save_iobox_calibration(request: IOBoxSaveRequest):
 	worker = await get_robot_worker_or_503()
 
 	stage_limit = _get_stage_limit(worker._robot._tool)
-	config = get_root_config()
+	config = get_root_config().model_copy(deep=True)
 	stage_nudge = config.robot.tool.parameters.STAGE_NUDGE
 	_validate_stage_target(request.stage_extension, stage_limit, "IO box stage extension")
 	_validate_stage_target(request.stage_extension + stage_nudge, stage_limit, "IO box stage extension plus nudge")
@@ -2615,7 +2615,7 @@ async def save_rotation_angles(request: RotateSaveRequest):
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
-	config = get_root_config()
+	config = get_root_config().model_copy(deep=True)
 
 	params_dict = config.robot.tool.parameters.model_dump()
 	params_dict["ROTATION_FRONT"] = request.front
@@ -2833,7 +2833,7 @@ async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 	"""
 	await ensure_laser_auto_calibration_not_running()
 
-	config = get_root_config()
+	config = get_root_config().model_copy(deep=True)
 
 	stage_limit: float | None = None
 	try:

@@ -28,7 +28,6 @@ def _persist_gripper_open_position(worker: RobotWorker, open_position: int) -> N
     next_config = config.model_copy(deep=True)
     next_config.robot.tool.gripper.open_position = int(open_position)
     save_root_config(next_config)
-    clear_config_cache()
     worker._robot.reload_parameters()
 
 

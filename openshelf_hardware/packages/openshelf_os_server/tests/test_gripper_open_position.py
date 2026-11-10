@@ -108,7 +108,6 @@ async def _calibrate(drive: FakeDrive, tmp_path, sides: list[StorageModuleSide] 
 	with (
 		patch(f"{RUNNER}.get_root_config", return_value=FakeConfig()),
 		patch(f"{RUNNER}.save_root_config", save),
-		patch(f"{RUNNER}.clear_config_cache"),
 		patch(f"{RUNNER}._build_default_scans_dir", return_value=str(tmp_path)),
 	):
 		result = await gripper_runner.calibrate_gripper_open_position(
@@ -173,7 +172,6 @@ async def test_a_partial_run_may_narrow_when_the_other_side_has_no_reference_cel
 	with (
 		patch(f"{RUNNER}.get_root_config", return_value=FakeConfig()),
 		patch(f"{RUNNER}.save_root_config", MagicMock()),
-		patch(f"{RUNNER}.clear_config_cache"),
 		patch(f"{RUNNER}._build_default_scans_dir", return_value=str(tmp_path)),
 	):
 		result = await gripper_runner.calibrate_gripper_open_position(worker, [StorageModuleSide.BACK])
@@ -232,7 +230,6 @@ async def _post_route(client: AsyncClient, drive: FakeDrive, grid: StorageGrid, 
 		patch(f"{routes}._clear_motors_for_move", new=AsyncMock()),
 		patch(f"{RUNNER}.get_root_config", return_value=FakeConfig()),
 		patch(f"{RUNNER}.save_root_config", MagicMock()),
-		patch(f"{RUNNER}.clear_config_cache"),
 		patch(f"{RUNNER}._build_default_scans_dir", return_value=str(tmp_path)),
 	):
 		return await client.post("/api/calibration/gripper/open-position", json=body)
