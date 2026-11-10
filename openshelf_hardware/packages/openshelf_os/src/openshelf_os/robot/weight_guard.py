@@ -139,10 +139,6 @@ class WeightChangeGuard:
     def is_latched(self) -> bool:
         return self._latched
 
-    @property
-    def is_failed(self) -> bool:
-        return self._failed is not None
-
     async def start(self) -> None:
         if self._task is not None:
             if self._task.done() is False:

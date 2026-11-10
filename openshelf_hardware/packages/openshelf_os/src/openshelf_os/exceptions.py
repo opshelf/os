@@ -17,10 +17,6 @@ class MotorError(OpenshelfError):
     """Exception raised for motor-related errors."""
     pass
 
-class CameraError(OpenshelfError):
-    """Exception raised for camera-related errors."""
-    pass
-
 class ConfigError(OpenshelfError):
     """Exception raised for configuration-related errors."""
     pass
