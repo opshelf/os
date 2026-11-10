@@ -423,7 +423,7 @@
 		{/if}
 		<div class="buttons">
 			<span class="status" class:invalid={isValidating === false && issueCount > 0} class:valid={isValidating === false && issueCount === 0 && changes.length > 0}>
-				{#if isValidating}checking…{:else if issueCount > 0}invalid ({issueCount}){:else if changes.length > 0}valid{:else}no changes{/if}
+				{#if isValidating}checking…{:else if issueCount > 0}{issueCount} invalid{:else if changes.length > 0}valid{:else}no changes{/if}
 			</span>
 			<button onclick={() => changesDialog?.showModal()} disabled={changes.length === 0}>
 				show changes
