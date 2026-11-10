@@ -91,6 +91,14 @@ class SharedModbusController:
                 return await operation(client)
 
             except TRANSIENT_MODBUS_ERRORS as e:
+                cancellation = e.__cause__
+                if isinstance(cancellation, asyncio.CancelledError):
+                    # pymodbus reports a task cancelled in the middle of a request as an
+                    # I/O error. Treating that as transient reconnected the shared bus,
+                    # re-sent the request (a write included) and kept the cancelled
+                    # caller running for seconds. Hand the cancellation back instead.
+                    raise cancellation
+
                 if attempt < attempts - 1:
                     reconnected = await self._reconnect()
 
@@ -303,12 +311,15 @@ class SharedModbusController:
 
             client = self._require_connected()
             previous_retries = client.ctx.retries
-            previous_timeout = client.comm_params.timeout_connect
+            # The transaction reads its response timeout from ctx.comm_params, a copy of
+            # client.comm_params: an override written to the client's own object never
+            # took effect, and a bounded read still waited the full default timeout.
+            previous_timeout = client.ctx.comm_params.timeout_connect
             try:
                 if modbus_retries is not None:
                     client.ctx.retries = modbus_retries
                 if modbus_timeout_s is not None:
-                    client.comm_params.timeout_connect = modbus_timeout_s
+                    client.ctx.comm_params.timeout_connect = modbus_timeout_s
                 return await self._run_with_reconnect_retry(
                     read_operation,
                     attempts=attempts,
@@ -324,7 +335,7 @@ class SharedModbusController:
                 )
             finally:
                 client.ctx.retries = previous_retries
-                client.comm_params.timeout_connect = previous_timeout
+                client.ctx.comm_params.timeout_connect = previous_timeout
 
     async def read_holding_register_block(
         self,
