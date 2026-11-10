@@ -134,7 +134,8 @@ def _build_minimal_config(data: dict) -> dict:
 
     # These are minimal defaults for testing only.
     # Production deployments MUST provide data/config.json with real calibrated values.
-    # The application will fail to start if config.json is missing in production.
+    # A missing config file is not fatal in any mode: get_root_config logs a warning
+    # and starts on these defaults.
     return {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "name": "openshelf_os",
@@ -258,6 +259,14 @@ def _apply_env_overrides(data: dict) -> dict:
         data["auth"]["dev_mode"] = False
         data["auth"]["require_auth"] = True
         data["auth"]["enabled"] = True
+    else:
+        # Production, demo and mock never sign anyone in automatically, whatever the file
+        # says: a config saved while in development mode carries the three values above,
+        # and a file shared between modes (OPENSHELF_CONFIG_PATH, or the single config.json
+        # of an older device) would otherwise run unauthenticated as the developer admin.
+        data["auth"]["dev_mode"] = False
+        data["auth"]["require_auth"] = True
+        data["auth"]["dev_auto_user"] = None
 
     # A blank JWT_SECRET (e.g. an unset compose passthrough) must not override a
     # usable secret, otherwise tokens would be signed with an empty key. The literal

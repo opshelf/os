@@ -7,6 +7,7 @@ import json
 import pytest
 
 from openshelf_os.config.exceptions import ConfigError
+from openshelf_os.config.schema import CURRENT_SCHEMA_VERSION
 from openshelf_os_server import settings
 
 
@@ -78,10 +79,10 @@ def config_file(tmp_path, v4_config, monkeypatch):
 def test_get_root_config_auto_migrates_v4_and_backs_up(config_file):
     path, raw = config_file
     config = settings.get_root_config()
-    assert config.schema_version == 9
+    assert config.schema_version == CURRENT_SCHEMA_VERSION
     assert path.with_name("config.json.schema-v4.bak").read_bytes() == raw
     on_disk = json.loads(path.read_bytes())
-    assert on_disk["schema_version"] == 9
+    assert on_disk["schema_version"] == CURRENT_SCHEMA_VERSION
     assert on_disk["robot"]["tool"]["parameters"]["PICKUP_POSITION_MULTI_ITEM"] == [0, 0]
     assert "front_shelf_scout_x_mm" in on_disk["robot"]["grid"]["scan"]
     assert on_disk["storage"]["bins"][0]["home_location"]["side"] == "front_module"
@@ -98,12 +99,12 @@ def test_existing_backup_confails_startup_and_leaves_file_untouched(config_file,
 def test_future_version_fails_startup_without_touching_file(config_file, monkeypatch):
     path, raw = config_file
     future = json.loads(raw)
-    future["schema_version"] = 10
+    future["schema_version"] = CURRENT_SCHEMA_VERSION + 1
     path.write_bytes(json.dumps(future).encode())
     with pytest.raises(ConfigError, match="newer than supported"):
         settings.get_root_config()
-    assert json.loads(path.read_bytes())["schema_version"] == 10
-    assert not path.with_name("config.json.schema-v10.bak").exists()
+    assert json.loads(path.read_bytes())["schema_version"] == CURRENT_SCHEMA_VERSION + 1
+    assert not path.with_name(f"config.json.schema-v{CURRENT_SCHEMA_VERSION + 1}.bak").exists()
 
 
 def test_failed_validation_fails_startup_and_leaves_file_untouched(config_file):
@@ -116,3 +117,19 @@ def test_failed_validation_fails_startup_and_leaves_file_untouched(config_file):
         settings.get_root_config()
     assert path.read_bytes() == broken_raw
     assert list(path.parent.glob("config.json.*.bak")) == []
+
+
+def test_saving_in_development_does_not_write_the_automatic_sign_in(config_file, monkeypatch):
+    # Development forces the developer auto-login when the config loads. Saving wrote it back
+    # into the file, and a device's production config.json was found carrying it.
+    path, _raw = config_file
+    settings.MODE_FILE.write_text("development")
+    monkeypatch.setenv("ENV", "dev")
+    settings.clear_config_cache()
+
+    config = settings.get_root_config()
+    assert config.auth.dev_mode is True and config.auth.require_auth is False
+    settings.save_root_config(config)
+
+    saved_auth = json.loads(path.read_bytes()).get("auth", {})
+    assert {"dev_mode", "require_auth", "dev_auto_user"}.isdisjoint(saved_auth)

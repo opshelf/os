@@ -632,6 +632,7 @@ class CrashVideoRecorder:
         os.close(descriptor)
         output_path = Path(output_name)
         writer: cv2.VideoWriter | None = None
+        container: av.container.InputContainer | None = None
 
         try:
             # The access units concatenate into a valid h264/hevc
@@ -711,6 +712,8 @@ class CrashVideoRecorder:
                 raise ValueError("encoded attachment exceeds size budget")
             return output_path.read_bytes()
         finally:
+            if container is not None:
+                container.close()
             if writer is not None:
                 writer.release()
             output_path.unlink(missing_ok=True)

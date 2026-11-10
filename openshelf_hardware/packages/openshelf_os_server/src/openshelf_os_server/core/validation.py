@@ -1,4 +1,5 @@
 """Data validation utilities for storage operations."""
+import math
 from typing import Dict, Any, Optional
 
 from openshelf_os.config.settings import BARCODE_MAX_LENGTH
@@ -14,6 +15,14 @@ class CellOccupiedError(ValidationError):
     pass
 
 
+def _is_positive_number(value: Any) -> bool:
+    # NaN compares false with everything, so `value <= 0` let it through, and JSON
+    # parsers accept NaN and Infinity. A bool is an int in Python.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value) and value > 0
+
+
 class ItemValidator:
     """Validator for item data."""
 
@@ -24,13 +33,13 @@ class ItemValidator:
         for key in required_keys:
             if key not in dimensions:
                 raise ValidationError(f"Enter the item {key}.")
-            if dimensions[key] <= 0:
+            if _is_positive_number(dimensions[key]) is False:
                 raise ValidationError(f"Enter a {key} greater than zero.")
 
     @staticmethod
     def validate_weight(weight: Optional[float]) -> None:
         """Validate item weight."""
-        if weight is not None and weight <= 0:
+        if weight is not None and _is_positive_number(weight) is False:
             raise ValidationError("Weight must be a positive number")
 
     @staticmethod
@@ -38,11 +47,6 @@ class ItemValidator:
         """Validate item name."""
         if len(name.strip()) == 0:
             raise ValidationError("Name cannot be empty")
-
-    @staticmethod
-    def validate_metadata(metadata: Optional[Dict[str, Any]]) -> None:
-        """Validate item metadata."""
-        return
 
 
 class LocationValidator:
@@ -78,7 +82,6 @@ class StorageValidator:
         ItemValidator.validate_name(name)
         ItemValidator.validate_dimensions(dimensions)
         ItemValidator.validate_weight(weight)
-        ItemValidator.validate_metadata(metadata)
 
         if not isinstance(barcode, str):
             raise ValidationError("Barcode must be a string")
@@ -97,8 +100,6 @@ class StorageValidator:
             ItemValidator.validate_dimensions(dimensions)
         if weight is not None:
             ItemValidator.validate_weight(weight)
-        if metadata is not None:
-            ItemValidator.validate_metadata(metadata)
 
     @staticmethod
     def validate_location_assignment(shelf_idx: int, cell_idx: int) -> None:

@@ -146,14 +146,14 @@ class MoveRequest(BaseModel):
 
 class MovePositionRequest(BaseModel):
 	side: StorageModuleSide
-	x: float = Field(description="Position or extension in millimeters")
-	y: float = Field(description="Position or extension in millimeters")
-	z_offset: float = 0.0
+	x: FiniteFloat = Field(description="Position or extension in millimeters")
+	y: FiniteFloat = Field(description="Position or extension in millimeters")
+	z_offset: FiniteFloat = 0.0
 
 
 class JogRequest(BaseModel):
 	axis: Literal["x", "y", "z", "stage"]
-	delta: float = Field(description="Signed displacement in millimeters")
+	delta: FiniteFloat = Field(description="Signed displacement in millimeters")
 
 
 class TestRequest(BaseModel):
@@ -185,7 +185,7 @@ async def _ensure_cell_is_testable(
 		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_found", "") from exc
 
 	if cell.status in UNTESTABLE_CELL_STATUSES:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_unavailable", f"That cell is {cell.status.value} and cannot be used for calibration tests.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_unavailable", "That cell is disabled or under maintenance and cannot be used for calibration tests.")
 
 	if not allow_tray_home:
 		# Grip tests exercise the tray in its home; single-item transfers would record a fake
@@ -308,9 +308,9 @@ class SaveRequest(BaseModel):
 	side: StorageModuleSide
 	shelf_idx: int
 	cell_idx: int
-	x: float = Field(description="Position or extension in millimeters")
-	y: float = Field(description="Position or extension in millimeters")
-	z_offset: float = Field(description="Position or extension in millimeters")
+	x: FiniteFloat = Field(description="Position or extension in millimeters")
+	y: FiniteFloat = Field(description="Position or extension in millimeters")
+	z_offset: FiniteFloat = Field(description="Position or extension in millimeters")
 	status: Optional[str] = None
 	is_manual: Optional[bool] = None
 	dimensions: Optional[Dimensions] = Field(
@@ -352,8 +352,6 @@ class LaserReadingResponse(BaseModel):
 
 
 _current_position: Optional[PositionResponse] = None
-_current_side: int = 0
-_current_side_name: str = "front_module"
 
 
 def _build_error_detail(
@@ -510,13 +508,17 @@ async def _retract_tool_for_move(
 
 	`blocked_message` reports a retract that finished with the tool still past the rotation
 	clearance limits as blocked (409, no `needs_home`) instead of as a motor fault, the same
-	way the rotation route already reports clearance failures.
+	way the rotation route already reports clearance failures. Only the clearance shortfall
+	Tool.retract wraps (a MovementError cause) counts: a drive fault (a failed move, recovery
+	home or position read) leaves the axis position untrusted and still flags homing.
 	"""
 	try:
 		await tool.retract()
 	except MovementError as e:
-		if blocked_message is None:
-			raise
+		if blocked_message is None or not isinstance(e.__cause__, MovementError):
+			# tool.retract() wraps every failure, drive faults included, as MovementError,
+			# which most callers' (MotorError, HardwareMotorError) clauses do not catch.
+			await _raise_motor_error(worker, "The tool could not retract.", e)
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_build_error_detail(f"{blocked_message} {CODE_MESSAGES['rotation_blocked']}", code="rotation_blocked"),
@@ -720,7 +722,7 @@ async def _move_tool_to_coordinate(
 	side_name: StorageModuleSide,
 	warnings: Optional[list[str]] = None,
 ) -> PositionResponse:
-	global _current_position, _current_side, _current_side_name
+	global _current_position
 
 	tool = worker._robot._tool
 
@@ -744,8 +746,6 @@ async def _move_tool_to_coordinate(
 
 	slide_extension = await _get_current_stage_extension(tool)
 
-	_current_side = coord.s
-	_current_side_name = side_name.value
 	warnings_payload = warnings if warnings else None
 	_current_position = PositionResponse(
 		x=coord.x,
@@ -1280,7 +1280,7 @@ async def _perform_quick_test(
 	lift: float | None,
 ) -> None:
 	"""Run one cell gripper test; shared by the single-cell endpoint and the test queue."""
-	global _current_position, _current_side
+	global _current_position
 
 	_ensure_ready(worker)
 
@@ -1306,7 +1306,6 @@ async def _perform_quick_test(
 			z_offset=coord.z_offset,
 			slide_extension=await _get_current_stage_extension(tool),
 		)
-		_current_side = coord.s
 
 		try:
 			if lift is None:
@@ -1325,7 +1324,7 @@ GRIP_PROBE_MAX_DEVIATION_MM = 5.0
 
 
 class GripProbeRequest(TestRequest):
-	z_offsets: list[float] = Field(min_length=1, max_length=GRIP_PROBE_MAX_POINTS)
+	z_offsets: list[FiniteFloat] = Field(min_length=1, max_length=GRIP_PROBE_MAX_POINTS)
 
 
 class GripProbePoint(BaseModel):
@@ -1512,6 +1511,9 @@ async def _perform_cycle_test(worker, location: StorageModuleCellLocation) -> No
 			grid.save()
 		except (MotorError, HardwareMotorError, ToolError) as e:
 			await _raise_motor_error(worker, "The cycle test failed.", e)
+		except HTTPException:
+			# The pre-retract already answered a motor fault with 409 and needs_home.
+			raise
 		except Exception as exc:
 			raise api_error(
 				status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1615,8 +1617,6 @@ async def _run_cell_test_queue(
 	locations: list[StorageModuleCellLocation],
 	lift: Optional[float],
 ) -> None:
-	global _test_queue_abort_requested
-
 	for location in locations:
 		if _test_queue_abort_requested:
 			await _finish_test_queue(worker, snapshot, "cancelled")
@@ -1791,8 +1791,8 @@ async def save_calibration(request: SaveRequest):
 		except ValueError:
 			raise api_error(status.HTTP_400_BAD_REQUEST, "cell_status_invalid", "Choose a cell status: available, occupied, maintenance or disabled.")
 
-	# Read tray homes while the caller's request session is open, so a coordinate save
-	# cannot silently change the cell a checked-out tray returns to.
+	# Read tray homes before changing anything, so a coordinate save cannot silently
+	# change the cell a checked-out tray returns to.
 	async with AsyncSessionLocal() as session:
 		reserved_homes = await reserved_bin_locations(session)
 	if (request.side.value, request.shelf_idx, request.cell_idx) in reserved_homes:
@@ -1937,20 +1937,20 @@ def _round_iobox_position(position: IOBoxPositionResponse) -> IOBoxPositionRespo
 class IOBoxJogRequest(BaseModel):
 	position: IOBoxPositionName
 	axis: IOBoxAxis
-	delta: float = Field(description="Signed displacement in millimeters")
+	delta: FiniteFloat = Field(description="Signed displacement in millimeters")
 
 
 class IOBoxSaveRequest(BaseModel):
-	pickup_low_x: float = Field(description="Position or extension in millimeters")
-	pickup_low_y: float = Field(description="Position or extension in millimeters")
-	pickup_high_x: float = Field(description="Position or extension in millimeters")
-	pickup_high_y: float = Field(description="Position or extension in millimeters")
-	z_extension: float = Field(description="Position or extension in millimeters")
-	stage_extension: float = Field(description="Position or extension in millimeters")
-	multi_item_x: float = Field(description="Position or extension in millimeters")
-	multi_item_y: float = Field(description="Position or extension in millimeters")
-	multi_item_z_extension: float = Field(description="Position or extension in millimeters")
-	multi_item_stage_extension: float = Field(description="Position or extension in millimeters")
+	pickup_low_x: FiniteFloat = Field(description="Position or extension in millimeters")
+	pickup_low_y: FiniteFloat = Field(description="Position or extension in millimeters")
+	pickup_high_x: FiniteFloat = Field(description="Position or extension in millimeters")
+	pickup_high_y: FiniteFloat = Field(description="Position or extension in millimeters")
+	z_extension: FiniteFloat = Field(description="Position or extension in millimeters")
+	stage_extension: FiniteFloat = Field(description="Position or extension in millimeters")
+	multi_item_x: FiniteFloat = Field(description="Position or extension in millimeters")
+	multi_item_y: FiniteFloat = Field(description="Position or extension in millimeters")
+	multi_item_z_extension: FiniteFloat = Field(description="Position or extension in millimeters")
+	multi_item_stage_extension: FiniteFloat = Field(description="Position or extension in millimeters")
 
 
 class IOBoxDoorPositionResponse(BaseModel):
@@ -1967,7 +1967,6 @@ class IOBoxDoorMoveRequest(IOBoxDoorPositionRequest):
 	position: Literal["close", "open"]
 
 
-_iobox_position: IOBoxPositionName = "low"
 _iobox_current: Optional[IOBoxPositionResponse] = None
 
 
@@ -2166,8 +2165,6 @@ async def move_to_iobox_position(position: IOBoxPositionName) -> IOBoxPositionRe
 	Opens the IO door, faces the tool forward, and moves to the configured low, high, or
 	multi-item point. Updates the in-memory IO calibration state returned by the endpoint.
 	"""
-	global _iobox_position, _iobox_current
-
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
@@ -2200,7 +2197,6 @@ async def move_to_iobox_position(position: IOBoxPositionName) -> IOBoxPositionRe
 			await tool.move(AxisCoordinate(x, y))
 		except (MotorError, HardwareMotorError) as e:
 			await _raise_motor_error(worker, "The robot could not move to the IO box position.", e)
-	_iobox_position = position
 	iobox_current.warnings = None
 
 	return iobox_current
@@ -2221,8 +2217,6 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	low and high share one Z and stage extension; the multi-item pose has its own. Updates
 	in-memory calibration; call the IO save endpoint to persist changes.
 	"""
-	global _iobox_current, _iobox_position
-
 	await ensure_laser_auto_calibration_not_running()
 
 	iobox_current = await _get_iobox_current_or_error()
@@ -2232,7 +2226,6 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	_ensure_ready(worker)
 
 	tool = worker._robot._tool
-	_iobox_position = request.position
 
 	field = IOBOX_POSITION_FIELDS[request.position][request.axis]
 	current_value = getattr(iobox_current, field)
@@ -2302,8 +2295,6 @@ async def test_iobox_sequence(with_gripper: bool = False):
 	`with_gripper=true` also operates the gripper. This moves physical hardware using the
 	current in-memory calibration.
 	"""
-	global _iobox_current
-
 	await ensure_laser_auto_calibration_not_running()
 
 	iobox_current = await _get_iobox_current_or_error()
@@ -2520,8 +2511,8 @@ class RotationAnglesResponse(BaseModel):
 
 
 class RotateSaveRequest(BaseModel):
-	front: float
-	back: float
+	front: FiniteFloat
+	back: FiniteFloat
 
 
 @router.get(
@@ -2551,7 +2542,11 @@ async def get_rotation_angles() -> RotationAnglesResponse:
     summary="Test tool rotation",
     responses=response_docs(model=BooleanSuccess, errors=(400, 401, 403, 409, 503)),
 )
-async def rotate_to_angle(angle: float):
+async def rotate_to_angle(
+	# NaN passes float parsing and `max(0, min(limit, nan))` returns the limit, so an
+	# empty angle field turned the tool to its maximum angle.
+	angle: float = Query(allow_inf_nan=False),
+):
 	"""Test tool rotation.
 
 	Rotates to the requested angle, clamped to the configured motor limits. Positions the
@@ -2794,8 +2789,8 @@ class ShelfStageExtensionResponse(BaseModel):
 
 
 class ShelfStageExtensionSaveRequest(BaseModel):
-	front: float
-	back: float
+	front: FiniteFloat
+	back: FiniteFloat
 
 
 @router.get(
@@ -2865,7 +2860,7 @@ async def save_shelf_stage_extension(request: ShelfStageExtensionSaveRequest):
 
 
 class StageMoveRequest(BaseModel):
-	position: float
+	position: FiniteFloat
 
 
 @router.post(

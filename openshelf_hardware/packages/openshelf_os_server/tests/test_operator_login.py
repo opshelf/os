@@ -162,3 +162,23 @@ async def test_scan_frames_filter_events_and_never_expose_the_barcode() -> None:
     assert frame["expires_in"] == login_core.SCAN_TOKEN_TTL_S
     assert auth.decode_scan_token(frame["scan_token"]) == scan.seq
     assert barcode not in json.dumps(frame)
+
+
+async def test_an_email_differing_only_by_case_is_taken(client: AsyncClient, make_user: MakeUser) -> None:
+    # Sign-in matches emails case-insensitively; a second row differing only by case made
+    # that lookup find two users and answer 500 for both of them.
+    existing = await make_user(email=f"Case-{uuid4().hex}@example.com")
+
+    response = await client.post(
+        "/api/users",
+        json={
+            "email": existing.email.lower(),
+            "first_name": "Second",
+            "last_name": "User",
+            "pin": "4321",
+            "role_id": existing.role_id,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "email_in_use"

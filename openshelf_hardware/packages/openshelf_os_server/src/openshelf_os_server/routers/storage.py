@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 
 import openshelf_os.common as common
 from openshelf_os.config.settings import (
@@ -169,9 +169,9 @@ class StorageCellUpdate(BaseModel):
 class GridCellUpdate(BaseModel):
     """Request payload for updating a robot storage-grid cell."""
 
-    x: Optional[float] = Field(default=None, description="Calibration x in millimeters; provide x, y, and z_offset together.")
-    y: Optional[float] = Field(default=None, description="Calibration y in millimeters; provide x, y, and z_offset together.")
-    z_offset: Optional[float] = Field(default=None, description="Calibration z offset in millimeters; provide x, y, and z_offset together.")
+    x: Optional[FiniteFloat] = Field(default=None, description="Calibration x in millimeters; provide x, y, and z_offset together.")
+    y: Optional[FiniteFloat] = Field(default=None, description="Calibration y in millimeters; provide x, y, and z_offset together.")
+    z_offset: Optional[FiniteFloat] = Field(default=None, description="Calibration z offset in millimeters; provide x, y, and z_offset together.")
     status: Optional[str] = Field(default=None, description="Cell status: available, occupied, maintenance, or disabled.")
     is_manual: Optional[bool] = Field(default=None, description="Whether the calibration is locked (manual); omit to keep the current value.")
     dimensions: Optional[DimensionsPayload] = Field(default=None, description="Cell width, height, and length in millimeters; omit to keep the current dimensions.")
@@ -1222,8 +1222,18 @@ async def create_item(
     metadata = item.item_metadata or {}
     access_level_id = item.access_level_id
     member_bin = await bin_service.item_bin(existing.id) if existing is not None else None
+    provided_fields = item.model_fields_set
+    if existing is not None:
+        # A re-post changes what it names. A field it omits keeps its stored value, as
+        # weight already does; it used to reset the size to the 1 mm default, the
+        # metadata to empty and the access level to none.
+        if "dimensions" not in provided_fields:
+            dimensions = existing.dimensions
+        if "item_metadata" not in provided_fields:
+            metadata = existing.item_metadata or {}
+        if "access_level_id" not in provided_fields:
+            access_level_id = existing.access_level_id
     if member_bin is not None:
-        provided_fields = item.model_fields_set
         dimensions_changed = (
             "dimensions" in provided_fields and item.dimensions != existing.dimensions
         )
@@ -1239,12 +1249,6 @@ async def create_item(
             )
         if (dimensions_changed or access_changed) and await bin_service.bin_in_motion(member_bin.id):
             raise api_error(409, "bin_workflow_conflict", "Wait for the bin to finish moving.")
-        if "dimensions" not in provided_fields:
-            dimensions = existing.dimensions
-        if "item_metadata" not in provided_fields:
-            metadata = existing.item_metadata or {}
-        if "access_level_id" not in provided_fields:
-            access_level_id = existing.access_level_id
     try:
         db_item = await storage_service.create_item(
             barcode=item.barcode,
@@ -1707,7 +1711,7 @@ async def delete_shelf(
         grid.remove_shelf(side, shelf_idx)
         return {"success": True}
     except IndexError as exc:
-        raise _grid_location_error(exc)
+        raise _grid_location_error(exc) from exc
     except Exception as exc:
         raise _grid_update_error(exc) from exc
 
@@ -1732,7 +1736,7 @@ async def add_grid_cell(
         grid.add_cell(side, shelf_idx)
         return {"success": True}
     except IndexError as exc:
-        raise _grid_location_error(exc)
+        raise _grid_location_error(exc) from exc
     except Exception as exc:
         raise _grid_update_error(exc) from exc
 
@@ -1782,7 +1786,7 @@ async def delete_cell(
         grid.remove_cell(side, shelf_idx, cell_idx)
         return {"success": True}
     except IndexError as exc:
-        raise _grid_location_error(exc)
+        raise _grid_location_error(exc) from exc
     except Exception as exc:
         raise _grid_update_error(exc) from exc
 
@@ -1808,7 +1812,7 @@ async def update_grid_cell(
         grid = _get_robot_grid()
         cell = grid.get_cell(StorageModuleCellLocation(side=side, shelf_idx=shelf_idx, cell_idx=cell_idx))
     except IndexError as exc:
-        raise _grid_location_error(exc)
+        raise _grid_location_error(exc) from exc
     except Exception as exc:
         raise _grid_load_error(exc) from exc
 
@@ -1837,8 +1841,8 @@ def _validate_grid_cell_update(payload: GridCellUpdate) -> None:
     if payload.status is not None:
         try:
             CellStatus(payload.status)
-        except ValueError:
-            raise api_error(400, "cell_status_invalid", "")
+        except ValueError as exc:
+            raise api_error(400, "cell_status_invalid", "") from exc
 
     if payload.dimensions is not None:
         _validate_grid_dimensions(payload.dimensions)
@@ -1900,7 +1904,7 @@ async def update_grid_cells(
                 StorageModuleCellLocation(side=side, shelf_idx=item.shelf_idx, cell_idx=item.cell_idx)
             )
         except IndexError as exc:
-            raise _grid_location_error(exc)
+            raise _grid_location_error(exc) from exc
         _validate_grid_cell_update(item)
         resolved.append((cell, item))
 

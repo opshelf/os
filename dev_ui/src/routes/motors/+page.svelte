@@ -355,8 +355,9 @@
 			await controlGripper('grip');
 			await controlGripper('release');
 			testResults['gripper'] = 'ok';
-		} catch {
+		} catch (err) {
 			testResults['gripper'] = 'err';
+			postToast('error', err instanceof Error ? err.message : 'The gripper test failed.');
 		}
 	}
 

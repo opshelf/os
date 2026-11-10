@@ -73,7 +73,7 @@
 			</button>
 			<div class="safety-ack-spacer"></div>
 			<button type="button" onclick={() => void didAcknowledge()} disabled={isAcknowledging === true}>
-				{isAcknowledging ? 'acknowledging...' : 'acknowledge'}
+				acknowledge
 			</button>
 		</div>
 	</aside>

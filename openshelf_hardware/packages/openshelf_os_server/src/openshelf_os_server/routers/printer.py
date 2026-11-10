@@ -257,7 +257,7 @@ async def print_label(request: PrintLabelRequest) -> PrintLabelResponse:
 
     Requires `printer:print` or the relay service credential. Takes the barcode in the
     request body, so every customer barcode is printable. The device renders it as a Code
-    128 label with the barcode as text below it; a multi-item bin's label adds its home
+    128 label with the barcode as text above it; a multi-item bin's label adds its home
     cell (e.g. `F:0:0`). Mock mode simulates printing without a physical artifact. This
     operation has no idempotency key; a retry may print another label. A printer write
     failure returns `503`.

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from fastapi import HTTPException
 from hardware.servo import GripState
+from openshelf_os.exceptions import MotorError, MovementError
 
 from openshelf_os_server.routers import calibration
 
@@ -157,3 +158,65 @@ async def test_iobox_multi_item_test_stops_when_no_tray_is_gripped(monkeypatch) 
 	# Only the safety retract the route runs before it rotates; the transfer itself has to
 	# stop at the failed tray grip without retracting onto the tray.
 	assert retract_call_count == 1
+
+
+async def test_a_non_finite_motion_target_is_refused_before_it_can_be_clamped(client) -> None:
+	# `max(0, min(limit, nan))` is the limit: a NaN angle from an emptied field turned the
+	# tool to its maximum angle, and a NaN jog or stage target reached the motors as well.
+	json_headers = {"Content-Type": "application/json"}
+
+	rotate = await client.post("/api/calibration/rotation/rotate?angle=NaN")
+	jog = await client.post(
+		"/api/calibration/jog", content=b'{"axis": "x", "delta": NaN}', headers=json_headers
+	)
+	stage = await client.post(
+		"/api/calibration/stage/move", content=b'{"position": Infinity}', headers=json_headers
+	)
+
+	assert [rotate.status_code, jog.status_code, stage.status_code] == [422, 422, 422]
+
+
+async def _retract_for_rotation(retract_error: Exception) -> tuple[HTTPException, list]:
+	worker, _ = _mock_multi_item_worker(GripState(0xF1, 0, 0, 0))
+	worker._robot._tool.retract = AsyncMock(side_effect=retract_error)
+	homing: list = []
+	worker.set_needs_home = lambda *args, **kwargs: homing.append((args, kwargs))
+	with pytest.raises(HTTPException) as raised:
+		await calibration._retract_tool_for_move(
+			worker._robot._tool, worker, blocked_message="The tool could not retract far enough to rotate."
+		)
+	return raised.value, homing
+
+
+def _retract_failure(cause: Exception) -> MovementError:
+	# Tool.retract wraps every failure as `MovementError(...) from cause`.
+	try:
+		raise cause
+	except Exception as e:
+		try:
+			raise MovementError("Tool retraction failed") from e
+		except MovementError as wrapped:
+			return wrapped
+
+
+@pytest.mark.anyio
+async def test_rotation_retract_that_stops_past_clearance_is_blocked_without_homing() -> None:
+	error, homing = await _retract_for_rotation(
+		_retract_failure(MovementError("z_axis retract stopped outside rotation clearance (9.0 > 5.0)"))
+	)
+
+	assert error.status_code == 409
+	assert error.detail["code"] == "rotation_blocked"
+	assert "needs_home" not in error.detail
+	assert homing == []
+
+
+@pytest.mark.anyio
+async def test_rotation_retract_drive_fault_flags_homing() -> None:
+	# The recovery home or position read faulted, so the axis position is untrusted.
+	error, homing = await _retract_for_rotation(_retract_failure(MotorError("Movement failed for motor 3 (status=FAULT)")))
+
+	assert error.status_code == 409
+	assert error.detail["code"] != "rotation_blocked"
+	assert error.detail["needs_home"] is True
+	assert len(homing) == 1

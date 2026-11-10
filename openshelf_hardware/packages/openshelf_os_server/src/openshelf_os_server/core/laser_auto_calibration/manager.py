@@ -1,4 +1,4 @@
-# ruff: noqa: F401, F403, F405
+# ruff: noqa: F403, F405
 from __future__ import annotations
 
 import asyncio
@@ -351,13 +351,3 @@ async def _absorb_cancellation() -> None:
         except asyncio.CancelledError:
             pass
         task.uncancel()
-
-
-_manager = LaserAutoCalibrationManager()
-
-def get_laser_auto_calibration_manager() -> LaserAutoCalibrationManager:
-    return _manager
-
-
-async def is_laser_auto_calibration_running() -> bool:
-    return await _manager.is_active()

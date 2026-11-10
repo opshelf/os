@@ -11,7 +11,7 @@ from hardware.curtain import MotionSafetyInterlock
 from hardware.motor import MotorStatus
 from openshelf_os.cabinet import Cabinet
 from openshelf_os.common import AxisCoordinate, ConfigError, load_config_file, CONFIG_PATH, resolve_grid_path
-from openshelf_os.demo_side_rename import DEMO_SIDE_RENAME_BACKUP_SUFFIX, migrate_demo_side_rename
+from openshelf_os.demo_side_rename import migrate_demo_side_rename
 from openshelf_os.config.models import compare_gpio_pins_to_defaults
 from openshelf_os.serial_ports import (
     DEFAULT_LASER_PORT,
@@ -1044,25 +1044,6 @@ class Robot:
     #  Demo cell mapping
     # ------------------------------------------------------------------ #
 
-    # One-time on-disk migration of the demo mapping files written before the front/back
-    # cutover, which keyed their cell locations under the L/R side letters. The shared
-    # implementation lives in openshelf_os.demo_side_rename so other demo.json readers
-    # (e.g. scripts/seed_demo.py) migrate on load with the same semantics.
-    # Kept as a class attribute alias of the shared constant for existing references.
-    DEMO_SIDE_RENAME_BACKUP_SUFFIX = DEMO_SIDE_RENAME_BACKUP_SUFFIX
-
-    @classmethod
-    def _migrate_demo_side_rename(cls, target_path: str, raw_content: str, data: Any) -> Any:
-        """Rename the pre-cutover side letters in a demo mapping file, in place and idempotently.
-
-        Files written before the front/back cutover keep their cell locations under the
-        L/R side letters. Rename them in the loaded data and rewrite the file with an
-        exclusive-created backup of the original bytes, so a device picks the new letters
-        up on its next load and the old file is recoverable. Files that already carry
-        the new letters are left untouched.
-        """
-        return migrate_demo_side_rename(target_path, raw_content, data)
-
     @staticmethod
     def _parse_demo_location(value: str) -> StorageModuleCellLocation:
         side_map = {
@@ -1093,7 +1074,10 @@ class Robot:
 
         raw_content = file_path.read_text(encoding="utf-8")
         raw = _json.loads(raw_content)
-        raw = self._migrate_demo_side_rename(str(file_path), raw_content, raw)
+        # Demo mapping files written before the front/back cutover key their cells under the
+        # L/R side letters; the shared migration renames them in place, as it does for the
+        # other demo.json readers (scripts/seed_demo.py).
+        raw = migrate_demo_side_rename(str(file_path), raw_content, raw)
         if isinstance(raw, dict) is False:
             raise ValueError("demo mapping must be a JSON object")
 
@@ -1796,28 +1780,6 @@ class Robot:
                 fault_code=cause,
             )
 
-    async def retrieve(self, item_name: str) -> RobotResponse:
-        command_name = "retrieve_item"
-
-        if not self._grid:
-            return RobotCommandError(command=command_name, error="The machine's storage is not ready. Reset it and try again.")
-
-        location = next(
-            (
-                entry.location
-                for entry in self._grid.get_all_cell_data()
-                if entry.cell
-                and entry.cell.data
-                and isinstance(entry.cell.data, dict)
-                and entry.cell.data.get("name") == item_name
-            ),
-            None,
-        )
-        if location is None:
-            return RobotCommandError(command=command_name, error=f"Item {item_name} is not in storage.")
-
-        return await self.retrieve_by_location(location.model_dump())
-
     async def _find_location_for_barcode(self, barcode: str) -> Optional[StorageModuleCellLocation]:
         for entry in self._grid.get_all_cell_data():
             cell = entry.cell
@@ -1949,7 +1911,9 @@ class Robot:
         command_name = getattr(command, "command", "unknown")
         try:
             if isinstance(command, StopCommand):
-                await self.stop()
+                # A queued stop halts motion; stop() is the shutdown teardown and would
+                # also end the curtain and cabinet monitors, which nothing restarts.
+                await self.stop_motion()
                 result: RobotResponse = RobotCommandSuccessful(command=command_name)
             elif isinstance(command, InitializeCommand):
                 await self._tool.configure()
@@ -1980,10 +1944,7 @@ class Robot:
                 else:
                     result = await self.retrieve_by_location(command.location, command.barcode, tray=True)
             elif isinstance(command, StoreItemCommand):
-                payload = getattr(command, "barcode", None)
-                if payload is None:
-                    payload = getattr(command, "item", None)
-                result = await self.store(payload)
+                result = await self.store(command.item)
             elif isinstance(command, RetrieveItemCommand):
                 if command.barcode:
                     result = await self.retrieve_by_barcode(command.barcode, location_payload=command.location)

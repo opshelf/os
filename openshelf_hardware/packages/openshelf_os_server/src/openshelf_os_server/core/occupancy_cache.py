@@ -52,14 +52,6 @@ def invalidate() -> None:
         _commit_generation += 1
 
 
-def reset() -> None:
-    """Drop the cached snapshot and restart the commit generation (tests)."""
-    global _commit_generation, _snapshot
-    with _generation_lock:
-        _commit_generation = 0
-        _snapshot = None
-
-
 @event.listens_for(Session, "after_commit")
 def _invalidate_on_commit(_session: Session) -> None:
     """Bump the generation for every committed session in this process.

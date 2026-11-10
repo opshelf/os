@@ -1,4 +1,4 @@
-# ruff: noqa: F401, F403, F405
+# ruff: noqa: F403, F405
 # mypy: disable-error-code=attr-defined
 from __future__ import annotations
 
@@ -191,7 +191,6 @@ class ScanRunnerMixin:
                     run_id=getattr(self, "_motion_diagnostic_session_id", self._snapshot.session_id),
                     correlation_id=getattr(self, "_motion_diagnostic_correlation_id", scan_correlation_id),
                 )
-        await self._refresh_scan_side_state(side_name, recorder, bounds)
         await self._refresh_scan_side_state(side_name, recorder, bounds)
         await self._update_snapshot(
             current_side=side_name,

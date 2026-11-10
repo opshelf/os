@@ -266,8 +266,13 @@ async def scan_networks() -> WifiNetworkList:
 			in_use=fields[0] == "*",
 		)
 		existing = strongest.get(ssid)
-		if existing is None or network.signal > existing.signal or network.in_use:
+		if existing is None:
 			strongest[ssid] = network
+		elif network.in_use or network.signal > existing.signal:
+			# A stronger access point of the connected network keeps the in-use flag.
+			strongest[ssid] = network.model_copy(
+				update={"in_use": network.in_use or existing.in_use}
+			)
 
 	networks = sorted(strongest.values(), key=lambda n: n.signal, reverse=True)
 	return WifiNetworkList(networks=networks)

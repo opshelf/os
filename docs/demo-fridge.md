@@ -66,7 +66,7 @@ Use the mechanically verified limit for other installations.
       "cells": [
         {
           "location": {
-            "side": "right_module",
+            "side": "back_module",
             "shelf_idx": 0,
             "cell_idx": 0
           },
@@ -105,8 +105,10 @@ stage setting in the demo configuration:
 Use the existing motors page to probe motor ID 20. Installation engineers can
 set, test, save, and reset the three named positions at `/calibration/fridge`.
 The `fridge_door` home action homes against the configured end and then always
-moves to center. Fridge door move and home actions are rejected while the tool
-is not fully retracted.
+moves to center. Before a fridge door move or home, a tool that faces the back
+and is not fully retracted is retracted first; the action is rejected when the
+tool's rotation or retraction cannot be confirmed. A tool facing the front does
+not block the door.
 Every absolute fridge-door move, including center, uses the configured `rpm`.
 Only the end-stop homing phase (and its internal approach) uses `Motor.home`'s
 existing `home_rpm` or `ret_rpm` behavior.

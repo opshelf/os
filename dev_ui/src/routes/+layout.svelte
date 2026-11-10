@@ -8,13 +8,11 @@
 		createReconnectingEventSource,
 		developerPin,
 		getSizerStatus,
-		isApiConnected,
 		isAuthenticated,
 		loginAsDeveloper,
 		robotInit,
 		robotStatus,
 		robotStatusError,
-		robotStatusLastUpdate,
 		type RobotInitState,
 		type WorkerStatusPayload
 	} from '$lib';
@@ -90,7 +88,6 @@
 
 	function setApiState(state: 'unknown' | 'down' | 'up'): void {
 		apiState = state;
-		isApiConnected.set(state === 'up');
 	}
 
 	async function probeApiState(): Promise<void> {
@@ -118,7 +115,6 @@
 		try {
 			robotStatus.set(JSON.parse(raw) as WorkerStatusPayload);
 			robotStatusError.set('');
-			robotStatusLastUpdate.set(new Date().toLocaleString());
 			setApiState('up');
 		} catch {
 			robotStatusError.set('Failed to parse the robot status payload.');
@@ -169,7 +165,6 @@
 							robotInit.set(init);
 							if (init.phase !== 'ready' && init.phase !== 'disabled') {
 								robotStatus.set(null);
-								robotStatusLastUpdate.set('');
 							}
 							setApiState('up');
 						} catch {

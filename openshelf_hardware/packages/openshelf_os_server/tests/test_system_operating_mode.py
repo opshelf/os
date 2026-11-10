@@ -23,9 +23,17 @@ class TestOperatingModeEnvironmentDefaults:
 	) -> None:
 		monkeypatch.setenv("ENV", "dev")
 		monkeypatch.setattr(settings_module, "get_operating_mode", lambda: mode)
-		data = {"auth": {"dev_mode": False, "require_auth": True}}
+		# What a config saved in development mode carries: the automatic developer sign-in.
+		data = {
+			"auth": {
+				"dev_mode": True,
+				"require_auth": False,
+				"dev_auto_user": settings_module.DEVELOPER_SYSTEM_USER_EMAIL,
+			}
+		}
 
 		result = settings_module._apply_env_overrides(data)
 
 		assert result["auth"]["dev_mode"] is False
 		assert result["auth"]["require_auth"] is True
+		assert result["auth"]["dev_auto_user"] is None

@@ -182,7 +182,7 @@ docker compose -f docker-compose.yml logs -f api
 docker compose -f docker-compose.yml logs -f dev_ui
 ```
 
-in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers. the overlay does not mount `scripts/` or the test directories, so a one-off container that needs a script needs its own `-v` for the scripts (see the `migrate_config.py` docker example above).
+in development mode, api source under `openshelf_hardware/packages/*/src` and ui source under `dev_ui/src` are bind-mounted into the containers. the overlay does not mount `scripts/` or the test directories, so a one-off container that needs a script needs its own `-v` for the scripts (see the `migrate_config.py` docker example below).
 
 dependency changes, dockerfile changes, or mode switches across the development/non-development boundary need a rebuild on laptops:
 
@@ -259,7 +259,7 @@ at release time, migrate any config template you ship to devices with the same r
 
 ### adding a migration
 
-add `v007_<description>.py` under `openshelf_hardware/packages/openshelf_os/src/openshelf_os/config_migrations/`. its `migrate(config)` function accepts the raw previous-schema dictionary and returns the transformed dictionary plus a list of changed field paths. register it under the destination version in `runner.MIGRATIONS` and increment `config.schema.CURRENT_SCHEMA_VERSION`. the runner advances the version only after each step succeeds and validates the complete result before persistence.
+add `v<NNN>_<description>.py` (the next schema number, zero-padded to three digits) under `openshelf_hardware/packages/openshelf_os/src/openshelf_os/config_migrations/`. its `migrate(config)` function accepts the raw previous-schema dictionary and returns the transformed dictionary plus a list of changed field paths. register it under the destination version in `runner.MIGRATIONS` and increment `config.schema.CURRENT_SCHEMA_VERSION`. the runner advances the version only after each step succeeds, and the complete result is validated against the current config model before anything is written.
 
 never modify a released migration; append a new step. test value preservation, conflicting keys, optional fields, the whole migration chain, and startup rejection. update generated config defaults, fixtures, release notes, and the provisioning template for each new schema; do not include secrets in migration diagnostics.
 

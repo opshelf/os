@@ -896,8 +896,8 @@ class ToolCameraStreamManager:
 			self.nalu_stop_event.set()
 
 		if self.nalu_process is not None:
-			# The worker only decodes frames; one blocked in an RTSP read never sees the
-			# stop event, so do not hold shutdown for it.
+			# A worker blocked in an RTSP read never sees the stop event, so do not hold
+			# shutdown for it.
 			self.nalu_process.join(timeout=0.5)
 			if self.nalu_process.is_alive() is True:
 				self.nalu_process.terminate()
@@ -1217,7 +1217,7 @@ async def unregister_camera_manager(camera_id: str) -> None:
 
 
 async def init_tool_camera_manager(rtsp_url: str, recording_url: str = "") -> None:
-	global tool_camera_manager, camera_registry
+	global tool_camera_manager
 
 	if rtsp_url is None or rtsp_url == "":
 		logger.warning("tool_camera_not_configured", reason="no_rtsp_url")
@@ -1229,7 +1229,7 @@ async def init_tool_camera_manager(rtsp_url: str, recording_url: str = "") -> No
 
 
 async def init_overhead_camera_manager(rtsp_url: str, recording_url: str = "") -> None:
-	global overhead_camera_manager, camera_registry
+	global overhead_camera_manager
 
 	if rtsp_url is None or rtsp_url == "":
 		logger.warning("overhead_camera_not_configured", reason="no_rtsp_url")

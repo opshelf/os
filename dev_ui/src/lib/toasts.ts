@@ -38,7 +38,8 @@ const CONDITION_PREFIX = 'condition:';
 const EVENT_PREFIX = 'event:';
 
 // A released condition stays remembered, acknowledgement included, so a source that
-// remounts and reports the same wording does not look like a new fault.
+// remounts and reports the same wording does not look like a new fault. A dismissed
+// condition nothing reports is forgotten once its acknowledgement window ends.
 const MAX_REMEMBERED = 64;
 
 // A dismissal silences a live condition, it does not resolve it: a fault that is still
@@ -83,7 +84,18 @@ function acknowledgeCondition(key: string, condition: Condition): void {
 	condition.reshowTimer = setTimeout(() => {
 		condition.reshowTimer = null;
 
-		if (condition.sources.size === 0 || condition.acknowledged === false) {
+		if (condition.acknowledged === false) {
+			return;
+		}
+
+		if (condition.sources.size === 0) {
+			// Nothing reports it anymore, so the dismissal goes with it. Kept forever, it
+			// silenced the same failure every later time it happened: a page that unmounts
+			// its error on retry releases the condition, it never reports it as over.
+			if (conditions.get(key) === condition) {
+				conditions.delete(key);
+			}
+
 			return;
 		}
 
@@ -259,15 +271,9 @@ function reportCondition(
 	rememberWithinBudget();
 
 	if (condition.message !== message) {
-		const isNewState =
-			condition.message !== message;
-
 		condition.message = message;
-
-		if (isNewState === true) {
-			condition.acknowledged = false;
-			clearReshow(condition);
-		}
+		condition.acknowledged = false;
+		clearReshow(condition);
 	}
 
 	condition.actions = actions;

@@ -554,6 +554,18 @@ class ImportJobService:
     async def _trays(self) -> list[StorageBin]:
         return list((await self.session.scalars(select(StorageBin).where(StorageBin.active.is_(True)))).all())
 
+    async def _sync_tray_config(self) -> None:
+        """Bring the bins in line with the config, or refuse the step the way the storage routes do."""
+        from openshelf_os_server.errors import CODE_MESSAGES  # noqa: PLC0415
+
+        try:
+            await self.bins.sync_config()
+        except ValueError as exc:
+            logger.warning("Storage bin config sync rejected during an import", exc_info=exc)
+            raise ImportJobError(
+                409, "tray_config_conflict", CODE_MESSAGES["tray_config_conflict"]
+            ) from exc
+
     def _tray_takes(self, trays: Sequence[StorageBin], unit: ImportJobUnit) -> bool:
         """Whether some tray's compartment takes the unit by its known size, free or not."""
         return any(self.bins.batch_fits(tray, unit.planned_dimensions) for tray in trays)
@@ -985,7 +997,7 @@ class ImportJobService:
             raise ImportJobError(422, "invalid_dimensions", "Enter a size greater than zero.")
         if unit.small:
             # Only a small unit no tray compartment takes is stored on its own.
-            await self.bins.sync_config()
+            await self._sync_tray_config()
             if self._tray_takes(await self._trays(), unit):
                 raise ImportJobError(409, "small_unit", "This item goes in a multi-item bin")
         if unit.status == "in_progress" and unit.stage == "measured":
@@ -1089,7 +1101,7 @@ class ImportJobService:
         if any(unit.stage in ("placed", "returning") for unit in await self.units(job, ["in_progress"])):
             raise ImportJobError(409, "tray_outside", "Return the current bin first")
         first = await self._current_pending(job)
-        await self.bins.sync_config()
+        await self._sync_tray_config()
         trays = await self._trays()
         if first is None or not first.small or not self._tray_takes(trays, first):
             raise ImportJobError(409, "not_current", "That item does not belong in the bin.")
