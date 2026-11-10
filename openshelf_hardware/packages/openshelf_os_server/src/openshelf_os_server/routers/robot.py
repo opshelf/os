@@ -1135,13 +1135,12 @@ async def stop_robot(worker: RobotWorker = Depends(get_robot_worker_or_error)) -
 )
 async def clear_robot_commands(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-    db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse:
     """Clear queued robot commands.
 
-    Removes waiting commands through the worker; requires `robot:control`. An active bin
-    workflow or laser calibration prevents this mutation. Read durable command results to
-    reconcile interrupted work.
+    Removes waiting commands through the worker; requires `robot:control`. A running laser
+    calibration prevents this mutation. Read durable command results to reconcile
+    interrupted work.
     """
     await _ensure_laser_auto_calibration_not_running()
     await worker.clear_commands()
@@ -1157,7 +1156,6 @@ async def clear_robot_commands(
 async def control_gripper(
     state: Literal["grip", "release"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-    db: AsyncSession = Depends(get_db),
 ) -> SuccessResponse:
     """Grip or release directly.
 
@@ -1446,13 +1444,11 @@ async def get_scale_calibration_params(
 async def set_scale_calibration_params(
     request: ScaleCalibrationParamsRequest,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Write scale calibration parameters.
 
     Writes the supplied range, known weight, precision, and division to the physical scale.
-    Inspect `success` in the response. An active bin workflow prevents mutation; this does
-    not update item mass.
+    Inspect `success` in the response. This does not update item mass.
     """
     try:
         ok = await worker.set_scale_calibration_params(
@@ -1486,13 +1482,12 @@ async def set_scale_calibration_params(
 )
 async def calibrate_scale_zero(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Calibrate the scale zero point.
 
     Runs the hardware zero-calibration operation. Prepare the scale according to the
-    engineering calibration procedure before calling. An active bin workflow prevents
-    mutation. The response reports the hardware calibration result.
+    engineering calibration procedure before calling. The response reports the hardware
+    calibration result.
     """
     try:
         return await worker.calibrate_scale_zero()
@@ -1520,13 +1515,11 @@ async def calibrate_scale_zero(
 )
 async def calibrate_scale_weight(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Calibrate with a known weight.
 
     Runs span calibration using the configured known calibration weight. Place the reference
-    weight on the scale before calling. An active bin workflow prevents mutation; this does
-    not change inventory mass.
+    weight on the scale before calling. This does not change inventory mass.
     """
     try:
         return await worker.calibrate_scale_weight()
@@ -1554,13 +1547,11 @@ async def calibrate_scale_weight(
 )
 async def scale_tare(
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Tare the physical scale.
 
     Sets the scale tare and returns a `success` flag. This changes the scale reading
-    baseline; it does not set an inventory item's `tare_weight`. An active bin workflow
-    prevents mutation.
+    baseline; it does not set an inventory item's `tare_weight`.
     """
     try:
         ok = await worker.scale_tare()
@@ -1697,7 +1688,6 @@ async def home_motor(
     motor_name: str,
     skip_pre_home_approach: bool = False,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Home one motor.
 
@@ -1749,7 +1739,7 @@ async def home_motor(
         logger.warning("Fridge door home refused", exc_info=exc)
         raise api_error(status.HTTP_409_CONFLICT, "tool_not_retracted", "") from exc
     except RotationClearanceError as exc:
-        logging.warning("Motor home refused", exc_info=exc)
+        logger.warning("Motor home refused", exc_info=exc)
         raise api_error(
             status.HTTP_409_CONFLICT,
             "rotation_blocked",
@@ -1932,7 +1922,7 @@ def _read_motor_limit_switch(worker: RobotWorker, motor_name: str) -> Optional[M
     try:
         engaged = motor.read_home_limit()
     except Exception as exc:
-        logging.warning("Limit switch read failed for %s", motor_name, exc_info=exc)
+        logger.warning("Limit switch read failed for %s", motor_name, exc_info=exc)
         return MotorLimitSwitchState(motor_name=motor_name, enabled=True, error="read failed")
 
     return MotorLimitSwitchState(motor_name=motor_name, enabled=engaged is not None, min_engaged=engaged)
@@ -1998,7 +1988,6 @@ async def move_motor(
     motor_name: str,
     request: MotorMoveRequest,
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Move one motor to a position.
 
@@ -2041,7 +2030,7 @@ async def move_motor(
         logger.warning("Fridge door move refused", exc_info=exc)
         raise api_error(status.HTTP_409_CONFLICT, "tool_not_retracted", "") from exc
     except RotationClearanceError as exc:
-        logging.warning("Motor move refused", exc_info=exc)
+        logger.warning("Motor move refused", exc_info=exc)
         raise api_error(
             status.HTTP_409_CONFLICT,
             "rotation_blocked",
@@ -2066,12 +2055,11 @@ async def move_motor(
 async def control_door(
     action: Literal["open", "close", "home"],
     worker: RobotWorker = Depends(get_robot_worker_or_error),
-    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Operate the IO box door.
 
     Directly opens, closes, or homes the IO door using the `action` query parameter. Runs
-    under the manual-motion guard and cannot interrupt an active bin workflow. Hardware
+    under the manual-motion guard, so it cannot interrupt a running command. Hardware
     failures return `503`.
     """
     try:

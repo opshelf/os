@@ -38,9 +38,6 @@ DEFAULT_Z_RETRACT_TARGET_MM = 1.0
 DEFAULT_ROTATION_STAGE_MAX_EXTENSION_MM = 5.0
 DEFAULT_ROTATION_Z_MAX_EXTENSION_MM = 5.0
 MAX_PICK_LIFT_MM = 30.0
-# The tool's own axes. A gripper feedback fault leaves the gantry position valid, so a reset
-# after one homes these, plus the IO box door when the tray was in the IO box.
-TOOL_MOTION_AXES: tuple[str, ...] = ("z_axis", "stage", "rotate")
 Y_STARTUP_HOME_CLEARANCE_MM = 10.0
 Y_STARTUP_HOME_PEAK_CURRENT = 30
 
@@ -238,7 +235,6 @@ class Tool:
         self._motorcontroller = motorcontroller
         self._lasercontroller = lasercontroller
         self._params = params
-        self._guard_paused = False
         self._logger = logging.getLogger(__name__)
         self._init_reporter: Optional[Callable[[str, str, str, Optional[str]], None]] = None
 
@@ -456,20 +452,6 @@ class Tool:
         except Exception as e:
             await self._handle_fault(e)
             raise MotorError(f"Failed to clear alarms: {str(e)}") from e
-
-    def block_motion_for_safety(self) -> None:
-        if self._guard_paused:
-            return
-
-        self._guard_paused = True
-        self._logger.info("Safety guard pausing tool")
-
-    def release_motion_safety(self) -> None:
-        if not self._guard_paused:
-            return
-
-        self._guard_paused = False
-        self._logger.info("Safety guard cleared for tool")
 
     def set_motion_diagnostic_context(
         self,

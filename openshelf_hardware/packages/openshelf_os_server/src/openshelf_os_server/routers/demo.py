@@ -95,7 +95,7 @@ async def _run_demo_cycle(worker, cells: list[tuple[StorageModuleCellLocation, A
 	except asyncio.CancelledError:
 		logger.info("demo_cycle_cancelled")
 	except FridgeSafetyError as exc:
-		logger.warning("demo_cycle_fridge_safety_rejected: %s", exc)
+		logger.warning("demo_cycle_fridge_safety_rejected", exc_info=exc)
 		await worker.get_status_snapshot(force_refresh=True)
 	except (MotorError, MovementError, ToolError, HardwareMotorError) as exc:
 		logger.error("demo_cycle_hardware_fault", exc_info=True)

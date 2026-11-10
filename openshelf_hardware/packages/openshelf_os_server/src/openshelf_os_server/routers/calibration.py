@@ -185,7 +185,7 @@ async def _ensure_cell_is_testable(
 		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_not_found", "") from exc
 
 	if cell.status in UNTESTABLE_CELL_STATUSES:
-		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_unavailable", f"That cell is {cell.status.value} and cannot be used for calibration tests.")
+		raise api_error(status.HTTP_400_BAD_REQUEST, "cell_unavailable", "That cell is disabled or under maintenance and cannot be used for calibration tests.")
 
 	if not allow_tray_home:
 		# Grip tests exercise the tray in its home; single-item transfers would record a fake
@@ -352,8 +352,6 @@ class LaserReadingResponse(BaseModel):
 
 
 _current_position: Optional[PositionResponse] = None
-_current_side: int = 0
-_current_side_name: str = "front_module"
 
 
 def _build_error_detail(
@@ -516,7 +514,9 @@ async def _retract_tool_for_move(
 		await tool.retract()
 	except MovementError as e:
 		if blocked_message is None:
-			raise
+			# tool.retract() wraps every failure, drive faults included, as MovementError,
+			# which most callers' (MotorError, HardwareMotorError) clauses do not catch.
+			await _raise_motor_error(worker, "The tool could not retract.", e)
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
 			detail=_build_error_detail(f"{blocked_message} {CODE_MESSAGES['rotation_blocked']}", code="rotation_blocked"),
@@ -720,7 +720,7 @@ async def _move_tool_to_coordinate(
 	side_name: StorageModuleSide,
 	warnings: Optional[list[str]] = None,
 ) -> PositionResponse:
-	global _current_position, _current_side, _current_side_name
+	global _current_position
 
 	tool = worker._robot._tool
 
@@ -744,8 +744,6 @@ async def _move_tool_to_coordinate(
 
 	slide_extension = await _get_current_stage_extension(tool)
 
-	_current_side = coord.s
-	_current_side_name = side_name.value
 	warnings_payload = warnings if warnings else None
 	_current_position = PositionResponse(
 		x=coord.x,
@@ -1280,7 +1278,7 @@ async def _perform_quick_test(
 	lift: float | None,
 ) -> None:
 	"""Run one cell gripper test; shared by the single-cell endpoint and the test queue."""
-	global _current_position, _current_side
+	global _current_position
 
 	_ensure_ready(worker)
 
@@ -1306,7 +1304,6 @@ async def _perform_quick_test(
 			z_offset=coord.z_offset,
 			slide_extension=await _get_current_stage_extension(tool),
 		)
-		_current_side = coord.s
 
 		try:
 			if lift is None:
@@ -1618,8 +1615,6 @@ async def _run_cell_test_queue(
 	locations: list[StorageModuleCellLocation],
 	lift: Optional[float],
 ) -> None:
-	global _test_queue_abort_requested
-
 	for location in locations:
 		if _test_queue_abort_requested:
 			await _finish_test_queue(worker, snapshot, "cancelled")
@@ -1794,8 +1789,8 @@ async def save_calibration(request: SaveRequest):
 		except ValueError:
 			raise api_error(status.HTTP_400_BAD_REQUEST, "cell_status_invalid", "Choose a cell status: available, occupied, maintenance or disabled.")
 
-	# Read tray homes while the caller's request session is open, so a coordinate save
-	# cannot silently change the cell a checked-out tray returns to.
+	# Read tray homes before changing anything, so a coordinate save cannot silently
+	# change the cell a checked-out tray returns to.
 	async with AsyncSessionLocal() as session:
 		reserved_homes = await reserved_bin_locations(session)
 	if (request.side.value, request.shelf_idx, request.cell_idx) in reserved_homes:
@@ -1970,7 +1965,6 @@ class IOBoxDoorMoveRequest(IOBoxDoorPositionRequest):
 	position: Literal["close", "open"]
 
 
-_iobox_position: IOBoxPositionName = "low"
 _iobox_current: Optional[IOBoxPositionResponse] = None
 
 
@@ -2169,8 +2163,6 @@ async def move_to_iobox_position(position: IOBoxPositionName) -> IOBoxPositionRe
 	Opens the IO door, faces the tool forward, and moves to the configured low, high, or
 	multi-item point. Updates the in-memory IO calibration state returned by the endpoint.
 	"""
-	global _iobox_position, _iobox_current
-
 	await ensure_laser_auto_calibration_not_running()
 
 	worker = await get_robot_worker_or_503()
@@ -2203,7 +2195,6 @@ async def move_to_iobox_position(position: IOBoxPositionName) -> IOBoxPositionRe
 			await tool.move(AxisCoordinate(x, y))
 		except (MotorError, HardwareMotorError) as e:
 			await _raise_motor_error(worker, "The robot could not move to the IO box position.", e)
-	_iobox_position = position
 	iobox_current.warnings = None
 
 	return iobox_current
@@ -2224,8 +2215,6 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	low and high share one Z and stage extension; the multi-item pose has its own. Updates
 	in-memory calibration; call the IO save endpoint to persist changes.
 	"""
-	global _iobox_current, _iobox_position
-
 	await ensure_laser_auto_calibration_not_running()
 
 	iobox_current = await _get_iobox_current_or_error()
@@ -2235,7 +2224,6 @@ async def jog_iobox_axis(request: IOBoxJogRequest) -> IOBoxPositionResponse:
 	_ensure_ready(worker)
 
 	tool = worker._robot._tool
-	_iobox_position = request.position
 
 	field = IOBOX_POSITION_FIELDS[request.position][request.axis]
 	current_value = getattr(iobox_current, field)
@@ -2305,8 +2293,6 @@ async def test_iobox_sequence(with_gripper: bool = False):
 	`with_gripper=true` also operates the gripper. This moves physical hardware using the
 	current in-memory calibration.
 	"""
-	global _iobox_current
-
 	await ensure_laser_auto_calibration_not_running()
 
 	iobox_current = await _get_iobox_current_or_error()
