@@ -367,7 +367,25 @@ class CommandLifecycleResponse(BaseModel):
     request_id: Optional[str]
     command: str
     status: Literal["queued", "running", "succeeded", "failed"]
-    result: Optional[dict[str, Any]]
+    result: Optional[dict[str, Any]] = Field(
+        description=(
+            "Terminal payload, null until the command finishes. Failed results carry `message: \"failed\"`, "
+            "an operator sentence in `error`, the failure class in `code`, and the cause in `fault_code` when known."
+        ),
+        examples=[
+            {
+                "message": "failed",
+                "command": "retrieve_item",
+                "command_id": "5b0c6a2e-9d1f-4c3b-8e7a-2f4d6b8c0a1e",
+                "request_id": "retrieve-001",
+                "error": "A motor drive raised an alarm and stopped. Clear the alarm, then reset the robot.",
+                "code": "execution_error",
+                "fault_code": "motor_alarm",
+                "barcode": "880000000001",
+                "location": {"side": "front_module", "shelf_idx": 0, "cell_idx": 0},
+            }
+        ],
+    )
     created_at: datetime
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
@@ -775,9 +793,26 @@ async def robot_commands(
 
     For retrieval, read the item first and supply its `location` (`side`, zero-based
     `shelf_idx`, `cell_idx`). Bin-managed items require the bin workflow. Clear the IO box
-    before retrieving. Home when `home_required` is reported. An item reserved by a tray interaction returns
-    `409`, as does a store or retrieval whose barcode or cell is already targeted by a
-    queued or running command (`target_in_flight`); a full queue returns `429` with `Retry-After`.
+    before retrieving. An item already in a cell returns `409` `item_already_stored`; an item
+    held in a bin returns `409` `reserved_tray_item`; a store or retrieval whose barcode or
+    cell is already targeted by a queued or running command returns `409`
+    `target_in_flight`; a full queue returns `429` with `Retry-After`.
+
+    While the robot needs a reset, only `home`, `recover`, `initialize` and `stop` are
+    admitted. Other commands return `409` `home_required` (with `needs_home_axes` and
+    `reason`) when motors lost position, for example after start-up with
+    `robot_app.home_on_init` set to false, or `409` `reset_required` after a grip fault that
+    kept every position; submit `recover` for that (it opens the fingers, withdraws the tool,
+    closes a door left open, and homes only the `axes` it names). While the gripper holds a
+    tray or bin, only `home` and `stop` are admitted; others return `409` `tray_on_tool`.
+    `503` `robot_not_initialized` means the worker has not started.
+
+    Acceptance does not guarantee execution. A command dequeued while the emergency stop is
+    pressed fails before moving with result code `emergency_stop`, and one dequeued while a
+    tray is on the tool fails with `tray_on_tool`. While the light curtain or cabinet doors
+    read tripped, or a trip has not been acknowledged, motion is held (status
+    `safety.motion_blocked`); it resumes only after the source clears and
+    `POST /api/robot/safety/acknowledge` succeeds.
 
     Mock mode supports only store/retrieve, with one FIFO worker and simulated completion.
     Hardware modes also accept the engineering commands in the schema. A queued stop is not
@@ -1063,9 +1098,15 @@ async def get_robot_command(command_id: str) -> CommandLifecycleResponse:
     """Read a durable command result.
 
     Available for mock and hardware command records. `result` is null before a terminal
-    result is persisted and may contain a command-specific success or failure payload
-    afterward. Unknown or expired IDs return `404`. For measurement semantics, see the
-    storage group; a successful retrieval does not guarantee a weight reading.
+    result is persisted. A succeeded result carries `message: "success"` and
+    command-specific fields. A failed result carries `message: "failed"`, `error` (an
+    operator sentence, not exception text), `code` (the failure class, such as
+    `execution_error`, `emergency_stop`, `tray_on_tool` or `command_interrupted`), and, when
+    the cause is known, `fault_code` (such as `motor_alarm`, `motor_timeout`,
+    `safety_stopped` or a grip failure). Branch on `code` and `fault_code`, not on `error`;
+    `GET /api/system/error-messages` maps each code to its sentence. Unknown or expired IDs
+    return `404` `command_not_found`. For measurement semantics, see the storage group; a
+    successful retrieval does not guarantee a weight reading.
     """
     row = await get_lifecycle_command(command_id)
     if row is None:

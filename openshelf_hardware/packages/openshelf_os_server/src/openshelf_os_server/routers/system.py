@@ -133,7 +133,11 @@ async def set_home_on_init(request: HomeOnInitUpdateRequest) -> HomeOnInitRespon
 	"""Set startup homing policy.
 
 	Requires `robot:control`. Persists whether robot initialization should home hardware.
-	Does not home the robot immediately.
+	Does not home the robot immediately. With `false`, the robot starts with `needs_home`
+	set (reason "Automatic homing disabled on initialization"), and store, retrieve and
+	other motion commands return `409` `home_required` until a `home` command succeeds.
+	A startup home is also skipped, leaving `needs_home`, while the emergency stop, light
+	curtain or cabinet doors read tripped or a bin workflow was left active.
 	"""
 	config = update_root_config(lambda draft: setattr(draft.robot_app, "home_on_init", request.home_on_init))
 	logger.info("home_on_init_changed", home_on_init=request.home_on_init)
@@ -320,7 +324,28 @@ async def get_config_section(section: str = Query("robot")) -> ConfigSectionResp
     response_model=dict[str, Any],
     dependencies=[Depends(require_permissions(CONFIG_EDITOR_PERMISSIONS))],
     summary="Read the JSON schema of one config section",
-    responses=response_docs(errors=(401, 403, 404)),
+    responses=response_docs(
+        errors=(401, 403, 404),
+        existing={
+            200: {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "description": "JSON Schema (draft 2020-12) of the section.",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "properties": {"type": "object", "additionalProperties": {"type": "object"}},
+                                "required": {"type": "array", "items": {"type": "string"}},
+                                "$defs": {"type": "object", "additionalProperties": {"type": "object"}},
+                            },
+                            "additionalProperties": True,
+                        }
+                    }
+                }
+            }
+        },
+    ),
 )
 async def get_config_schema(section: str = Query("robot")) -> dict[str, Any]:
 	"""Read the JSON schema of one config section.

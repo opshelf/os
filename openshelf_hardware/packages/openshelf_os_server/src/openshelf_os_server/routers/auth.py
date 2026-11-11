@@ -49,10 +49,14 @@ class LoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
 	"""Token response model."""
-	access_token: str
-	refresh_token: str
+	access_token: str = Field(description="Send as `Authorization: Bearer <access_token>` until it expires")
+	refresh_token: str = Field(
+		description="Exchange at `POST /api/auth/refresh` for a new access token; valid 7 days from login by default and not rotated by refresh"
+	)
 	token_type: str = "bearer"
-	expires_in: int = Field(description="Access-token lifetime in seconds from issuance")
+	expires_in: int = Field(
+		description="Access-token lifetime in seconds from issuance (1800 by default); renew before it elapses or on a `401` `token_invalid`"
+	)
 
 class UserResponse(BaseModel):
 	"""User response model."""
@@ -183,7 +187,15 @@ async def login_json(
 	request: Request,
 	db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-	"""Exchange email, name, assigned barcode, or scan token plus PIN for tokens."""
+	"""Log in with an identity and PIN.
+
+	Exchanges email, name, assigned barcode, or scan token plus PIN for an access token and a
+	refresh token. Send the access token as `Authorization: Bearer <access_token>` on every
+	request; it expires after `expires_in` seconds. Wrong credentials return `401` with code
+	`login_failed` and a `Retry-After` header; further attempts on the same credential within
+	that delay return `429` `login_rate_limited`. The delay grows with each failure, up to 60
+	seconds, so an integration should not retry a failed login in a loop.
+	"""
 	settings = get_settings()
 	auth_service = AuthService(
 		settings.auth.jwt_secret or "",
@@ -259,8 +271,11 @@ async def refresh_token(
 	"""Refresh a user access token.
 
 	Exchanges a valid refresh token for a new access token using the current user
-	role/access settings. Returns the same refresh token, not a rotated token. Expired
-	tokens and inactive or absent users return `401`.
+	role/access settings. Call it before the access token's `expires_in` elapses or after a
+	request returns `401` `token_invalid`, then retry that request. Returns the same refresh
+	token, not a rotated one, so its lifetime (7 days from login by default) is not extended.
+	An expired or invalid refresh token returns `401` `refresh_token_invalid`, and an inactive
+	or absent user `401` `unauthorized`; log in again with `POST /api/auth/login/json`.
 	"""
 	settings = get_settings()
 	auth_service = AuthService(
