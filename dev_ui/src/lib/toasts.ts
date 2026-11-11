@@ -14,11 +14,15 @@ export type Toast = {
 	key: string;
 	message: string;
 	actions?: ToastAction[];
+	persistent?: boolean;
 };
 
 export type ToastReport = {
 	key?: string;
 	actions?: ToastAction[];
+	// Stays up until the source reports the condition over: no expiry, no tap to dismiss.
+	// For a condition the operator has to act on or wait out, such as progress.
+	persistent?: boolean;
 };
 
 export type ToastSource = {
@@ -54,6 +58,7 @@ type Condition = {
 	kind: ToastKind;
 	message: string;
 	actions?: ToastAction[];
+	persistent: boolean;
 	sources: Set<number>;
 	toastId: number | null;
 	acknowledged: boolean;
@@ -100,7 +105,7 @@ function acknowledgeCondition(key: string, condition: Condition): void {
 		}
 
 		condition.acknowledged = false;
-		condition.toastId = upsertToast(condition.kind, key, condition.message, condition.actions);
+		condition.toastId = upsertToast(condition.kind, key, condition.message, condition.actions, condition.persistent);
 	}, ACK_TIMEOUT_MS);
 }
 
@@ -128,17 +133,22 @@ function upsertToast(
 	kind: ToastKind,
 	key: string,
 	message: string,
-	actions?: ToastAction[]
+	actions?: ToastAction[],
+	persistent = false
 ): number {
 	const existing = get(toasts).find((toast) => toast.key === key);
 
 	if (existing !== undefined) {
 		toasts.update((current) =>
-			current.map((toast) => (toast.id === existing.id ? { ...toast, message, actions } : toast))
+			current.map((toast) =>
+				toast.id === existing.id ? { ...toast, message, actions, persistent } : toast
+			)
 		);
 
-		if (kind === 'status') {
+		if (kind === 'status' && persistent === false) {
 			scheduleExpiry(existing.id);
+		} else {
+			clearExpiry(existing.id);
 		}
 
 		return existing.id;
@@ -146,9 +156,9 @@ function upsertToast(
 
 	const id = nextToastId++;
 
-	toasts.update((current) => [...current, { id, kind, key, message, actions }]);
+	toasts.update((current) => [...current, { id, kind, key, message, actions, persistent }]);
 
-	if (kind === 'status') {
+	if (kind === 'status' && persistent === false) {
 		scheduleExpiry(id);
 	}
 
@@ -175,7 +185,14 @@ function trimToCap(): void {
 		let next = current;
 
 		while (next.length > MAX_VISIBLE) {
-			const [oldest, ...rest] = next as [Toast, ...Toast[]];
+			// A persistent toast is what the operator must act on or wait out, so the oldest
+			// of the others leaves first.
+			const index = Math.max(
+				0,
+				next.findIndex((toast) => toast.persistent !== true)
+			);
+			const oldest = next[index] as Toast;
+			const rest = next.filter((_, position) => position !== index);
 
 			clearExpiry(oldest.id);
 
@@ -236,7 +253,8 @@ function reportCondition(
 	kind: ToastKind,
 	message: string,
 	reportKey: string,
-	actions?: ToastAction[]
+	actions?: ToastAction[],
+	persistent = false
 ): void {
 	const key = reportKey === '' ? '' : `${CONDITION_PREFIX}${reportKey}`;
 	const previousKey = activeKeyOf.get(sourceId);
@@ -259,6 +277,7 @@ function reportCondition(
 			kind,
 			message,
 			actions,
+			persistent,
 			sources: new Set<number>(),
 			toastId: null,
 			acknowledged: false,
@@ -277,6 +296,14 @@ function reportCondition(
 	}
 
 	condition.actions = actions;
+	condition.persistent = persistent;
+
+	// A persistent condition cannot be tapped away, so an acknowledgement from before it
+	// became persistent does not hide it.
+	if (persistent === true && condition.acknowledged === true) {
+		condition.acknowledged = false;
+		clearReshow(condition);
+	}
 
 	// Acknowledged and unchanged: keep it out of the way even though sources keep
 	// reporting it after a navigation, a remount, or another status snapshot.
@@ -284,7 +311,7 @@ function reportCondition(
 		return;
 	}
 
-	condition.toastId = upsertToast(kind, key, message, actions);
+	condition.toastId = upsertToast(kind, key, message, actions, persistent);
 }
 
 // Anything can post here. Toasts dismiss on tap; status toasts also expire on their
@@ -314,13 +341,21 @@ export function createToastSource(kind: ToastKind): ToastSource {
 				kind,
 				text,
 				(report?.key ?? text).trim(),
-				report?.actions
+				report?.actions,
+				report?.persistent === true
 			);
 		},
 		release: () => {
 			const key = activeKeyOf.get(sourceId);
 
-			if (key !== undefined) {
+			if (key === undefined) {
+				return;
+			}
+
+			// Nothing can dismiss a persistent toast, so it cannot outlive its last source.
+			if (conditions.get(key)?.persistent === true) {
+				endCondition(key, sourceId);
+			} else {
 				releaseOwnership(key, sourceId);
 			}
 		}
@@ -329,6 +364,10 @@ export function createToastSource(kind: ToastKind): ToastSource {
 
 export function dismissToast(id: number): void {
 	const toast = get(toasts).find((candidate) => candidate.id === id);
+
+	if (toast?.persistent === true) {
+		return;
+	}
 
 	clearExpiry(id);
 	toasts.update((current) => current.filter((candidate) => candidate.id !== id));

@@ -24,15 +24,19 @@
 		{#each $toasts as toast (toast.id)}
 			{#if toast.actions !== undefined && toast.actions.length > 0}
 				<div class="toast {toast.kind} with-actions" role="status">
-					<div
-						class="toast-body"
-						role="button"
-						tabindex="0"
-						onclick={(event) => didClickToast(event, toast.id)}
-						onkeydown={(event) => didKeyToast(event, toast.id)}
-					>
-						{toast.message}
-					</div>
+					{#if toast.persistent === true}
+						<div class="toast-body persistent">{toast.message}</div>
+					{:else}
+						<div
+							class="toast-body"
+							role="button"
+							tabindex="0"
+							onclick={(event) => didClickToast(event, toast.id)}
+							onkeydown={(event) => didKeyToast(event, toast.id)}
+						>
+							{toast.message}
+						</div>
+					{/if}
 					<div class="toast-actions">
 						{#each toast.actions as action (action.label)}
 							<button
@@ -45,6 +49,8 @@
 						{/each}
 					</div>
 				</div>
+			{:else if toast.persistent === true}
+				<div class="toast {toast.kind} persistent" role="status">{toast.message}</div>
 			{:else}
 				<div
 					class="toast {toast.kind}"
@@ -87,6 +93,12 @@
 		user-select: text;
 	}
 
+
+	/* nothing to dismiss: it leaves once the condition is over */
+	.toast.persistent,
+	.toast-body.persistent {
+		cursor: default;
+	}
 
 	.toast-actions {
 		display: flex;

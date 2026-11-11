@@ -2676,6 +2676,12 @@ class Motor():
 
                 raise MotorTimeoutError(f"Motor {self._motor_id} homing timed out")
 
+        except asyncio.CancelledError:
+            # A stop cancels the home mid-way. Without an end phase the motor would read as
+            # homing until its next home, and the dev UI keeps homing prompts hidden while it does.
+            home_failed = True
+            self._emit_init("failed", detail="home", reason="Homing was stopped before it finished. Home it again.")
+            raise
         except Exception as e:
             home_failed = True
             if isinstance(e, MotorTimeoutError):
