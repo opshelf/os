@@ -94,6 +94,21 @@ check(
 needsHome.report('');
 check('clearing the robot flag clears its toast', visible().length === 0);
 
+const pinned = createToastSource('status');
+pinned.report('homing x axis motor', { key: 'homing-progress', persistent: true });
+dismiss('homing x axis motor');
+check('a persistent toast cannot be tapped away', has('homing x axis motor'));
+for (let i = 1; i <= 6; i++) {
+	postToast('error', `burst ${i}`);
+}
+check(
+	'a full queue drops the oldest of the others, not the persistent toast',
+	visible().length === 5 && has('homing x axis motor') && has('burst 1') === false
+);
+visible().forEach((message) => dismiss(message));
+pinned.release();
+check('releasing its last source ends a persistent toast', visible().length === 0);
+
 for (const toast of [...get(toasts)]) {
 	dismissToast(toast.id);
 }

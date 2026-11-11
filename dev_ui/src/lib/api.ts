@@ -602,6 +602,16 @@ export async function retrieveItem(
 	});
 }
 
+// Homes the whole machine through the command queue, which also clears a needs-home flag that
+// names no motors.
+export async function homeRobot(): Promise<RobotCommandReceipt> {
+	return apiFetch<RobotCommandReceipt>('/robot/commands', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ command: 'home' })
+	});
+}
+
 export async function saveCalibration(
 	side: StorageModuleSide,
 	shelfIdx: number,

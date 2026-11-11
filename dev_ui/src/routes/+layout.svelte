@@ -163,7 +163,9 @@
 						try {
 							const init = JSON.parse(event.data) as RobotInitState;
 							robotInit.set(init);
-							if (init.phase !== 'ready' && init.phase !== 'disabled') {
+							// Degraded only follows a running robot (a motor failed to home, say), so its
+							// status stays valid; clearing it would also drop the needs-home prompt.
+							if (init.phase === 'initializing' || init.phase === 'failed') {
 								robotStatus.set(null);
 							}
 							setApiState('up');
