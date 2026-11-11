@@ -421,8 +421,10 @@ def _default_gpio_pins() -> dict[str, GpioPinConfig]:
         # PCA9535_1 (0x21) - IO box, cabinet locks, estop, power
         "io_lim_max": _pca9535_input("pca9535_1", 0),
         "light_curtain": _pca9535_input("pca9535_1", 1, inverted=False, debounce_ms=50),
-        "io_in0": _pca9535_input("pca9535_1", 2),
-        "io_1": _pca9535_input("pca9535_1", 3),
+        # U9 FRIDGE_LIM_MIN/MAX (ctrl-v3.0 schematic), PNP photo-eyes. The N3 factory
+        # table reads photo-eye limits 1=blocked; unconfirmed on a fridge switch.
+        "fridge_lim_min": _pca9535_input("pca9535_1", 2, inverted=False),
+        "fridge_lim_max": _pca9535_input("pca9535_1", 3, inverted=False),
         # PCB comparison sheet marks IO2 as an output; kept as input here to
         # preserve existing behavior. Tracked separately, not fixed here.
         "io_2": _pca9535_input("pca9535_1", 4),
@@ -474,6 +476,8 @@ GPIO_PIN_ALIASES = {
     "tool_limit_z": "z_lim_min",
     "io_limit_min": "io_lim_min",
     "io_limit_max": "io_lim_max",
+    "io_in0": "fridge_lim_min",
+    "io_1": "fridge_lim_max",
 }
 
 

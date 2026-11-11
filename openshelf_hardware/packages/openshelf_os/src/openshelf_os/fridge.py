@@ -10,6 +10,8 @@ from openshelf_os.config.settings import DemoFridgeCellSettings, DemoFridgeSetti
 from openshelf_os.exceptions import ConfigError, FridgeSafetyError, MotorError
 from openshelf_os.storage import StorageModuleCellLocation
 
+FRIDGE_HOME_LIMIT_PIN = "fridge_lim_min"
+
 
 class DemoFridge:
     """Demo-only sliding fridge door and per-cell access configuration."""
@@ -24,12 +26,20 @@ class DemoFridge:
         is_rotated_back: Callable[[], Awaitable[bool]] | None = None,
         retract_tool: Callable[[], Awaitable[None]] | None = None,
         x_axis_middle_mm: Callable[[], float] | None = None,
+        gpio=None,
     ) -> None:
         if params.motor is None or params.motor.enabled is False:
             raise ConfigError("Demo fridge motor must be configured and enabled")
 
         self._params = params
-        self._door = Motor(motorcontroller, params.motor, safety)
+        home_limit_input = None
+        if (
+            params.motor.limit_switches_enabled is True
+            and gpio is not None
+            and gpio.has_pin(FRIDGE_HOME_LIMIT_PIN)
+        ):
+            home_limit_input = gpio.input(FRIDGE_HOME_LIMIT_PIN)
+        self._door = Motor(motorcontroller, params.motor, safety, home_limit_input=home_limit_input)
         self._is_fully_retracted = is_fully_retracted
         self._is_rotated_back = is_rotated_back
         self._retract_tool = retract_tool

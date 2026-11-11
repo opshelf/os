@@ -180,6 +180,7 @@ class Robot:
                 is_rotated_back=self._tool.is_rotated_back,
                 retract_tool=self._tool.retract_empty,
                 x_axis_middle_mm=self._tool.x_axis_travel_middle_mm,
+                gpio=self._gpio,
             )
 
         self._grid_path = resolve_grid_path(self._config, CONFIG_PATH)
