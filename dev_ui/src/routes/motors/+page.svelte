@@ -178,7 +178,9 @@
 			motorPositions = nextPositions;
 			moveTargets = nextTargets;
 		} catch (err) {
-			pollState.report(err instanceof Error ? err.message : 'The motor positions could not be read.');
+			pollState.report(
+				err instanceof Error ? err.message : 'The motor positions could not be read.'
+			);
 		} finally {
 			isProbing = false;
 		}
@@ -262,7 +264,8 @@
 				error = `Failed to clear alarm for ${motorLabel(motorName)}.`;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : `Clear alarm failed for ${motorLabel(motorName)}.`;
+			error =
+				err instanceof Error ? err.message : `Clear alarm failed for ${motorLabel(motorName)}.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -344,7 +347,10 @@
 			testResults[motorName] = 'ok';
 		} catch (err) {
 			testResults[motorName] = 'err';
-			postToast('error', err instanceof Error ? err.message : `The ${motorLabel(motorName)} test failed.`);
+			postToast(
+				'error',
+				err instanceof Error ? err.message : `The ${motorLabel(motorName)} test failed.`
+			);
 		}
 	}
 
@@ -461,7 +467,10 @@
 
 			message = `Homed the ${sectionLabel(sectionName)} motors.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : `Homing the ${sectionLabel(sectionName)} motors failed.`;
+			error =
+				err instanceof Error
+					? err.message
+					: `Homing the ${sectionLabel(sectionName)} motors failed.`;
 		} finally {
 			activeMotor = null;
 			activeAction = null;
@@ -481,7 +490,9 @@
 			await apiFetch('/robot/commands', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(axes.length > 0 ? { command: 'recover', axes } : { command: 'recover' })
+				body: JSON.stringify(
+					axes.length > 0 ? { command: 'recover', axes } : { command: 'recover' }
+				)
 			});
 			message = 'Recover command sent.';
 		} catch (err) {
@@ -545,7 +556,10 @@
 
 			message = `Moved the ${sectionLabel(sectionName)} motors.`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : `Moving the ${sectionLabel(sectionName)} motors failed.`;
+			error =
+				err instanceof Error
+					? err.message
+					: `Moving the ${sectionLabel(sectionName)} motors failed.`;
 		} finally {
 			movingMotor = null;
 			sectionAction = null;
@@ -783,10 +797,8 @@
 									on:click={() => didClickMoveSection('tool', toolMotors())}
 									disabled={isActionDisabled()}>MOVE</button
 								>
-								<button
-									type="button"
-									on:click={didClickRecoverTool}
-									disabled={isActionDisabled()}>RECOVER</button
+								<button type="button" on:click={didClickRecoverTool} disabled={isActionDisabled()}
+									>RECOVER</button
 								>
 							</span>
 						</div>
@@ -1090,98 +1102,102 @@
 	</div>
 
 	{#if fridgeMotors().length > 0}
-		<table class="motor-table">
-			<thead>
-				<tr>
-					<th colspan="6">
-						<div class="section-heading">
-							<span>FRIDGE MOTORS</span>
-							<span>
-								<button
-									type="button"
-									on:click={() => didClickHomeSection('fridge', fridgeMotors())}
-									disabled={isActionDisabled()}>HOME</button
-								>
-								<button
-									type="button"
-									on:click={() => didClickMoveSection('fridge', fridgeMotors())}
-									disabled={isActionDisabled()}>MOVE</button
-								>
-							</span>
-						</div>
-					</th>
-				</tr>
-				<tr>
-					<th>id</th>
-					<th class="motor-name">motor</th>
-					<th>status</th>
-					<th class="position-column">POSITION</th>
-					<th>move to</th>
-					<th>actions</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each fridgeMotors() as motor (motor.name)}
+		<div class="scroll-x motor-table-scroll">
+			<table class="motor-table">
+				<thead>
 					<tr>
-						<td class="motor-id">{motor.motor_id}</td>
-						<td class="motor-name">{motor.name}</td>
-						<td>
-							{#if testingMotor === motor.name}
-								<span class="status-testing">TEST</span>
-							{:else if testResults[motor.name] === 'ok'}
-								<span class="status-ok">OK</span>
-							{:else if testResults[motor.name] === 'err'}
-								<span class="status-error">ERR</span>
-							{:else}
-								<span class="status-unknown">-</span>
-							{/if}
-						</td>
-						<td class="position-column"
-							>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
-						>
-						<td>
-							<input
-								type="number"
-								step="0.1"
-								placeholder={unitForMotor(motor.name)}
-								value={moveTargets[motor.name] ?? ''}
-								on:input={(e) => didInputTarget(motor.name, e)}
-								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-							/>
-							<button
-								type="button"
-								on:click={() => didClickMove(motor.name)}
-								disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
-							>
-								go
-							</button>
-						</td>
-						<td>
-							<button
-								type="button"
-								on:click={() => didClickTestMotor(motor.name)}
-								disabled={isActionDisabled()}>TEST</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickHome(motor.name)}
-								disabled={isActionDisabled()}>home</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickCrash(motor.name)}
-								disabled={isActionDisabled()}>crash</button
-							>
-							<button
-								type="button"
-								on:click={() => didClickClear(motor.name)}
-								disabled={isActionDisabled()}>clear</button
-							>
-						</td>
+						<th colspan="7">
+							<div class="section-heading">
+								<span>FRIDGE MOTORS</span>
+								<span>
+									<button
+										type="button"
+										on:click={() => didClickHomeSection('fridge', fridgeMotors())}
+										disabled={isActionDisabled()}>HOME</button
+									>
+									<button
+										type="button"
+										on:click={() => didClickMoveSection('fridge', fridgeMotors())}
+										disabled={isActionDisabled()}>MOVE</button
+									>
+								</span>
+							</div>
+						</th>
 					</tr>
-				{/each}
-			</tbody>
-		</table>
+					<tr>
+						<th>id</th>
+						<th class="motor-name">motor</th>
+						<th>status</th>
+						<th>min</th>
+						<th class="position-column">POSITION</th>
+						<th>move to</th>
+						<th>actions</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each fridgeMotors() as motor (motor.name)}
+						<tr>
+							<td class="motor-id">{motor.motor_id}</td>
+							<td class="motor-name">{motor.name}</td>
+							<td>
+								{#if testingMotor === motor.name}
+									<span class="status-testing">TEST</span>
+								{:else if testResults[motor.name] === 'ok'}
+									<span class="status-ok">OK</span>
+								{:else if testResults[motor.name] === 'err'}
+									<span class="status-error">ERR</span>
+								{:else}
+									<span class="status-unknown">-</span>
+								{/if}
+							</td>
+							<td>{minLimitLabel(limitSwitches[motor.name])}</td>
+							<td class="position-column"
+								>{positionLabelForMotor(motor.name, motorPositions[motor.name])}</td
+							>
+							<td>
+								<input
+									type="number"
+									step="0.1"
+									placeholder={unitForMotor(motor.name)}
+									value={moveTargets[motor.name] ?? ''}
+									on:input={(e) => didInputTarget(motor.name, e)}
+									disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+								/>
+								<button
+									type="button"
+									on:click={() => didClickMove(motor.name)}
+									disabled={movingMotor !== null || activeMotor !== null || isTesting === true}
+								>
+									go
+								</button>
+							</td>
+							<td>
+								<button
+									type="button"
+									on:click={() => didClickTestMotor(motor.name)}
+									disabled={isActionDisabled()}>TEST</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickHome(motor.name)}
+									disabled={isActionDisabled()}>home</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickCrash(motor.name)}
+									disabled={isActionDisabled()}>crash</button
+								>
+								<button
+									type="button"
+									on:click={() => didClickClear(motor.name)}
+									disabled={isActionDisabled()}>clear</button
+								>
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
 	{/if}
 
 	{#if message !== ''}
@@ -1256,5 +1272,4 @@
 	.status-testing {
 		color: orange;
 	}
-
 </style>
