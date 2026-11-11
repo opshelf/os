@@ -34,3 +34,16 @@ export function orderSectionMoves(
 
 	return [...retracts, ...others, ...extends_.reverse()];
 }
+
+// The tool's own home sequence: Z and the stage pull in before X, rotate needs all three
+// clear (and re-homes X itself), and Y goes last. The doors home once the tool is retracted.
+const HOME_ORDER = ['z_axis', 'stage', 'x_axis', 'rotate', 'y_axis', 'door', 'fridge_door'];
+
+export function orderForHoming(motors: string[]): string[] {
+	const rank = (name: string): number => {
+		const index = HOME_ORDER.indexOf(name);
+		return index === -1 ? HOME_ORDER.length : index;
+	};
+
+	return [...motors].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}

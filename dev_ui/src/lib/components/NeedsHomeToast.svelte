@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { homeMotor } from '$lib/api';
+	import { orderForHoming } from '$lib/motor-order';
 	import { devicePath } from '$lib/nav';
 	import { robotStatus } from '$lib/stores';
 	import { createToastSource, postToast, type ToastAction } from '$lib/toasts';
@@ -8,7 +9,7 @@
 	// crash publishes a snapshot with needs_home + needs_home_axes immediately,
 	// and a successful home clears the flag and republishes.
 	const needsHome = $derived($robotStatus?.needs_home === true);
-	const motors = $derived(needsHome ? [...($robotStatus?.needs_home_axes ?? [])].sort() : []);
+	const motors = $derived(needsHome ? orderForHoming($robotStatus?.needs_home_axes ?? []) : []);
 	const reason = $derived($robotStatus?.needs_home_reason ?? '');
 	const motorsKey = $derived(motors.length > 0 ? motors.join(':') : `reason:${reason}`);
 	const message = $derived(motors.length === 1 ? 'A motor needs homing.' : 'Motors need homing.');
@@ -18,15 +19,20 @@
 	const source = createToastSource('status');
 	let homingMotor = $state<string | null>(null);
 	let queuedMotors = $state<string[]>([]);
+	const isHoming = $derived(homingMotor !== null || queuedMotors.length > 0);
 
-	// The server rejects concurrent motion with 409, so clicks queue up and the
-	// motors home one at a time. A successful home republishes status without
-	// that motor, which removes its button.
-	async function didHome(motor: string): Promise<void> {
-		if (homingMotor === motor || queuedMotors.includes(motor)) {
+	function motorLabel(motor: string): string {
+		return motor.replace(/_/g, ' ');
+	}
+
+	// The server rejects concurrent motion with 409, so the motors home one at a time, in
+	// the tool's safe home order. A successful home republishes status without that motor.
+	async function didHome(requested: string[]): Promise<void> {
+		const fresh = requested.filter((motor) => homingMotor !== motor && queuedMotors.includes(motor) === false);
+		if (fresh.length === 0) {
 			return;
 		}
-		queuedMotors = [...queuedMotors, motor];
+		queuedMotors = orderForHoming([...queuedMotors, ...fresh]);
 		if (homingMotor !== null) {
 			return;
 		}
@@ -34,12 +40,20 @@
 			const [next, ...rest] = queuedMotors;
 			queuedMotors = rest;
 			homingMotor = next;
+			let failure: string | null = null;
 			try {
-				await homeMotor(next);
+				const result = await homeMotor(next);
+				if (result?.success !== true) {
+					failure = '';
+				}
 			} catch (err) {
-				// Stop the queue so the operator sees the failure before more motion. The clue
-				// line's request path names the motor.
-				postToast('error', err instanceof Error ? err.message : `Homing the ${next.replace(/_/g, ' ')} failed.`);
+				failure = err instanceof Error ? err.message : '';
+			}
+			if (failure !== null) {
+				// Stop the queue so the operator sees the failure before more motion. The
+				// needs-home toast comes back with whatever is still unhomed, so a retry is one tap.
+				const named = `Homing ${motorLabel(next)} failed.`;
+				postToast('error', failure === '' ? named : `${named} ${failure}`);
 				queuedMotors = [];
 			}
 		}
@@ -58,11 +72,16 @@
 			];
 		}
 
-		return motors.map((motor) => ({
-			label: `home ${motor}`,
-			onClick: () => didHome(motor),
-			disabled: homingMotor === motor || queuedMotors.includes(motor)
+		const perMotor = motors.map((motor) => ({
+			label: `home ${motorLabel(motor)}`,
+			onClick: () => didHome([motor])
 		}));
+
+		if (motors.length < 2) {
+			return perMotor;
+		}
+
+		return [{ label: 'home all', onClick: () => didHome(motors) }, ...perMotor];
 	}
 
 	$effect(() => {
@@ -71,10 +90,14 @@
 		}
 	});
 
+	// While homing runs the toast steps aside: each home republishes status, and without
+	// this the toast would pop back with the motors that are still waiting their turn.
+	// Once the queue is done it returns only if something is still unhomed.
 	$effect(() => {
-		source.report(needsHome === true ? message : '', {
-			key: needsHome === true ? `needs-home:${motorsKey}` : '',
-			actions: needsHome === true ? toastActions() : undefined
+		const shown = needsHome === true && isHoming === false;
+		source.report(shown ? message : '', {
+			key: shown ? `needs-home:${motorsKey}` : '',
+			actions: shown ? toastActions() : undefined
 		});
 	});
 
