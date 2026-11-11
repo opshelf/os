@@ -36,6 +36,20 @@
 		const named = `Homing ${motorLabel(motor)} failed.`;
 		failureSource.report(detail === '' ? named : `${named} ${detail}`, { key: `home-failed:${motor}` });
 		hasFailed = true;
+		resolvingMotors = null;
+	}
+
+	// A homing run that starts while the robot needs homing is confirmed once it ends with
+	// nothing left to home, whoever started it. A failure anywhere in the run cancels it.
+	let resolvingMotors = $state<string[] | null>(null);
+	let wasHoming = false;
+	let confirmGraceTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function clearConfirmGrace(): void {
+		if (confirmGraceTimer !== null) {
+			clearTimeout(confirmGraceTimer);
+			confirmGraceTimer = null;
+		}
 	}
 
 	// This toast's own homes go one motor at a time through the debug endpoint: the server
@@ -218,6 +232,36 @@
 	});
 
 	$effect(() => {
+		if (isHoming === true && wasHoming === false) {
+			clearConfirmGrace();
+			resolvingMotors = needsHome === true ? motors : null;
+		}
+		wasHoming = isHoming;
+	});
+
+	// The last home clears the flag in a status publish that can land just after the homing
+	// phase ends, so a run that ends with the flag still up gets a moment before it counts
+	// as unresolved.
+	$effect(() => {
+		if (isHoming === true || resolvingMotors === null) {
+			return;
+		}
+		if (needsHome === false) {
+			clearConfirmGrace();
+			const only = resolvingMotors.length === 1 ? resolvingMotors[0] : undefined;
+			postToast('status', only === undefined ? 'Motors homed.' : `${motorLabel(only)} motor homed.`);
+			resolvingMotors = null;
+			return;
+		}
+		if (confirmGraceTimer === null) {
+			confirmGraceTimer = setTimeout(() => {
+				confirmGraceTimer = null;
+				resolvingMotors = null;
+			}, 2000);
+		}
+	});
+
+	$effect(() => {
 		const text = isHoming === true ? progressMessage() : '';
 		progressSource.report(text, { key: isHoming === true ? 'homing-progress' : '', persistent: true });
 	});
@@ -229,5 +273,6 @@
 		if (commandRequestTimer !== null) {
 			clearTimeout(commandRequestTimer);
 		}
+		clearConfirmGrace();
 	});
 </script>
