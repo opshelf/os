@@ -147,6 +147,7 @@ prefer a scanner by-id path or a scanner-specific udev symlink. do not use `/dev
 
 - ui: `http://localhost:8080`
 - api health: `http://localhost:8000/api/health`
+- camera health: `http://localhost:8000/api/health/cameras` (public; each camera's `online` and `has_frame` only, for on-device checks without a token)
 - developer login: `developer@opshelf.com` with pin `1111` in development and mock mode
 
 ### roles

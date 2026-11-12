@@ -174,6 +174,16 @@ class HealthResponse(BaseModel):
     robot_error_type: str | None = None
 
 
+class CameraHealthEntry(BaseModel):
+    id: str
+    online: bool
+    has_frame: bool
+
+
+class CameraHealthResponse(BaseModel):
+    cameras: list[CameraHealthEntry]
+
+
 class SystemInfoResponse(BaseModel):
     device_id: str
     device_alias: str | None

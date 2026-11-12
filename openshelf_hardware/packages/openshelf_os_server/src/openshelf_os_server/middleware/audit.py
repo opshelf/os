@@ -34,6 +34,7 @@ command_records_context: ContextVar[List[Dict[str, Any]]] = ContextVar("command_
 IGNORED_METHODS = frozenset(["OPTIONS"])
 ALWAYS_EXCLUDED_ENDPOINTS = frozenset([
     "/api/health",
+    "/api/health/cameras",
     "/api/robot/debug/motors/probe",
     "/api/calibration/laser/stream",
 ])
