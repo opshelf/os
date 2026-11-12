@@ -1,5 +1,5 @@
 from __future__ import annotations
-from openshelf_os_server.documentation import HealthResponse, SystemInfoResponse, response_docs
+from openshelf_os_server.documentation import CameraHealthResponse, HealthResponse, SystemInfoResponse, response_docs
 
 import asyncio
 import fcntl
@@ -57,6 +57,7 @@ from openshelf_os_server.core.init_progress import get_init_tracker
 from openshelf_os_server.core.storage import StorageService
 from openshelf_os_server.core.bin_storage import BinStorageService
 from openshelf_os_server.core.camera import (
+	get_all_cameras_status,
 	init_camera_progress,
 	init_overhead_camera_manager,
 	init_overview_camera_manager,
@@ -1282,6 +1283,28 @@ async def health() -> JSONResponse:
 	body["robot_status"] = str(robot_health["status"])
 	body["robot_phase"] = str(robot_health.get("phase", ""))
 	return JSONResponse(content=body)
+
+
+@app.get(
+    "/api/health/cameras",
+    tags=["system"],
+    summary="Check camera streams",
+    responses=response_docs(model=CameraHealthResponse),
+)
+async def camera_health() -> dict[str, list[dict[str, str | bool]]]:
+	"""Check whether each registered camera is online and producing frames.
+
+	Public health check for on-device tooling (`opshelf-cameras status`), which holds no
+	user token. Lists every camera the API registered with its `online` and `has_frame`
+	flags only; frames, stream URLs and consumer counts stay behind `GET /api/camera`.
+	"""
+	cameras = await get_all_cameras_status()
+	return {
+		"cameras": [
+			{"id": str(camera["id"]), "online": bool(camera["online"]), "has_frame": bool(camera["has_frame"])}
+			for camera in cameras
+		]
+	}
 
 
 @app.get(
