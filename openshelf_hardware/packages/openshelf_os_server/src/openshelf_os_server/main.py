@@ -92,6 +92,7 @@ from openshelf_os_server.launcher import bootstrap_runtime_state
 from openshelf_os_server.middleware.audit import AuditMiddleware
 from openshelf_os_server.middleware.correlation import CorrelationIdMiddleware
 from openshelf_os_server.middleware.inventory_events import InventoryEventsMiddleware
+from openshelf_os_server.routers.auth_deps import report_relay_service_token_configuration
 from openshelf_os_server.routers import access_levels, audit, auth, cabinet, calibration, camera, cycle_test, chemicals, demo, import_jobs, iobox_sizer, onboarding, printer, report, robot, roles, storage, system, telemetry, users, wifi
 from openshelf_os_server.settings import (
 	DEFAULT_DEVELOPER_PIN,
@@ -1040,6 +1041,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 	)
 	settings = get_settings()
 	is_mock = runtime_paths.mode == OperatingMode.mock
+	report_relay_service_token_configuration()
 
 	_run_migrations()
 
