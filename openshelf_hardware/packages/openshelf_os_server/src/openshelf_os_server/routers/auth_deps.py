@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import os
+import time
 from typing import Optional, List, Callable
 from fastapi import Depends, HTTPException, status, Query, Request
 from fastapi.security import OAuth2PasswordBearer
@@ -15,13 +16,20 @@ from ..database.session import AsyncSessionLocal, get_db
 from ..database.models import User, Item, Role
 from ..core.auth import AuthService
 from ..core.permissions import has_permission
-from openshelf_os_server.errors import api_error, error_detail
+from openshelf_os_server.errors import api_error, error_detail, request_correlation_id
 
 # Retain the existing header extraction behavior while documenting JSON login
 # accurately: this API does not implement an OAuth password grant.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login/json", auto_error=False)
 oauth2_scheme.scheme_name = "UserBearer"
 RELAY_SERVICE_TOKEN_SHA256_ENV = "OPSHELF_RELAY_SERVICE_TOKEN_SHA256"
+# Prefix of every token the relay mints (`opshelf_relay.security`), so a rejected
+# bearer can be told apart from a stale user JWT without trusting anything else in it.
+RELAY_SERVICE_TOKEN_PREFIX = "os_service."
+# A console portal polls several routes a second; one line per reason per window is
+# enough to name the cause without flooding the log.
+RELAY_REJECTION_LOG_INTERVAL_SECONDS = 60.0
+_relay_rejection_last_logged: dict[str, float] = {}
 
 # The dev fallback can fail on every request once the database lacks the
 # configured identity, so log the reason once per process instead of per request.
@@ -173,19 +181,72 @@ async def get_current_user_for_stream(
 		return await get_current_user(token=token, db=db)
 
 
+def relay_service_token_hash_problem() -> Optional[str]:
+	"""Name what is wrong with the configured relay token digest, or None when it is usable.
+
+	Docker compose passes the variable through as `${...:-}`, so a value lost from the
+	device `.env` arrives as an empty string rather than being absent.
+	"""
+	expected_digest = os.getenv(RELAY_SERVICE_TOKEN_SHA256_ENV, "")
+	if expected_digest == "":
+		return "hash_not_configured"
+	if len(expected_digest) != 64 or any(char not in "0123456789abcdef" for char in expected_digest):
+		return "hash_malformed"
+	return None
+
+
+def report_relay_service_token_configuration() -> None:
+	"""Warn once at startup when the relay credential cannot be verified.
+
+	Without a usable digest every relay request is refused with a plain 401, and the
+	console portal only reports that robot authentication is unavailable.
+	"""
+	problem = relay_service_token_hash_problem()
+	if problem is not None:
+		logger.warning(
+			"relay_service_token_hash_unusable",
+			reason=problem,
+			env_var=RELAY_SERVICE_TOKEN_SHA256_ENV,
+			impact="relay and console access to this robot will be refused",
+		)
+
+
+def _report_relay_service_token_rejection(request: Request, reason: str) -> None:
+	now = time.monotonic()
+	last_logged = _relay_rejection_last_logged.get(reason)
+	if last_logged is not None and now - last_logged < RELAY_REJECTION_LOG_INTERVAL_SECONDS:
+		return
+	_relay_rejection_last_logged[reason] = now
+	logger.warning(
+		"relay_service_token_rejected",
+		reason=reason,
+		correlation_id=request_correlation_id(request),
+		env_var=RELAY_SERVICE_TOKEN_SHA256_ENV,
+	)
+
+
 def _is_relay_service_token(request: Request, token: str) -> bool:
-	"""Validate a relay service bearer token without accepting it from query parameters."""
+	"""Validate a relay service bearer token without accepting it from query parameters.
+
+	A relay-style token that fails is logged with the reason (never the token or a
+	digest); the caller still answers with the generic user-token 401.
+	"""
 	authorization = request.headers.get("Authorization", "")
 	scheme, separator, header_token = authorization.partition(" ")
 	if separator == "" or scheme.lower() != "bearer" or header_token != token:
 		return False
 
-	expected_digest = os.getenv(RELAY_SERVICE_TOKEN_SHA256_ENV, "")
-	if len(expected_digest) != 64 or any(char not in "0123456789abcdef" for char in expected_digest):
-		return False
+	problem = relay_service_token_hash_problem()
+	if problem is None:
+		actual_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+		expected_digest = os.getenv(RELAY_SERVICE_TOKEN_SHA256_ENV, "")
+		if hmac.compare_digest(actual_digest, expected_digest):
+			return True
+		problem = "mismatch"
 
-	actual_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
-	return hmac.compare_digest(actual_digest, expected_digest)
+	if token.startswith(RELAY_SERVICE_TOKEN_PREFIX):
+		_report_relay_service_token_rejection(request, problem)
+	return False
 
 
 async def _get_relay_system_user(db: AsyncSession) -> User:
