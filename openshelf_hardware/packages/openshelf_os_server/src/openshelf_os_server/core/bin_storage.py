@@ -32,7 +32,13 @@ from openshelf_os.exceptions import (
 from openshelf_os.robot.commands import DeliverTrayCommand, ReturnTrayCommand
 
 
-from openshelf_os.robot.worker import EMERGENCY_STOP_CODE, TRAY_ON_TOOL_CODE, RobotWorker
+from openshelf_os.robot.worker import (
+    EMERGENCY_STOP_CODE,
+    SCALE_OCCUPIED_THRESHOLD_GRAMS,
+    TRAY_ON_TOOL_CODE,
+    RobotWorker,
+    log_io_box_guard,
+)
 
 
 from openshelf_os_server.core.manual_motion import get_manual_motion_operation
@@ -142,11 +148,25 @@ async def is_io_box_occupied(worker: RobotWorker) -> bool:
     """Read IO-box occupancy using the cached scale status when available."""
     cached = worker.get_cached_scale_status()
     if cached is not None:
-        return cached.occupied is True
+        occupied = cached.occupied is True
+        log_io_box_guard(
+            logger,
+            "bin",
+            "occupied" if occupied else "empty",
+            weight_grams=getattr(cached, "weight_grams", None),
+            cached=True,
+            scale_age_s=worker.get_cached_scale_status_age_s(),
+        )
+        return occupied
     try:
-        return abs(float((await worker.get_scale_data())["weight"])) > 5.0
-    except Exception:
+        weight = abs(float((await worker.get_scale_data())["weight"]))
+    except Exception as exc:
+        logger.warning("Scale read failed during IO box check; treating as empty: %s", exc, exc_info=exc)
+        log_io_box_guard(logger, "bin", "read_failed")
         return False
+    occupied = weight > SCALE_OCCUPIED_THRESHOLD_GRAMS
+    log_io_box_guard(logger, "bin", "occupied" if occupied else "empty", weight_grams=weight)
+    return occupied
 
 
 def ensure_worker_homed_for_bin_motion(worker: RobotWorker) -> None:

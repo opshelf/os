@@ -31,7 +31,12 @@ from openshelf_os.robot.commands import (
 )
 import logging
 from openshelf_os.robot.core import POWER_CYCLE_HOLD_S, V24_POWER_RAILS
-from openshelf_os.robot.worker import TRAY_ON_TOOL_ALLOWED_COMMANDS, RobotWorker
+from openshelf_os.robot.worker import (
+    SCALE_OCCUPIED_THRESHOLD_GRAMS,
+    TRAY_ON_TOOL_ALLOWED_COMMANDS,
+    RobotWorker,
+    log_io_box_guard,
+)
 from openshelf_os_server.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -995,11 +1000,22 @@ async def robot_commands(
             ).scalar_one_or_none()
             if binned_item is not None:
                 raise api_error(status.HTTP_409_CONFLICT, "reserved_tray_item", "")
+        request_id = command.request_id
         if worker.get_safety_status().get("bypassed") is not True:
             try:
                 scale_status = worker.get_cached_scale_status()
                 if scale_status is not None:
-                    if scale_status.occupied is True:
+                    occupied = scale_status.occupied is True
+                    log_io_box_guard(
+                        logger,
+                        "admission",
+                        "blocked" if occupied else "allowed",
+                        weight_grams=getattr(scale_status, "weight_grams", None),
+                        cached=True,
+                        scale_age_s=worker.get_cached_scale_status_age_s(),
+                        request_id=request_id,
+                    )
+                    if occupied:
                         raise api_error(
                             409,
                             "io_box_occupied",
@@ -1008,7 +1024,15 @@ async def robot_commands(
                 else:
                     scale_data = await worker.get_scale_data()
                     weight = abs(scale_data["weight"])
-                    if weight > 5.0:
+                    occupied = weight > SCALE_OCCUPIED_THRESHOLD_GRAMS
+                    log_io_box_guard(
+                        logger,
+                        "admission",
+                        "blocked" if occupied else "allowed",
+                        weight_grams=weight,
+                        request_id=request_id,
+                    )
+                    if occupied:
                         raise api_error(
                             409,
                             "io_box_occupied",
@@ -1018,6 +1042,9 @@ async def robot_commands(
                 raise
             except Exception as exc:
                 logger.warning("Scale read failed during retrieve check: %s", exc, exc_info=exc)
+                log_io_box_guard(logger, "admission", "read_failed", request_id=request_id)
+        else:
+            log_io_box_guard(logger, "admission", "skipped", request_id=request_id)
 
         location_data = command.location or {}
         side = location_data.get("side")

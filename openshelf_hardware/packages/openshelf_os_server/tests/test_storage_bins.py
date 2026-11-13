@@ -44,6 +44,9 @@ class FakeWorker:
     def get_cached_scale_status(self):
         return SimpleNamespace(occupied=True)
 
+    def get_cached_scale_status_age_s(self) -> float:
+        return 0.5
+
     def needs_home(self) -> bool:
         return self.is_needs_home
 

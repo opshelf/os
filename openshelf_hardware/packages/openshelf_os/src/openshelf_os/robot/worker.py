@@ -71,6 +71,54 @@ def _operation_log_context(operation: Optional[QueuedOperation]):
     finally:
         correlation_id_var.reset(token)
 
+
+def log_io_box_guard(
+    log: logging.Logger,
+    check: str,
+    outcome: str,
+    *,
+    weight_grams: Optional[float] = None,
+    cached: bool = False,
+    scale_age_s: Optional[float] = None,
+    command_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> None:
+    """Log one IO-box occupancy guard decision, so a retrieval into a full box can be traced.
+
+    `check` is admission, dequeue or bin. `outcome` is allowed, blocked, skipped (safety
+    bypass) or read_failed; the bin check, whose callers need the box both empty and full,
+    logs occupied or empty. `cached` marks a reading from the scale poll, `scale_age_s` its age.
+    """
+    # Logging must never change the guard's decision, so tolerate odd values instead of raising.
+    if isinstance(weight_grams, (int, float)) is False:
+        weight_grams = None
+    if isinstance(scale_age_s, (int, float)) is False:
+        scale_age_s = None
+    source = "cached" if cached is True else "fresh"
+    log.info(
+        "IO box guard %s: %s (weight=%s g, threshold=%s g, scale=%s%s, command_id=%s, request_id=%s)",
+        check,
+        outcome,
+        "n/a" if weight_grams is None else f"{weight_grams:.1f}",
+        SCALE_OCCUPIED_THRESHOLD_GRAMS,
+        source,
+        "" if scale_age_s is None else f" {scale_age_s:.1f}s old",
+        command_id,
+        request_id,
+        extra={
+            "io_box_check": check,
+            "io_box_outcome": outcome,
+            "weight_grams": weight_grams,
+            "threshold_grams": SCALE_OCCUPIED_THRESHOLD_GRAMS,
+            "scale_source": source,
+            "scale_age_s": None if scale_age_s is None else round(scale_age_s, 2),
+            "command_id": command_id,
+            "request_id": request_id,
+        },
+        stacklevel=2,
+    )
+
+
 SCALE_OCCUPIED_THRESHOLD_GRAMS = 5.0
 SCALE_POLL_INTERVAL_SECONDS = 1.0
 SCALE_STATUS_FRESH_SECONDS = 3.0
@@ -506,6 +554,12 @@ class RobotWorker:
             return None
         return self._latest_scale_status
 
+    def get_cached_scale_status_age_s(self) -> Optional[float]:
+        """Seconds since the cached scale status was sampled, for guard logs."""
+        if self._latest_scale_status_monotonic is None:
+            return None
+        return time.monotonic() - self._latest_scale_status_monotonic
+
     async def get_scale_calibration_status(self) -> Dict[str, Any]:
         async with self._scale_lock:
             return await self._robot.get_scale_calibration_status()
@@ -553,23 +607,30 @@ class RobotWorker:
             self.invalidate_cached_scale_status()
         return result
 
-    async def _is_io_box_occupied_before_retrieve(self, command: RobotCommands) -> bool:
+    async def _is_io_box_occupied_before_retrieve(self, operation: QueuedOperation) -> bool:
         """Re-read the IO box when a queued retrieval is about to move.
 
         Admission only saw the box at submit time; an earlier queued retrieval may have
         filled it since. The cached poll can predate that delivery, so read directly.
         """
+        command = operation.command
         if isinstance(command, RetrieveItemCommand) is False or isinstance(command, DeliverTrayCommand) is True:
             return False
-        if self._safety_guard_bypassed is True:
-            return False
-        try:
-            data = await asyncio.wait_for(self.get_scale_data(), SCALE_PRE_RETRIEVE_READ_TIMEOUT_SECONDS)
-            weight = abs(float(data["weight"]))
-        except Exception as err:
-            logger.warning("Scale read failed before retrieve; proceeding: %s", err, exc_info=err)
-            return False
-        return weight > SCALE_OCCUPIED_THRESHOLD_GRAMS
+        ids = {"command_id": operation.command_id, "request_id": getattr(command, "request_id", None)}
+        with _operation_log_context(operation):
+            if self._safety_guard_bypassed is True:
+                log_io_box_guard(logger, "dequeue", "skipped", **ids)
+                return False
+            try:
+                data = await asyncio.wait_for(self.get_scale_data(), SCALE_PRE_RETRIEVE_READ_TIMEOUT_SECONDS)
+                weight = abs(float(data["weight"]))
+            except Exception as err:
+                logger.warning("Scale read failed before retrieve; proceeding: %s", err, exc_info=err)
+                log_io_box_guard(logger, "dequeue", "read_failed", **ids)
+                return False
+            occupied = weight > SCALE_OCCUPIED_THRESHOLD_GRAMS
+            log_io_box_guard(logger, "dequeue", "blocked" if occupied else "allowed", weight_grams=weight, **ids)
+            return occupied
 
     def invalidate_cached_scale_status(self) -> None:
         """Force the next bin admission to sample the scale after calibration changes."""
@@ -1903,7 +1964,7 @@ class RobotWorker:
                                 if operation is not queued_operation
                             ]
                             is_rejected_before_start = True
-                        elif await self._is_io_box_occupied_before_retrieve(command) is True:
+                        elif await self._is_io_box_occupied_before_retrieve(queued_operation) is True:
                             await self._publish_command_failure(
                                 command,
                                 IO_BOX_OCCUPIED_ERROR,
