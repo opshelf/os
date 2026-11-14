@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: ./Dockerfile.dev
+      args:
+        BASE_IMAGE: ${OPSHELF_REGISTRY:-registry.opshelf.com}/opshelf/openshelf_os_api:latest
     image: ${OPSHELF_REGISTRY:-registry.opshelf.com}/opshelf/openshelf_os_api_dev:latest
     volumes:
       - ./openshelf_hardware/packages/hardware/src/hardware:/app/openshelf_hardware/packages/hardware/src/hardware
