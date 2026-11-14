@@ -1,5 +1,4 @@
 """Emergency stop unit tests."""
-# ruff: noqa: E402, PLC0415
 
 import asyncio
 import json

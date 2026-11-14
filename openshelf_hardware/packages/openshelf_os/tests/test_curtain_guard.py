@@ -1,5 +1,4 @@
 """Curtain guard unit tests with lightweight dependency stubs."""
-# ruff: noqa: E402
 
 import asyncio
 import pathlib

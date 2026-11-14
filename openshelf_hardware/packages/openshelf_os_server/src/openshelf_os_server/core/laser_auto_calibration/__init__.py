@@ -1,5 +1,3 @@
-# mypy: disable-error-code=no-redef
-# ruff: noqa: F403
 from __future__ import annotations
 
 from . import angle_runner as _angle_runner

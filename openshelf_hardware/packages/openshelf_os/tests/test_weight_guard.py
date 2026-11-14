@@ -1,5 +1,4 @@
 """Weight-change guard tests: detection, acknowledgement and safety-guard state."""
-# ruff: noqa: E402
 
 import asyncio
 import pathlib
