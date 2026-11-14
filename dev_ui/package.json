@@ -22,10 +22,6 @@
 		"typescript": "^5.9.2",
 		"vite": "7.3.7"
 	},
-	"dependencies": {
-		"prettier-plugin-svelte": "^3.4.0",
-		"prettier-plugin-tailwindcss": "^0.7.1"
-	},
 	"overrides": {
 		"cookie": "^0.7.0"
 	}
