@@ -288,3 +288,56 @@ async def test_persist_failure_metadata_marks_active_scan_run_failed(tmp_path) -
     assert data['status'] == 'failed'
     assert data['error'] == 'boom'
     assert data['error_type'] == 'RuntimeError'
+
+
+@pytest.mark.asyncio
+async def test_io_box_scout_session_reports_the_measurement_and_never_saves_the_config(tmp_path) -> None:
+    """The io box scout is measure-only: a completed run carries its result in the snapshot and
+    leaves the config untouched, so a scout can never move a hand-calibrated pose."""
+    import contextlib
+
+    from openshelf_os.laser_calibration.io_box_scout import IOBoxManualPose, IOBoxScoutResult
+    from openshelf_os_server.core.laser_auto_calibration import LaserAutoCalibrationScope
+    from openshelf_os_server.core.laser_auto_calibration import scope_runner
+
+    @contextlib.asynccontextmanager
+    async def hold_enabled():
+        yield
+
+    def motor(lim: float) -> SimpleNamespace:
+        return SimpleNamespace(_params=SimpleNamespace(lim=lim, lower_lim=0.0), hold_enabled=hold_enabled)
+
+    worker = SimpleNamespace(
+        _robot=SimpleNamespace(_tool=SimpleNamespace(_mx=motor(950.0), _my=motor(1165.0)), stop_motion=AsyncMock()),
+        set_needs_home=MagicMock(),
+        get_status_snapshot=AsyncMock(),
+        refresh_tray_on_tool=AsyncMock(return_value=False),
+    )
+    result = IOBoxScoutResult(
+        laser_offset_x_mm=51.0,
+        laser_offset_y_mm=0.0,
+        gripper_correction_x_mm=0.0,
+        gripper_correction_y_mm=0.0,
+        manual=IOBoxManualPose(None, None, (24.0, 465.0), None, 174.0, None, 52.0, 160.5),
+        y_line_x_mm=10.0,
+        plate_top_tool_y_mm=430.0,
+    )
+    scout = AsyncMock(return_value=result)
+    manager = LaserAutoCalibrationManager()
+    manager._scans_dir = str(tmp_path)
+
+    with (
+        patch.object(manager, '_validate_requested_scope_config'),
+        patch.object(scope_runner, 'run_io_box_scout', scout),
+        patch.object(scope_runner, 'save_root_config') as save,
+    ):
+        await manager.ensure_session_started(worker, LaserAutoCalibrationScope(mode='io_box'))
+        await manager._task
+
+    snapshot = await manager.get_snapshot()
+    assert snapshot.state == 'completed', snapshot.error
+    assert snapshot.io_box_scout is not None
+    assert snapshot.io_box_scout['plate_top_tool_y_mm'] == 430.0
+    assert scout.await_args.kwargs['x_travel_min_mm'] == 0.0
+    assert scout.await_args.kwargs['run_dir'].parent.name == 'io_box_scout'
+    save.assert_not_called()
