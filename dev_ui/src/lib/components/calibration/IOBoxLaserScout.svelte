@@ -165,45 +165,55 @@
 			</tr>
 			{#if result !== null}
 				<tr>
-					<th>measured</th>
-					<th>tool frame</th>
-					<th>manual</th>
-					<th>manual - measured</th>
+					<th>parameter</th>
+					<th>current</th>
+					<th>proposed</th>
+					<th>measured from</th>
 				</tr>
 				<tr>
-					<td>opening right edge x</td>
-					<td>{mm(result.opening_right_edge_tool_x_mm)}</td>
-					<td>multi-item x {mm(result.manual.pickup_multi_item?.[0])}, low x {mm(result.manual.pickup_low?.[0])}</td>
-					<td>{mm(result.multi_item_x_minus_opening_edge_mm)}, {mm(result.low_x_minus_opening_edge_mm)}</td>
+					<td>low / multi-item x</td>
+					<td>{mm(result.manual.pickup_low?.[0])} / {mm(result.manual.pickup_multi_item?.[0])}</td>
+					<td>{mm(result.proposed_x_mm)}</td>
+					<td>opening edge x {mm(result.opening_right_edge_tool_x_mm)}</td>
 				</tr>
 				<tr>
-					<td>plate bottom y</td>
-					<td>{mm(result.plate_bottom_tool_y_mm)}</td>
-					<td>multi-item y {mm(result.manual.pickup_multi_item?.[1])}</td>
-					<td>{mm(result.multi_item_y_minus_plate_bottom_mm)}</td>
+					<td>low y</td>
+					<td>{mm(result.manual.pickup_low?.[1])}</td>
+					<td>{mm(result.proposed_low_y_mm)}</td>
+					<td rowspan="2">plate bottom y {mm(result.plate_bottom_tool_y_mm)}</td>
 				</tr>
 				<tr>
-					<td>plate bottom y</td>
-					<td>{mm(result.plate_bottom_tool_y_mm)}</td>
-					<td>low y {mm(result.manual.pickup_low?.[1])}, high y {mm(result.manual.pickup_high?.[1])}</td>
-					<td>{mm(result.low_y_minus_plate_bottom_mm)}, {mm(result.high_y_minus_plate_bottom_mm)}</td>
+					<td>multi-item y</td>
+					<td>{mm(result.manual.pickup_multi_item?.[1])}</td>
+					<td>{mm(result.proposed_multi_item_y_mm)}</td>
 				</tr>
 				<tr>
-					<td>plate top y / thickness, right edge x</td>
-					<td>{mm(result.plate_top_tool_y_mm)} / {mm(result.plate_thickness_mm)}, {mm(result.plate_right_edge_tool_x_mm)}</td>
-					<td colspan="2">{result.plate_thickness_matches === false ? 'not the 8mm plate' : ''}</td>
+					<td>z io</td>
+					<td>{mm(result.manual.z_extension_io)}</td>
+					<td>{mm(result.proposed_z_io_mm)}</td>
+					<td rowspan="2">face depth {mm(result.plate_face_depth_mm)} as z {mm(result.face_equivalent_z_mm)}</td>
 				</tr>
 				<tr>
-					<td>face depth {mm(result.plate_face_depth_mm)} as z (multi-item stage)</td>
-					<td>{mm(result.face_equivalent_z_multi_item_mm)}</td>
-					<td>z multi-item {mm(result.manual.z_extension_io_multi_item)}</td>
-					<td>{mm(result.z_multi_item_minus_face_equivalent_mm)}</td>
+					<td>z multi-item</td>
+					<td>{mm(result.manual.z_extension_io_multi_item)}</td>
+					<td>{mm(result.proposed_z_multi_item_mm)}</td>
 				</tr>
 				<tr>
-					<td>face depth as z (io stage)</td>
-					<td>{mm(result.face_equivalent_z_io_mm)}</td>
-					<td>z io {mm(result.manual.z_extension_io)}</td>
-					<td>{mm(result.z_io_minus_face_equivalent_mm)}</td>
+					<td>stage io / multi-item</td>
+					<td>{mm(result.manual.stage_extension_io_box)} / {mm(result.manual.stage_extension_io_box_multi_item)}</td>
+					<td>{mm(result.proposed_stage_extension_mm)}</td>
+					<td>fixed</td>
+				</tr>
+				<tr>
+					<td>high y</td>
+					<td>{mm(result.manual.pickup_high?.[1])}</td>
+					<td>-</td>
+					<td>not derived</td>
+				</tr>
+				<tr>
+					<td colspan="4">
+						plate top y {mm(result.plate_top_tool_y_mm)}, thickness {mm(result.plate_thickness_mm)}{result.plate_thickness_matches === false ? ' (not the 8mm plate)' : ''}, plate right edge x {mm(result.plate_right_edge_tool_x_mm)}
+					</td>
 				</tr>
 				{#each result.notes as note}
 					<tr>

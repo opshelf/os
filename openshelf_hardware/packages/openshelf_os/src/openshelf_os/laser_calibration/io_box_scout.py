@@ -64,6 +64,19 @@ IO_BOX_Y_LINE_X_MM = 10.0
 IO_BOX_X_LINE_SPAN_RIGHT_OF_CENTER_MM = 180.0
 IO_BOX_ABOVE_PLATE_LINE_MM = 40.0
 IO_BOX_SCOUT_RESULT_FILENAME = "io_box_scout.json"
+# Where the box sits on every lb4a within a few mm, so the search window needs no hand-set pose.
+IO_BOX_NOMINAL_GRAB_MM = (23.0, 465.0)
+# Fixed offsets from the measured references to each IO box pose. The scouts of 2026-11-25
+# derived them from hand-calibrated poses: multi-item from lb4a-3 only (lb4a-9's was never
+# calibrated), low y and Z_EXTENSION_IO as the mean of lb4a-3 (+32.9, 0.0) and lb4a-9
+# (+31.4, -2.5). X follows lb4a-3: its opening edge matched lb4a-9's within 1mm while the
+# hand-set x differed by 3mm.
+IO_BOX_STAGE_EXTENSION_MM = 52.0
+IO_BOX_X_FROM_OPENING_EDGE_MM = -83.1
+IO_BOX_LOW_Y_FROM_PLATE_BOTTOM_MM = 32.1
+IO_BOX_MULTI_ITEM_Y_FROM_PLATE_BOTTOM_MM = 30.9
+IO_BOX_Z_IO_FROM_FACE_MM = -1.2
+IO_BOX_Z_MULTI_ITEM_FROM_FACE_MM = 10.5
 
 
 @dataclass
@@ -115,9 +128,15 @@ class IOBoxScoutResult:
 	plate_bottom_tool_y_mm: Optional[float] = None
 	plate_right_edge_tool_x_mm: Optional[float] = None
 	opening_right_edge_tool_x_mm: Optional[float] = None
-	# Gripper z a shelf face at the plate's depth would get, at each IO box stage extension.
-	face_equivalent_z_io_mm: Optional[float] = None
-	face_equivalent_z_multi_item_mm: Optional[float] = None
+	# Gripper z a shelf face at the plate's depth would get, at the IO box stage extension.
+	face_equivalent_z_mm: Optional[float] = None
+	# The pose the fixed offsets give for this machine. Proposed only: nothing is written.
+	proposed_x_mm: Optional[float] = None
+	proposed_low_y_mm: Optional[float] = None
+	proposed_multi_item_y_mm: Optional[float] = None
+	proposed_z_io_mm: Optional[float] = None
+	proposed_z_multi_item_mm: Optional[float] = None
+	proposed_stage_extension_mm: float = IO_BOX_STAGE_EXTENSION_MM
 	# Hand-calibrated value minus the measured reference: the fixed offsets to compare across machines.
 	multi_item_x_minus_opening_edge_mm: Optional[float] = None
 	low_x_minus_opening_edge_mm: Optional[float] = None
@@ -313,22 +332,26 @@ def summarize_io_box_scout(result: IOBoxScoutResult, *, z_model: Any) -> None:
 	if result.opening_right_edge_laser_x_mm is not None:
 		result.opening_right_edge_tool_x_mm = result.opening_right_edge_laser_x_mm + laser_to_tool_x_mm
 
+	if result.opening_right_edge_tool_x_mm is not None:
+		result.proposed_x_mm = result.opening_right_edge_tool_x_mm + IO_BOX_X_FROM_OPENING_EDGE_MM
+
+	if result.plate_bottom_tool_y_mm is not None:
+		result.proposed_low_y_mm = result.plate_bottom_tool_y_mm + IO_BOX_LOW_Y_FROM_PLATE_BOTTOM_MM
+		result.proposed_multi_item_y_mm = result.plate_bottom_tool_y_mm + IO_BOX_MULTI_ITEM_Y_FROM_PLATE_BOTTOM_MM
+
+	result.face_equivalent_z_mm = _face_equivalent_z(
+		model=z_model,
+		depth_mm=result.plate_face_depth_mm,
+		tool_x_mm=result.proposed_x_mm if result.proposed_x_mm is not None else IO_BOX_NOMINAL_GRAB_MM[0],
+		stage_mm=IO_BOX_STAGE_EXTENSION_MM,
+		z_place_mm=manual.z_extension_place,
+	)
+
+	if result.face_equivalent_z_mm is not None:
+		result.proposed_z_io_mm = result.face_equivalent_z_mm + IO_BOX_Z_IO_FROM_FACE_MM
+		result.proposed_z_multi_item_mm = result.face_equivalent_z_mm + IO_BOX_Z_MULTI_ITEM_FROM_FACE_MM
+
 	multi_item = manual.pickup_multi_item
-	tool_x_mm = multi_item[0] if multi_item is not None else result.plate_right_edge_tool_x_mm
-	result.face_equivalent_z_io_mm = _face_equivalent_z(
-		model=z_model,
-		depth_mm=result.plate_face_depth_mm,
-		tool_x_mm=tool_x_mm,
-		stage_mm=manual.stage_extension_io_box,
-		z_place_mm=manual.z_extension_place,
-	)
-	result.face_equivalent_z_multi_item_mm = _face_equivalent_z(
-		model=z_model,
-		depth_mm=result.plate_face_depth_mm,
-		tool_x_mm=tool_x_mm,
-		stage_mm=manual.stage_extension_io_box_multi_item,
-		z_place_mm=manual.z_extension_place,
-	)
 	low = manual.pickup_low
 	high = manual.pickup_high
 	result.multi_item_x_minus_opening_edge_mm = _difference(
@@ -340,9 +363,9 @@ def summarize_io_box_scout(result: IOBoxScoutResult, *, z_model: Any) -> None:
 	)
 	result.low_y_minus_plate_bottom_mm = _difference(None if low is None else low[1], result.plate_bottom_tool_y_mm)
 	result.high_y_minus_plate_bottom_mm = _difference(None if high is None else high[1], result.plate_bottom_tool_y_mm)
-	result.z_io_minus_face_equivalent_mm = _difference(manual.z_extension_io, result.face_equivalent_z_io_mm)
+	result.z_io_minus_face_equivalent_mm = _difference(manual.z_extension_io, result.face_equivalent_z_mm)
 	result.z_multi_item_minus_face_equivalent_mm = _difference(
-		manual.z_extension_io_multi_item, result.face_equivalent_z_multi_item_mm
+		manual.z_extension_io_multi_item, result.face_equivalent_z_mm
 	)
 
 
@@ -377,10 +400,11 @@ async def run_io_box_scout(
 	correction = get_gripper_xy_correction(scan_config=scan_config, side=StorageModuleSide.FRONT) or (0.0, 0.0)
 	z_model = get_wall_depth_to_gripper_z_model(scan_config=scan_config, side=StorageModuleSide.FRONT)
 	manual = await read_manual_io_box_pose(tool)
-	prior = manual.pickup_multi_item or manual.pickup_low
-
-	if prior is None:
-		raise ValueError("The IO box scout needs a hand-calibrated multi-item or low IO box pose to search around")
+	# An uncalibrated machine carries 0,0 poses; search around where the box always is instead.
+	prior = next(
+		(pose for pose in (manual.pickup_multi_item, manual.pickup_low) if pose is not None and pose[1] > 0.0),
+		IO_BOX_NOMINAL_GRAB_MM,
+	)
 
 	result = IOBoxScoutResult(
 		laser_offset_x_mm=float(laser_offset_x_mm),

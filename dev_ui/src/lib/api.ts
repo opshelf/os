@@ -779,8 +779,13 @@ export interface IOBoxScoutResult {
 	plate_face_depth_mm: number | null;
 	plate_right_edge_tool_x_mm: number | null;
 	opening_right_edge_tool_x_mm: number | null;
-	face_equivalent_z_io_mm: number | null;
-	face_equivalent_z_multi_item_mm: number | null;
+	face_equivalent_z_mm: number | null;
+	proposed_x_mm: number | null;
+	proposed_low_y_mm: number | null;
+	proposed_multi_item_y_mm: number | null;
+	proposed_z_io_mm: number | null;
+	proposed_z_multi_item_mm: number | null;
+	proposed_stage_extension_mm: number;
 	multi_item_x_minus_opening_edge_mm: number | null;
 	low_x_minus_opening_edge_mm: number | null;
 	multi_item_y_minus_plate_bottom_mm: number | null;
