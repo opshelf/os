@@ -6,8 +6,20 @@ from statistics import median
 
 from openshelf_os.laser_calibration.defaults import EXPECTED_HOLE_HEIGHT_MM, Z_OFFSET_MODEL_PARAM_TOLERANCE_MM
 
-from .models import *
+from uuid import uuid4
 
+from openshelf_os.laser_calibration.io_box_scout import run_io_box_scout
+
+from .models import *
+from .scan_runner import _clamp_bounds_to_axis_travel
+
+IO_BOX_SCOUT_DIR_NAME = "io_box_scout"
+
+
+def _axis_lower_limit_mm(motor: Any) -> float:
+    lower_mm = getattr(getattr(motor, "_params", None), "lower_lim", 0.0)
+
+    return float(lower_mm) if isinstance(lower_mm, (int, float)) else 0.0
 
 
 # Mid-travel X the abort parks at before homing, clear of the gantry uprights for the rotate home.
@@ -208,6 +220,12 @@ class ScopeRunnerMixin:
         worker: RobotWorker | None = None,
     ) -> None:
         scan_config = get_root_config().robot.grid.scan
+
+        if requested_scope.mode == "io_box":
+            # Measure-only: no grid, datum or z source is read, only the laser frame.
+            laser_module.require_laser_offsets(scan_config)
+            return
+
         front_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.FRONT)
         back_bounds = _build_bounds_for_side(scan_config, StorageModuleSide.BACK)
         _validate_laser_auto_calibration_config(
@@ -371,6 +389,11 @@ class ScopeRunnerMixin:
         worker: RobotWorker,
         requested_scope: LaserAutoCalibrationScope,
     ) -> None:
+        if requested_scope.mode == "io_box":
+            await self._run_io_box_scout(worker)
+
+            return
+
         if requested_scope.mode in ("all", "both"):
             await self._run_all_sides(
                 worker,
@@ -417,6 +440,43 @@ class ScopeRunnerMixin:
             return
 
         raise ValueError(f"Unsupported auto calibration scope: {requested_scope.mode}")
+
+    async def _run_io_box_scout(self, worker: RobotWorker) -> None:
+        scan_config = get_root_config().robot.grid.scan
+        tool = worker._robot._tool
+        travel = _clamp_bounds_to_axis_travel(
+            _build_bounds_for_side(scan_config, StorageModuleSide.FRONT),
+            tool,
+        )
+        run_id = uuid4().hex
+        run_dir = Path(self._scans_dir) / IO_BOX_SCOUT_DIR_NAME / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        self._run_dir = run_dir
+        await self._update_snapshot(
+            current_side=StorageModuleSide.FRONT,
+            current_stage="io-box-scout",
+            state="running",
+            run_id=run_id,
+        )
+        logger.info("laser_auto_calibration_io_box_scout_start run_dir=%s", str(run_dir))
+
+        try:
+            result = await run_io_box_scout(
+                robot=worker._robot,
+                scan_config=scan_config,
+                run_dir=run_dir,
+                # The box sits at the x origin, so the line starts at the axis limit rather than
+                # the storage scan's AUTO_SCAN_X_MIN_MM margin.
+                x_travel_min_mm=_axis_lower_limit_mm(tool._mx),
+                x_travel_max_mm=travel.x_max,
+                y_travel_min_mm=travel.y_min,
+                y_travel_max_mm=travel.y_max,
+                should_abort=self._should_abort_work,
+            )
+        finally:
+            self._run_dir = None
+
+        await self._update_snapshot(io_box_scout=result.to_dict(), current_stage="io-box-scout-complete")
 
     async def _run_all_sides(
         self,

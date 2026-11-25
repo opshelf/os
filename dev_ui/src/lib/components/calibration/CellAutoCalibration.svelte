@@ -17,8 +17,11 @@
 	} from '$lib/api';
 	import { formatLaserFailure, normalizeLaserAutoCalibrationSnapshot } from '$lib/api';
 	import { activeVocabulary, activeVocabularyStore, sideIndex, sideLabel } from '$lib/side';
-	import { createReconnectingEventSource, type ReconnectingEventSource } from '$lib/sse';
-	import { developerPin, ensureValidToken, isAuthenticated, loginAsDeveloper } from '$lib/auth';
+	import {
+		createReconnectingEventSource,
+		refreshStreamAuthentication,
+		type ReconnectingEventSource
+	} from '$lib/sse';
 	import { postToast } from '$lib/toasts';
 	import ErrorMessage from '$lib/components/ErrorMessage.svelte';
 	import StatusMessage from '$lib/components/StatusMessage.svelte';
@@ -583,28 +586,6 @@
 		}
 
 		didConnectStream();
-	}
-
-	async function refreshStreamAuthentication(): Promise<void> {
-		if (developerPin() === null) {
-			return;
-		}
-
-		try {
-			if (isAuthenticated() === true) {
-				await ensureValidToken();
-			} else {
-				await loginAsDeveloper();
-			}
-		} catch {
-			// A rejected refresh clears the session; sign in once more, as the stream
-			// helper does. If that fails too, the start request reports the rejection.
-			try {
-				await loginAsDeveloper();
-			} catch {
-				// The start request reports the rejection.
-			}
-		}
 	}
 
 	function didConnectStream(): void {

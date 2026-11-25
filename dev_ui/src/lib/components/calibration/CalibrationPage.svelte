@@ -6,6 +6,7 @@
 	import CellCalibrationTest from '$lib/components/calibration/CellCalibrationTest.svelte';
 	import CycleTestRunner from '$lib/components/calibration/CycleTestRunner.svelte';
 	import IOBoxCalibration from '$lib/components/calibration/IOBoxCalibration.svelte';
+	import IOBoxLaserScout from '$lib/components/calibration/IOBoxLaserScout.svelte';
 	import RotationCalibration from '$lib/components/calibration/RotationCalibration.svelte';
 	import FridgeCalibration from '$lib/components/calibration/FridgeCalibration.svelte';
 	import ShelfCalibration from '$lib/components/calibration/ShelfCalibration.svelte';
@@ -87,6 +88,7 @@
 	<CycleTestRunner />
 {:else if selectedView === 'io'}
 	<IOBoxCalibration />
+	<IOBoxLaserScout />
 {:else if selectedView === 'rotation'}
 	<RotationCalibration />
 {:else if selectedView === 'fridge' && hasFridge}

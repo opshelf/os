@@ -128,7 +128,7 @@ class LaserAutoCalibrationGripperResult(BaseModel):
 
 
 class LaserAutoCalibrationScope(BaseModel):
-    mode: Literal["all", "both", "side", "shelf", "cell"] = "all"
+    mode: Literal["all", "both", "side", "shelf", "cell", "io_box"] = "all"
     side: StorageModuleSide | None = None
     shelf_idx: int | None = None
     cell_idx: int | None = None
@@ -176,6 +176,8 @@ class LaserAutoCalibrationSnapshot(BaseModel):
     detected_cells: list[LaserAutoCalibrationCell] = Field(default_factory=list)
     reference_offset_results: list[LaserAutoCalibrationReferenceOffset] = Field(default_factory=list)
     gripper_open_position: LaserAutoCalibrationGripperResult | None = None
+    # Measure-only IO box scout (`IOBoxScoutResult.to_dict()`); never applied to the config.
+    io_box_scout: dict[str, Any] | None = None
     error: str | None = None
     error_detail: LaserAutoCalibrationErrorRef | None = None
 

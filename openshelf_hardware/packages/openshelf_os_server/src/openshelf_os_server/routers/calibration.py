@@ -202,7 +202,7 @@ def _build_laser_auto_calibration_scope(
 	side: StorageModuleSide | None,
 	shelf_idx: int | None,
 	cell_idx: int | None,
-	mode: Literal["all", "both"] | None,
+	mode: Literal["all", "both", "io_box"] | None,
 	include_gripper_calibration: bool | None = None,
 ) -> LaserAutoCalibrationScope:
 	if shelf_idx is not None and shelf_idx < 0:
@@ -210,6 +210,12 @@ def _build_laser_auto_calibration_scope(
 
 	if cell_idx is not None and cell_idx < 0:
 		raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "The cell number cannot be negative.")
+
+	if mode == "io_box":
+		if side is not None or shelf_idx is not None or cell_idx is not None or include_gripper_calibration is True:
+			raise api_error(status.HTTP_400_BAD_REQUEST, "request_invalid", "The IO box scout cannot be limited to a side, shelf or cell.")
+
+		return LaserAutoCalibrationScope(mode="io_box")
 
 	if mode == "both":
 		if side is not None or shelf_idx is not None or cell_idx is not None:
@@ -961,7 +967,7 @@ async def stream_laser_auto_calibration(
 	side: StorageModuleSide | None = None,
 	shelf_idx: int | None = None,
 	cell_idx: int | None = None,
-	mode: Literal["all", "both"] | None = None,
+	mode: Literal["all", "both", "io_box"] | None = None,
 	include_gripper_calibration: bool | None = None,
 	hold_y_enabled: bool | None = None,
 	subscribe_only: bool = False,
@@ -984,6 +990,9 @@ async def stream_laser_auto_calibration(
 	returns `400` before moving when one of those cells is missing or not marked manual, or
 	when a side or module run has no z source (z stall probe, a reference cell whose z was
 	saved with its stage extension, or a z model pinned to the live Z_EXTENSION_PLACE).
+	`mode=io_box` runs the measure-only IO box scout instead: it opens the IO box door, flies
+	laser lines over the scale plate and reports the plate edges and face depth next to the
+	hand-calibrated IO box poses in `io_box_scout`. It never changes the config.
 	"""
 	requested_scope = _build_laser_auto_calibration_scope(
 		side,

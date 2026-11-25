@@ -308,3 +308,25 @@ export function createReconnectingEventSource(
 		getSource: () => source
 	};
 }
+
+/** Renew the session before a request that opens a stream, signing in again if the refresh is
+ * rejected; the request itself reports a rejection that survives both. */
+export async function refreshStreamAuthentication(): Promise<void> {
+	if (developerPin() === null) {
+		return;
+	}
+
+	try {
+		if (isAuthenticated() === true) {
+			await ensureValidToken();
+		} else {
+			await loginAsDeveloper();
+		}
+	} catch {
+		try {
+			await loginAsDeveloper();
+		} catch {
+			// The start request reports the rejection.
+		}
+	}
+}

@@ -750,8 +750,47 @@ export async function calibrateGripperOpenPosition(side?: StorageModuleSide): Pr
 	});
 }
 
+export interface IOBoxScoutProfileSegment {
+	start_mm: number;
+	end_mm: number;
+	depth_mm: number | null;
+	sample_count: number;
+}
+
+/** Measure-only laser scout of the IO box scale plate; the device never applies it. */
+export interface IOBoxScoutResult {
+	manual: {
+		pickup_low: [number, number] | null;
+		pickup_high: [number, number] | null;
+		pickup_multi_item: [number, number] | null;
+		z_extension_io: number | null;
+		z_extension_io_multi_item: number | null;
+		stage_extension_io_box: number | null;
+		stage_extension_io_box_multi_item: number | null;
+		z_extension_place: number | null;
+	};
+	y_profile: IOBoxScoutProfileSegment[];
+	plate_x_profile: IOBoxScoutProfileSegment[];
+	above_plate_x_profile: IOBoxScoutProfileSegment[];
+	plate_top_tool_y_mm: number | null;
+	plate_bottom_tool_y_mm: number | null;
+	plate_thickness_mm: number | null;
+	plate_thickness_matches: boolean | null;
+	plate_face_depth_mm: number | null;
+	plate_right_edge_tool_x_mm: number | null;
+	face_equivalent_z_io_mm: number | null;
+	face_equivalent_z_multi_item_mm: number | null;
+	multi_item_x_minus_right_edge_mm: number | null;
+	multi_item_y_minus_plate_top_mm: number | null;
+	low_y_minus_plate_top_mm: number | null;
+	high_y_minus_plate_top_mm: number | null;
+	z_io_minus_face_equivalent_mm: number | null;
+	z_multi_item_minus_face_equivalent_mm: number | null;
+	notes: string[];
+}
+
 export interface LaserAutoCalibrationRequest {
-	mode: 'all' | 'both' | 'side' | 'shelf' | 'cell';
+	mode: 'all' | 'both' | 'side' | 'shelf' | 'cell' | 'io_box';
 	side?: StorageModuleSide;
 	shelf_idx?: number;
 	cell_idx?: number;
@@ -805,6 +844,7 @@ export interface LaserAutoCalibrationSnapshot {
 	detected_cells: LaserAutoCalibrationCell[];
 	reference_offset_results: LaserAutoCalibrationReferenceOffset[];
 	gripper_open_position?: GripperOpenPositionResult | null;
+	io_box_scout?: IOBoxScoutResult | null;
 	error: string | null;
 	error_detail?: {
 		phase: string | null;
@@ -827,6 +867,11 @@ export function buildLaserAutoCalibrationStreamUrl(
 
 	if (request.mode === 'both') {
 		url.searchParams.set('mode', 'both');
+		return url.toString();
+	}
+
+	if (request.mode === 'io_box') {
+		url.searchParams.set('mode', 'io_box');
 		return url.toString();
 	}
 
