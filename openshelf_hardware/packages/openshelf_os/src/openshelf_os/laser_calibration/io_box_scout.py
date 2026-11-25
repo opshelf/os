@@ -73,17 +73,15 @@ IO_BOX_EDGE_MIN_READS = 3
 IO_BOX_SCOUT_RESULT_FILENAME = "io_box_scout.json"
 # Where the box sits on every lb4a within a few mm, so the search window needs no hand-set pose.
 IO_BOX_NOMINAL_GRAB_MM = (23.0, 465.0)
-# Fixed offsets from the measured references to each IO box pose. The scouts of 2026-11-25
-# derived them from hand-calibrated poses: multi-item from lb4a-3 only (lb4a-9's was never
-# calibrated), low y and Z_EXTENSION_IO as the mean of lb4a-3 (+32.9, 0.0) and lb4a-9
-# (+31.4, -2.5). X follows lb4a-3: its opening edge matched lb4a-9's within 1mm while the
-# hand-set x differed by 3mm.
+# Fixed offsets from the measured references to each IO box pose: lb4a-3's hand-calibrated
+# poses minus the mean of three slow-pass scouts (2026-11-25, edges repeated within 0.07mm).
+# lb4a-3 carries the current plate; lb4a-9's older plate is left out.
 IO_BOX_STAGE_EXTENSION_MM = 52.0
-IO_BOX_X_FROM_OPENING_EDGE_MM = -83.1
-IO_BOX_LOW_Y_FROM_PLATE_BOTTOM_MM = 32.1
-IO_BOX_MULTI_ITEM_Y_FROM_PLATE_BOTTOM_MM = 30.9
-IO_BOX_Z_IO_FROM_FACE_MM = -1.2
-IO_BOX_Z_MULTI_ITEM_FROM_FACE_MM = 10.5
+IO_BOX_X_FROM_OPENING_EDGE_MM = -84.07
+IO_BOX_LOW_Y_FROM_PLATE_BOTTOM_MM = 34.26
+IO_BOX_MULTI_ITEM_Y_FROM_PLATE_BOTTOM_MM = 32.26
+IO_BOX_Z_IO_FROM_FACE_MM = 0.08
+IO_BOX_Z_MULTI_ITEM_FROM_FACE_MM = 10.58
 
 
 @dataclass
