@@ -136,4 +136,8 @@ async def test_io_box_scout_measures_the_plate_and_leaves_the_door_homed(monkeyp
 	assert tool.retract_count == 1
 	saved = json.loads((tmp_path / scout_module.IO_BOX_SCOUT_RESULT_FILENAME).read_text())
 	assert saved["plate_top_laser_y_mm"] == pytest.approx(result.plate_top_laser_y_mm)
-	assert (tmp_path / "flying_samples.jsonl").exists()
+	# Both reference edges come from the slow passes, flown after the fast lines found them.
+	assert result.plate_bottom_fast_laser_y_mm is not None
+	assert result.opening_right_edge_fast_laser_x_mm is not None
+	labels = {json.loads(line)["label"] for line in (tmp_path / "flying_samples.jsonl").read_text().splitlines()}
+	assert {"io_box_plate_bottom_slow_y", "io_box_opening_slow_x"} <= labels

@@ -63,6 +63,13 @@ IO_BOX_Y_LINE_X_MM = 10.0
 # The X lines run from the carriage's left limit to this far right of the predicted box centre.
 IO_BOX_X_LINE_SPAN_RIGHT_OF_CENTER_MM = 180.0
 IO_BOX_ABOVE_PLATE_LINE_MM = 40.0
+# Each depth is placed feed x capture latency (~42ms) back along the line, and that latency
+# varies with the bus. At the 40mm/s fine feed the reference edges spread ~1.9mm between runs
+# (lb4a-3, 2026-11-25), so each is flown again slowly across this window around the fast edge.
+IO_BOX_EDGE_PASS_FEED_MM_S = 5.0
+IO_BOX_EDGE_PASS_HALF_WINDOW_MM = 6.0
+# A side of an edge counts once this many consecutive reads agree on it.
+IO_BOX_EDGE_MIN_READS = 3
 IO_BOX_SCOUT_RESULT_FILENAME = "io_box_scout.json"
 # Where the box sits on every lb4a within a few mm, so the search window needs no hand-set pose.
 IO_BOX_NOMINAL_GRAB_MM = (23.0, 465.0)
@@ -118,6 +125,9 @@ class IOBoxScoutResult:
 	above_plate_x_profile: list[ProfileSegment] = field(default_factory=list)
 	plate_top_laser_y_mm: Optional[float] = None
 	plate_bottom_laser_y_mm: Optional[float] = None
+	# The fast-pass edges the slow passes refined, kept to show how far they moved.
+	plate_bottom_fast_laser_y_mm: Optional[float] = None
+	opening_right_edge_fast_laser_x_mm: Optional[float] = None
 	plate_thickness_mm: Optional[float] = None
 	plate_thickness_matches: Optional[bool] = None
 	plate_face_depth_mm: Optional[float] = None
@@ -255,6 +265,36 @@ def find_right_edge_in_profile(
 			return None
 
 		return float(segment.end_mm)
+
+	return None
+
+
+def find_return_transition(
+	samples: list[Any],
+	*,
+	to_return: bool,
+	min_reads: int = IO_BOX_EDGE_MIN_READS,
+) -> Optional[float]:
+	"""Midpoint of the first change between no return and a surface, in flight order.
+
+	`to_return` False finds a surface ending (the plate's bottom edge flown downward), True
+	finds a surface starting (the opening's edge flown out of the box). Both sides must hold
+	for `min_reads` consecutive reads, so one stray read cannot place the edge.
+	"""
+	reads = [
+		(sample_scan_position_mm(sample), float(sample.depth_mm) > GAP_DEPTH_THRESHOLD_MM)
+		for sample in samples
+		if sample.depth_mm is not None
+	]
+
+	for index in range(min_reads, len(reads) - min_reads + 1):
+		before = reads[index - min_reads : index]
+		after = reads[index : index + min_reads]
+
+		if all(is_return is not to_return for _, is_return in before) and all(
+			is_return is to_return for _, is_return in after
+		):
+			return (before[-1][0] + after[0][0]) / 2.0
 
 	return None
 
@@ -430,8 +470,10 @@ async def run_io_box_scout(
 	capture_latency_s = get_flying_capture_latency_s(scan_config)
 	y_rpm = resolve_axis_rpm_for_feed(tool._my, feed_mm_s)
 	x_rpm = resolve_axis_rpm_for_feed(tool._mx, feed_mm_s)
+	slow_y_rpm = resolve_axis_rpm_for_feed(tool._my, IO_BOX_EDGE_PASS_FEED_MM_S)
+	slow_x_rpm = resolve_axis_rpm_for_feed(tool._mx, IO_BOX_EDGE_PASS_FEED_MM_S)
 
-	if y_rpm is None or x_rpm is None:
+	if y_rpm is None or x_rpm is None or slow_y_rpm is None or slow_x_rpm is None:
 		raise ValueError("The gantry axes need a configured mm per revolution for a flying scan")
 
 	print_status(
@@ -440,15 +482,24 @@ async def run_io_box_scout(
 		f"x_lines=({x_left_mm:.2f},{x_right_mm:.2f})"
 	)
 
-	async def didFly(label: str, axis: str, start_mm: float, end_mm: float, fixed_mm: float) -> FlyingScanLine:
+	async def didFly(
+		label: str,
+		axis: str,
+		start_mm: float,
+		end_mm: float,
+		fixed_mm: float,
+		*,
+		is_slow: bool = False,
+	) -> FlyingScanLine:
 		raise_if_cancelled(should_abort)
+		rpms = {("y", False): y_rpm, ("x", False): x_rpm, ("y", True): slow_y_rpm, ("x", True): slow_x_rpm}
 		line = await scan_axis_flying(
 			tool=tool,
 			axis=axis,
 			start_mm=start_mm,
 			end_mm=end_mm,
 			fixed_mm=fixed_mm,
-			rpm=y_rpm if axis == "y" else x_rpm,
+			rpm=int(rpms[(axis, is_slow)]),
 			progress_label=label,
 			should_abort=should_abort,
 			capture_latency_s=capture_latency_s,
@@ -485,6 +536,26 @@ async def run_io_box_scout(
 		)
 		result.plate_face_depth_mm = plate.depth_mm
 
+		result.plate_bottom_fast_laser_y_mm = result.plate_bottom_laser_y_mm
+		bottom_line = await didFly(
+			"io_box_plate_bottom_slow_y",
+			"y",
+			result.plate_bottom_fast_laser_y_mm + IO_BOX_EDGE_PASS_HALF_WINDOW_MM,
+			max(result.plate_bottom_fast_laser_y_mm - IO_BOX_EDGE_PASS_HALF_WINDOW_MM, y_travel_min_mm),
+			y_line_x_mm,
+			is_slow=True,
+		)
+		slow_bottom_mm = find_return_transition(bottom_line.samples, to_return=False)
+
+		if slow_bottom_mm is None:
+			result.notes.append("the slow pass did not see the plate's bottom edge: the fast edge is used")
+		else:
+			result.plate_bottom_laser_y_mm = slow_bottom_mm
+			result.plate_thickness_mm = result.plate_top_laser_y_mm - slow_bottom_mm
+			result.plate_thickness_matches = (
+				abs(result.plate_thickness_mm - IO_BOX_PLATE_THICKNESS_MM) <= IO_BOX_PLATE_THICKNESS_TOLERANCE_MM
+			)
+
 		if result.plate_thickness_matches is False:
 			result.notes.append(
 				f"the surface above the drop-off is {result.plate_thickness_mm:.1f}mm tall, "
@@ -511,6 +582,23 @@ async def run_io_box_scout(
 
 		if result.opening_right_edge_laser_x_mm is None:
 			result.notes.append("the line above the plate did not start inside the opening: opening edge not found")
+			return result
+
+		result.opening_right_edge_fast_laser_x_mm = result.opening_right_edge_laser_x_mm
+		opening_line = await didFly(
+			"io_box_opening_slow_x",
+			"x",
+			max(result.opening_right_edge_fast_laser_x_mm - IO_BOX_EDGE_PASS_HALF_WINDOW_MM, x_travel_min_mm),
+			result.opening_right_edge_fast_laser_x_mm + IO_BOX_EDGE_PASS_HALF_WINDOW_MM,
+			above_y_mm,
+			is_slow=True,
+		)
+		slow_opening_mm = find_return_transition(opening_line.samples, to_return=True)
+
+		if slow_opening_mm is None:
+			result.notes.append("the slow pass did not see the opening edge: the fast edge is used")
+		else:
+			result.opening_right_edge_laser_x_mm = slow_opening_mm
 
 		return result
 	except BaseException:
