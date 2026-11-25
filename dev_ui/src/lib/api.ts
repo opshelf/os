@@ -778,12 +778,14 @@ export interface IOBoxScoutResult {
 	plate_thickness_matches: boolean | null;
 	plate_face_depth_mm: number | null;
 	plate_right_edge_tool_x_mm: number | null;
+	opening_right_edge_tool_x_mm: number | null;
 	face_equivalent_z_io_mm: number | null;
 	face_equivalent_z_multi_item_mm: number | null;
-	multi_item_x_minus_right_edge_mm: number | null;
-	multi_item_y_minus_plate_top_mm: number | null;
-	low_y_minus_plate_top_mm: number | null;
-	high_y_minus_plate_top_mm: number | null;
+	multi_item_x_minus_opening_edge_mm: number | null;
+	low_x_minus_opening_edge_mm: number | null;
+	multi_item_y_minus_plate_bottom_mm: number | null;
+	low_y_minus_plate_bottom_mm: number | null;
+	high_y_minus_plate_bottom_mm: number | null;
 	z_io_minus_face_equivalent_mm: number | null;
 	z_multi_item_minus_face_equivalent_mm: number | null;
 	notes: string[];

@@ -6,10 +6,11 @@ and its left side are out of reach. The scout therefore measures what the beam c
 reports it next to the hand-calibrated IO box poses, so the fixed offsets between the two can
 be derived and compared across machines before anything is applied:
 
-- a descending Y line inside the box finds the scale plate's front face, its top and its
-  bottom edge (below the plate the beam reads nothing),
+- a descending Y line inside the box finds the scale plate's front face: the first surface the
+  beam meets coming down out of the empty box. Its bottom edge (below it the beam reads
+  nothing) is the Y reference; the top edge can be chamfered, so it is only a sanity check,
 - an X line across the plate face finds the plate's right edge,
-- an X line above the plate records the box interior for review,
+- an X line above the plate finds the right edge of the box opening, the X reference,
 - the face depth goes through the front wall-depth model to the gripper z a shelf face at
   that depth would get.
 
@@ -54,8 +55,6 @@ IO_BOX_PLATE_THICKNESS_TOLERANCE_MM = 3.0
 IO_BOX_PROFILE_DEPTH_STEP_MM = 3.0
 # Shorter segments are single-read noise and are left out of the profile.
 IO_BOX_PROFILE_MIN_SAMPLES = 2
-# Below the plate the beam has to read nothing for at least this long to count as its bottom edge.
-IO_BOX_PLATE_MIN_GAP_BELOW_MM = 10.0
 # Vertical line window around the hand-calibrated multi-item grab y, in the laser frame.
 IO_BOX_Y_LINE_ABOVE_GRAB_MM = 60.0
 IO_BOX_Y_LINE_BELOW_GRAB_MM = 160.0
@@ -110,18 +109,21 @@ class IOBoxScoutResult:
 	plate_thickness_matches: Optional[bool] = None
 	plate_face_depth_mm: Optional[float] = None
 	plate_right_edge_laser_x_mm: Optional[float] = None
+	opening_right_edge_laser_x_mm: Optional[float] = None
 	# Tool frame: the gantry position that puts the gripper where the beam measured.
 	plate_top_tool_y_mm: Optional[float] = None
 	plate_bottom_tool_y_mm: Optional[float] = None
 	plate_right_edge_tool_x_mm: Optional[float] = None
+	opening_right_edge_tool_x_mm: Optional[float] = None
 	# Gripper z a shelf face at the plate's depth would get, at each IO box stage extension.
 	face_equivalent_z_io_mm: Optional[float] = None
 	face_equivalent_z_multi_item_mm: Optional[float] = None
 	# Hand-calibrated value minus the measured reference: the fixed offsets to compare across machines.
-	multi_item_x_minus_right_edge_mm: Optional[float] = None
-	multi_item_y_minus_plate_top_mm: Optional[float] = None
-	low_y_minus_plate_top_mm: Optional[float] = None
-	high_y_minus_plate_top_mm: Optional[float] = None
+	multi_item_x_minus_opening_edge_mm: Optional[float] = None
+	low_x_minus_opening_edge_mm: Optional[float] = None
+	multi_item_y_minus_plate_bottom_mm: Optional[float] = None
+	low_y_minus_plate_bottom_mm: Optional[float] = None
+	high_y_minus_plate_bottom_mm: Optional[float] = None
 	z_io_minus_face_equivalent_mm: Optional[float] = None
 	z_multi_item_minus_face_equivalent_mm: Optional[float] = None
 	notes: list[str] = field(default_factory=list)
@@ -191,35 +193,32 @@ def segment_depth_profile(
 	return segments
 
 
-def find_plate_in_descending_profile(
-	segments: list[ProfileSegment],
-	*,
-	expected_top_mm: float,
-	min_gap_below_mm: float = IO_BOX_PLATE_MIN_GAP_BELOW_MM,
-) -> Optional[ProfileSegment]:
-	"""The surface directly above a no-return run, nearest the expected plate top.
+def find_plate_in_descending_profile(segments: list[ProfileSegment]) -> Optional[ProfileSegment]:
+	"""The first surface below the open box, ending in a drop to no return.
 
-	`segments` run top to bottom. The plate's bottom edge is where the beam drops off the
-	plate's front face into nothing; the face segment's upper end is the plate top.
+	`segments` run top to bottom and start inside the empty box, where the beam reads nothing.
+	Parts under the plate can return the beam too, so the plate is the first surface down, not
+	the one above the longest gap.
 	"""
-	candidates: list[ProfileSegment] = []
-
-	for index in range(len(segments) - 1):
-		surface = segments[index]
-		below = segments[index + 1]
-
-		if surface.is_return is False or below.is_return is True:
-			continue
-
-		if abs(below.start_mm - below.end_mm) < min_gap_below_mm and index + 1 < len(segments) - 1:
-			continue
-
-		candidates.append(surface)
-
-	if len(candidates) == 0:
+	if len(segments) < 3 or segments[0].is_return is True:
 		return None
 
-	return min(candidates, key=lambda segment: abs(max(segment.start_mm, segment.end_mm) - expected_top_mm))
+	plate = segments[1]
+
+	if plate.is_return is False or segments[2].is_return is True:
+		return None
+
+	return plate
+
+
+def find_opening_right_edge(segments: list[ProfileSegment]) -> Optional[float]:
+	"""Right end of the no-return run the line starts in, inside the box opening."""
+	ordered = sorted(segments, key=lambda segment: min(segment.start_mm, segment.end_mm))
+
+	if len(ordered) < 2 or ordered[0].is_return is True:
+		return None
+
+	return max(ordered[0].start_mm, ordered[0].end_mm)
 
 
 def find_right_edge_in_profile(
@@ -306,10 +305,13 @@ def summarize_io_box_scout(result: IOBoxScoutResult, *, z_model: Any) -> None:
 			result.plate_bottom_laser_y_mm - result.laser_offset_y_mm + result.gripper_correction_y_mm
 		)
 
+	laser_to_tool_x_mm = result.laser_offset_x_mm + result.gripper_correction_x_mm
+
 	if result.plate_right_edge_laser_x_mm is not None:
-		result.plate_right_edge_tool_x_mm = (
-			result.plate_right_edge_laser_x_mm + result.laser_offset_x_mm + result.gripper_correction_x_mm
-		)
+		result.plate_right_edge_tool_x_mm = result.plate_right_edge_laser_x_mm + laser_to_tool_x_mm
+
+	if result.opening_right_edge_laser_x_mm is not None:
+		result.opening_right_edge_tool_x_mm = result.opening_right_edge_laser_x_mm + laser_to_tool_x_mm
 
 	multi_item = manual.pickup_multi_item
 	tool_x_mm = multi_item[0] if multi_item is not None else result.plate_right_edge_tool_x_mm
@@ -327,18 +329,17 @@ def summarize_io_box_scout(result: IOBoxScoutResult, *, z_model: Any) -> None:
 		stage_mm=manual.stage_extension_io_box_multi_item,
 		z_place_mm=manual.z_extension_place,
 	)
-	result.multi_item_x_minus_right_edge_mm = _difference(
-		None if multi_item is None else multi_item[0], result.plate_right_edge_tool_x_mm
+	low = manual.pickup_low
+	high = manual.pickup_high
+	result.multi_item_x_minus_opening_edge_mm = _difference(
+		None if multi_item is None else multi_item[0], result.opening_right_edge_tool_x_mm
 	)
-	result.multi_item_y_minus_plate_top_mm = _difference(
-		None if multi_item is None else multi_item[1], result.plate_top_tool_y_mm
+	result.low_x_minus_opening_edge_mm = _difference(None if low is None else low[0], result.opening_right_edge_tool_x_mm)
+	result.multi_item_y_minus_plate_bottom_mm = _difference(
+		None if multi_item is None else multi_item[1], result.plate_bottom_tool_y_mm
 	)
-	result.low_y_minus_plate_top_mm = _difference(
-		None if manual.pickup_low is None else manual.pickup_low[1], result.plate_top_tool_y_mm
-	)
-	result.high_y_minus_plate_top_mm = _difference(
-		None if manual.pickup_high is None else manual.pickup_high[1], result.plate_top_tool_y_mm
-	)
+	result.low_y_minus_plate_bottom_mm = _difference(None if low is None else low[1], result.plate_bottom_tool_y_mm)
+	result.high_y_minus_plate_bottom_mm = _difference(None if high is None else high[1], result.plate_bottom_tool_y_mm)
 	result.z_io_minus_face_equivalent_mm = _difference(manual.z_extension_io, result.face_equivalent_z_io_mm)
 	result.z_multi_item_minus_face_equivalent_mm = _difference(
 		manual.z_extension_io_multi_item, result.face_equivalent_z_multi_item_mm
@@ -444,11 +445,12 @@ async def run_io_box_scout(
 		y_line = await didFly("io_box_y", "y", y_top_mm, y_bottom_mm, y_line_x_mm)
 		result.y_profile = segment_depth_profile(y_line.samples)
 		print_status(_profile_text("io_box_y", result.y_profile))
-		expected_top_mm = prior_laser_y_mm - (IO_BOX_Y_LINE_BELOW_GRAB_MM / 4.0)
-		plate = find_plate_in_descending_profile(result.y_profile, expected_top_mm=expected_top_mm)
+		plate = find_plate_in_descending_profile(result.y_profile)
 
 		if plate is None:
-			result.notes.append("no surface with nothing below it on the vertical line: plate not found")
+			result.notes.append(
+				"the vertical line did not start in the open box and drop off a first surface: plate not found"
+			)
 			return result
 
 		result.plate_top_laser_y_mm = max(plate.start_mm, plate.end_mm)
@@ -481,6 +483,10 @@ async def run_io_box_scout(
 		above_line = await didFly("io_box_above_plate_x", "x", x_right_mm, x_left_mm, above_y_mm)
 		result.above_plate_x_profile = segment_depth_profile(above_line.samples)
 		print_status(_profile_text("io_box_above_plate_x", result.above_plate_x_profile))
+		result.opening_right_edge_laser_x_mm = find_opening_right_edge(result.above_plate_x_profile)
+
+		if result.opening_right_edge_laser_x_mm is None:
+			result.notes.append("the line above the plate did not start inside the opening: opening edge not found")
 
 		return result
 	except BaseException:

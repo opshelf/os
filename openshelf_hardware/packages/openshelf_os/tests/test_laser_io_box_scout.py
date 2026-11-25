@@ -10,18 +10,23 @@ from test_laser_flying_scan import FakeAxisMotor, FakeFlyingTool
 PLATE_TOP_Y_MM = 420.0
 PLATE_BOTTOM_Y_MM = 412.0
 PLATE_RIGHT_EDGE_X_MM = 55.0
-PLATE_FACE_DEPTH_MM = 95.0
+PLATE_FACE_DEPTH_MM = 10.5
+OPENING_RIGHT_EDGE_X_MM = 62.0
 
 
 def io_box_depth_mm(x_mm: float, y_mm: float) -> float:
-	"""Front laser view of the box: plate face, nothing below it, the box interior above."""
-	if y_mm < PLATE_BOTTOM_Y_MM:
-		return 0.0
+	"""Front laser view as lb4a-3 showed it: the empty box and the gaps read nothing (0), the
+	plate face, a gap, then a part under the plate that returns the beam too."""
+	if y_mm > PLATE_TOP_Y_MM:
+		return 0.0 if x_mm <= OPENING_RIGHT_EDGE_X_MM else 11.0
 
-	if y_mm <= PLATE_TOP_Y_MM:
+	if y_mm >= PLATE_BOTTOM_Y_MM:
 		return PLATE_FACE_DEPTH_MM if x_mm <= PLATE_RIGHT_EDGE_X_MM else 0.0
 
-	return 300.0 if x_mm <= PLATE_RIGHT_EDGE_X_MM + 5.0 else 60.0
+	if PLATE_BOTTOM_Y_MM - 8.0 <= y_mm <= PLATE_BOTTOM_Y_MM - 3.0:
+		return 11.3
+
+	return 0.0
 
 
 class FakeIOBoxTool(FakeFlyingTool):
@@ -76,8 +81,9 @@ def build_scan_config() -> SimpleNamespace:
 
 @pytest.mark.asyncio
 async def test_io_box_scout_measures_the_plate_and_leaves_the_door_homed(monkeypatch, tmp_path) -> None:
-	"""Measures plate top, bottom, right edge and face depth in the tool frame, and closes the
-	door again: a scout that left the door open would leave the box unguarded."""
+	"""Takes the first surface below the open box as the plate (not a part under it), measures
+	its edges and the opening edge in the tool frame, and closes the door again: a scout that
+	left the door open would leave the box unguarded."""
 	params = {
 		"PICKUP_POSITION_L": [24, 467],
 		"PICKUP_POSITION_H": [24, 700],
@@ -111,12 +117,14 @@ async def test_io_box_scout_measures_the_plate_and_leaves_the_door_homed(monkeyp
 	assert result.plate_thickness_matches is True
 	assert result.plate_face_depth_mm == pytest.approx(PLATE_FACE_DEPTH_MM)
 	assert result.plate_right_edge_laser_x_mm == pytest.approx(PLATE_RIGHT_EDGE_X_MM, abs=1.0)
+	assert result.opening_right_edge_laser_x_mm == pytest.approx(OPENING_RIGHT_EDGE_X_MM, abs=1.0)
 	# Tool frame: x adds the laser offset and correction, y adds the correction.
-	assert result.plate_right_edge_tool_x_mm == pytest.approx(PLATE_RIGHT_EDGE_X_MM + 51.0 - 2.0, abs=1.0)
-	assert result.multi_item_y_minus_plate_top_mm == pytest.approx(465.0 - (PLATE_TOP_Y_MM + 1.0), abs=1.0)
+	assert result.opening_right_edge_tool_x_mm == pytest.approx(OPENING_RIGHT_EDGE_X_MM + 51.0 - 2.0, abs=1.0)
+	assert result.multi_item_x_minus_opening_edge_mm == pytest.approx(24.0 - (OPENING_RIGHT_EDGE_X_MM + 49.0), abs=1.0)
+	assert result.low_y_minus_plate_bottom_mm == pytest.approx(467.0 - (PLATE_BOTTOM_Y_MM + 1.0), abs=1.0)
 	# Face depth through the model, carried from stage 46 to the IO box's 52.
-	assert result.face_equivalent_z_multi_item_mm == pytest.approx(160.5 + 95.0 - 1.0 - 6.0)
-	assert result.z_multi_item_minus_face_equivalent_mm == pytest.approx(174.0 - 248.5)
+	assert result.face_equivalent_z_io_mm == pytest.approx(160.5 + 10.5 - 1.0 - 6.0)
+	assert result.z_io_minus_face_equivalent_mm == pytest.approx(163.5 - 164.0)
 	assert io_box.events == ["open", "home"]
 	assert tool.retract_count == 1
 	saved = json.loads((tmp_path / scout_module.IO_BOX_SCOUT_RESULT_FILENAME).read_text())

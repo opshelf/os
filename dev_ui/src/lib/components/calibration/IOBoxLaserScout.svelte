@@ -171,26 +171,26 @@
 					<th>manual - measured</th>
 				</tr>
 				<tr>
-					<td>plate right edge x</td>
-					<td>{mm(result.plate_right_edge_tool_x_mm)}</td>
-					<td>multi-item x {mm(result.manual.pickup_multi_item?.[0])}</td>
-					<td>{mm(result.multi_item_x_minus_right_edge_mm)}</td>
+					<td>opening right edge x</td>
+					<td>{mm(result.opening_right_edge_tool_x_mm)}</td>
+					<td>multi-item x {mm(result.manual.pickup_multi_item?.[0])}, low x {mm(result.manual.pickup_low?.[0])}</td>
+					<td>{mm(result.multi_item_x_minus_opening_edge_mm)}, {mm(result.low_x_minus_opening_edge_mm)}</td>
 				</tr>
 				<tr>
-					<td>plate top y</td>
-					<td>{mm(result.plate_top_tool_y_mm)}</td>
+					<td>plate bottom y</td>
+					<td>{mm(result.plate_bottom_tool_y_mm)}</td>
 					<td>multi-item y {mm(result.manual.pickup_multi_item?.[1])}</td>
-					<td>{mm(result.multi_item_y_minus_plate_top_mm)}</td>
+					<td>{mm(result.multi_item_y_minus_plate_bottom_mm)}</td>
 				</tr>
 				<tr>
-					<td>plate top y</td>
-					<td>{mm(result.plate_top_tool_y_mm)}</td>
+					<td>plate bottom y</td>
+					<td>{mm(result.plate_bottom_tool_y_mm)}</td>
 					<td>low y {mm(result.manual.pickup_low?.[1])}, high y {mm(result.manual.pickup_high?.[1])}</td>
-					<td>{mm(result.low_y_minus_plate_top_mm)}, {mm(result.high_y_minus_plate_top_mm)}</td>
+					<td>{mm(result.low_y_minus_plate_bottom_mm)}, {mm(result.high_y_minus_plate_bottom_mm)}</td>
 				</tr>
 				<tr>
-					<td>plate bottom y / thickness</td>
-					<td>{mm(result.plate_bottom_tool_y_mm)} / {mm(result.plate_thickness_mm)}</td>
+					<td>plate top y / thickness, right edge x</td>
+					<td>{mm(result.plate_top_tool_y_mm)} / {mm(result.plate_thickness_mm)}, {mm(result.plate_right_edge_tool_x_mm)}</td>
 					<td colspan="2">{result.plate_thickness_matches === false ? 'not the 8mm plate' : ''}</td>
 				</tr>
 				<tr>
