@@ -2201,9 +2201,10 @@ async def move_motor(
                 if await worker._robot._tool.is_rotation_at_position(request.position_mm):
                     return {"success": True, "motor": motor_name, "position_mm": request.position_mm}
 
-                original_x = await worker._robot._tool.ensure_safe_rotation_x_position()
+                # A manual turn may straighten the tool after an X crash left X unhomed.
+                original_x = await worker._robot._tool.ensure_safe_rotation_x_position(allow_unhomed_x=True)
                 try:
-                    await worker._robot._tool.ensure_safe_rotation_stage_extension()
+                    await worker._robot._tool.ensure_safe_rotation_stage_extension(allow_unhomed_x=True)
                     await motor.move_to_position(request.position_mm)
                 finally:
                     await worker._robot._tool.restore_safe_rotation_x_position(original_x)
@@ -2219,9 +2220,16 @@ async def move_motor(
     except RotationClearanceError as exc:
         logger.warning("Motor move refused", exc_info=exc)
         message = "The tool is not clear to move. Retract the tool and home the rotation, then try again."
-        if motor_name == "rotate" and getattr(worker._robot._tool._mx, "_is_homed", True) is False:
-            # After an X crash this reads as a dead rotate; rotate home homes X first.
-            message = "The tool cannot turn while the x axis is not homed. Home the rotation; it homes the x axis first."
+        x_motor = getattr(worker._robot._tool, "_mx", None)
+        if motor_name == "rotate" and x_motor is not None and getattr(x_motor, "_is_homed", True) is False:
+            # The tool never drives an unhomed X into the rotation window; the engineer jogs it there.
+            tool = worker._robot._tool
+            if tool._is_in_rotation_x_window(x_motor, float(await x_motor.get_position())) is False:
+                window_min_mm, window_max_mm = tool._rotation_x_window(x_motor)
+                message = (
+                    "The x axis is not homed, so it is not moved for the turn. Move the x axis to between "
+                    f"{window_min_mm:.0f} and {window_max_mm:.0f} mm, then turn the tool."
+                )
         raise api_error(status.HTTP_409_CONFLICT, "rotation_blocked", message) from exc
     except Exception as exc:
         logger.warning("Motor move failed: %s", exc, exc_info=exc)
