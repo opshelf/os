@@ -325,6 +325,48 @@ async def test_x_motion_guard_refusal_is_a_409_not_a_retry_503(client: AsyncClie
 
 
 @pytest.mark.anyio
+async def test_rotate_move_trusts_an_unhomed_x_reading(client: AsyncClient) -> None:
+	"""lb4a-4: after an X crash the engineer must be able to straighten the tool from the dev UI."""
+	mock_worker = _mock_worker()
+	mock_worker._robot._tool._mx._is_homed = False
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post("/api/robot/debug/motors/rotate/move", json={"position_mm": 182.0})
+
+	assert response.status_code == 200
+	tool = mock_worker._robot._tool
+	tool.ensure_safe_rotation_x_position.assert_awaited_once_with(allow_unhomed_x=True)
+	tool.ensure_safe_rotation_stage_extension.assert_awaited_once_with(allow_unhomed_x=True)
+	mock_worker._robot._get_motor_by_name("rotate").move_to_position.assert_awaited_once_with(182.0)
+
+
+@pytest.mark.anyio
+async def test_rotate_move_with_unhomed_x_outside_the_window_says_where_to_jog_x(client: AsyncClient) -> None:
+	from openshelf_os.exceptions import RotationClearanceError
+
+	mock_worker = _mock_worker()
+	tool = mock_worker._robot._tool
+	tool._mx._is_homed = False
+	tool._mx.get_position = AsyncMock(return_value=120.0)
+	tool._rotation_x_window = MagicMock(return_value=(200.0, 750.0))
+	tool._is_in_rotation_x_window = MagicMock(return_value=False)
+	tool.ensure_safe_rotation_x_position = AsyncMock(
+		side_effect=RotationClearanceError("Unsafe tool clearance for rotation: unhomed x_axis=120.000mm is outside the rotation window 200.0-750.0mm")
+	)
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post("/api/robot/debug/motors/rotate/move", json={"position_mm": 182.0})
+
+	assert response.status_code == 409
+	detail = response.json()["detail"]
+	assert detail["code"] == "rotation_blocked"
+	assert "between 200 and 750 mm" in detail["message"]
+	mock_worker._robot._get_motor_by_name("rotate").move_to_position.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_home_fridge_door_uses_home_and_close_sequence(client: AsyncClient) -> None:
 	fridge_door = _mock_motor(100.0)
 	mock_worker = _mock_worker({"fridge_door": fridge_door})

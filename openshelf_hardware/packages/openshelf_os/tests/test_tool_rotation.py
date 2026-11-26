@@ -531,3 +531,53 @@ async def test_back_scan_entry_turns_at_the_scan_x_instead_of_a_fixed_mid_rail_s
     await motion.enter_scan_mode(tool, StorageModuleSide.BACK, scan_config=None)
 
     assert events == ["move:300.0", "rotate:184.0"]
+
+
+@pytest.mark.asyncio
+async def test_unhomed_x_refuses_rotation_as_a_clearance_refusal() -> None:
+    # lb4a-4 2026-11-26: after an X crash every manual rotate came back as a generic motor
+    # failure, so the operator could not tell that X (not rotate) needed a home.
+    tool = Tool.__new__(Tool)
+    tool._mx = _mock_x_motor(limit=950.0, position=475.0)
+    tool._mx._is_homed = False
+
+    with pytest.raises(RotationClearanceError, match="x_axis is not homed"):
+        await tool.ensure_safe_rotation_x_position()
+
+    tool._mx.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("x_mm", [200.0, 475.0, 750.0])
+async def test_manual_rotate_trusts_an_unhomed_x_inside_the_window_without_moving_it(x_mm: float) -> None:
+    # An X crash leaves X unhomed; the engineer jogs X into the window and straightens the tool.
+    tool, _ = _tool_for_x_window_check(x_mm=x_mm, is_homed=False)
+    del tool.ensure_safe_rotation_x_position
+
+    assert await tool.ensure_safe_rotation_x_position(allow_unhomed_x=True) is None
+    await tool.ensure_safe_rotation_stage_extension(allow_unhomed_x=True)
+
+    tool._mx.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("x_mm", [0.0, 150.0, 800.0])
+async def test_manual_rotate_refuses_an_unhomed_x_outside_the_window_without_moving_it(x_mm: float) -> None:
+    # After a power cycle an unhomed X reads 0 wherever it stands, so it is never driven on that reading.
+    tool, _ = _tool_for_x_window_check(x_mm=x_mm, is_homed=False)
+    del tool.ensure_safe_rotation_x_position
+
+    with pytest.raises(RotationClearanceError, match="outside the rotation window 200.0-750.0mm"):
+        await tool.ensure_safe_rotation_x_position(allow_unhomed_x=True)
+    with pytest.raises(RotationClearanceError, match="outside the rotation window 200.0-750.0mm"):
+        await tool.ensure_safe_rotation_stage_extension(allow_unhomed_x=True)
+
+    tool._mx.move_to_position.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rotation_clearance_still_requires_a_homed_x_by_default() -> None:
+    tool, _ = _tool_for_x_window_check(x_mm=475.0, is_homed=False)
+
+    with pytest.raises(RotationClearanceError, match="x_axis is not homed"):
+        await tool.ensure_safe_rotation_stage_extension()

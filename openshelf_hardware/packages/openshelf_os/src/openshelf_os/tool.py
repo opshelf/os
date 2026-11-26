@@ -1182,12 +1182,13 @@ class Tool:
 
         return await self.is_rotation_at_position(float(rotation_back))
 
-    async def ensure_safe_rotation_stage_extension(self) -> bool:
+    async def ensure_safe_rotation_stage_extension(self, *, allow_unhomed_x: bool = False) -> bool:
         """Prepare the stage and verify both tool axes are safe for rotation.
 
         Some machines require a minimum stage extension while rotating. All
         others use the configured maximum stage and Z extensions as a
-        retract-before-rotate interlock.
+        retract-before-rotate interlock. `allow_unhomed_x`: see
+        ensure_safe_rotation_x_position.
         """
         did_extend = False
         stage_position: float | None = None
@@ -1219,6 +1220,7 @@ class Tool:
         await self._assert_rotation_clearance(
             stage_position=stage_position,
             stage_extension_enabled=stage_extension_enabled,
+            allow_unhomed_x=allow_unhomed_x,
         )
         return did_extend
 
@@ -1228,6 +1230,7 @@ class Tool:
         stage_position: float | None = None,
         stage_extension_enabled: bool | None = None,
         before_x_motion: bool = False,
+        allow_unhomed_x: bool = False,
     ) -> None:
         # before_x_motion: only check that Z and the stage are retracted enough for X to move
         # sideways; the stage may sit anywhere up to its safe extension and X is not checked.
@@ -1297,7 +1300,7 @@ class Tool:
         # ends of its travel; ensure_safe_rotation_x_position moves it there before rotating.
         x_motor = None if before_x_motion else getattr(self, "_mx", None)
         if x_motor is not None:
-            if getattr(x_motor, "_is_homed", True) is False:
+            if getattr(x_motor, "_is_homed", True) is False and allow_unhomed_x is False:
                 unsafe.append("x_axis is not homed")
             else:
                 x_position = float(await x_motor.get_position())
@@ -1325,7 +1328,13 @@ class Tool:
             <= window_max_mm + ROTATION_SAFE_X_TOLERANCE_MM
         )
 
-    async def ensure_safe_rotation_x_position(self) -> Optional[float]:
+    async def ensure_safe_rotation_x_position(self, *, allow_unhomed_x: bool = False) -> Optional[float]:
+        """Move a homed X into the rotation window; return the X to restore, or None.
+
+        `allow_unhomed_x` is for a manual turn after an X crash: it trusts the unhomed X reading,
+        but only to check the window. It never drives X on that reading, which reads 0 wherever
+        the carriage stands after a drive power cycle.
+        """
         x_motor = getattr(self, "_mx", None)
 
         if x_motor is None:
@@ -1341,7 +1350,15 @@ class Tool:
             )
 
         if getattr(x_motor, "_is_homed", True) is False:
-            raise MotorError("X axis is not homed; home X before rotating")
+            if allow_unhomed_x is False:
+                raise RotationClearanceError("Unsafe tool clearance for rotation: x_axis is not homed")
+            x_mm = float(await x_motor.get_position())
+            if self._is_in_rotation_x_window(x_motor, x_mm) is False:
+                raise RotationClearanceError(
+                    f"Unsafe tool clearance for rotation: unhomed x_axis={x_mm:.3f}mm is outside "
+                    f"the rotation window {window_min_mm:.1f}-{window_max_mm:.1f}mm"
+                )
+            return None
 
         current_x = await x_motor.get_position()
 
