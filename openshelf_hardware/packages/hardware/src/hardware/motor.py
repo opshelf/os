@@ -2924,7 +2924,9 @@ class Motor():
     ) -> None:
         """`provisional` homes where the axis may stop short on an obstruction: it skips the home
         limit check, and the caller must home again verified. It also skips the motion guard, but
-        only while the axis is unhomed (no coordinates to trust); a homed axis still runs it."""
+        only while the axis is unhomed (no coordinates to trust); a homed axis still runs it. It
+        seeks from where the axis stands: the pre-home approach is an ordinary move that faults
+        on the very obstruction the seek may stop on."""
         if self._motion_guard is not None and (provisional is False or self._is_homed is True):
             await self._motion_guard(None)
 
@@ -2948,7 +2950,9 @@ class Motor():
             home_dir = self._get_home_direction()
             home_rpm = self._params.home_rpm or self._params.ret_rpm
 
-            approach_moved = await self._run_pre_home_approach(pre_home_clearance_mm, skip_pre_home_approach)
+            approach_moved = False if provisional else await self._run_pre_home_approach(
+                pre_home_clearance_mm, skip_pre_home_approach
+            )
 
             # Wait before the homing overrides go on, so a blocked axis does not sit on them.
             if self._safety:

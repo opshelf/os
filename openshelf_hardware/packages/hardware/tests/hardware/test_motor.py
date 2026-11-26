@@ -862,6 +862,21 @@ async def test_provisional_home_of_an_unhomed_axis_skips_the_guard_and_the_limit
 
 
 @pytest.mark.asyncio
+async def test_provisional_home_seeks_from_where_the_axis_stands_without_the_approach(mock_controller):
+    # lb4a-4 2026-11-26: after a crash turned the tool, every rotate home ran X's approach to
+    # 5 mm, which stalled on the turned tool at 6.07 mm and faulted before the seek could start.
+    motor = _limit_checked_home_motor(mock_controller, AsyncMock())
+    motor._move_near_home = AsyncMock(side_effect=AssertionError("approach ran"))
+
+    await motor.home(provisional=True)
+
+    motor._move_near_home.assert_not_awaited()
+    motor._start_path_zero.assert_awaited_once()
+    assert motor.is_homed() is True
+    assert motor._is_home_provisional is True
+
+
+@pytest.mark.asyncio
 async def test_provisional_home_of_a_homed_axis_runs_the_guard_and_is_refused(mock_controller):
     # A homed X has coordinates, so a rotated tool must not be allowed to drive it onto a stop.
     guard = AsyncMock(side_effect=RuntimeError("tool rotated"))
