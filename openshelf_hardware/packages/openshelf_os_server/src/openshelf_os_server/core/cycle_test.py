@@ -1,4 +1,4 @@
-"""Server-side port of provision/scripts/cycle_test.py.
+"""Server-side cycle test runner.
 
 The runner drives the device through its own public API over an in-process ASGI
 transport, authenticated as the user who started the run, so every store, retrieve,

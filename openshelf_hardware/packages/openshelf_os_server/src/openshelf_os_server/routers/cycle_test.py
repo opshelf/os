@@ -42,7 +42,7 @@ async def start_cycle_test(
 ) -> CycleTestSnapshot:
 	"""Start a store/retrieve cycle test.
 
-	Server-side equivalent of `provision/scripts/cycle_test.py`: walks the enabled storage
+	Walks the enabled storage
 	cells, creating test items and running real store/retrieve commands (or calibration
 	quick tests) through this API as the calling user, and stops at the first failure or
 	hardware fault. Store and retrieve modes run only in development or mock mode because they
