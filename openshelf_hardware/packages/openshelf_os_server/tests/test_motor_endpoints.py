@@ -325,6 +325,30 @@ async def test_x_motion_guard_refusal_is_a_409_not_a_retry_503(client: AsyncClie
 
 
 @pytest.mark.anyio
+async def test_rotate_move_with_unhomed_x_names_x_and_rotate_home(client: AsyncClient) -> None:
+	"""lb4a-4: after an X crash the rotate move failed as a generic 503 the engineer read as a dead rotate."""
+	from openshelf_os.exceptions import RotationClearanceError
+
+	mock_worker = _mock_worker()
+	tool = mock_worker._robot._tool
+	tool._mx._is_homed = False
+	tool.ensure_safe_rotation_x_position = AsyncMock(
+		side_effect=RotationClearanceError("Unsafe tool clearance for rotation: x_axis is not homed")
+	)
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()):
+		with patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+			response = await client.post("/api/robot/debug/motors/rotate/move", json={"position_mm": 182.0})
+
+	assert response.status_code == 409
+	detail = response.json()["detail"]
+	assert detail["code"] == "rotation_blocked"
+	assert "x axis is not homed" in detail["message"]
+	assert "Home the rotation" in detail["message"]
+	mock_worker._robot._get_motor_by_name("rotate").move_to_position.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_home_fridge_door_uses_home_and_close_sequence(client: AsyncClient) -> None:
 	fridge_door = _mock_motor(100.0)
 	mock_worker = _mock_worker({"fridge_door": fridge_door})

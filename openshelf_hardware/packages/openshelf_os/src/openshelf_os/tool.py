@@ -1341,7 +1341,7 @@ class Tool:
             )
 
         if getattr(x_motor, "_is_homed", True) is False:
-            raise MotorError("X axis is not homed; home X before rotating")
+            raise RotationClearanceError("Unsafe tool clearance for rotation: x_axis is not homed")
 
         current_x = await x_motor.get_position()
 

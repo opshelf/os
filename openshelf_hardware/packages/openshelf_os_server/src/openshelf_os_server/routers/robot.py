@@ -2218,11 +2218,11 @@ async def move_motor(
         raise api_error(status.HTTP_409_CONFLICT, "tool_not_retracted", "") from exc
     except RotationClearanceError as exc:
         logger.warning("Motor move refused", exc_info=exc)
-        raise api_error(
-            status.HTTP_409_CONFLICT,
-            "rotation_blocked",
-            "The tool is not clear to move. Retract the tool and home the rotation, then try again.",
-        ) from exc
+        message = "The tool is not clear to move. Retract the tool and home the rotation, then try again."
+        if motor_name == "rotate" and getattr(worker._robot._tool._mx, "_is_homed", True) is False:
+            # After an X crash this reads as a dead rotate; rotate home homes X first.
+            message = "The tool cannot turn while the x axis is not homed. Home the rotation; it homes the x axis first."
+        raise api_error(status.HTTP_409_CONFLICT, "rotation_blocked", message) from exc
     except Exception as exc:
         logger.warning("Motor move failed: %s", exc, exc_info=exc)
         raise hardware_api_error(

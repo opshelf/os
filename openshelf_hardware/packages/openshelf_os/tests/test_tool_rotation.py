@@ -531,3 +531,17 @@ async def test_back_scan_entry_turns_at_the_scan_x_instead_of_a_fixed_mid_rail_s
     await motion.enter_scan_mode(tool, StorageModuleSide.BACK, scan_config=None)
 
     assert events == ["move:300.0", "rotate:184.0"]
+
+
+@pytest.mark.asyncio
+async def test_unhomed_x_refuses_rotation_as_a_clearance_refusal() -> None:
+    # lb4a-4 2026-11-26: after an X crash every manual rotate came back as a generic motor
+    # failure, so the operator could not tell that X (not rotate) needed a home.
+    tool = Tool.__new__(Tool)
+    tool._mx = _mock_x_motor(limit=950.0, position=475.0)
+    tool._mx._is_homed = False
+
+    with pytest.raises(RotationClearanceError, match="x_axis is not homed"):
+        await tool.ensure_safe_rotation_x_position()
+
+    tool._mx.move_to_position.assert_not_awaited()
