@@ -1474,3 +1474,37 @@ async def test_motion_is_refused_before_any_trigger_when_the_trial_restore_fails
     assert enable_writes(mock_controller) == [0]
     calls = mock_controller.write_single_register.await_args_list
     assert not [c for c in calls if c.args[1] == 0x6002]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["move", "move_same_pos", "move_no_wait", "jog"])
+async def test_faulted_motor_refuses_motion_immediately_before_safety_or_bus_io(mock_controller, entry):
+    from hardware.curtain import MotionSafetyInterlock
+
+    safety = MotionSafetyInterlock()
+    safety.block()
+    motor = Motor(mock_controller, make_motor_params(), safety=safety)
+    motor._cur_pos = 100.0
+    motor.set_fault()
+    mock_controller.write_single_register.reset_mock()
+
+    async def start():
+        if entry == "move":
+            await motor.move_to_position(150.0)
+        elif entry == "move_same_pos":
+            await motor.move_to_position(100.0)
+        elif entry == "move_no_wait":
+            await motor.move_to_position_no_wait(150.0)
+        else:
+            await motor.jog(10.0)
+
+    with pytest.raises(MotorError) as exc_info:
+        await asyncio.wait_for(start(), timeout=1.0)
+
+    assert getattr(exc_info.value, "fault_context", None) == {
+        "motor_id": 1,
+        "simulated": True,
+        "status": "FAULT",
+    }
+    mock_controller.write_single_register.assert_not_awaited()
+    mock_controller.read_holding_registers.assert_not_awaited()

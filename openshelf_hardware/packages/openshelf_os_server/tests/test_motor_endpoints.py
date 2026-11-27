@@ -514,3 +514,207 @@ async def test_y_descent_trial_refuses_a_speed_above_the_configured_rpm_before_m
 	assert response.status_code == expected_status
 	y_axis.move_to_position.assert_not_awaited()
 	y_axis.trial_drive_settings.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_crashed_blocked_interlock_rejects_move_immediately_and_allows_recovery_home(
+	client: AsyncClient,
+) -> None:
+	"""Opening and acknowledging cabinet doors while crashed leaves _motion_safety blocked.
+	Manual move must fail immediately instead of hanging in wait_clear() under _motion_lock,
+	while manual home must evaluate safety, run recovery, and refuse when a guard is active."""
+	from hardware.curtain import MotionSafetyInterlock
+	from openshelf_os.robot.worker import RobotWorker
+	from openshelf_os_server.core.manual_motion import (
+		ensure_robot_available_for_manual_motion,
+		get_manual_motion_operation,
+	)
+
+	safety = MotionSafetyInterlock()
+
+	class _InterlockMotor:
+		def __init__(self, motor_id: int) -> None:
+			self._motor_id = motor_id
+			self._simulated_fault = False
+			self.homed = False
+
+		async def get_position(self) -> float:
+			return 50.0
+
+		async def clear_alarm(self) -> None:
+			return None
+
+		async def move_to_position(self, _position_mm: float) -> None:
+			await safety.wait_clear()
+
+		async def home(self) -> None:
+			await safety.wait_clear()
+			self.homed = True
+
+	class _InterlockRobot:
+		def __init__(self) -> None:
+			self._motion_safety = safety
+			self._motors = {"x_axis": _InterlockMotor(1)}
+			self._tool = MagicMock()
+			self._fridge = None
+			self.curtain_blocked = False
+			self.io_door_open = False
+			self.cabinet_doors: dict[str, bool] = {"open": False}
+
+		def _get_motor_by_name(self, name: str):
+			return self._motors.get(name)
+
+		def get_motor_names(self) -> dict[str, list[str]]:
+			return {"io": [], "tool": ["x_axis"]}
+
+		def block_motion_for_safety(self) -> None:
+			self._motion_safety.block()
+
+		def release_motion_safety(self) -> None:
+			self._motion_safety.unblock()
+
+		def get_curtain_state(self) -> bool:
+			return self.curtain_blocked
+
+		async def refresh_door_state(self) -> bool:
+			return self.io_door_open
+
+		def get_cabinet_door_state(self) -> dict[str, bool]:
+			return self.cabinet_doors
+
+		def get_operation_context(self) -> None:
+			return None
+
+		async def read_tray_held(self) -> bool:
+			return False
+
+		async def get_status(self) -> None:
+			return None
+
+	robot = _InterlockRobot()
+	RobotWorker._instance = None
+	worker = RobotWorker(robot)
+	try:
+		worker.set_needs_home("Motor 1 faulted", axes=["x_axis"])
+		worker.set_crash_state("Motor 1 faulted")
+		# Cabinet door opened and acknowledged while crashed: worker safety flags clear,
+		# but the interlock stays engaged until recovery.
+		robot.cabinet_doors = {"open": True}
+		await worker._evaluate_safety_guard()
+		robot.cabinet_doors = {"open": False}
+		assert (await worker.acknowledge_safety_guard())["accepted"] is True
+		assert worker._safety_motion_blocked is False
+		assert safety.blocked is True
+
+		with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()), \
+			patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=worker):
+			move = await asyncio.wait_for(
+				client.post("/api/robot/debug/motors/x_axis/move", json={"position_mm": 120.0}),
+				timeout=1.0,
+			)
+			assert move.status_code == 409
+			assert move.json()["detail"]["code"] == "robot_crashed"
+			assert get_manual_motion_operation() is None
+
+			probe = await asyncio.wait_for(client.post("/api/robot/debug/motors/probe"), timeout=1.0)
+			assert probe.status_code == 200
+			assert probe.json()["busy"] is False
+
+			# Light curtain active with IO door open must still refuse recovery home immediately.
+			robot.curtain_blocked = True
+			robot.io_door_open = True
+			blocked_home = await asyncio.wait_for(
+				client.post("/api/robot/debug/motors/x_axis/home"),
+				timeout=1.0,
+			)
+			assert blocked_home.status_code == 409
+			assert safety.blocked is True
+			assert robot._motors["x_axis"].homed is False
+			# Config save / restart (allow_safety_interruption=True) must still be permitted
+			# while crashed, under a safety interruption, and with _motion_safety blocked.
+			ensure_robot_available_for_manual_motion(worker, allow_safety_interruption=True)
+
+			robot.curtain_blocked = False
+			robot.io_door_open = False
+			assert (await worker.acknowledge_safety_guard())["accepted"] is True
+
+			# E-stop active must refuse recovery home immediately.
+			worker._is_estop_active = True
+			estop_home = await asyncio.wait_for(
+				client.post("/api/robot/debug/motors/x_axis/home"),
+				timeout=1.0,
+			)
+			assert estop_home.status_code == 409
+			assert estop_home.json()["detail"]["code"] == "emergency_stop"
+			assert safety.blocked is True
+			ensure_robot_available_for_manual_motion(worker, allow_safety_interruption=True)
+
+			worker._is_estop_active = False
+			home = await asyncio.wait_for(
+				client.post("/api/robot/debug/motors/x_axis/home"),
+				timeout=1.0,
+			)
+			assert home.status_code == 200
+			assert robot._motors["x_axis"].homed is True
+			assert worker._is_crashed is False
+			assert safety.blocked is False
+	finally:
+		RobotWorker._instance = None
+
+
+@pytest.mark.anyio
+async def test_move_faulted_motor_returns_error_immediately_even_at_current_position(
+	client: AsyncClient,
+) -> None:
+	from types import SimpleNamespace
+	from hardware.motor import Motor
+
+	controller = MagicMock()
+	controller.write_single_register = AsyncMock()
+	controller.read_holding_registers = AsyncMock()
+	controller.read_holding_register_block = AsyncMock()
+
+	def _real_faulted_motor(motor_id: int, name: str, pos: float) -> Motor:
+		params = SimpleNamespace(
+			motor_id=motor_id,
+			motor_name=name,
+			lim=300.0,
+			lower_lim=0.0,
+			home_rpm=100,
+			ret_rpm=200,
+			rpm=300,
+			accel=100,
+			Ip=10,
+			dr=0,
+			mpr=80.0,
+			phys_at_zero=0.0,
+			phys_at_max=300.0,
+			ppr=10000,
+		)
+		motor = Motor(controller, params)
+		motor._cur_pos = pos
+		motor.set_fault()
+		return motor
+
+	x_axis = _real_faulted_motor(1, "x_axis", 100.0)
+	rotate = _real_faulted_motor(5, "rotate", 180.0)
+	mock_worker = _mock_worker({"x_axis": x_axis, "rotate": rotate})
+	mock_worker._robot._tool.is_rotation_at_position = AsyncMock(return_value=True)
+
+	with patch("openshelf_os_server.routers.robot.get_settings", return_value=_mock_settings()), \
+		patch("openshelf_os_server.routers.robot.get_robot_worker", return_value=mock_worker):
+		x_response = await client.post(
+			"/api/robot/debug/motors/x_axis/move",
+			json={"position_mm": 100.0},
+		)
+		rotate_response = await client.post(
+			"/api/robot/debug/motors/rotate/move",
+			json={"position_mm": 180.0},
+		)
+
+	assert x_response.status_code == 503
+	assert x_response.json()["detail"]["code"] == "motor_fault"
+	assert rotate_response.status_code == 503
+	assert rotate_response.json()["detail"]["code"] == "motor_fault"
+	mock_worker._robot._tool.is_rotation_at_position.assert_not_awaited()
+	controller.write_single_register.assert_not_awaited()

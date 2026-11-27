@@ -1274,10 +1274,32 @@ class Motor():
                 raise MotorError(f"Alarm {alarm_code} persists after clear attempt")
 
             self._status = MotorStatus.STOPPED
+            self._last_fault_context = None
         except Exception as e:
             if not isinstance(e, MotorError):
                 raise MotorError(f"Failed to clear motor alarm: {str(e)}") from e
             raise
+
+    def ensure_not_faulted(self) -> None:
+        """Refuse new moves while this axis is faulted, until clear_alarm() or home() resets it."""
+        if self._simulated_fault is False and self._status not in TERMINAL_MOTOR_STATUSES:
+            return
+
+        fault_type = "simulated fault" if self._simulated_fault else self._status.name.lower()
+        error = MotorError(
+            f"Motor {self._motor_id} is in {fault_type} state; clear the alarm or home it before moving"
+        )
+        fault_context = (
+            dict(self._last_fault_context)
+            if isinstance(self._last_fault_context, dict)
+            else {
+                "motor_id": self._motor_id,
+                "simulated": self._simulated_fault,
+                "status": self._status.name,
+            }
+        )
+        setattr(error, "fault_context", fault_context)
+        raise error
 
     def set_fault(self) -> None:
         self._simulated_fault = True
@@ -1446,6 +1468,8 @@ class Motor():
         *,
         homing: bool = False,
     ) -> None:
+        self.ensure_not_faulted()
+
         if self._motion_guard is not None:
             await self._motion_guard(value)
 
@@ -1460,6 +1484,8 @@ class Motor():
         homing: bool = False,
     ) -> None:
         try:
+            self.ensure_not_faulted()
+
             if self._safety:
                 if self._safety.blocked:
                     self._logger.debug(
@@ -1508,6 +1534,8 @@ class Motor():
         rpm: Optional[int] = None,
         accel: Optional[int] = None,
     ) -> bool:
+        self.ensure_not_faulted()
+
         if self._motion_guard is not None:
             await self._motion_guard(value)
 
@@ -1529,6 +1557,8 @@ class Motor():
 
     async def jog(self, dist: float, rpm: Optional[int] = None, homing: bool = False) -> MotorStatus:
         try:
+            self.ensure_not_faulted()
+
             physical_dist = self._params.logical_to_physical_delta(dist)
             ppr = getattr(self._params, "ppr", 10000)
             pulse = motor_helpers.rev_to_pulse(motor_helpers.mm_to_rev(physical_dist, self._params.mpr), ppr)
@@ -1842,6 +1872,9 @@ class Motor():
                 "flight_recorder_path": dump_path,
             },
         )
+        self._status = MotorStatus.FAULT
+        self._hard_stopped = True
+        self._is_homed = False
         return MotorStatus.FAULT
 
     def _is_completion_stable(self, state: MotionWaitState, homing: bool) -> bool:

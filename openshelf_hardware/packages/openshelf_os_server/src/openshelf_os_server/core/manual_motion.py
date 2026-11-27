@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, cast
+from contextlib import AsyncExitStack, asynccontextmanager
+from typing import Any, AsyncIterator, Callable, NoReturn, cast
 
 from fastapi import HTTPException, status
 
-from openshelf_os.robot.worker import TRAY_ON_TOOL_CODE
+from openshelf_os.robot.worker import RobotWorker, TRAY_ON_TOOL_CODE
 from openshelf_os_server.errors import api_error, error_detail
 
 _motion_lock = asyncio.Lock()
@@ -48,11 +48,35 @@ def _has_pending_commands(worker_state: dict[str, Any]) -> bool:
 	return any(operation is not current_operation for operation in queued_commands)
 
 
+def _is_motion_interlock_blocked(worker) -> bool:
+	robot = getattr(worker, "_robot", None)
+	motion_safety = getattr(robot, "_motion_safety", None)
+	return getattr(motion_safety, "blocked", False) is True
+
+
+def _raise_motion_interlock_conflict(worker_state: dict[str, Any]) -> NoReturn:
+	if worker_state.get("_is_estop_active") is True:
+		raise api_error(status.HTTP_409_CONFLICT, "emergency_stop", "")
+	if worker_state.get("_is_crashed") is True:
+		raise api_error(status.HTTP_409_CONFLICT, "robot_crashed", "")
+	if worker_state.get("_is_emergency_stopped") is True:
+		raise api_error(status.HTTP_409_CONFLICT, "home_required", "")
+	raise HTTPException(
+		status_code=status.HTTP_409_CONFLICT,
+		detail=_conflict_detail(
+			"Robot is paused by a safety interruption",
+			reason="safety_interruption",
+		),
+	)
+
+
 def ensure_robot_available_for_manual_motion(
 	worker,
 	*,
 	allow_safety_interruption: bool = False,
 	allow_doors_interruption: bool = False,
+	allow_motion_interlock: bool = False,
+	allow_stopped_interlock: bool = False,
 ) -> None:
 	worker_state = cast(dict[str, Any], getattr(worker, "__dict__", {}))
 	current_command = worker_state.get("_current_command")
@@ -82,6 +106,24 @@ def ensure_robot_available_for_manual_motion(
 				reason="safety_interruption",
 			),
 		)
+
+	if (
+		worker_state.get("_is_estop_active") is True
+		and allow_safety_interruption is False
+		and allow_motion_interlock is False
+		and allow_doors_interruption is False
+	):
+		raise api_error(status.HTTP_409_CONFLICT, "emergency_stop", "")
+
+	if (
+		_is_motion_interlock_blocked(worker) is True
+		and allow_safety_interruption is False
+		and allow_motion_interlock is False
+		and allow_stopped_interlock is False
+		and allow_doors_interruption is False
+	):
+		_raise_motion_interlock_conflict(worker_state)
+
 	if current_command is not None:
 		raise HTTPException(
 			status_code=status.HTTP_409_CONFLICT,
@@ -134,6 +176,8 @@ async def manual_motion_guard(
 	*,
 	allow_tray_on_tool: bool = False,
 	allow_doors_interruption: bool = False,
+	allow_motion_interlock: bool = False,
+	allow_stopped_recovery: bool = False,
 ) -> AsyncIterator[None]:
 	"""allow_tray_on_tool admits the actions that recover a held tray: single-motor moves and the IO door
 	from the debug motor controls, release, homing, clearing alarms, power cycling, probing and unlocking
@@ -142,12 +186,21 @@ async def manual_motion_guard(
 	allow_doors_interruption admits actions that move no gantry axis while the open cabinet doors
 	hold the interlock: the stop recovery unlocks the cabinet and opens the gripper fingers with the
 	doors open, so the operator can support the tray. Any other active source, or a running or
-	queued command, still refuses them."""
+	queued command, still refuses them.
+
+	allow_motion_interlock admits non-motion diagnostic/recovery actions (probing, clearing alarms,
+	power cycling) that never wait on the hardware motion interlock.
+
+	allow_stopped_recovery admits manual homing routes while the robot is crashed or emergency-stopped,
+	evaluating safety guards and temporarily releasing the motion interlock just as a queued home does."""
 	global _current_operation
 
 	if worker is not None:
 		ensure_robot_available_for_manual_motion(
-			worker, allow_doors_interruption=allow_doors_interruption
+			worker,
+			allow_doors_interruption=allow_doors_interruption,
+			allow_motion_interlock=allow_motion_interlock,
+			allow_stopped_interlock=allow_stopped_recovery,
 		)
 
 	if _motion_lock.locked() is True and _should_wait_for_probe(operation) is not True:
@@ -162,15 +215,26 @@ async def manual_motion_guard(
 	await _motion_lock.acquire()
 
 	try:
-		if worker is not None:
-			ensure_robot_available_for_manual_motion(
-				worker, allow_doors_interruption=allow_doors_interruption
-			)
-			if allow_tray_on_tool is False:
-				await ensure_no_tray_on_tool(worker)
+		async with AsyncExitStack() as stack:
+			if worker is not None:
+				if allow_stopped_recovery is True and isinstance(worker, RobotWorker):
+					ensure_robot_available_for_manual_motion(
+						worker,
+						allow_doors_interruption=allow_doors_interruption,
+						allow_motion_interlock=allow_motion_interlock,
+						allow_stopped_interlock=True,
+					)
+					await stack.enter_async_context(worker.manual_recovery_motion())
+				ensure_robot_available_for_manual_motion(
+					worker,
+					allow_doors_interruption=allow_doors_interruption,
+					allow_motion_interlock=allow_motion_interlock,
+				)
+				if allow_tray_on_tool is False:
+					await ensure_no_tray_on_tool(worker)
 
-		_current_operation = operation
-		yield
+			_current_operation = operation
+			yield
 	finally:
 		_current_operation = None
 		_motion_lock.release()

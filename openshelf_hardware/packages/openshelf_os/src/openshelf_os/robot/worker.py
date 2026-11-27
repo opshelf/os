@@ -8,8 +8,8 @@ import traceback
 import uuid
 import sentry_sdk
 
-from collections.abc import Awaitable, Callable
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from typing import Optional, List, Any, Dict
 from openshelf_os import SIMULATED_FAULT_CONTEXT_KEY, SIMULATED_MOTOR_FAULT_PREFIX
@@ -517,6 +517,7 @@ class RobotWorker:
         self._is_emergency_stopped: bool = False
         self._emergency_stop_reason: Optional[str] = None
         self._is_estop_active: bool = False
+        self._manual_recovery_active: bool = False
         self._needs_home_axes: set[str] = set()
         self._needs_home_unknown: bool = False
         self._needs_home_reason: Optional[str] = None
@@ -2434,18 +2435,47 @@ class RobotWorker:
         return self._is_crashed is True or self._is_emergency_stopped is True
 
     def _may_release_motion_safety(self) -> bool:
-        # While stopped, only the recovery home or recover command may run the robot, so it
-        # is the only thing that may release the interlock; the e-stop button never does.
+        # While stopped, only the recovery home or recover command (or an explicit manual
+        # recovery home) may run the robot, so it is the only thing that may release the
+        # interlock; the e-stop button never does.
         if self._is_estop_active is True or self._safety_motion_blocked is True:
             return False
         if self._is_stopped() is False:
             return True
-        return isinstance(self._current_command, (HomeCommand, RecoverCommand))
+        return (
+            isinstance(self._current_command, (HomeCommand, RecoverCommand))
+            or self._manual_recovery_active is True
+        )
 
     def _should_ignore_light_curtain(self) -> bool:
         # Only while idle: the recovery home or recover command that clears the stop moves
         # the robot, so the curtain guards it like any other motion.
-        return self._is_stopped() is True and self._current_command is None
+        return (
+            self._is_stopped() is True
+            and self._current_command is None
+            and self._manual_recovery_active is False
+        )
+
+    @asynccontextmanager
+    async def manual_recovery_motion(self) -> AsyncIterator[None]:
+        """Allow a manual recovery home to run while stopped, with safety guards enforced."""
+        motion_safety = getattr(self._robot, "_motion_safety", None)
+        was_blocked = getattr(motion_safety, "blocked", False) is True
+        if self._is_stopped() is False and was_blocked is False:
+            yield
+            return
+
+        self._manual_recovery_active = True
+        try:
+            await self._evaluate_safety_guard()
+            if self._may_release_motion_safety() is True:
+                self._robot.release_motion_safety()
+                logger.info("Released motion safety for manual recovery homing")
+            yield
+        finally:
+            self._manual_recovery_active = False
+            if was_blocked is True and self._may_release_motion_safety() is False:
+                self._robot.block_motion_for_safety()
 
     def _can_acknowledge_safety(self) -> bool:
         return self._awaiting_safety_ack is True and not self._safety_active_sources

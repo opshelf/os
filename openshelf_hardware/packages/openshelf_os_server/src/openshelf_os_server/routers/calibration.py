@@ -1827,7 +1827,12 @@ async def home_tool_motors() -> CalibrationStatusResponse:
 		raise api_error(status.HTTP_503_SERVICE_UNAVAILABLE, "motor_not_configured", "The tool motors are not configured on this machine.")
 
 	try:
-		async with manual_motion_guard("calibration_home_tool_motors", worker=worker, allow_tray_on_tool=True):
+		async with manual_motion_guard(
+			"calibration_home_tool_motors",
+			worker=worker,
+			allow_tray_on_tool=True,
+			allow_stopped_recovery=True,
+		):
 			await tool._ms.home()
 			await tool._mg.home()
 	except (MotorError, HardwareMotorError) as e:
@@ -2884,7 +2889,12 @@ async def abort_calibration():
 	tool = worker._robot._tool
 
 	try:
-		async with manual_motion_guard("calibration_abort", worker=worker, allow_tray_on_tool=True):
+		async with manual_motion_guard(
+			"calibration_abort",
+			worker=worker,
+			allow_tray_on_tool=True,
+			allow_stopped_recovery=True,
+		):
 			await tool.home()
 		worker.clear_needs_home()
 		await worker.get_status_snapshot(force_refresh=True)

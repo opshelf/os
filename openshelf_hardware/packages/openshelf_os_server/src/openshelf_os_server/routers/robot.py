@@ -34,7 +34,7 @@ import logging
 from openshelf_os.robot.core import POWER_CYCLE_HOLD_S, V24_POWER_RAILS
 from openshelf_os.robot.y_descent_trial import run_descent_trial
 from hardware.exceptions import MotorConfigError
-from hardware.motor import Y_MIN_TARGET_MM
+from hardware.motor import Motor, Y_MIN_TARGET_MM
 from openshelf_os.robot.worker import (
     SCALE_OCCUPIED_THRESHOLD_GRAMS,
     TRAY_ON_TOOL_ALLOWED_COMMANDS,
@@ -1841,7 +1841,12 @@ async def clear_motor_alarm(
         )
 
     try:
-        async with manual_motion_guard(f"motor_clear:{motor_name}", worker=worker, allow_tray_on_tool=True):
+        async with manual_motion_guard(
+            f"motor_clear:{motor_name}",
+            worker=worker,
+            allow_tray_on_tool=True,
+            allow_motion_interlock=True,
+        ):
             was_simulated_fault = bool(getattr(motor, "_simulated_fault", False))
             await motor.clear_alarm()
             if was_simulated_fault is True:
@@ -1900,7 +1905,12 @@ async def home_motor(
         )
 
     try:
-        async with manual_motion_guard(f"motor_home:{motor_name}", worker=worker, allow_tray_on_tool=True):
+        async with manual_motion_guard(
+            f"motor_home:{motor_name}",
+            worker=worker,
+            allow_tray_on_tool=True,
+            allow_stopped_recovery=True,
+        ):
             await motor.clear_alarm()
             if motor_name == "rotate":
                 # The full sequence also recovers an unhomed X: a provisional X home gives the
@@ -2016,7 +2026,12 @@ async def power_cycle_rail(
         )
 
     try:
-        async with manual_motion_guard(f"power_cycle:{rail}", worker=worker, allow_tray_on_tool=True):
+        async with manual_motion_guard(
+            f"power_cycle:{rail}",
+            worker=worker,
+            allow_tray_on_tool=True,
+            allow_motion_interlock=True,
+        ):
             cut_axes = list(worker._robot.power_rail_axes(rail))
 
             def _mark_axes_for_homing() -> None:
@@ -2059,7 +2074,12 @@ async def probe_motors(
         return MotorProbeResponse(busy=True, reason=busy_reason)
 
     try:
-        async with manual_motion_guard("motor_probe", worker=worker, allow_tray_on_tool=True):
+        async with manual_motion_guard(
+            "motor_probe",
+            worker=worker,
+            allow_tray_on_tool=True,
+            allow_motion_interlock=True,
+        ):
             motor_names = worker.get_motor_names()
             results: List[MotorProbeResult] = []
 
@@ -2194,6 +2214,8 @@ async def move_motor(
 
     try:
         async with manual_motion_guard(f"motor_move:{motor_name}", worker=worker, allow_tray_on_tool=True):
+            if isinstance(motor, Motor):
+                motor.ensure_not_faulted()
             if motor_name == "fridge_door":
                 # The fridge checks the tool is retracted before the door moves.
                 await worker._robot._fridge.move_door_to(request.position_mm)
@@ -2360,7 +2382,12 @@ async def control_door(
     failures return `503`.
     """
     try:
-        async with manual_motion_guard(f"door:{action}", worker=worker, allow_tray_on_tool=True):
+        async with manual_motion_guard(
+            f"door:{action}",
+            worker=worker,
+            allow_tray_on_tool=True,
+            allow_stopped_recovery=action == "home",
+        ):
             if action == "open":
                 await worker._robot._io.open_door()
             elif action == "close":
